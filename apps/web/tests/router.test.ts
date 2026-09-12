@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { router } from '../src/router';
 import DemandsView from '../src/views/DemandsView.vue';
 import ReservesView from '../src/views/ReservesView.vue';
+import FinanceView from '../src/views/FinanceView.vue';
 
 describe('business routes', () => {
   it('lazy-loads the real demand pool at /demands instead of the P2 placeholder', async () => {
@@ -20,5 +21,14 @@ describe('business routes', () => {
     expect(typeof loader).toBe('function');
     const resolved = await (loader as () => Promise<{ default: unknown }>)();
     expect(resolved.default).toBe(ReservesView);
+  });
+
+  it('lazy-loads the real finance workspace at /finance instead of the P4 placeholder', async () => {
+    const route = router.getRoutes().find((item) => item.path === '/finance');
+    expect(route).toBeTruthy();
+    const loader = route?.components?.default;
+    expect(typeof loader).toBe('function');
+    const resolved = await (loader as () => Promise<{ default: unknown }>)();
+    expect(resolved.default).toBe(FinanceView);
   });
 });

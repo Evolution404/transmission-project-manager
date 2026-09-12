@@ -11,11 +11,11 @@ defineProps<{ currentUser: CurrentUser }>();
       <n-grid-item><n-card><n-statistic label="项目需求" value="—" /><small class="muted">P2 已接入需求池；总览统计留 P6</small></n-card></n-grid-item>
       <n-grid-item><n-card><n-statistic label="储备项目" value="—" /><small class="muted">P3 已接入储备转换；总览统计留 P6</small></n-card></n-grid-item>
       <n-grid-item><n-card><n-statistic label="实施待办" value="—" /><small class="muted">P5 接入实施状态</small></n-card></n-grid-item>
-      <n-grid-item><n-card><n-statistic label="资金预警" value="—" /><small class="muted">P4 / P6 接入资金规则</small></n-card></n-grid-item>
+      <n-grid-item><n-card><n-statistic label="资金预警" value="—" /><small class="muted">P4 已接入框架/协议/预算/资金口径；总览聚合留 P6</small></n-card></n-grid-item>
     </n-grid>
 
     <n-card title="当前开发状态">
-      <template #header-extra><n-tag type="success" :bordered="false">P3 储备转换与估算</n-tag></template>
+      <template #header-extra><n-tag type="success" :bordered="false">P4 框架协议与资金</n-tag></template>
       <n-empty description="尚未导入正式业务数据">
         <template #extra>
           <p class="empty-copy">当前只展示已实现能力。需求、储备、出库、实施、结算和资金数据不会使用硬编码样本冒充正式结果。</p>

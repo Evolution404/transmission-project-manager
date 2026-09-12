@@ -129,7 +129,49 @@ test('P2 database upgrades to P3 without losing imported demand and material pro
   ))[0].count, 7);
 });
 
-test('clean database applies the current P3 development schema and remains repeatable', () => {
+test('P3 database upgrades to P4 without losing reserve project versions and allocations', () => {
+  const state = tempState('tpm-migration-p4-upgrade-');
+  executeLocalD1(state, { file: 'migrations/0001_p1_identity_and_config.sql' });
+  executeLocalD1(state, { file: 'migrations/0002_p2_import_demands_materials.sql' });
+  executeLocalD1(state, { file: 'migrations/0003_p3_reserve_projects.sql' });
+  executeLocalD1(state, {
+    command: `
+      INSERT INTO members
+        (id,username,display_name,role,enabled,version,credential_salt,credential_verifier,credential_algorithm,credential_params_json,
+         must_change_password,session_version,failed_login_count,credential_changed_at,created_at,updated_at)
+      VALUES ('p4-existing','p4-existing','P4升级保留成员','admin',1,1,'salt','verifier','argon2id-v1','{}',0,1,0,
+        '2026-09-01T00:00:00.000Z','2026-09-01T00:00:00.000Z','2026-09-01T00:00:00.000Z');
+      INSERT INTO import_batches
+        (id,file_name,file_sha256,file_type,mapping_json,status,uploaded_rows,valid_rows,error_rows,warning_rows,published_rows,version,created_by,created_at,updated_at,published_at)
+      VALUES ('p4-batch','保留.xlsx','${'7'.repeat(64)}','xlsx','{}','published',1,1,0,0,1,1,'p4-existing','2026-09-01T00:00:00.000Z','2026-09-01T00:00:00.000Z','2026-09-01T00:00:00.000Z');
+      INSERT INTO demands
+        (id,source_key,source_batch_id,source_file_sha256,source_file_name,source_sheet,source_row_number,sequence_no,business_year,voltage_raw,voltage_verified,line_name,section_text,category_key,owner,business_signature,raw_json,extra_json,version,created_by,created_at,updated_at)
+      VALUES ('p4-demand','p4-source','p4-batch','${'7'.repeat(64)}','保留.xlsx','需求',2,'1',2026,'220kV','220kV','保留线','#1','防断线',NULL,'p4-signature','{}','{}',1,'p4-existing','2026-09-01T00:00:00.000Z','2026-09-01T00:00:00.000Z');
+      INSERT INTO demand_materials (id,demand_id,raw_model,material_id,quantity_scaled,unit,created_at)
+      VALUES ('p4-demand-material','p4-demand','JX-01',NULL,10000,'套','2026-09-01T00:00:00.000Z');
+      INSERT INTO projects (id,name,business_year,owner,status,reserve_version,framework_id,version,created_by,created_at,updated_at)
+      VALUES ('p4-project','保留储备项目',2026,NULL,'confirmed',1,NULL,3,'p4-existing','2026-09-01T00:00:00.000Z','2026-09-02T00:00:00.000Z');
+      INSERT INTO demand_allocations (id,project_id,demand_material_id,quantity_scaled,created_at)
+      VALUES ('p4-allocation','p4-project','p4-demand-material',10000,'2026-09-01T00:00:00.000Z');
+      INSERT INTO project_versions
+        (id,project_id,reserve_version,snapshot_json,known_amount_fen,missing_price_count,completeness_basis_points,reason,confirmed_by,confirmed_at)
+      VALUES ('p4-project-version','p4-project',1,'{"name":"保留储备项目"}',12345,0,10000,'初始确认','p4-existing','2026-09-02T00:00:00.000Z');
+    `,
+  });
+
+  executeLocalD1(state, { file: 'migrations/0004_p4_finance.sql' });
+
+  assert.deepEqual(rows(queryLocalD1(state,
+    "SELECT name,status,reserve_version,version FROM projects WHERE id='p4-project';",
+  ))[0], { name: '保留储备项目', status: 'confirmed', reserve_version: 1, version: 3 });
+  assert.equal(rows(queryLocalD1(state, "SELECT quantity_scaled FROM demand_allocations WHERE id='p4-allocation';"))[0].quantity_scaled, 10000);
+  assert.equal(rows(queryLocalD1(state, "SELECT known_amount_fen FROM project_versions WHERE id='p4-project-version';"))[0].known_amount_fen, 12345);
+  assert.equal(rows(queryLocalD1(state,
+    "SELECT COUNT(*) AS count FROM sqlite_master WHERE type='table' AND name IN ('frameworks','framework_versions','agreements','agreement_versions','project_budgets','budget_allocations','budget_versions','budget_version_allocations','financial_entries','financial_entry_allocations');",
+  ))[0].count, 10);
+});
+
+test('clean database applies the current P4 development schema and remains repeatable', () => {
   const state = tempState('tpm-migration-clean-');
   applyLocalMigrations(state);
   applyLocalMigrations(state);
@@ -139,6 +181,7 @@ test('clean database applies the current P3 development schema and remains repea
     '0001_p1_identity_and_config.sql',
     '0002_p2_import_demands_materials.sql',
     '0003_p3_reserve_projects.sql',
+    '0004_p4_finance.sql',
   ]);
 
   const tables = rows(queryLocalD1(state,
@@ -150,10 +193,12 @@ test('clean database applies the current P3 development schema and remains repea
     'import_batches', 'import_rows', 'demands', 'demand_materials', 'field_definitions',
     'projects', 'project_versions', 'demand_allocations', 'project_cost_lines',
     'reserve_categories', 'category_mappings', 'category_cost_allocations',
+    'frameworks', 'framework_versions', 'agreements', 'agreement_versions', 'project_budgets',
+    'budget_allocations', 'budget_versions', 'budget_version_allocations', 'financial_entries', 'financial_entry_allocations',
   ]) assert.ok(tables.includes(table), `missing table ${table}`);
 });
 
-test('member schema remains username/credential based after P3 migration', () => {
+test('member schema remains username/credential based after P4 migration', () => {
   const state = tempState('tpm-migration-auth-schema-');
   applyLocalMigrations(state);
   const columns = rows(queryLocalD1(state, 'PRAGMA table_info(members);')).map((row) => row.name);

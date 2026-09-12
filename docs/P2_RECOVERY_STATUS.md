@@ -15,7 +15,7 @@ P1.2 完整门禁结果：31/31 Node/workerd+D1 + 11/11 Vue，共 42 项 PASS。
 P2 在 P1.2 重构前保存于：
 `stash@{0}: On main: wip P2 before P1.2 local account auth`
 
-该 stash 已执行 `git stash apply`，**stash 本身仍保留**，作为恢复备份，不要立即 drop。
+该 stash 当时已执行 `git stash apply` 并暂时保留作为恢复备份；P3 完成后、P4 开始前，已按用户明确要求执行 `git stash drop stash@{0}`。当前本机不再保留该恢复 stash。
 
 恢复时产生的三处内容冲突已经人工合并并用 `git add` 标记 resolved：
 - `apps/api/src/app.ts`
@@ -82,7 +82,7 @@ P2 目标仍是：Excel 导入、需求池、物资字典。
 5. 分片上传、校验、发布均覆盖 stale version 和并发原子性，失败写入不会留下半批数据。
 6. `/demands` 已懒加载真实 `DemandsView.vue`；生产构建主入口 JS 降至约 458.65 kB，不再触发 500 kB 主包警告。
 7. 完整 `npm run check` 已全绿，实施计划、测试策略、完整交接和短交接均已更新。
-8. 恢复用 stash 仍保留作本机备份；P2 已完成，后续入口改为 P3。除非明确需要清理，本次不 drop stash。
+8. 恢复用 stash 在 P2/P3 阶段曾保留作本机备份；P4 开始前已按用户要求删除。P2 已完成，当前代码不依赖任何 stash。
 
 ## 6. 不能回退的决定
 
