@@ -75,6 +75,7 @@ npm run check
 
 ### P1.1 · 2026-09-12
 
+- 主要实现提交：`1b8139c`（`feat: complete P1.1 member management handover`）。
 - 完成：成员新增/编辑/启停、角色与 `all/framework/project` 范围；成员邀请/首次/最近登录生命周期；一次性首管理员 bootstrap；最后一个启用管理员保护；完整前端成员管理界面。
 - 数据：新增追加式迁移 `0002_p1_1_member_lifecycle.sql`，未修改 P1 已交付迁移；本地 seed 仍只用于 `.invalid` 合成身份。
 - 运维：新增 `docs/OPERATIONS_HANDOVER.md`，将资产所有者、应用管理员、技术运维负责人和 CI/CD 服务身份分离；正式 Cloudflare/GitHub 移交演练仍留 P7。

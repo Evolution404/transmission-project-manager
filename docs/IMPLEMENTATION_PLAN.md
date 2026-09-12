@@ -72,7 +72,7 @@ P1完成记录（2026-09-12，主要实现提交 `4880918`）：
 - 本地/CI 使用合成 Access 身份完成完整成员生命周期测试，不把测试账号写入正式迁移。
 - P1.1 完成后重新运行 `npm run check`，并将“下一步”切换为 P2。
 
-P1.1 完成记录（2026-09-12）：
+P1.1 完成记录（2026-09-12，主要实现提交 `1b8139c`）：
 
 - 新增 `0002_p1_1_member_lifecycle.sql`，只追加 `invited_at`、`first_login_at`、`last_login_at` 等生命周期字段，不回改 P1 迁移。
 - 实现一次性 `POST /api/bootstrap/admin`：必须与显式 `BOOTSTRAP_ADMIN_EMAIL` 身份匹配且成员表为空；创建后自动关闭，不采用“首个登录者自动当管理员”。
