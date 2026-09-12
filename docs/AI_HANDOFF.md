@@ -4,11 +4,11 @@
 
 P0、P1、P1.1、P1.2 已完成并通过本地验收。业务登录现为系统自维护 `username + password`：浏览器 Web Worker 执行 Argon2id，服务端保存带运行时 pepper 的 HMAC verifier，并使用 7 天 HttpOnly 服务端会话。邮箱和 Cloudflare Access 均不参与业务认证。
 
-P2 的认证改造前 WIP 仍保存在 Git stash `wip P2 before P1.2 local account auth`，下一步应恢复该 stash、解决与新认证基线的冲突后继续 P2。当前已建立 npm workspaces、Vue Router + Naive UI 管理台、Hono API、账号/会话/成员范围/配置版本/字典/审计/幂等、完整认证页面和 42 项自动门禁。
+P2 的认证改造前 WIP 已从 Git stash `wip P2 before P1.2 local account auth` apply 到当前工作区；stash 本身仍保留作为备份。三处合并冲突已经解决并标记 resolved。详细恢复状态、文件清单和下一步见 `docs/P2_RECOVERY_STATUS.md`。
 
-尚未实现：Excel导入、需求/储备/物资业务表、框架协议预算、出库实施结算、分类分析、定时任务、发信、备份及正式Cloudflare部署。P7 还需要完成真实 Cloudflare/GitHub 运维身份、account-owned CI token 和完整移交演练。后续业务入口当前均为真实空状态，不得把页面框架解释为这些业务已完成。
+当前 `npm run typecheck` 只剩 `apps/web/tests/DemandsView.test.ts` 两个旧认证测试夹具错误：把 `authSource: 'development'` 改为 `'session'`，并删除已不存在的 `CurrentUser.email`。P2 尚未完成、尚未提交；Excel 导入、需求池和物资字典必须重新通过新认证基线下的完整门禁后才能标完成。
 
-**下一步恢复并继续 P2。** Cloudflare 仍是托管路线，但不参与业务身份认证；恢复 P2 时保留 P1.2 的账号、会话和权限中间件，不得把旧 Access/邮箱身份代码带回来。
+**下一步继续 P2。** Cloudflare 仍是托管路线，但不参与业务身份认证；保留 P1.2 的账号、会话和权限中间件，不得把旧 Access/邮箱身份代码带回来。对外简短交接直接使用 `docs/NEXT_AI.md`。
 
 ## 阅读顺序
 
@@ -19,20 +19,9 @@ P2 的认证改造前 WIP 仍保存在 Git stash `wip P2 before P1.2 local accou
 5. [TESTING.md](TESTING.md)：先测试后生产代码、迁移锁、并发/原子性和阶段门禁。
 6. [DEPLOYMENT.md](DEPLOYMENT.md)：本地与生产的区别、Cloudflare限制。
 
-## 可直接复制给 AI 的提示词
+## 给下一位 AI 的短提示词
 
-```text
-请接手这个仓库的后续实现。先阅读 AGENTS.md、docs/AI_HANDOFF.md、
-docs/DESIGN.md、docs/DATA_MODEL.md、docs/IMPLEMENTATION_PLAN.md。
-P0、P1、P1.1、P1.2 已完成。恢复 `wip P2 before P1.2 local account auth` 中的 P2 工作，
-解决与当前账号/会话认证基线的冲突后继续 Excel 导入、需求池和物资字典；不要重做认证，也不要将 P3–P7 未实现能力标为完成。
-严格遵守 docs/TESTING.md：先写 P2 验收/回归测试并验证测试确实有约束力，再修改生产代码；任何缺陷先补复现用例。
-保持 Cloudflare 免费起步、Vue + TypeScript + Hono + D1 + R2 的架构。
-不需要再次询问已经在文档中确定的需求。原始Excel缺失时使用明确标注的合成测试数据，
-浏览器负责 Excel 解析，Worker 负责分片校验、暂存和发布；正式 Cloudflare/GitHub 运维移交演练留到 P7。
-P2 完成后运行 npm run check 和该阶段验收，更新实施计划与交接说明，
-总结完成范围、检查结果、迁移与未验证事项，并按当前任务授权提交代码。
-```
+不要在这里维护第二份长提示词。直接复制 `docs/NEXT_AI.md` 给下一位 AI；本文件只保存完整背景和历史记录。
 
 ## 本地命令
 
@@ -93,6 +82,6 @@ npm run check
 - 安全：生产不读取 Cloudflare Access JWT 或开发身份头；最后管理员保护升级为数据库条件写入；修复成员 PATCH 审计 SQL 占位符导致的错误 409。
 - 测试：`npm run check` 全绿，31/31 Node/workerd+D1 + 11/11 Vue，共 42 项 PASS；Argon2 worker/WASM 正常生产构建，Worker dry-run PASS。
 - 未验证：真实 Cloudflare 线上 CPU/配额/网络，以及低性能手机 Argon2id 交互体验，留 P7。
-- 下一步：恢复 P2 stash，解决与 P1.2 新基线的冲突后继续 Excel 导入、需求池和物资字典。
+- 后续状态：P2 stash 已于同日 apply 到工作区，冲突已解决；当前恢复细节见 `docs/P2_RECOVERY_STATUS.md`。
 
 每完成阶段在此追加：阶段、提交号、完成内容、测试、未完成/未验证项和明确下一步。不要删除原始边界说明。

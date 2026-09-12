@@ -7,9 +7,9 @@
 
 ## 交给其他 AI 的入口
 
-1. 阅读 [AGENTS.md](AGENTS.md)。
-2. 阅读 [AI 交接说明](docs/AI_HANDOFF.md)，其中有可直接复制的任务提示词。
-3. 按 [实施计划](docs/IMPLEMENTATION_PLAN.md) 从 **P2** 继续；P1.2 本地账号认证已经完成并通过质量门禁。
+1. 对外快速交接直接使用 [NEXT_AI.md](docs/NEXT_AI.md)。
+2. 接手后阅读 [AGENTS.md](AGENTS.md) 和 [AI 交接说明](docs/AI_HANDOFF.md)。
+3. 按 [实施计划](docs/IMPLEMENTATION_PLAN.md) 从 **P2** 继续；当前恢复细节见 [P2_RECOVERY_STATUS.md](docs/P2_RECOVERY_STATUS.md)。
 4. 开发前先阅读 [测试策略](docs/TESTING.md)：所有新阶段和缺陷修复必须先写验收/回归测试，再改生产代码。
 5. 业务依据为 [设计方案](docs/DESIGN.md)，数据与 API 约定见 [数据模型](docs/DATA_MODEL.md)。
 
