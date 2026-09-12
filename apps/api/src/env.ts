@@ -5,4 +5,6 @@ export interface WorkerBindings {
   ASSETS: Fetcher;
   AUTH_CREDENTIAL_PEPPER?: string;
   BOOTSTRAP_TOKEN?: string;
+  NOTIFICATION_DELIVERY_URL?: string;
+  NOTIFICATION_DELIVERY_TOKEN?: string;
 }

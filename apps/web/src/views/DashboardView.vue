@@ -1,26 +1,54 @@
 <script setup lang="ts">
-import { NCard, NEmpty, NGrid, NGridItem, NStatistic, NTag } from 'naive-ui';
-import type { CurrentUser } from '@tpm/shared';
+import { onMounted, ref } from 'vue';
+import { NAlert, NCard, NGrid, NGridItem, NSpin, NStatistic, NTag } from 'naive-ui';
+import type { AnalysisDashboardSummary, ApiResponse, CurrentUser } from '@tpm/shared';
 
 defineProps<{ currentUser: CurrentUser }>();
+
+const loading = ref(true);
+const error = ref('');
+const dashboard = ref<AnalysisDashboardSummary | null>(null);
+
+function businessToday() {
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
+  const get = (type: string) => parts.find((part) => part.type === type)?.value ?? '';
+  return `${get('year')}-${get('month')}-${get('day')}`;
+}
+
+async function loadDashboard() {
+  loading.value = true;
+  error.value = '';
+  try {
+    const response = await fetch(`/api/analysis/dashboard?asOf=${businessToday()}`);
+    const result = await response.json() as ApiResponse<AnalysisDashboardSummary>;
+    if (!response.ok || !result.ok) throw new Error(result.ok ? `HTTP ${response.status}` : result.error.message);
+    dashboard.value = result.data;
+  } catch (cause) {
+    error.value = cause instanceof Error ? cause.message : '读取总览失败';
+  } finally {
+    loading.value = false;
+  }
+}
+
+onMounted(loadDashboard);
 </script>
 
 <template>
   <div class="view-stack">
-    <n-grid :cols="4" :x-gap="16" :y-gap="16" responsive="screen">
-      <n-grid-item><n-card><n-statistic label="项目需求" value="—" /><small class="muted">P2 已接入需求池；总览统计留 P6</small></n-card></n-grid-item>
-      <n-grid-item><n-card><n-statistic label="储备项目" value="—" /><small class="muted">P3 已接入储备转换；总览统计留 P6</small></n-card></n-grid-item>
-      <n-grid-item><n-card><n-statistic label="实施待办" value="—" /><small class="muted">P5 已接入出库、实施、结算与四状态；总览聚合留 P6</small></n-card></n-grid-item>
-      <n-grid-item><n-card><n-statistic label="资金预警" value="—" /><small class="muted">P4 已接入框架/协议/预算/资金口径；总览聚合留 P6</small></n-card></n-grid-item>
-    </n-grid>
+    <n-alert v-if="error" type="error">{{ error }}</n-alert>
+    <n-spin :show="loading">
+      <n-grid :cols="5" :x-gap="16" :y-gap="16" responsive="screen">
+        <n-grid-item><n-card><n-statistic label="已纳入需求" :value="dashboard?.demandCount ?? 0" /><small class="muted">已进入项目范围的需求</small></n-card></n-grid-item>
+        <n-grid-item><n-card><n-statistic label="项目总数" :value="dashboard?.projectCount ?? 0" /><small class="muted">当前授权范围</small></n-card></n-grid-item>
+        <n-grid-item><n-card><n-statistic label="待出库项目" :value="dashboard?.unreleasedProjectCount ?? 0" /><small class="muted">仍存在未出库范围</small></n-card></n-grid-item>
+        <n-grid-item><n-card><n-statistic label="结算待办" :value="dashboard?.pendingSettlementCount ?? 0" /><small class="muted">已实施但未最终结算</small></n-card></n-grid-item>
+        <n-grid-item><n-card><n-statistic label="活动预警" :value="dashboard?.activeAlertCount ?? 0" /><small class="muted">规则或年度事项提醒</small></n-card></n-grid-item>
+      </n-grid>
+    </n-spin>
 
     <n-card title="当前开发状态">
-      <template #header-extra><n-tag type="success" :bordered="false">P5 出库实施与结算</n-tag></template>
-      <n-empty description="尚未导入正式业务数据">
-        <template #extra>
-          <p class="empty-copy">当前只展示已实现能力。需求、储备、出库、实施、结算和资金数据不会使用硬编码样本冒充正式结果。</p>
-        </template>
-      </n-empty>
+      <template #header-extra><n-tag type="success" :bordered="false">P6 分析、提醒与备份</n-tag></template>
+      <p class="empty-copy">首页数字来自当前业务事实和活动预警，不使用硬编码样本。正式业务数据、线上配额和真实通知投递仍需在 P7 验收。</p>
     </n-card>
 
     <n-card title="当前身份">

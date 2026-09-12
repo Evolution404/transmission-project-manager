@@ -3,6 +3,7 @@ import { router } from '../src/router';
 import DemandsView from '../src/views/DemandsView.vue';
 import ReservesView from '../src/views/ReservesView.vue';
 import FinanceView from '../src/views/FinanceView.vue';
+import AnalysisView from '../src/views/AnalysisView.vue';
 import DeliveryView from '../src/views/DeliveryView.vue';
 
 describe('business routes', () => {
@@ -31,6 +32,15 @@ describe('business routes', () => {
     expect(typeof loader).toBe('function');
     const resolved = await (loader as () => Promise<{ default: unknown }>)();
     expect(resolved.default).toBe(FinanceView);
+  });
+
+  it('lazy-loads the real analysis workspace at /analysis instead of the P6 placeholder', async () => {
+    const route = router.getRoutes().find((item) => item.path === '/analysis');
+    expect(route).toBeTruthy();
+    const loader = route?.components?.default;
+    expect(typeof loader).toBe('function');
+    const resolved = await (loader as () => Promise<{ default: unknown }>)();
+    expect(resolved.default).toBe(AnalysisView);
   });
 
   it('lazy-loads the real delivery and settlement workspace at /delivery instead of the P5 placeholder', async () => {

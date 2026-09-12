@@ -2,3 +2,8 @@
 # Never reuse local values in production.
 AUTH_CREDENTIAL_PEPPER=replace-with-random-local-development-value
 BOOTSTRAP_TOKEN=replace-with-one-time-local-bootstrap-token
+
+# Optional P6 notification delivery adapter. Leave unset to keep outbox messages pending.
+# The endpoint accepts JSON { notificationId,eventId,to,subject,text,ruleKey }.
+# NOTIFICATION_DELIVERY_URL=https://notification-adapter.example.invalid/deliver
+# NOTIFICATION_DELIVERY_TOKEN=replace-with-adapter-bearer-token

@@ -1,6 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router';
 import DashboardView from './views/DashboardView.vue';
-import PlaceholderView from './views/PlaceholderView.vue';
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -10,7 +9,7 @@ export const router = createRouter({
     { path: '/reserves', name: 'reserves', component: () => import('./views/ReservesView.vue'), meta: { title: '储备出库' } },
     { path: '/delivery', name: 'delivery', component: () => import('./views/DeliveryView.vue'), meta: { title: '实施结算' } },
     { path: '/finance', name: 'finance', component: () => import('./views/FinanceView.vue'), meta: { title: '框架费用' } },
-    { path: '/analysis', name: 'analysis', component: PlaceholderView, meta: { title: '储备分析', stage: 'P6', description: '分类分析、月报和预警将在 P6 实现。' } },
+    { path: '/analysis', name: 'analysis', component: () => import('./views/AnalysisView.vue'), meta: { title: '储备分析' } },
     {
       path: '/administration',
       name: 'administration',

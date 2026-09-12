@@ -48,6 +48,7 @@ import { p2App } from './p2';
 import { p3App } from './p3';
 import { p4App } from './p4';
 import { p5App } from './p5';
+import { p6App } from './p6';
 
 export const app = new Hono<AppEnv>();
 
@@ -159,7 +160,7 @@ function currentUserData<T extends { mustChangePassword: boolean }>(member: T) {
 app.get('/api/health', (c) => {
   const body: HealthResponse = {
     ok: true,
-    data: { service: 'transmission-project-manager', stage: 'p5' },
+    data: { service: 'transmission-project-manager', stage: 'p6' },
   };
   c.header('Cache-Control', 'no-store');
   return c.json(body);
@@ -697,5 +698,6 @@ app.route('/api', p2App);
 app.route('/api', p3App);
 app.route('/api', p4App);
 app.route('/api', p5App);
+app.route('/api', p6App);
 
 app.notFound((c) => c.json(apiError('NOT_FOUND', '接口不存在或尚未实现'), 404));

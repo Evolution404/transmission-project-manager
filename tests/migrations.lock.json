@@ -3,5 +3,6 @@
   "apps/api/migrations/0002_p2_import_demands_materials.sql": "649f55c8f30980f71c80f788815f2e1d33fff0ca4949a6ebaae881f2156cb5ae",
   "apps/api/migrations/0003_p3_reserve_projects.sql": "0f05230740cb5cbdc106afcf035f7193d1a91e72a39f649ab1c9e05bbf1169c5",
   "apps/api/migrations/0004_p4_finance.sql": "288fc89eed5333ecd582c8a66a48eb7f32dca6de71bb79ee25dd604deb7f8cb5",
-  "apps/api/migrations/0005_p5_delivery_implementation_settlement.sql": "aa3967dd010c6005ca5293b1fbe16c2e859e2469eec60f1b972adbb2411e73fe"
+  "apps/api/migrations/0005_p5_delivery_implementation_settlement.sql": "aa3967dd010c6005ca5293b1fbe16c2e859e2469eec60f1b972adbb2411e73fe",
+  "apps/api/migrations/0006_p6_analysis_notifications_backups.sql": "facf79bc96dab059c534fa670979ed7fa3899f183c33eb63f7806090e332df9e"
 }

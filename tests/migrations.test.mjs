@@ -234,7 +234,72 @@ test('P4 database upgrades to P5 without losing framework, budget, and financial
   ))[0].count, 8);
 });
 
-test('clean database applies the current P5 development schema and remains repeatable', () => {
+test('P5 database upgrades to P6 without losing delivery, implementation, settlement, attachment, or finance history', () => {
+  const state = tempState('tpm-migration-p6-upgrade-');
+  for (const file of [
+    'migrations/0001_p1_identity_and_config.sql',
+    'migrations/0002_p2_import_demands_materials.sql',
+    'migrations/0003_p3_reserve_projects.sql',
+    'migrations/0004_p4_finance.sql',
+    'migrations/0005_p5_delivery_implementation_settlement.sql',
+  ]) executeLocalD1(state, { file });
+  executeLocalD1(state, {
+    command: `
+      INSERT INTO members
+        (id,username,display_name,role,enabled,version,credential_salt,credential_verifier,credential_algorithm,credential_params_json,
+         must_change_password,session_version,failed_login_count,credential_changed_at,created_at,updated_at)
+      VALUES ('p6-existing','p6-existing','P6升级保留成员','admin',1,1,'salt','verifier','argon2id-v1','{}',0,1,0,
+        '2026-09-01T00:00:00.000Z','2026-09-01T00:00:00.000Z','2026-09-01T00:00:00.000Z');
+      INSERT INTO import_batches
+        (id,file_name,file_sha256,file_type,mapping_json,status,uploaded_rows,valid_rows,error_rows,warning_rows,published_rows,version,created_by,created_at,updated_at,published_at)
+      VALUES ('p6-batch','保留.xlsx','${'9'.repeat(64)}','xlsx','{}','published',1,1,0,0,1,1,'p6-existing','2026-09-01T00:00:00.000Z','2026-09-01T00:00:00.000Z','2026-09-01T00:00:00.000Z');
+      INSERT INTO demands
+        (id,source_key,source_batch_id,source_file_sha256,source_file_name,source_sheet,source_row_number,sequence_no,business_year,voltage_raw,voltage_verified,line_name,section_text,category_key,owner,business_signature,raw_json,extra_json,version,created_by,created_at,updated_at)
+      VALUES ('p6-demand','p6-source','p6-batch','${'9'.repeat(64)}','保留.xlsx','需求',2,'1',2026,'220kV','220kV','P6保留线','#1','防断线',NULL,'p6-signature','{}','{}',1,'p6-existing','2026-09-01T00:00:00.000Z','2026-09-01T00:00:00.000Z');
+      INSERT INTO demand_materials (id,demand_id,raw_model,material_id,quantity_scaled,unit,created_at)
+      VALUES ('p6-demand-material','p6-demand','JX-01',NULL,10000,'套','2026-09-01T00:00:00.000Z');
+      INSERT INTO frameworks (id,code,name,total_amount_fen,annual_target_fen,start_date,end_date,version,created_by,created_at,updated_at)
+      VALUES ('p6-framework','FW-P6','P6保留框架',1000000,800000,'2026-01-01','2026-12-31',1,'p6-existing','2026-09-01T00:00:00.000Z','2026-09-01T00:00:00.000Z');
+      INSERT INTO framework_versions
+        (id,framework_id,version,code,name,total_amount_fen,annual_target_fen,start_date,end_date,reason,created_by,created_at)
+      VALUES ('p6-framework-v1','p6-framework',1,'FW-P6','P6保留框架',1000000,800000,'2026-01-01','2026-12-31',NULL,'p6-existing','2026-09-01T00:00:00.000Z');
+      INSERT INTO projects (id,name,business_year,owner,status,reserve_version,framework_id,version,created_by,created_at,updated_at)
+      VALUES ('p6-project','P6保留项目',2026,NULL,'confirmed',1,'p6-framework',5,'p6-existing','2026-09-01T00:00:00.000Z','2026-09-05T00:00:00.000Z');
+      INSERT INTO demand_allocations (id,project_id,demand_material_id,quantity_scaled,created_at)
+      VALUES ('p6-allocation','p6-project','p6-demand-material',10000,'2026-09-01T00:00:00.000Z');
+      INSERT INTO financial_entries (id,framework_id,project_id,entry_type,business_date,amount_fen,note,reverses_entry_id,created_by,created_at)
+      VALUES ('p6-entry','p6-framework','p6-project','budget_occurrence','2026-09-02',120000,NULL,NULL,'p6-existing','2026-09-02T00:00:00.000Z');
+      INSERT INTO release_batches (id,project_id,release_date,note,project_version_snapshot,reserve_version_snapshot,created_by,created_at)
+      VALUES ('p6-release','p6-project','2026-09-03',NULL,2,1,'p6-existing','2026-09-03T00:00:00.000Z');
+      INSERT INTO release_lines (id,release_batch_id,project_id,demand_material_id,quantity_scaled,snapshot_json,created_at)
+      VALUES ('p6-release-line','p6-release','p6-project','p6-demand-material',10000,'{}','2026-09-03T00:00:00.000Z');
+      INSERT INTO implementation_records (id,project_id,historical,record_date,personnel,note,version,created_by,created_at,updated_at)
+      VALUES ('p6-implementation','p6-project',0,'2026-09-04','班组',NULL,1,'p6-existing','2026-09-04T00:00:00.000Z','2026-09-04T00:00:00.000Z');
+      INSERT INTO implementation_lines (id,implementation_id,project_id,release_line_id,demand_material_id,description,unit,completed_quantity_scaled,actual_used_quantity_scaled,created_at)
+      VALUES ('p6-implementation-line','p6-implementation','p6-project','p6-release-line','p6-demand-material',NULL,'套',10000,10000,'2026-09-04T00:00:00.000Z');
+      INSERT INTO settlements (id,project_id,settlement_date,amount_fen,final,note,version,voided_at,voided_by,void_reason,created_by,created_at,updated_at)
+      VALUES ('p6-settlement','p6-project','2026-09-05',50000,1,NULL,1,NULL,NULL,NULL,'p6-existing','2026-09-05T00:00:00.000Z','2026-09-05T00:00:00.000Z');
+      INSERT INTO settlement_coverage (id,settlement_id,project_id,demand_material_id,quantity_scaled,created_at)
+      VALUES ('p6-coverage','p6-settlement','p6-project','p6-demand-material',10000,'2026-09-05T00:00:00.000Z');
+      INSERT INTO attachments (id,project_id,object_type,object_id,r2_key,file_name,content_type,size_bytes,uploaded_by,created_at,deleted_at)
+      VALUES ('p6-attachment','p6-project','project','p6-project','attachments/p6-project/p6-attachment','凭据.pdf','application/pdf',1234,'p6-existing','2026-09-05T00:00:00.000Z',NULL);
+    `,
+  });
+
+  executeLocalD1(state, { file: 'migrations/0006_p6_analysis_notifications_backups.sql' });
+
+  assert.equal(rows(queryLocalD1(state, "SELECT amount_fen FROM financial_entries WHERE id='p6-entry';"))[0].amount_fen, 120000);
+  assert.equal(rows(queryLocalD1(state, "SELECT quantity_scaled FROM release_lines WHERE id='p6-release-line';"))[0].quantity_scaled, 10000);
+  assert.equal(rows(queryLocalD1(state, "SELECT completed_quantity_scaled FROM implementation_lines WHERE id='p6-implementation-line';"))[0].completed_quantity_scaled, 10000);
+  assert.equal(rows(queryLocalD1(state, "SELECT final,amount_fen FROM settlements WHERE id='p6-settlement';"))[0].final, 1);
+  assert.equal(rows(queryLocalD1(state, "SELECT r2_key FROM attachments WHERE id='p6-attachment';"))[0].r2_key, 'attachments/p6-project/p6-attachment');
+  assert.equal(rows(queryLocalD1(state, "SELECT mode,threshold_basis_points FROM analysis_rules WHERE version=1;"))[0].mode, 'ratio');
+  assert.equal(rows(queryLocalD1(state,
+    "SELECT COUNT(*) AS count FROM sqlite_master WHERE type='table' AND name IN ('analysis_rules','monthly_plans','report_snapshots','annual_milestones','notification_contacts','alert_events','notification_outbox','backup_runs','backup_chunks');",
+  ))[0].count, 9);
+});
+
+test('clean database applies the current P6 development schema and remains repeatable', () => {
   const state = tempState('tpm-migration-clean-');
   applyLocalMigrations(state);
   applyLocalMigrations(state);
@@ -246,6 +311,7 @@ test('clean database applies the current P5 development schema and remains repea
     '0003_p3_reserve_projects.sql',
     '0004_p4_finance.sql',
     '0005_p5_delivery_implementation_settlement.sql',
+    '0006_p6_analysis_notifications_backups.sql',
   ]);
 
   const tables = rows(queryLocalD1(state,
@@ -261,10 +327,12 @@ test('clean database applies the current P5 development schema and remains repea
     'budget_allocations', 'budget_versions', 'budget_version_allocations', 'financial_entries', 'financial_entry_allocations',
     'release_batches', 'release_lines', 'implementation_records', 'implementation_lines',
     'settlements', 'settlement_coverage', 'settlement_agreement_allocations', 'attachments',
+    'analysis_rules', 'monthly_plans', 'report_snapshots', 'annual_milestones', 'notification_contacts',
+    'alert_events', 'notification_outbox', 'backup_runs', 'backup_chunks',
   ]) assert.ok(tables.includes(table), `missing table ${table}`);
 });
 
-test('member schema remains username/credential based after P5 migration', () => {
+test('member schema remains username/credential based after P6 migration', () => {
   const state = tempState('tpm-migration-auth-schema-');
   applyLocalMigrations(state);
   const columns = rows(queryLocalD1(state, 'PRAGMA table_info(members);')).map((row) => row.name);

@@ -12,6 +12,7 @@
   "dependencies": {
     "@phi-ag/argon2": "^0.5.27",
     "@tpm/shared": "*",
+    "echarts": "6.1.0",
     "naive-ui": "^2.42.0",
     "vue": "3.5.42",
     "vue-router": "^4.6.3",
