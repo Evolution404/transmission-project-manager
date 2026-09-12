@@ -51,3 +51,14 @@
 3. 发布和迁移不依赖资产所有者个人登录态或个人长期 API Token；
 4. 已实测发布、迁移、回退、Token 轮换、旧维护人撤权和恢复路径；
 5. 资产所有者可以只保留最高兜底能力而不参与日常操作。
+
+## 7. P7 交接补充核对
+
+- [ ] 使用 [P7_RUNBOOK.md](P7_RUNBOOK.md) 和私有发布记录，写清当前 commit、schema lock、Worker version、资源归属及具体操作者。
+- [ ] 核实生产 Environment 的真实分支/审批保护能力；不能以 YAML 声明替代真实权限检查。未启用部署模板前确认 main 普通 push 仅验证。
+- [ ] Secret 交接只记录名称与受控托管位置；pepper 单独安全备份，明确它与已有 verifier 的依赖，不能当普通 CI token 无损轮换。
+- [ ] 首次 bootstrap 关闭并移除一次性 Token；确认第二管理员和紧急应用账号恢复路径。
+- [ ] 备份前验证停写与 Cron 暂停；留存 JSON manifest/hash、schema、逐表数量和分账金额基线。正式恢复不启用 Cron/邮件，不复活会话。
+- [ ] R2 附件本体独立保存 key/size/hash 清单；确认保留策略不删除恢复所需对象。
+- [ ] 实际收到 CPU/额度、备份失败和通知失败告警，记录接收人及升级联系人。
+- [ ] 旧维护人从 GitHub、Cloudflare、Secret 托管和告警渠道撤权后，验证新维护人/CI 发布、迁移检查、回退及通知接收；记录权限变更与 run ID，不仅勾选“已交接”。

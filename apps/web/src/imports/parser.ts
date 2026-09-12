@@ -39,8 +39,9 @@ function parseSheet(name: string, worksheet: XLSX.WorkSheet): ParsedSpreadsheetS
     header: 1,
     raw: true,
     defval: null,
-    blankrows: false,
+    blankrows: true,
   });
+  const firstRow = worksheet['!ref'] ? XLSX.utils.decode_range(worksheet['!ref']).s.r : 0;
   const rawHeaders = matrix[0] ?? [];
   const headers = rawHeaders.map(headerName);
   const duplicateCheck = new Set<string>();
@@ -55,8 +56,8 @@ function parseSheet(name: string, worksheet: XLSX.WorkSheet): ParsedSpreadsheetS
     for (let column = 0; column < headers.length; column += 1) {
       cells[headers[column]!] = toCell(values[column]);
     }
-    return { rowNumber: index + 2, cells };
-  });
+    return { rowNumber: firstRow + index + 2, cells };
+  }).filter((row) => Object.values(row.cells).some((value) => value !== null && value !== ''));
   return { name, headers, rows };
 }
 

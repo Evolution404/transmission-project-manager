@@ -2,14 +2,14 @@
 
 面向 20 人以内团队的项目管理应用，计划采用 Cloudflare Workers、D1、R2，免费额度内运行，支持电脑和手机访问。
 
-**当前状态：P0、P1、P1.1、P1.2 已完成并通过本地验收；下一步恢复 P2 Excel 导入、需求池与物资字典；尚未部署到 Cloudflare。**
-当前业务认证完全由系统自身维护：用户使用 `username + 密码` 登录，浏览器 Web Worker 负责 Argon2id 派生，服务端只保存带运行时 pepper 的 HMAC verifier，并签发 7 天 HttpOnly 会话。邮箱不参与账号体系。需求、储备、资金、实施结算、提醒与备份仍按后续阶段实现。
+**当前状态：P0–P6 已完成本地/合成数据验收；P7 离线预检、生产模板和运维检查已准备，真实数据及正式环境验收仍待完成；尚未部署到 Cloudflare。**
+当前业务认证完全由系统自身维护：用户使用 `username + 密码` 登录，浏览器 Web Worker 负责 Argon2id 派生，服务端只保存带运行时 pepper 的 HMAC verifier，并签发 7 天 HttpOnly 会话。邮箱不参与账号体系。需求、储备、资金、实施结算、提醒与分片备份均已有本地实现。
 
 ## 交给其他 AI 的入口
 
 1. 对外快速交接直接使用 [NEXT_AI.md](docs/NEXT_AI.md)。
 2. 接手后阅读 [AGENTS.md](AGENTS.md) 和 [AI 交接说明](docs/AI_HANDOFF.md)。
-3. 按 [实施计划](docs/IMPLEMENTATION_PLAN.md) 从 **P2** 继续；当前恢复细节见 [P2_RECOVERY_STATUS.md](docs/P2_RECOVERY_STATUS.md)。
+3. 按 [P7 验收矩阵](docs/P7_ACCEPTANCE.md) 和 [预检/发布/恢复手册](docs/P7_RUNBOOK.md) 继续；不可用合成数据代替真实验收。
 4. 开发前先阅读 [测试策略](docs/TESTING.md)：所有新阶段和缺陷修复必须先写验收/回归测试，再改生产代码。
 5. 业务依据为 [设计方案](docs/DESIGN.md)，数据与 API 约定见 [数据模型](docs/DATA_MODEL.md)。
 
@@ -35,13 +35,13 @@ npm run check
 
 该命令是统一质量门禁：运行生产代码和测试代码 TypeScript 检查、前端构建、Worker **dry-run** 打包、当前开发迁移基线检查、真实本地 workerd + D1 集成测试、production 认证、会话/权限/并发/原子性，以及 Vue 行为合同测试。Node 测试均使用独立临时 D1，不污染日常本地库。详细规则见 `docs/TESTING.md`。
 
-`npm run build` 不会发布网站。当前没有自动部署工作流，也没有生产凭据。
+`npm run build` 不会发布网站。`npm run p7:preflight` 运行离线配置/验收工具守卫。普通 push 只测试；手工 production preflight 只校验非 Secret 配置并 dry-run，实际部署模板默认不启用，当前没有生产凭据。
 
 ## 目录
 
 ```text
 apps/web/                Vue 3 + Vite + Router + Naive UI 管理台
-apps/api/                Hono + Workers 鉴权/基础配置接口与 Wrangler 配置
+apps/api/                Hono + Workers 业务接口与 Wrangler 配置
 apps/api/migrations/     当前开发期 D1 数据库基线；正式上线后改为追加式迁移
 packages/shared/         前后端共享接口类型
 tests/                   迁移守卫、Workers+D1、并发/原子性、production 鉴权测试

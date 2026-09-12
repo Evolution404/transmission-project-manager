@@ -1,0 +1,122 @@
+{
+  "version": 1,
+  "items": [
+    {
+      "id": "P7-01",
+      "status": "blocked",
+      "environment": null,
+      "reviewer": null,
+      "observedAt": null,
+      "evidence": [],
+      "blocker": "等待真实资料或生产资源，详见 P7_ACCEPTANCE.md"
+    },
+    {
+      "id": "P7-02",
+      "status": "blocked",
+      "environment": null,
+      "reviewer": null,
+      "observedAt": null,
+      "evidence": [],
+      "blocker": "等待真实资料或生产资源，详见 P7_ACCEPTANCE.md"
+    },
+    {
+      "id": "P7-03",
+      "status": "blocked",
+      "environment": null,
+      "reviewer": null,
+      "observedAt": null,
+      "evidence": [],
+      "blocker": "等待真实资料或生产资源，详见 P7_ACCEPTANCE.md"
+    },
+    {
+      "id": "P7-04",
+      "status": "blocked",
+      "environment": null,
+      "reviewer": null,
+      "observedAt": null,
+      "evidence": [],
+      "blocker": "等待真实资料或生产资源，详见 P7_ACCEPTANCE.md"
+    },
+    {
+      "id": "P7-05",
+      "status": "blocked",
+      "environment": null,
+      "reviewer": null,
+      "observedAt": null,
+      "evidence": [],
+      "blocker": "等待真实资料或生产资源，详见 P7_ACCEPTANCE.md"
+    },
+    {
+      "id": "P7-06",
+      "status": "blocked",
+      "environment": null,
+      "reviewer": null,
+      "observedAt": null,
+      "evidence": [],
+      "blocker": "等待真实资料或生产资源，详见 P7_ACCEPTANCE.md"
+    },
+    {
+      "id": "P7-07",
+      "status": "blocked",
+      "environment": null,
+      "reviewer": null,
+      "observedAt": null,
+      "evidence": [],
+      "blocker": "等待真实资料或生产资源，详见 P7_ACCEPTANCE.md"
+    },
+    {
+      "id": "P7-08",
+      "status": "blocked",
+      "environment": null,
+      "reviewer": null,
+      "observedAt": null,
+      "evidence": [],
+      "blocker": "等待真实资料或生产资源，详见 P7_ACCEPTANCE.md"
+    },
+    {
+      "id": "P7-09",
+      "status": "blocked",
+      "environment": null,
+      "reviewer": null,
+      "observedAt": null,
+      "evidence": [],
+      "blocker": "等待真实资料或生产资源，详见 P7_ACCEPTANCE.md"
+    },
+    {
+      "id": "P7-10",
+      "status": "blocked",
+      "environment": null,
+      "reviewer": null,
+      "observedAt": null,
+      "evidence": [],
+      "blocker": "等待真实资料或生产资源，详见 P7_ACCEPTANCE.md"
+    },
+    {
+      "id": "P7-11",
+      "status": "blocked",
+      "environment": null,
+      "reviewer": null,
+      "observedAt": null,
+      "evidence": [],
+      "blocker": "等待真实资料或生产资源，详见 P7_ACCEPTANCE.md"
+    },
+    {
+      "id": "P7-12",
+      "status": "blocked",
+      "environment": null,
+      "reviewer": null,
+      "observedAt": null,
+      "evidence": [],
+      "blocker": "等待真实资料或生产资源，详见 P7_ACCEPTANCE.md"
+    },
+    {
+      "id": "P7-13",
+      "status": "blocked",
+      "environment": null,
+      "reviewer": null,
+      "observedAt": null,
+      "evidence": [],
+      "blocker": "等待真实资料或生产资源，详见 P7_ACCEPTANCE.md"
+    }
+  ]
+}

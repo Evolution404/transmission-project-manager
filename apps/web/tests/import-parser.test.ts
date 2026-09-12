@@ -65,6 +65,28 @@ describe('P2 browser spreadsheet parser', () => {
     expect(secondSheet.rows[0]!.cells.线路名称).toBe('长江线');
   });
 
+  it('keeps physical source rows across blank rows in XLSX and CSV', async () => {
+    const spaced = [rows[0]!, rows[1]!, [], rows[2]!];
+    for (const input of [
+      { name: 'blank.xlsx', data: xlsxBuffer(spaced) },
+      { name: 'blank.csv', data: new TextEncoder().encode(spaced.map((row) => row.join(',')).join('\n')).buffer },
+    ]) {
+      const parsed = await parseSpreadsheet(input);
+      expect(parsed.sheets[0]!.rows.map((row) => row.rowNumber)).toEqual([2, 4]);
+      expect(parsed.sheets[0]!.rows[1]!.cells.线路名称).toBe('江北线');
+    }
+  });
+
+  it('honors the worksheet used-range starting row', async () => {
+    const workbook = XLSX.utils.book_new();
+    const sheet = XLSX.utils.aoa_to_sheet([]);
+    XLSX.utils.sheet_add_aoa(sheet, rows, { origin: 'A4' });
+    sheet['!ref'] = 'A4:G6';
+    XLSX.utils.book_append_sheet(workbook, sheet, '偏移');
+    const parsed = await parseSpreadsheet({ name: 'offset.xlsx', data: toArrayBuffer(XLSX.write(workbook, { type: 'array', bookType: 'xlsx' }) as ArrayBuffer) });
+    expect(parsed.sheets[0]!.rows.map((row) => row.rowNumber)).toEqual([5, 6]);
+  });
+
   it('rejects legacy XLS explicitly instead of silently parsing it', async () => {
     await expect(parseSpreadsheet({ name: '旧表.xls', data: new ArrayBuffer(8) }))
       .rejects.toThrow(/XLS_UNSUPPORTED.*另存为.*\.xlsx/i);

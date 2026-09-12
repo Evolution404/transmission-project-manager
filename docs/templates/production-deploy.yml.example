@@ -1,0 +1,70 @@
+# INACTIVE TEMPLATE. Enable only after the resource owner authorizes production,
+# GitHub Environment protection is verified, migrations and backups are reviewed.
+name: Production release
+on:
+  workflow_dispatch:
+    inputs:
+      release_sha:
+        description: Exact current main commit (40 hexadecimal characters)
+        required: true
+        type: string
+      release_record:
+        description: Reviewed private release/backup/schema evidence reference (no secrets)
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: production-release
+  cancel-in-progress: false
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    environment: production
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      WRANGLER_SEND_METRICS: 'false'
+    steps:
+      - uses: actions/checkout@v7
+      - name: Bind approval to exact main revision
+        env:
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          RELEASE_RECORD: ${{ inputs.release_record }}
+          ENABLED: ${{ vars.PRODUCTION_DEPLOY_ENABLED }}
+        run: |
+          test "$ENABLED" = true
+          test -n "$RELEASE_RECORD"
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          git fetch origin main
+          test "$(git rev-parse origin/main)" = "$RELEASE_SHA"
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - name: Materialize non-secret config
+        env:
+          PRODUCTION_CONFIG_JSON: ${{ vars.PRODUCTION_CONFIG_JSON }}
+        run: |
+          node --input-type=module -e 'import {writeFileSync} from "node:fs"; writeFileSync("apps/api/wrangler.production.jsonc", process.env.PRODUCTION_CONFIG_JSON || "{}", {mode: 0o600});'
+      - run: npm run p7 -- config apps/api/wrangler.production.jsonc
+      - name: Dry run
+        working-directory: apps/api
+        run: npm exec -- wrangler deploy --dry-run --config wrangler.production.jsonc --outdir dist-production-preflight
+      - name: Recheck approved revision before publication
+        env:
+          RELEASE_SHA: ${{ inputs.release_sha }}
+        run: |
+          git fetch origin main
+          test "$(git rev-parse origin/main)" = "$RELEASE_SHA"
+      - name: Publish reviewed code only (schema migration is separate)
+        working-directory: apps/api
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: npm exec -- wrangler deploy --config wrangler.production.jsonc
+      - name: Remove generated config
+        if: always()
+        run: rm -f apps/api/wrangler.production.jsonc

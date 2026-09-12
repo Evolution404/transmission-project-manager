@@ -155,3 +155,13 @@ npm run check
 - 下一步：P7 仅做真实数据与正式环境验收/上线，不扩写新业务功能；任何口径差异先回到现有设计和不变量核对，不能用真实数据接入覆盖历史事实。
 
 每完成阶段在此追加：阶段、提交号、完成内容、测试、未完成/未验证项和明确下一步。不要删除原始边界说明。
+
+### P7 离线准备 · 2026-09-12
+
+- 完成：非 Secret production config 模板与拒绝占位/错误绑定/旧认证的校验；13 项真实验收记录模板/结构检查；私有文件哈希清单；P6 manifest/chunk/附件存在性离线检查；发布、迁移、停写备份、隔离恢复、回退和运维撤权手册。
+- CI：普通 push 仍只验证；新增手工 production preflight 仅 dry-run，不使用云 Token。生产部署模板位于 workflows 外，必须另行授权、配置并验证 Environment 保护后才可启用。
+- 缺陷：真实 Excel 准备审计发现解析器忽略空行和 used-range 起点会偏移物理来源行。两个回归先复现失败，再修复保留真实行号且过滤空行；不自动改写旧批次。
+- 验证：完整单次 `npm run check` 成功（Node 测试约 228 秒），100/100 Node/workerd+D1 + 50/50 Vue/Vitest，共 150/150 PASS；TypeScript、Vite build、Worker dry-run PASS；production 示例独立 dry-run PASS；3 份 workflow YAML 语法解析 PASS；空验收记录按预期退出 2，占位 production config 按预期退出 1。
+- 迁移影响：无 schema/迁移改动；认证与 P2–P6 后端数量、金额、版本、幂等、并发和状态实现保持不变。
+- 未完成：P7-01～13 真实验收仍缺原件、生产资源/授权、Secret、邮件适配器/域名、CPU/额度与现场网络、真实恢复/发布/撤权证据。没有创建资源、部署或发送邮件，未使用生产 Secret。
+- 下一步：按 `docs/P7_RUNBOOK.md` 和矩阵采集真实证据；JSON 记录结构通过不能代替真实验收。备份不具备跨表快照隔离，正式迁移前需可靠停写并隔离恢复对账。

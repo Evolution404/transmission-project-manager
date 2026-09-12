@@ -15,7 +15,7 @@
 | P4 | 框架、协议、预算与费用流水 | P1、P3项目身份 | 已完成（本地验收通过） |
 | P5 | 出库、实施、结算、四状态反馈 | P3、P4 | 已完成（本地验收通过） |
 | P6 | 月报、预警、年度节点、通知与备份 | P2–P5 | 已完成（本地/合成数据验收通过） |
-| P7 | 真实文件验收、性能与正式部署 | P1.2–P6 | 下一阶段 |
+| P7 | 真实文件验收、性能与正式部署 | P1.2–P6 | 本地准备已补齐；真实验收仍阻塞 |
 
 后续 AI 进入 P7。P0–P6 的业务取舍和不变量已经固化，不应在 P7 为接入真实数据而静默改口径。原始文件缺失不阻止此前基础实现；P7 负责把真实文件、真实云资源、邮件、网络、恢复和运维移交逐项验收。
 
@@ -233,7 +233,7 @@ P6 完成记录（2026-09-12，主要实现提交 `3f4a62d`）：
 
 交付前必须有用户原始Excel、年度节点和类别文件（用于真实数据验收，不是开发P1.1–P6的前提），可用 Cloudflare 账户资源/域名、受托运维身份及成员收件邮箱。真实文件本地读取或存私有R2，不提交GitHub。缺少任一上线必需项时记录具体未完成项，不宣称正式上线。
 
-运维移交要求：交接时由现有 Super Administrator 完成一次性基础授权，至少指定一名受托技术运维负责人使用其自己的 Cloudflare 成员身份；若要求其今后能独立管理 Cloudflare 成员和账户级 CI Token，则需明确授予足够权限并记录风险。建立 Cloudflare account-owned API token 作为 CI/CD 服务身份，按最小权限写入 GitHub Secrets/Environment Secrets；生产发布不得依赖资产所有者个人登录态、Global API Key 或长期个人 Token。完成后实际演练“资产所有者不登录 Cloudflare”的发布、迁移、回退、Access 调整和旧维护人撤权。
+运维移交要求：交接时由现有 Super Administrator 完成一次性基础授权，至少指定一名受托技术运维负责人使用其自己的 Cloudflare 成员身份；若要求其今后能独立管理 Cloudflare 成员和账户级 CI Token，则需明确授予足够权限并记录风险。建立 Cloudflare account-owned API token 作为 CI/CD 服务身份，按最小权限写入 GitHub Secrets/Environment Secrets；生产发布不得依赖资产所有者个人登录态、Global API Key 或长期个人 Token。完成后实际演练“资产所有者不登录 Cloudflare”的发布、迁移、回退、基础设施权限调整和旧维护人撤权。
 
 验收矩阵：
 
@@ -254,3 +254,13 @@ P6 完成记录（2026-09-12，主要实现提交 `3f4a62d`）：
 ## 阶段完成记录格式
 
 每阶段结束更新本文件状态和 `AI_HANDOFF.md`，包括提交号、完成能力、实际运行的检查、未验证项、下一阶段入口。不能只写“完成”；必须能从代码、测试和运行结果核对。
+
+### P7 离线准备 · 2026-09-12
+
+- 完成：非 Secret production config 模板与拒绝占位/错误绑定/旧认证的校验；13 项真实验收记录模板/结构检查；私有文件哈希清单；P6 manifest/chunk/附件存在性离线检查；发布、迁移、停写备份、隔离恢复、回退和运维撤权手册。
+- CI：普通 push 仍只验证；新增手工 production preflight 仅 dry-run，不使用云 Token。生产部署模板位于 workflows 外，必须另行授权、配置并验证 Environment 保护后才可启用。
+- 缺陷：真实 Excel 准备审计发现解析器忽略空行和 used-range 起点会偏移物理来源行。两个回归先复现失败，再修复保留真实行号且过滤空行；不自动改写旧批次。
+- 验证：完整单次 `npm run check` 成功（Node 测试约 228 秒），100/100 Node/workerd+D1 + 50/50 Vue/Vitest，共 150/150 PASS；TypeScript、Vite build、Worker dry-run PASS；production 示例独立 dry-run PASS；3 份 workflow YAML 语法解析 PASS；空验收记录按预期退出 2，占位 production config 按预期退出 1。
+- 迁移影响：无 schema/迁移改动；认证与 P2–P6 后端数量、金额、版本、幂等、并发和状态实现保持不变。
+- 未完成：P7-01～13 真实验收仍缺原件、生产资源/授权、Secret、邮件适配器/域名、CPU/额度与现场网络、真实恢复/发布/撤权证据。没有创建资源、部署或发送邮件，未使用生产 Secret。
+- 下一步：按 `docs/P7_RUNBOOK.md` 和矩阵采集真实证据；JSON 记录结构通过不能代替真实验收。备份不具备跨表快照隔离，正式迁移前需可靠停写并隔离恢复对账。

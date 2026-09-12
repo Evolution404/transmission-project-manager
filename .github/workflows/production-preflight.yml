@@ -1,0 +1,40 @@
+name: Production preflight (no deployment)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-preflight
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    if: github.ref == 'refs/heads/main'
+    environment: production
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      WRANGLER_SEND_METRICS: 'false'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - name: Materialize non-secret config
+        env:
+          PRODUCTION_CONFIG_JSON: ${{ vars.PRODUCTION_CONFIG_JSON }}
+        run: |
+          node --input-type=module -e 'import {writeFileSync} from "node:fs"; writeFileSync("apps/api/wrangler.production.jsonc", process.env.PRODUCTION_CONFIG_JSON || "{}", {mode: 0o600});'
+      - run: npm run p7 -- config apps/api/wrangler.production.jsonc
+      - name: Package only (no Cloudflare credentials)
+        working-directory: apps/api
+        run: npm exec -- wrangler deploy --dry-run --config wrangler.production.jsonc --outdir dist-production-preflight
+      - name: Remove generated config
+        if: always()
+        run: rm -f apps/api/wrangler.production.jsonc

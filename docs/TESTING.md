@@ -215,3 +215,13 @@ P6 最终分段完整门禁为 93/93 Node/workerd+D1 + 48/48 Vue/Vitest，共 14
 - 正式备份恢复与运维移交。
 
 P7 必须使用测试/生产资源进行端到端验收，并保留结果记录。
+
+## 10. P7 本地准备门禁
+
+`tests/p7-preflight.test.mjs` 覆盖：生产占位配置拒绝、Secret/旧认证/错误绑定/公开路由拒绝、13 项唯一证据与真实环境标记、备份 hash/行数/连续索引/附件与安全路径、文件哈希与 .xls 边界、普通 CI/手工预检无云变更、未启用生产部署模板必须手工触发且绑定 main SHA/Environment。运行 `npm run p7:preflight` 可快速复核，全部测试也自动纳入 `npm run check`。
+
+`import-parser.test.ts` 新增表内空行和 XLSX used-range 起始行回归。旧解析将实际 4 行误记为 3、实际 5/6 行误记为 2/3，测试先失败后修复；现在保留物理位置且不导入空白行。旧批次不会自动改写。
+
+`npm run p7 -- ...` 的退出码和边界见 P7_RUNBOOK.md。备份完整性不等于恢复/快照一致性，验收 JSON 结构通过不证明证据真实。正式 5 万行、5 并发、Cloudflare CPU/用量、低性能手机/地区网络与真实投递仍必须另验。
+
+本轮实际完整 `npm run check` 一次通过：100/100 Node/workerd+D1、50/50 Vue/Vitest，共 150/150 PASS，Node 约 228 秒；类型检查、生产构建、Worker dry-run 同时通过。此前“单次 300 秒限制”的记录仅描述 P6 当时运行情况，本轮无需分段替代。

@@ -29,7 +29,7 @@ npm run check
   → Workers Static Assets（Vue静态应用）
   → /api/*（Hono，验证系统会话 Cookie、成员角色及业务范围）
       → D1：业务表、流水、任务、快照
-      → 私有 R2：原始文件、附件、SQL备份
+      → 私有 R2：附件、JSON 分片备份（原始文件需另行留存）
       → Email：已验证团队邮箱
   → Cron：领取分批任务、预警、发信和备份
 ```
@@ -82,9 +82,9 @@ CPU是执行代码的时间，网络/数据库等待不计入。JS解析大JSON�
 
 1. 完成 P1.2–P6、本地检查和主要业务验收，准备正式账号与自定义域名；显式确定首个真实应用管理员 username，并生成一次性 bootstrap secret。
 2. 由已授权的受托技术运维身份创建/配置 D1、R2 和 Workers；提供 `apac` 位置提示。提示不能锁定具体机房，也不承诺香港路由。采用全球网络，不接入中国大陆网络。
-3. 将本地配置复制为被Git忽略的 `apps/api/wrangler.production.jsonc`，写入真实D1/R2绑定、`APP_ENV=production`、自定义域名和正式Worker名称；移除占位符。正式使用的配置结构随后可用不含密钥的模板固化。
+3. 将 `apps/api/wrangler.production.example.json` 复制为被Git忽略的 `apps/api/wrangler.production.jsonc`，写入真实D1/R2绑定、`APP_ENV=production`、自定义域名和正式Worker名称；移除占位符。配置使用严格 JSON 子集，运行 `npm run p7 -- config apps/api/wrangler.production.jsonc` 检查；模板不含 Secret。
 4. 保持 `workers_dev=false`、`preview_urls=false`。生产认证只接受系统会话 Cookie；不得启用 `X-Dev-User-*`、Cloudflare Access JWT 或其他请求头身份兜底。
-5. 通过 Worker Secrets 配置 `AUTH_CREDENTIAL_PEPPER`、`BOOTSTRAP_TOKEN`，以及后续确有需要的最小权限 D1 导出令牌；不写入前端和 Git。首管理员创建后验证 bootstrap 再次调用已关闭。
+5. 通过 Worker Secrets 配置 `AUTH_CREDENTIAL_PEPPER`、`BOOTSTRAP_TOKEN`；不写入前端和 Git。首管理员创建后验证 bootstrap 再次调用已关闭。
 6. 如后续启用邮件通知，再单独设置通知邮箱/域名与 SPF/DKIM；业务账号不要求邮箱，邮件基础设施验证不得重新变成登录前提。
 7. 在本地/测试库完成迁移与恢复演练，备份现有正式库，再对准确数据库执行正式迁移。确认版本和资源名后部署。
 8. 开启分批定时任务、备份及用量告警；测试浏览器关闭后仍能提醒，以及发送失败的恢复行为。
@@ -98,15 +98,17 @@ npm run check
 npm exec --workspace @tpm/api -- wrangler deploy --config wrangler.production.jsonc
 ```
 
-当前仓库 CI 只有类型/构建/测试，无云部署步骤、无生产 Secrets。P7 才增加受保护的生产部署工作流；GitHub 普通 push 不应默认直接发布生产，生产部署应使用受保护 Environment、明确分支/审批规则和 account-owned API token。
+当前普通 push CI 只有检查；新增手工 production preflight 只校验非敏感配置并 dry-run，没有云凭据。生产部署 workflow 模板位于 `docs/templates/production-deploy.yml.example`，尚未启用；必须先获得授权并验证 Environment 分支/审批规则和 account-owned API token。完整操作顺序、证据与回退边界见 [P7_RUNBOOK.md](P7_RUNBOOK.md)。
 
 ## 5. 数据备份和回退
 
-- D1免费版Time Travel为7天；备份任务使用D1导出API把SQL写入私有R2，导出期间可能短暂不能查询，安排北京时间03:00。
-- 备份保留7份日备份与3份月末备份，监控容量；文件附件使用不可覆盖版本键和30天延迟删除，并保留对象清单，避免只有SQL无法恢复附件。
-- 恢复先在隔离数据库演练，核对行数、金额/数量、文件清单及规则版本，再按业务维护安排切换绑定。
-- 代码回退不等于数据回退。当前未上线开发期允许在明确决策下重整 schema；首次正式部署后迁移冻结为只追加兼容变更，禁止用回退旧代码自动删除新数据。每次版本发布记录迁移版本、备份位置和恢复路径。
-- 运维告警至少包含任务失败、邮件失败、备份失败、CPU超限、D1读写/空间及R2用量；当前均尚未实现。
+- 当前实现通过 D1 绑定逐表读取，每 100 行写入私有 R2 JSON 分片，附 SHA-256 和 manifest；不使用 D1 HTTP SQL 导出 API，不需要单独导出 Token。
+- 北京时间 03:00 创建任务，Cron 每次只推进一个分片步骤；daily 保留 7 份、monthly 保留 3 份已完成备份。完成时间和保留清理 CPU 须按真实数据规模测量。
+- 分片备份不是跨表一致快照。正式迁移备份须可靠停写并暂停并发 Cron/step，留存 schema 指纹、截止时间和逐表对账；无法保证停写时必须使用另行验证的一致性方案。
+- manifest 仅列附件 key，不含本体或内容 hash；附件需独立下载、核对大小/hash。30 天延迟删除和周期孤立对象清理尚未实现，不应假定已经启用。
+- 恢复先在隔离 D1 应用同版本迁移并回灌 JSON，核对行数、金额/数量、状态、规则、外键和附件，`auth_sessions` 不恢复；只校验 checksum 不等于恢复成功。
+- 代码回退不等于数据回退。首次正式/共享环境使用后历史迁移冻结；保持旧应用与新 schema 兼容，数据恢复经隔离核对后再切换，不直接覆盖正式库。
+- P6 已实现业务预警、通知 outbox 和备份任务状态；Cloudflare CPU/额度/容量及外部可用性告警仍需 P7 正式配置并验证负责人收得到。
 
 ## 6. 官方依据
 

@@ -18,7 +18,9 @@
     "test:node": "node --test --test-concurrency=1 tests/*.test.mjs",
     "test:web": "npm run test --workspace @tpm/web",
     "test": "npm run test:node && npm run test:web",
-    "check": "npm run typecheck && npm run build && npm test"
+    "check": "npm run typecheck && npm run build && npm test",
+    "p7": "node scripts/p7/cli.mjs",
+    "p7:preflight": "node --test tests/repository-guards.test.mjs tests/p7-preflight.test.mjs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "5.20260911.1",

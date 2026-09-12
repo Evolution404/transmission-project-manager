@@ -27,3 +27,6 @@ backups/
 *.csv
 *.pdf
 *.docx
+
+# P7 dry-run artifacts and private operational evidence
+dist-production-preflight/
