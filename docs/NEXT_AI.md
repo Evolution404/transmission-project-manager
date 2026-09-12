@@ -25,7 +25,8 @@ git fetch origin
 5. `docs/DATA_MODEL.md`
 6. `docs/TESTING.md`
 7. `docs/DEPLOYMENT.md`
-8. `docs/HANDOFF-P6-WIP-2026-09-12.md`（已更新为 P6 完成记录，文件名保留用于历史追溯）
+8. `docs/P7_ACCEPTANCE.md` —— P7 验收矩阵、当前阻塞与证据要求
+9. `docs/HANDOFF-P6-WIP-2026-09-12.md`（已更新为 P6 完成记录，文件名保留用于历史追溯）
 
 认证基线永久锁定为系统自维护 `username + password`：浏览器 Web Worker 做 Argon2id，服务端只保存带运行时 pepper 的 HMAC verifier，使用 7 天 HttpOnly 会话。禁止恢复 Cloudflare Access、邮箱业务登录、邮箱验证码或服务端慢 KDF。
 
