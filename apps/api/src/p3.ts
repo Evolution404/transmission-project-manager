@@ -505,6 +505,25 @@ async function allocationFailure(db: D1Database, allocations: CreateProjectReque
   return null;
 }
 
+async function protectedProjectScope(db: D1Database, projectId: string) {
+  const result = await db.prepare(
+    `SELECT demand_material_id,MAX(total) AS protected_quantity_scaled
+     FROM (
+       SELECT demand_material_id,COALESCE(SUM(quantity_scaled),0) AS total
+       FROM release_lines WHERE project_id=? GROUP BY demand_material_id
+       UNION ALL
+       SELECT demand_material_id,COALESCE(SUM(completed_quantity_scaled),0) AS total
+       FROM implementation_lines WHERE project_id=? AND demand_material_id IS NOT NULL GROUP BY demand_material_id
+       UNION ALL
+       SELECT sc.demand_material_id,COALESCE(SUM(sc.quantity_scaled),0) AS total
+       FROM settlement_coverage sc INNER JOIN settlements s ON s.id=sc.settlement_id
+       WHERE sc.project_id=? AND s.voided_at IS NULL GROUP BY sc.demand_material_id
+     ) protected
+     GROUP BY demand_material_id`,
+  ).bind(projectId, projectId, projectId).all<{ demand_material_id: string; protected_quantity_scaled: number }>();
+  return new Map((result.results ?? []).map((row) => [row.demand_material_id, Number(row.protected_quantity_scaled)]));
+}
+
 function calculateAmountFen(quantityScaled: number, unitPriceScaled: number): number | null {
   const product = BigInt(quantityScaled) * BigInt(unitPriceScaled);
   const rounded = (product + 500_000n) / 1_000_000n;
@@ -799,6 +818,18 @@ p3App.put('/projects/:id/allocations', requireRoles('admin', 'project_manager'),
   if (!project) return c.json(apiError('PROJECT_NOT_FOUND', '储备项目不存在'), 404);
   if (!canAccessProject(c, project.id)) return c.json(apiError('SCOPE_FORBIDDEN', '当前成员无权修改该项目'), 403);
   if (project.version !== expectedVersion) return c.json(apiError('VERSION_CONFLICT', '项目已被修改，请刷新后重试'), 409);
+  const protectedScope = await protectedProjectScope(c.env.DB, project.id);
+  const requestedQuantities = new Map(allocations.map((item) => [item.demandMaterialId, item.quantityScaled]));
+  for (const [demandMaterialId, protectedQuantityScaled] of protectedScope) {
+    const requestedQuantityScaled = requestedQuantities.get(demandMaterialId) ?? 0;
+    if (requestedQuantityScaled < protectedQuantityScaled) {
+      return c.json(apiError(
+        'PROJECT_SCOPE_PROTECTED',
+        '已有出库、实施或有效结算的项目范围不能被储备修改缩小',
+        { demandMaterialId, protectedQuantityScaled, requestedQuantityScaled },
+      ), 422);
+    }
+  }
 
   const actor = c.get('currentUser');
   const now = new Date().toISOString();

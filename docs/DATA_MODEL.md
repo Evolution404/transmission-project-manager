@@ -1,6 +1,6 @@
 # 数据关系与接口约定
 
-这是一份实现约定。P1.2 已将身份模型重整为系统自维护账号、浏览器派生凭据与服务端会话；P2 已实现导入批次、需求池、来源追溯与标准物资；P3 已实现储备项目、需求物资分配、估算、储备分类与确认版本；P4 已实现框架/协议版本、项目预算版本、预算发生/实际发生流水及资金汇总。当前开发 schema 不包含邮箱身份或 Cloudflare Access 认证字段。P5–P7 业务对象仍按阶段实现。表名和字段可在迁移中作不影响语义的细化；改变业务口径必须同步 DESIGN.md。使用 D1/SQLite，不依赖 PostgreSQL 专有语法。
+这是一份实现约定。P1.2 已将身份模型重整为系统自维护账号、浏览器派生凭据与服务端会话；P2 已实现导入批次、需求池、来源追溯与标准物资；P3 已实现储备项目、需求物资分配、估算、储备分类与确认版本；P4 已实现框架/协议版本、项目预算版本、预算发生/实际发生流水及资金汇总；P5 已实现出库、实施、结算、四状态投影与私有附件。当前开发 schema 不包含邮箱身份或 Cloudflare Access 认证字段。P6–P7 业务对象仍按阶段实现。表名和字段可在迁移中作不影响语义的细化；改变业务口径必须同步 DESIGN.md。使用 D1/SQLite，不依赖 PostgreSQL 专有语法。
 
 ## 1. 通用约定
 
@@ -75,12 +75,17 @@
 26. `financial_entries` 仅保存独立口径的 `budget_occurrence` 与 `actual_cost`，原流水不硬删除。更正使用独立负数冲销记录并通过 `reverses_entry_id` 关联；同一原流水最多冲销一次。
 27. 协议 90% 和框架 80% 警示使用整数交叉相乘判断真实比例，不得用四舍五入后的展示基点提前触发；预算合计仅在严格大于框架总额时提示超框架。0 分母返回未配置，不返回 Infinity 或伪造 100%。
 28. P4 可变资金对象的 `expectedVersion` guard、历史版本、审计和幂等记录必须在同一 D1 batch 中。幂等重放应优先于因首次成功后产生的版本/状态冲突判断，确保相同键和相同 payload 返回原响应而不重复落账。
+29. P5 出库总量不得超过项目当前 `demand_allocations`；正常实施必须引用已出库范围且累计完成量不得超过对应出库行。出库、实施、结算/撤销、历史实施关联都与同一个 `projects.version` 原子推进，stale version 失败不得留下半笔历史事实。
+30. P3 修改项目需求分配时，新的数量不得低于 P5 已出库、已实施或有效结算覆盖形成的保护下限。允许扩大范围，但历史事实不能通过修改储备被静默删除或缩小；并发 P3/P5 写入必须由共同项目版本守卫串行化。
+31. 历史实施允许暂时没有项目/出库关联；后续只通过显式关联把实施行映射到项目需求物资，不补造出库。关联成功后同一历史记录不得被再次统计为第二份实施量，幂等重放返回原结果。
+32. 需求/项目“已实施”要求全部有效范围实施完成；“已结算”要求全部有效范围结算覆盖完整且存在至少一个未撤销的最终结算。非最终结算即使覆盖 100% 仍属于未结算；已有覆盖完整时允许 0 元、空新增覆盖的最终确认收口。最终结算创建时覆盖仍不完整必须拒绝。
+33. 实施与结算独立投影，允许先结算后实施；最终结算撤销后必须重新投影并恢复结算待办。项目/出库/实施/结算附件只存私有 R2 键，下载必须重新执行项目范围授权；跨项目不得访问。
 
 建议索引至少覆盖：来源幂等键；需求年度/类别/线路；需求物资分配；框架和协议归属；项目及财务条目的业务月；到期且待处理的通知；附件所属对象。按实际查询计划验收读行数。
 
 ## 4. API 合同
 
-当前已实现 P1/P1.2/P2/P3/P4 接口：
+当前已实现 P1/P1.2/P2/P3/P4/P5 接口：
 
 ```http
 GET /api/health
@@ -144,21 +149,31 @@ GET /api/financial-entries
 POST /api/financial-entries
 POST /api/financial-entries/:id/reverse
 GET /api/finance/summary
+POST /api/release-batches
+GET /api/release-batches
+POST /api/implementations
+GET /api/implementations
+PUT /api/implementations/:id/link
+POST /api/settlements
+GET /api/settlements
+POST /api/settlements/:id/void
+GET /api/projects/:id/lifecycle
+POST /api/attachments
+GET /api/attachments
+GET /api/attachments/:id/content
 ```
 
-`/api/health` 当前返回 `stage: "p4"`。业务接口先验证系统自身会话 Cookie，再根据 D1 成员启用状态、角色和范围授权；不解析 Cloudflare Access JWT，也不信任任何请求头 username/email/role。成员角色、启停和范围继续受服务端权限、版本/幂等/审计约束；最后一个启用管理员不可被停用或降权。P2/P3 生产写接口继续由 `admin/project_manager` 管理；P4 框架/协议结构写入为 `admin/project_manager`，预算和资金流水允许 `finance` 在其业务范围内操作；所有读写仍按 `all/framework/project` scope 服务端过滤。未知 `/api` 路径返回 JSON 404，不回退到前端 HTML。
+`/api/health` 当前返回 `stage: "p5"`。业务接口先验证系统自身会话 Cookie，再根据 D1 成员启用状态、角色和范围授权；不解析 Cloudflare Access JWT，也不信任任何请求头 username/email/role。成员角色、启停和范围继续受服务端权限、版本/幂等/审计约束；最后一个启用管理员不可被停用或降权。P2/P3 生产写接口继续由 `admin/project_manager` 管理；P4 框架/协议结构写入为 `admin/project_manager`，预算和资金流水允许 `finance` 在其业务范围内操作；P5 出库由 `admin/project_manager`，实施由 `admin/project_manager/implementation`，结算由 `admin/project_manager/finance` 操作，附件按对象项目范围再次授权。所有读写仍按 `all/framework/project` scope 服务端过滤。未知 `/api` 路径返回 JSON 404，不回退到前端 HTML。
 
 其余待实现接口族：
 
 | 接口族 | 能力 |
 |---|---|
-| `/api/projects`（后续扩展） | P5 增加出库批次；不得重做或绕过 P3/P4 已有储备身份、框架归属和预算版本 |
-| `/api/implementations`、`/api/settlements` | 分批记录、历史导入关联、确认与更正 |
 | `/api/reports`、`/api/milestones`、`/api/alerts` | 汇总、月报、年度事项、待办和预警 |
-| `/api/attachments` | 私有文件分片上传、元数据、授权下载 |
+| `/api/backups` | 备份任务、清单、恢复演练元数据 |
 
 通用响应沿用 `packages/shared` 的 `ApiResponse<T>`。列表默认50项、最大100项，返回 `items` 和不透明 `nextCursor`；P3 待分配候选池和 P4 资金流水都按该约束分页，归并建议与资金汇总在数据库内做集合聚合，不能通过逐对象 N+1 查询或单请求无限制返回全库。大导出同样使用分页。
 
-每个创建/确认/出库/发生/结算等变更请求携带 `Idempotency-Key`；更新携带 `version`。P2 的多步导入、P3 的项目分配/估算/分类/确认，以及 P4 的框架/协议/项目归属/预算更新都使用 `expectedVersion` 显式推进对象版本。错误使用明确状态：400格式、401未认证、403无权限、404不存在、409版本/幂等冲突、422业务校验、429限流。接口不接受前端提交的汇总值、剩余数量、最终金额、使用率或最终权限判断为事实；这些均由服务端从有效版本与流水明细重算。
+每个创建/确认/出库/发生/结算等变更请求携带 `Idempotency-Key`；更新携带 `version`。P2 的多步导入、P3 的项目分配/估算/分类/确认、P4 的框架/协议/项目归属/预算更新，以及 P5 的出库/实施/历史关联/结算/撤销都使用相应 `expectedVersion` / `expectedProjectVersion` 显式推进对象版本。错误使用明确状态：400格式、401未认证、403无权限、404不存在、409版本/幂等冲突、422业务校验、429限流。接口不接受前端提交的汇总值、剩余数量、最终金额、使用率或最终权限判断为事实；这些均由服务端从有效版本与流水明细重算。
 
 每个阶段开始时先补齐该接口族的共享类型，再实现 API 和前端，保持类型、迁移和文档同步。生产鉴权只接受系统签发的服务端会话 Cookie；请求头 username、email、角色或 Cloudflare Access JWT 都不构成业务身份。

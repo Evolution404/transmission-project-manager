@@ -171,7 +171,70 @@ test('P3 database upgrades to P4 without losing reserve project versions and all
   ))[0].count, 10);
 });
 
-test('clean database applies the current P4 development schema and remains repeatable', () => {
+test('P4 database upgrades to P5 without losing framework, budget, and financial history', () => {
+  const state = tempState('tpm-migration-p5-upgrade-');
+  executeLocalD1(state, { file: 'migrations/0001_p1_identity_and_config.sql' });
+  executeLocalD1(state, { file: 'migrations/0002_p2_import_demands_materials.sql' });
+  executeLocalD1(state, { file: 'migrations/0003_p3_reserve_projects.sql' });
+  executeLocalD1(state, { file: 'migrations/0004_p4_finance.sql' });
+  executeLocalD1(state, {
+    command: `
+      INSERT INTO members
+        (id,username,display_name,role,enabled,version,credential_salt,credential_verifier,credential_algorithm,credential_params_json,
+         must_change_password,session_version,failed_login_count,credential_changed_at,created_at,updated_at)
+      VALUES ('p5-existing','p5-existing','P5升级保留成员','admin',1,1,'salt','verifier','argon2id-v1','{}',0,1,0,
+        '2026-09-01T00:00:00.000Z','2026-09-01T00:00:00.000Z','2026-09-01T00:00:00.000Z');
+      INSERT INTO import_batches
+        (id,file_name,file_sha256,file_type,mapping_json,status,uploaded_rows,valid_rows,error_rows,warning_rows,published_rows,version,created_by,created_at,updated_at,published_at)
+      VALUES ('p5-batch','保留.xlsx','${'8'.repeat(64)}','xlsx','{}','published',1,1,0,0,1,1,'p5-existing','2026-09-01T00:00:00.000Z','2026-09-01T00:00:00.000Z','2026-09-01T00:00:00.000Z');
+      INSERT INTO demands
+        (id,source_key,source_batch_id,source_file_sha256,source_file_name,source_sheet,source_row_number,sequence_no,business_year,voltage_raw,voltage_verified,line_name,section_text,category_key,owner,business_signature,raw_json,extra_json,version,created_by,created_at,updated_at)
+      VALUES ('p5-demand','p5-source','p5-batch','${'8'.repeat(64)}','保留.xlsx','需求',2,'1',2026,'220kV','220kV','P5保留线','#1','防断线',NULL,'p5-signature','{}','{}',1,'p5-existing','2026-09-01T00:00:00.000Z','2026-09-01T00:00:00.000Z');
+      INSERT INTO demand_materials (id,demand_id,raw_model,material_id,quantity_scaled,unit,created_at)
+      VALUES ('p5-demand-material','p5-demand','JX-01',NULL,10000,'套','2026-09-01T00:00:00.000Z');
+      INSERT INTO frameworks (id,code,name,total_amount_fen,annual_target_fen,start_date,end_date,version,created_by,created_at,updated_at)
+      VALUES ('p5-framework','FW-P5','P5保留框架',1000000,800000,'2026-01-01','2026-12-31',1,'p5-existing','2026-09-01T00:00:00.000Z','2026-09-01T00:00:00.000Z');
+      INSERT INTO framework_versions
+        (id,framework_id,version,code,name,total_amount_fen,annual_target_fen,start_date,end_date,reason,created_by,created_at)
+      VALUES ('p5-framework-v1','p5-framework',1,'FW-P5','P5保留框架',1000000,800000,'2026-01-01','2026-12-31',NULL,'p5-existing','2026-09-01T00:00:00.000Z');
+      INSERT INTO agreements (id,framework_id,code,name,amount_fen,valid_from,valid_to,status,version,created_by,created_at,updated_at)
+      VALUES ('p5-agreement','p5-framework','AG-P5','P5保留协议',900000,'2026-01-01','2026-12-31','active',1,'p5-existing','2026-09-01T00:00:00.000Z','2026-09-01T00:00:00.000Z');
+      INSERT INTO agreement_versions
+        (id,agreement_id,version,framework_id,code,name,amount_fen,valid_from,valid_to,status,reason,created_by,created_at)
+      VALUES ('p5-agreement-v1','p5-agreement',1,'p5-framework','AG-P5','P5保留协议',900000,'2026-01-01','2026-12-31','active',NULL,'p5-existing','2026-09-01T00:00:00.000Z');
+      INSERT INTO projects (id,name,business_year,owner,status,reserve_version,framework_id,version,created_by,created_at,updated_at)
+      VALUES ('p5-project','P5保留项目',2026,NULL,'confirmed',1,'p5-framework',4,'p5-existing','2026-09-01T00:00:00.000Z','2026-09-02T00:00:00.000Z');
+      INSERT INTO demand_allocations (id,project_id,demand_material_id,quantity_scaled,created_at)
+      VALUES ('p5-allocation','p5-project','p5-demand-material',10000,'2026-09-01T00:00:00.000Z');
+      INSERT INTO project_budgets (id,project_id,total_amount_fen,note,status,budget_version,version,created_by,created_at,updated_at)
+      VALUES ('p5-budget','p5-project',600000,NULL,'confirmed',1,2,'p5-existing','2026-09-01T00:00:00.000Z','2026-09-02T00:00:00.000Z');
+      INSERT INTO budget_allocations (id,budget_id,agreement_id,amount_fen,created_at)
+      VALUES ('p5-budget-current-allocation','p5-budget','p5-agreement',600000,'2026-09-02T00:00:00.000Z');
+      INSERT INTO budget_versions (id,budget_id,project_id,framework_id,budget_version,total_amount_fen,note,confirmed_by,confirmed_at)
+      VALUES ('p5-budget-v1','p5-budget','p5-project','p5-framework',1,600000,NULL,'p5-existing','2026-09-02T00:00:00.000Z');
+      INSERT INTO budget_version_allocations (id,budget_version_id,agreement_id,amount_fen,created_at)
+      VALUES ('p5-budget-v1-allocation','p5-budget-v1','p5-agreement',600000,'2026-09-02T00:00:00.000Z');
+      INSERT INTO financial_entries
+        (id,framework_id,project_id,entry_type,business_date,amount_fen,note,reverses_entry_id,created_by,created_at)
+      VALUES ('p5-entry','p5-framework','p5-project','budget_occurrence','2026-09-03',200000,NULL,NULL,'p5-existing','2026-09-03T00:00:00.000Z');
+      INSERT INTO financial_entry_allocations (id,financial_entry_id,agreement_id,amount_fen,created_at)
+      VALUES ('p5-entry-allocation','p5-entry','p5-agreement',200000,'2026-09-03T00:00:00.000Z');
+    `,
+  });
+
+  executeLocalD1(state, { file: 'migrations/0005_p5_delivery_implementation_settlement.sql' });
+
+  assert.deepEqual(rows(queryLocalD1(state,
+    "SELECT name,framework_id,version FROM projects WHERE id='p5-project';",
+  ))[0], { name: 'P5保留项目', framework_id: 'p5-framework', version: 4 });
+  assert.equal(rows(queryLocalD1(state, "SELECT total_amount_fen,budget_version FROM project_budgets WHERE id='p5-budget';"))[0].total_amount_fen, 600000);
+  assert.equal(rows(queryLocalD1(state, "SELECT amount_fen FROM financial_entries WHERE id='p5-entry';"))[0].amount_fen, 200000);
+  assert.equal(rows(queryLocalD1(state,
+    "SELECT COUNT(*) AS count FROM sqlite_master WHERE type='table' AND name IN ('release_batches','release_lines','implementation_records','implementation_lines','settlements','settlement_coverage','settlement_agreement_allocations','attachments');",
+  ))[0].count, 8);
+});
+
+test('clean database applies the current P5 development schema and remains repeatable', () => {
   const state = tempState('tpm-migration-clean-');
   applyLocalMigrations(state);
   applyLocalMigrations(state);
@@ -182,6 +245,7 @@ test('clean database applies the current P4 development schema and remains repea
     '0002_p2_import_demands_materials.sql',
     '0003_p3_reserve_projects.sql',
     '0004_p4_finance.sql',
+    '0005_p5_delivery_implementation_settlement.sql',
   ]);
 
   const tables = rows(queryLocalD1(state,
@@ -195,10 +259,12 @@ test('clean database applies the current P4 development schema and remains repea
     'reserve_categories', 'category_mappings', 'category_cost_allocations',
     'frameworks', 'framework_versions', 'agreements', 'agreement_versions', 'project_budgets',
     'budget_allocations', 'budget_versions', 'budget_version_allocations', 'financial_entries', 'financial_entry_allocations',
+    'release_batches', 'release_lines', 'implementation_records', 'implementation_lines',
+    'settlements', 'settlement_coverage', 'settlement_agreement_allocations', 'attachments',
   ]) assert.ok(tables.includes(table), `missing table ${table}`);
 });
 
-test('member schema remains username/credential based after P4 migration', () => {
+test('member schema remains username/credential based after P5 migration', () => {
   const state = tempState('tpm-migration-auth-schema-');
   applyLocalMigrations(state);
   const columns = rows(queryLocalD1(state, 'PRAGMA table_info(members);')).map((row) => row.name);

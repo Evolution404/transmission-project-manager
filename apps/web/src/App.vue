@@ -139,8 +139,8 @@ onMounted(loadIdentity);
             @update:value="navigate"
           />
           <div class="phase-badge">
-            <span>P4</span>
-            <small>框架协议与资金</small>
+            <span>P5</span>
+            <small>出库实施与结算</small>
           </div>
         </n-layout-sider>
 
