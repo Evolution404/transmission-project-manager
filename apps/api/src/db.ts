@@ -9,14 +9,26 @@ import type {
 
 interface MemberRow {
   id: string;
-  email: string;
+  username: string;
   display_name: string;
   role: MemberRole;
   enabled: number;
   version: number;
+  credential_salt: string;
+  credential_verifier: string;
+  credential_algorithm: 'argon2id-v1';
+  credential_params_json: string;
+  must_change_password: number;
+  session_version: number;
+  failed_login_count: number;
+  locked_until: string | null;
+  last_failed_login_at: string | null;
+  credential_changed_at: string;
   invited_at: string | null;
   first_login_at: string | null;
   last_login_at: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 interface ScopeRow {
@@ -46,6 +58,22 @@ interface DictionaryRow {
   version: number;
 }
 
+export interface MemberCredentialRecord {
+  memberId: string;
+  username: string;
+  enabled: boolean;
+  credentialSalt: string;
+  credentialVerifier: string;
+  credentialAlgorithm: 'argon2id-v1';
+  credentialParamsJson: string;
+  mustChangePassword: boolean;
+  sessionVersion: number;
+  failedLoginCount: number;
+  lockedUntil: string | null;
+  lastFailedLoginAt: string | null;
+  credentialChangedAt: string;
+}
+
 function lifecycleStatus(row: Pick<MemberRow, 'enabled' | 'first_login_at'>): MemberLifecycleStatus {
   if (row.enabled !== 1) return 'disabled';
   return row.first_login_at ? 'active' : 'pending_first_login';
@@ -64,7 +92,7 @@ function mapScopes(rows: ScopeRow[]): Map<string, MemberScope[]> {
 function mapMember(row: MemberRow, scopes: MemberScope[]): MemberSummary {
   return {
     id: row.id,
-    email: row.email,
+    username: row.username,
     displayName: row.display_name,
     role: row.role,
     enabled: row.enabled === 1,
@@ -74,6 +102,25 @@ function mapMember(row: MemberRow, scopes: MemberScope[]): MemberSummary {
     firstLoginAt: row.first_login_at,
     lastLoginAt: row.last_login_at,
     lifecycleStatus: lifecycleStatus(row),
+    mustChangePassword: row.must_change_password === 1,
+  };
+}
+
+function mapCredential(row: MemberRow): MemberCredentialRecord {
+  return {
+    memberId: row.id,
+    username: row.username,
+    enabled: row.enabled === 1,
+    credentialSalt: row.credential_salt,
+    credentialVerifier: row.credential_verifier,
+    credentialAlgorithm: row.credential_algorithm,
+    credentialParamsJson: row.credential_params_json,
+    mustChangePassword: row.must_change_password === 1,
+    sessionVersion: row.session_version,
+    failedLoginCount: row.failed_login_count,
+    lockedUntil: row.locked_until,
+    lastFailedLoginAt: row.last_failed_login_at,
+    credentialChangedAt: row.credential_changed_at,
   };
 }
 
@@ -83,24 +130,19 @@ function parseJson(value: string | null): unknown {
 }
 
 const memberSelect = `
-  SELECT id, email, display_name, role, enabled, version,
-         invited_at, first_login_at, last_login_at
+  SELECT id, username, display_name, role, enabled, version,
+         credential_salt, credential_verifier, credential_algorithm, credential_params_json,
+         must_change_password, session_version, failed_login_count, locked_until,
+         last_failed_login_at, credential_changed_at, invited_at, first_login_at,
+         last_login_at, created_at, updated_at
   FROM members`;
 
 async function scopesForMember(db: D1Database, memberId: string): Promise<MemberScope[]> {
-  const scopeResult = await db.prepare(
+  const result = await db.prepare(
     `SELECT member_id, scope_type, scope_id
      FROM member_scopes WHERE member_id = ? ORDER BY scope_type, scope_id`,
   ).bind(memberId).all<ScopeRow>();
-  return (scopeResult.results ?? []).map((row) => ({ type: row.scope_type, id: row.scope_id }));
-}
-
-export async function findMemberByEmail(db: D1Database, email: string): Promise<MemberSummary | null> {
-  const member = await db.prepare(`${memberSelect} WHERE email = ? COLLATE NOCASE LIMIT 1`)
-    .bind(email)
-    .first<MemberRow>();
-  if (!member) return null;
-  return mapMember(member, await scopesForMember(db, member.id));
+  return (result.results ?? []).map((row) => ({ type: row.scope_type, id: row.scope_id }));
 }
 
 export async function findMemberById(db: D1Database, id: string): Promise<MemberSummary | null> {
@@ -109,18 +151,31 @@ export async function findMemberById(db: D1Database, id: string): Promise<Member
   return mapMember(member, await scopesForMember(db, member.id));
 }
 
+export async function findMemberByUsername(db: D1Database, username: string): Promise<MemberSummary | null> {
+  const member = await db.prepare(`${memberSelect} WHERE username = ? COLLATE NOCASE LIMIT 1`)
+    .bind(username)
+    .first<MemberRow>();
+  if (!member) return null;
+  return mapMember(member, await scopesForMember(db, member.id));
+}
+
+export async function findCredentialByUsername(db: D1Database, username: string): Promise<MemberCredentialRecord | null> {
+  const row = await db.prepare(`${memberSelect} WHERE username = ? COLLATE NOCASE LIMIT 1`)
+    .bind(username)
+    .first<MemberRow>();
+  return row ? mapCredential(row) : null;
+}
+
+export async function findCredentialByMemberId(db: D1Database, memberId: string): Promise<MemberCredentialRecord | null> {
+  const row = await db.prepare(`${memberSelect} WHERE id = ? LIMIT 1`).bind(memberId).first<MemberRow>();
+  return row ? mapCredential(row) : null;
+}
+
 export async function listMembers(db: D1Database): Promise<MemberSummary[]> {
   const [memberResult, scopeResult] = await db.batch([
-    db.prepare(
-      `${memberSelect}
-       ORDER BY enabled DESC, display_name COLLATE NOCASE, email COLLATE NOCASE`,
-    ),
-    db.prepare(
-      `SELECT member_id, scope_type, scope_id
-       FROM member_scopes ORDER BY member_id, scope_type, scope_id`,
-    ),
+    db.prepare(`${memberSelect} ORDER BY enabled DESC, display_name COLLATE NOCASE, username COLLATE NOCASE`),
+    db.prepare(`SELECT member_id, scope_type, scope_id FROM member_scopes ORDER BY member_id, scope_type, scope_id`),
   ]);
-
   const members = ((memberResult?.results ?? []) as unknown) as MemberRow[];
   const scopes = mapScopes(((scopeResult?.results ?? []) as unknown) as ScopeRow[]);
   return members.map((member) => mapMember(member, scopes.get(member.id) ?? []));
@@ -148,8 +203,7 @@ export async function recordSuccessfulLogin(db: D1Database, member: MemberSummar
   await db.prepare(
     `UPDATE members
      SET first_login_at = COALESCE(first_login_at, ?), last_login_at = ?
-     WHERE id = ?
-       AND (first_login_at IS NULL OR last_login_at IS NULL OR last_login_at < ?)`,
+     WHERE id = ? AND (first_login_at IS NULL OR last_login_at IS NULL OR last_login_at < ?)`,
   ).bind(nowIso, nowIso, member.id, staleBefore).run();
 
   return {
@@ -166,10 +220,8 @@ export async function listCurrentSettings(db: D1Database): Promise<SettingVersio
      FROM settings_versions s
      INNER JOIN (
        SELECT setting_key, MAX(version) AS version
-       FROM settings_versions
-       GROUP BY setting_key
-     ) latest
-       ON latest.setting_key = s.setting_key AND latest.version = s.version
+       FROM settings_versions GROUP BY setting_key
+     ) latest ON latest.setting_key = s.setting_key AND latest.version = s.version
      ORDER BY s.setting_key`,
   ).all<SettingRow>();
 
@@ -205,14 +257,12 @@ export async function listDictionary(db: D1Database, key?: string): Promise<Dict
   const statement = key
     ? db.prepare(
       `SELECT id, dictionary_key, item_key, label, value_json, enabled, sort_order, version
-       FROM dictionary_items WHERE dictionary_key = ?
-       ORDER BY sort_order, item_key`,
+       FROM dictionary_items WHERE dictionary_key = ? ORDER BY sort_order, item_key`,
     ).bind(key)
     : db.prepare(
       `SELECT id, dictionary_key, item_key, label, value_json, enabled, sort_order, version
        FROM dictionary_items ORDER BY dictionary_key, sort_order, item_key`,
     );
-
   const result = await statement.all<DictionaryRow>();
   return (result.results ?? []).map((row) => ({
     id: row.id,

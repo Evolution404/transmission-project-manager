@@ -1,6 +1,6 @@
 # Cloudflare 运行、成本与部署说明
 
-核对日期：2026-09-12。**P1 身份与基础配置核心已完成；尚未创建或部署任何正式 Cloudflare 资源。**
+核对日期：2026-09-12。**P1.2 系统自维护账号认证已完成本地验收；尚未创建或部署任何正式 Cloudflare 资源。**
 
 ## 1. 本地开发
 
@@ -19,15 +19,15 @@ npm run dev
 npm run check
 ```
 
-检查包括三个工作区的类型检查、前端产物、Worker dry-run 打包，以及真实 workerd + 本地 D1 的 P1 集成测试。测试使用 8799 端口、独立临时 D1 和合成身份，不需要 Cloudflare 密钥，也不会污染日常本地开发库。健康接口成功只表示 Worker 存活；P2 以后业务仍未实现。
+检查包括三个工作区的类型检查、前端产物、Worker dry-run 打包，以及真实 workerd + 本地 D1 的认证、权限、并发和原子性测试。测试使用独立临时 D1，通过一次性 bootstrap 创建合成测试账号，不需要 Cloudflare 账号或真实 Secret，也不会污染日常本地开发库。健康接口成功只表示 Worker 存活。
 
 ## 2. 计划中的部署拓扑
 
 ```text
 电脑/手机浏览器
-  → 自定义域名与 Cloudflare Access
+  → 自定义域名 / Cloudflare 网络层
   → Workers Static Assets（Vue静态应用）
-  → /api/*（Hono，验证Access JWT及成员范围）
+  → /api/*（Hono，验证系统会话 Cookie、成员角色及业务范围）
       → D1：业务表、流水、任务、快照
       → 私有 R2：原始文件、附件、SQL备份
       → Email：已验证团队邮箱
@@ -46,7 +46,6 @@ npm run check
 | D1单次操作 | 免费每Worker调用50次查询、每SQL最多100个绑定参数 |
 | R2标准存储 | 10GB-month/月、100万A类操作、1000万B类操作；超额计费 |
 | Cron | 免费账户5个触发器 |
-| Access | 免费档最多50名用户，本项目初期20人以内 |
 | Email | 向账户内已验证收件地址发送免费；任意收件人发送需付费Workers |
 
 CPU是执行代码的时间，网络/数据库等待不计入。JS解析大JSON、大Excel解压/生成、排序归并、批量验证、构造大量SQL及序列化仍占CPU；图表渲染和浏览器解析不占Worker CPU，但占用户设备资源。超CPU限制会失败，`async`、后台执行或`waitUntil()`不提高CPU限额。
@@ -64,30 +63,32 @@ CPU是执行代码的时间，网络/数据库等待不计入。JS解析大JSON�
 生产环境不得依赖资产所有者个人 Cloudflare 登录态。应用管理员、Cloudflare 技术运维和 CI/CD 使用不同身份：
 
 - **应用管理员**只在本系统内管理业务成员、角色、项目/框架范围和规则，不需要 Cloudflare 权限。
-- **技术运维人员**使用自己的 Cloudflare Account Member 身份处理域名、Access、Workers、D1/R2、Secrets、迁移与故障，禁止共享资产所有者账号密码。
+- **技术运维人员**使用自己的 Cloudflare Account Member 身份处理域名、Workers、D1/R2、Secrets、WAF、迁移与故障，禁止共享资产所有者账号密码。业务账号不在 Cloudflare 管理。
 - **受托运维负责人**如果需要在资产所有者不介入的情况下继续邀请/撤销 Cloudflare 成员、创建或轮换 account-owned API token，则必须在交接时明确授予其 Super Administrator 等足够权限。Cloudflare 当前要求 Super Administrator 才能管理 Account Members，创建/更新 account-owned API token 也需要 Super Administrator 权限；这是高权限角色，只授予明确的受托负责人。
 - **CI/CD 服务身份**使用 Cloudflare account-owned API token，按实际发布所需最小权限配置并存入 GitHub Secrets/Environment Secrets。禁止使用资产所有者的 Global API Key、个人长期 API Token 或浏览器登录 Cookie 作为自动化依赖。
-- **资产所有者**可保留 Super Administrator 作为紧急兜底，但日常发布、迁移、Access 调整和业务成员管理不应要求其登录。
+- **资产所有者**可保留 Super Administrator 作为紧急兜底，但日常发布、迁移、基础设施调整和业务账号管理不应要求其登录。
 
 若资产所有者当前是唯一 Super Administrator，首次完整移交仍需要其完成一次性的受托负责人授权；授权完成后，后续日常运维不再依赖资产所有者账号。
 
-### 4.2 Access 与新用户
+### 4.2 系统账号与认证 Secret
 
-Access 只做身份认证，应用成员表做业务准入。优先按稳定企业邮箱域或 IdP 组配置 Access 范围，使普通新成员由应用管理员在系统内新增即可，不需要逐个进入 Cloudflare。不得仅为了减少运维而把 Access 配成允许任意有效邮箱。确需新增现有 Access 策略之外的邮箱/域时，由受托技术运维人员使用自己的 Cloudflare 身份修改策略。
+业务账号完全在应用内维护，不配置 Cloudflare Access。生产至少需要两个与业务数据分离的运行时 Secret：`AUTH_CREDENTIAL_PEPPER` 和一次性 `BOOTSTRAP_TOKEN`；只放 Worker Secrets / 部署密钥管理中，不进入 Git、前端或日志。首管理员创建成功后 bootstrap 普通路径关闭；后续账号、重置密码、角色和范围均由应用管理员处理。
+
+慢 KDF 在浏览器 Web Worker 执行 Argon2id，Worker 服务端只做 HMAC-SHA256 verifier 和会话校验，因此登录不会为了密码慢哈希消耗大量 Worker CPU。P7 仍需实测真实 Workers 请求 CPU，以及不同手机/浏览器执行 Argon2id 的耗时和交互体验。
 
 ### 4.3 上线步骤
 
 以下步骤在 P7 执行：
 
-1. 完成 P1.1–P6、本地检查和主要业务验收，准备正式用户与自定义域名；显式确定首个真实应用管理员邮箱。
-2. 由已授权的受托技术运维身份创建/配置 D1、R2、Workers 和 Access；提供 `apac` 位置提示。提示不能锁定具体机房，也不承诺香港路由。采用全球网络，不接入中国大陆网络。
+1. 完成 P1.2–P6、本地检查和主要业务验收，准备正式账号与自定义域名；显式确定首个真实应用管理员 username，并生成一次性 bootstrap secret。
+2. 由已授权的受托技术运维身份创建/配置 D1、R2 和 Workers；提供 `apac` 位置提示。提示不能锁定具体机房，也不承诺香港路由。采用全球网络，不接入中国大陆网络。
 3. 将本地配置复制为被Git忽略的 `apps/api/wrangler.production.jsonc`，写入真实D1/R2绑定、`APP_ENV=production`、自定义域名和正式Worker名称；移除占位符。正式使用的配置结构随后可用不含密钥的模板固化。
-4. 保持 `workers_dev=false`、`preview_urls=false`，配置Access应用覆盖前端/API。服务端验证JWT签名、issuer、audience和成员状态，不能只信任请求头邮箱。生产不启用开发身份兜底。
-5. 通过Worker Secrets配置所需机密（如最小权限D1导出API令牌），不写入前端和Git。需要哪些Secrets由已实现适配器明确，不提前提交空的虚假凭据。
-6. 设置专用邮件子域和已验证成员邮箱；配置SPF/DKIM等记录时不要覆盖用户已有主域邮箱MX配置。完成真实收件测试后再开启业务通知。
+4. 保持 `workers_dev=false`、`preview_urls=false`。生产认证只接受系统会话 Cookie；不得启用 `X-Dev-User-*`、Cloudflare Access JWT 或其他请求头身份兜底。
+5. 通过 Worker Secrets 配置 `AUTH_CREDENTIAL_PEPPER`、`BOOTSTRAP_TOKEN`，以及后续确有需要的最小权限 D1 导出令牌；不写入前端和 Git。首管理员创建后验证 bootstrap 再次调用已关闭。
+6. 如后续启用邮件通知，再单独设置通知邮箱/域名与 SPF/DKIM；业务账号不要求邮箱，邮件基础设施验证不得重新变成登录前提。
 7. 在本地/测试库完成迁移与恢复演练，备份现有正式库，再对准确数据库执行正式迁移。确认版本和资源名后部署。
 8. 开启分批定时任务、备份及用量告警；测试浏览器关闭后仍能提醒，以及发送失败的恢复行为。
-9. 在目标地区的移动/联通/电信测试 Access 登录、首页、列表、附件和邮件；记录结果再决定正式使用。
+9. 在目标地区的移动/联通/电信测试账号密码登录、7天会话、首次改密、首页、列表、附件和可选邮件；记录结果再决定正式使用。
 10. 完成运维移交演练：由受托维护人或 CI 服务身份在资产所有者不登录 Cloudflare 的情况下完成一次受控发布、一次迁移演练和一次回退；验证旧维护人撤权、CI Token 轮换后系统仍可运行，并记录紧急恢复路径。
 
 生产部署命令形状（从仓库根目录执行，只有完成上述准备且获得当次授权后才使用）：
@@ -104,7 +105,7 @@ npm exec --workspace @tpm/api -- wrangler deploy --config wrangler.production.js
 - D1免费版Time Travel为7天；备份任务使用D1导出API把SQL写入私有R2，导出期间可能短暂不能查询，安排北京时间03:00。
 - 备份保留7份日备份与3份月末备份，监控容量；文件附件使用不可覆盖版本键和30天延迟删除，并保留对象清单，避免只有SQL无法恢复附件。
 - 恢复先在隔离数据库演练，核对行数、金额/数量、文件清单及规则版本，再按业务维护安排切换绑定。
-- 代码回退不等于数据回退。迁移优先追加兼容变更，禁止用回退旧代码自动删除新数据。每次版本发布记录迁移版本、备份位置和恢复路径。
+- 代码回退不等于数据回退。当前未上线开发期允许在明确决策下重整 schema；首次正式部署后迁移冻结为只追加兼容变更，禁止用回退旧代码自动删除新数据。每次版本发布记录迁移版本、备份位置和恢复路径。
 - 运维告警至少包含任务失败、邮件失败、备份失败、CPU超限、D1读写/空间及R2用量；当前均尚未实现。
 
 ## 6. 官方依据
@@ -122,11 +123,9 @@ npm exec --workspace @tpm/api -- wrangler deploy --config wrangler.production.js
 - [R2价格](https://developers.cloudflare.com/r2/pricing/)
 - [R2开通与订阅](https://developers.cloudflare.com/r2/get-started/)
 - [Email价格及已验证收件人](https://developers.cloudflare.com/email-service/platform/pricing/)
-- [Access套餐](https://www.cloudflare.com/plans/)
 - [Cloudflare中国大陆网络](https://developers.cloudflare.com/china-network/)
 - [Cloudflare Account Members 与权限](https://developers.cloudflare.com/fundamentals/manage-members/)
 - [Cloudflare Account Roles](https://developers.cloudflare.com/fundamentals/manage-members/roles/)
 - [Cloudflare Account-owned API Tokens](https://developers.cloudflare.com/fundamentals/api/get-started/account-owned-tokens/)
-- [Cloudflare Access Policies](https://developers.cloudflare.com/cloudflare-one/access-controls/policies/)
 
 所有价格/限制上线前需再次核对。免费不等于无限额或可用性保证；全球网络不等于中国大陆加速。

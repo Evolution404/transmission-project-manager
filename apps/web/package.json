@@ -10,6 +10,7 @@
     "test": "vitest run --config vitest.config.ts"
   },
   "dependencies": {
+    "@phi-ag/argon2": "^0.5.27",
     "@tpm/shared": "*",
     "naive-ui": "^2.42.0",
     "vue": "3.5.42",

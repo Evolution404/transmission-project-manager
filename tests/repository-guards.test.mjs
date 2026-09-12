@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 import { test } from 'node:test';
 
@@ -12,7 +12,7 @@ function sha256(path) {
   return createHash('sha256').update(readFileSync(path)).digest('hex');
 }
 
-test('published migrations are append-only and checksum locked', () => {
+test('current development migration baseline is explicitly checksum locked', () => {
   const migrationFiles = readdirSync(migrationsDir)
     .filter((name) => /^\d{4}_.+\.sql$/.test(name))
     .sort();
@@ -20,14 +20,14 @@ test('published migrations are append-only and checksum locked', () => {
   assert.deepEqual(
     migrationFiles,
     lockedFiles,
-    '新增迁移时必须先追加迁移文件，再显式更新 tests/migrations.lock.json；禁止静默修改/遗漏旧迁移',
+    '开发期重整迁移后必须显式同步 tests/migrations.lock.json；不得留下已删除或未纳入门禁的迁移',
   );
 
   for (const [relativePath, expectedHash] of Object.entries(lock)) {
     assert.equal(
       sha256(resolve(root, relativePath)),
       expectedHash,
-      `${relativePath} 已发布，禁止修改旧迁移；请新增下一编号迁移`,
+      `${relativePath} 与当前开发基线不一致；如属明确的开发期 schema 重整，请同步更新迁移锁`,
     );
   }
 });
@@ -39,10 +39,10 @@ test('production migrations never contain synthetic local identities', () => {
   }
 });
 
-test('local synthetic identities stay isolated in the seed file', () => {
-  const seed = readFileSync(resolve(root, 'apps/api/seeds/local.sql'), 'utf8');
-  assert.match(seed, /example\.invalid/);
-  assert.match(seed, /dev-admin@example\.invalid/);
+test('development no longer injects synthetic account seed data', () => {
+  assert.equal(existsSync(resolve(root, 'apps/api/seeds/local.sql')), false);
+  const apiPackage = readFileSync(resolve(root, 'apps/api/package.json'), 'utf8');
+  assert.doesNotMatch(apiPackage, /seeds\/local\.sql/);
 });
 
 function collectTestFiles(directory) {
@@ -54,6 +54,29 @@ function collectTestFiles(directory) {
   }
   return files;
 }
+
+test('P1.2 runtime authentication does not depend on Cloudflare Access or email identity headers', () => {
+  const runtimeFiles = [
+    resolve(root, 'apps/api/src/auth.ts'),
+    resolve(root, 'apps/api/src/env.ts'),
+    resolve(root, 'apps/api/wrangler.jsonc'),
+    resolve(root, 'apps/api/package.json'),
+  ];
+  const source = runtimeFiles.map((file) => readFileSync(file, 'utf8')).join('\n');
+  assert.doesNotMatch(source, /Cf-Access-Jwt-Assertion/);
+  assert.doesNotMatch(source, /ACCESS_TEAM_DOMAIN|ACCESS_AUD|DEV_AUTH_EMAIL|BOOTSTRAP_ADMIN_EMAIL/);
+  assert.doesNotMatch(source, /from ['\"]jose['\"]|\"jose\"\s*:/);
+});
+
+test('server authentication never performs the browser-side slow KDF', () => {
+  const files = readdirSync(resolve(root, 'apps/api/src'))
+    .filter((name) => name.endsWith('.ts'))
+    .map((name) => readFileSync(resolve(root, 'apps/api/src', name), 'utf8'))
+    .join('\n');
+  assert.doesNotMatch(files, /@phi-ag\/argon2|PBKDF2|deriveBits\s*\(/);
+  const webAuth = readFileSync(resolve(root, 'apps/web/src/auth/credential-worker.ts'), 'utf8');
+  assert.match(webAuth, /Argon2id/);
+});
 
 test('committed tests cannot silently bypass the quality gate', () => {
   const files = [

@@ -1,6 +1,6 @@
 # 数据关系与接口约定
 
-这是一份实现约定。P1 已创建身份/权限/基础配置相关表与接口；P1.1 已追加成员生命周期字段、成员创建/编辑/范围授权、首管理员 bootstrap 和最后管理员保护；其余 P2–P7 业务对象仍是待实现约定。表名和字段可在迁移中作不影响语义的细化；改变业务口径必须同步 DESIGN.md。使用 D1/SQLite，不依赖 PostgreSQL 专有语法。
+这是一份实现约定。P1.2 已将身份模型重整为系统自维护账号、浏览器派生凭据与服务端会话；当前开发 schema 不再包含邮箱身份或 Cloudflare Access 认证字段。其余 P2–P7 业务对象仍按阶段实现。表名和字段可在迁移中作不影响语义的细化；改变业务口径必须同步 DESIGN.md。使用 D1/SQLite，不依赖 PostgreSQL 专有语法。
 
 ## 1. 通用约定
 
@@ -17,7 +17,8 @@
 
 | 对象（建议表） | 核心内容 | 关系/约束 |
 |---|---|---|
-| members / member_scopes | Access身份、邮箱、角色、启用状态、授权范围、邀请/首次/最近登录时间 | 邮箱规范化唯一；停用立即拒绝业务访问；至少保留一个启用管理员 |
+| members / member_scopes | 唯一 username、显示姓名、角色、启用状态、授权范围、Argon2id salt/KDF 参数、服务端 HMAC verifier、强制改密、失败计数/锁定、session_version、邀请/首次/最近登录时间 | username 大小写不敏感唯一；邮箱不在认证模型；浏览器派生凭据不入库；停用立即撤销会话；至少保留一个启用管理员 |
+| auth_sessions | 随机会话 token 的 SHA-256 哈希、member_id、session_version、创建/最近访问/到期/撤销时间 | 原始 token 只存在浏览器 HttpOnly Cookie；默认 7 天绝对有效期；停用/改密/重置立即失效 |
 | settings_versions | 口径、阈值、目标、提醒参数、生效时间 | 每个报表/预警引用规则版本 |
 | import_batches / import_rows | 文件哈希、工作表、映射版本、源行、原始JSON、错误、发布状态 | 批次分片幂等；未发布行不得计入正式报表 |
 | demand_categories / field_definitions | 需求类别、字段类型、必填规则、版本 | 初始6个必备字段；扩展可配置 |
@@ -56,20 +57,32 @@
 8. 金额条目确认、汇总更新、审计和待发事件尽量在同一D1事务完成。D1支持 `batch()` 失败整体回滚；不要用多次独立请求模拟开放事务。
 9. 版本条件更新未命中必须显式转成冲突/事务失败；仅返回 `changes=0` 不等于 `batch()` 失败，不得随后继续产生孤立流水。
 10. 只读缓存、报表快照不是金额唯一真相；需能由有效流水重建并对账。
-11. Access 身份通过不等于应用成员存在。生产成员只能由显式 bootstrap 或已授权管理员创建；不得首次登录自动建号/自动升权。
+11. 生产账号只能由一次性 bootstrap 或已授权管理员显式创建；不存在开放注册、邮箱自动建号或首次访问自动升权。
 12. 成员停用、角色和范围变更必须可审计；不能停用或降权最后一个启用管理员。历史业务记录引用停用成员仍然有效，不通过硬删除破坏审计链。
+13. `username` 是唯一登录标识；邮箱不属于当前认证 schema。正式 API/UI 都不得把邮箱或请求头身份解释为业务账号。
+14. 慢 KDF 只在浏览器 Web Worker 执行：Argon2id 当前参数为 `m=19456 KiB,t=2,p=1,hash=32,version=19`，每账号随机 16-byte salt。服务端只保存 `HMAC-SHA256(AUTH_CREDENTIAL_PEPPER, derivedCredential)` verifier 和公开 KDF 参数；不得保存明文密码或浏览器派生凭据，也不得在服务端执行 PBKDF2/Argon2。
+15. 会话 token 至少 256 bit 随机，数据库只存 token SHA-256 哈希。每次鉴权检查会话未撤销/未过期、session_version 一致和成员启用；停用、改密或管理员重置密码必须使旧会话失效。
+16. `must_change_password` 为真时，只允许 `/api/me`、改密和退出等最小接口，不能访问业务数据或成员管理。
 
 建议索引至少覆盖：来源幂等键；需求年度/类别/线路；需求物资分配；框架和协议归属；项目及财务条目的业务月；到期且待处理的通知；附件所属对象。按实际查询计划验收读行数。
 
 ## 4. API 合同
 
-当前已实现 P1 接口：
+当前已实现 P1/P1.2 接口：
 
 ```http
 GET /api/health
+GET /api/auth/status
+POST /api/auth/kdf
+POST /api/auth/bootstrap
+POST /api/auth/login
+POST /api/auth/logout
+POST /api/auth/change-password
 GET /api/me
 GET /api/members
+POST /api/members
 PATCH /api/members/:id
+POST /api/members/:id/reset-password
 GET /api/settings
 GET /api/settings/:key/history
 PUT /api/settings/:key
@@ -77,9 +90,7 @@ GET /api/dictionaries?key=...
 GET /api/scopes/:scopeType/:scopeId/check
 ```
 
-`/api/health` 当前返回 `stage: "p1.1"`。生产业务接口先验证 Cloudflare Access JWT，再根据 D1 成员启用状态、角色和范围授权；开发/测试身份只在非生产模式显式启用。配置变更要求版本检查和 `Idempotency-Key`，并保存历史版本与审计。未知 `/api` 路径返回 JSON 404，不回退到前端HTML。
-
-P1.1 已实现：`POST /api/bootstrap/admin`、`POST /api/members`、`PATCH /api/members/:id`；成员角色、启停和范围统一写入，首次/最近登录由成功身份匹配更新且不增加成员业务版本。成员创建/角色/范围/启停均受服务端权限、版本/幂等/审计约束，最后一个启用管理员不可被停用或降权。
+`/api/health` 当前返回 `stage: "p1.2"`。业务接口先验证系统自身会话 Cookie，再根据 D1 成员启用状态、角色和范围授权；不解析 Cloudflare Access JWT，也不信任任何请求头 username/email/role。成员角色、启停和范围继续受服务端权限、版本/幂等/审计约束；最后一个启用管理员不可被停用或降权。配置变更继续保存历史版本与审计。未知 `/api` 路径返回 JSON 404，不回退到前端 HTML。
 
 其余待实现接口族：
 
@@ -98,4 +109,4 @@ P1.1 已实现：`POST /api/bootstrap/admin`、`POST /api/members`、`PATCH /api
 
 每个创建/确认/出库/发生/结算等变更请求携带 `Idempotency-Key`；更新携带 `version`。错误使用明确状态：400格式、401未认证、403无权限、404不存在、409版本/幂等冲突、422业务校验、429限流。接口不接受前端提交的汇总值或最终权限判断为事实。
 
-每个阶段开始时先补齐该接口族的共享类型，再实现API和前端，保持类型、迁移和文档同步。生产鉴权使用Access JWT签名、发行方、受众及成员状态验证；信任头部邮箱字符串不构成鉴权。
+每个阶段开始时先补齐该接口族的共享类型，再实现 API 和前端，保持类型、迁移和文档同步。生产鉴权只接受系统签发的服务端会话 Cookie；请求头 username、email、角色或 Cloudflare Access JWT 都不构成业务身份。

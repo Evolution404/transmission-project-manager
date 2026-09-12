@@ -1,6 +1,6 @@
 # 测试策略与开发门禁
 
-版本：2026-09-12。适用于 P2 及之后所有业务开发。
+版本：2026-09-12。P1.2 起适用于所有高风险认证重构、P2 及之后全部业务开发。
 
 ## 1. 核心规则：先测试，后业务代码
 
@@ -12,7 +12,7 @@
 4. 运行完整 `npm run check`，不能只运行新增用例。
 5. 更新实施计划和交接记录后再提交。禁止把故意失败或跳过的测试提交到 `main` 充当“以后再做”的占位。
 
-前端隐藏按钮不是权限测试；接口返回成功不是数据一致性测试；本地 workerd 通过也不是 Cloudflare 真实 Access/额度/网络验收。
+前端隐藏按钮不是权限测试；接口返回成功不是数据一致性测试；本地 workerd 通过也不是 Cloudflare 真实 CPU/额度/网络验收。
 
 ## 2. 当前自动测试层级
 
@@ -20,19 +20,19 @@
 
 `tests/repository-guards.test.mjs`
 
-- 已发布迁移由 `tests/migrations.lock.json` 的 SHA-256 锁定。
-- 修改 `0001/0002` 等历史迁移会直接失败；业务变更必须新增下一编号迁移。
-- 正式迁移不得混入 `.invalid`、本地管理员等合成身份。
-- 新增迁移后需显式把新文件哈希加入锁文件，表示该迁移内容已经进入基线。
+- `tests/migrations.lock.json` 显式锁定当前开发 schema 基线。
+- 当前系统尚未正式上线、没有真实共享数据，因此在用户明确决定下允许重整开发迁移，但必须同步锁文件、空库测试和文档，不能留下隐式兼容层。
+- 一旦进入正式/共享数据环境，迁移立即切换为只追加策略，历史迁移不得再回改。
+- 正式迁移不得混入测试账号、固定密码或其他合成身份。
 
 ### B. D1 升级与可重复性
 
 `tests/migrations.test.mjs`
 
-- 从真实 P1 结构升级到 P1.1，验证成员、范围、配置和审计数据不丢失。
-- 验证完整迁移链在空库可执行。
-- 本地 seed 可重复执行，不产生重复成员。
-- 后续每个涉及 schema 的阶段必须新增“上一阶段真实结构 → 新阶段”升级用例，不能只测全新空库。
+- 验证当前开发迁移在空库可执行且重复执行安全。
+- 验证 `members` 为 username/credential 模型，不含邮箱身份列或明文/普通 password hash 字段。
+- 验证默认配置和角色字典存在，同时空库不注入合成账号。
+- 正式上线后，每个涉及 schema 的阶段恢复“上一正式结构 → 新结构”的升级与数据保留用例。
 
 ### C. Worker + D1 集成
 
@@ -40,7 +40,9 @@
 
 覆盖：
 
-- bootstrap、成员生命周期、停用即时失效；
+- 一次性 bootstrap、账号创建、登录、首次改密、管理员重置密码、退出和停用撤销会话；
+- Argon2id 公共 KDF 参数、服务端 HMAC verifier、会话 token 只存哈希；
+- 未知账号/错误凭据统一响应、连续失败锁定；
 - 角色与项目/框架范围；
 - 幂等键、版本冲突；
 - 失败写入不能产生孤立范围、审计或幂等记录；
@@ -52,24 +54,24 @@
 
 ### D. 生产鉴权模式
 
-`tests/production-auth.test.mjs`
+`tests/p1-2-production-auth.test.mjs`
 
-- `APP_ENV=production` 时开发邮箱头必须完全失效。
-- 缺 Cloudflare Access 配置时业务请求和 bootstrap 必须 fail-closed。
-- `/api/health` 保持公共存活检查，不代表业务鉴权已就绪。
-
-真实 Cloudflare Access JWT、邮箱验证码和 IdP 端到端流程只能在 P7 的真实测试环境验证，本地不得自造另一套验证码认证来冒充生产流程。
+- production 使用系统账号和会话即可完成 bootstrap/login，不需要 Cloudflare Access 配置。
+- `X-Dev-User-*`、`Cf-Access-Jwt-Assertion` 等旧身份头不能构成业务身份。
+- production Cookie 必须包含 HttpOnly、SameSite=Strict、Secure。
+- `AUTH_CREDENTIAL_PEPPER` 与 `BOOTSTRAP_TOKEN` 属于运行时 Secret；正式部署不得使用仓库中的开发值。
 
 ### E. Vue 行为合同
 
 `apps/web/tests/*.test.ts` 使用 Vitest + Vue Test Utils + happy-dom。
 
-当前覆盖成员管理：
+当前覆盖认证与成员管理：
 
-- 管理员/非管理员页面行为；
-- 新增成员邮箱规范化和 payload；
-- 自定义范围为空时前端阻断；
-- 编辑时保留版本和授权范围。
+- 登录只呈现账号/密码，不出现邮箱认证入口；
+- 浏览器先取得 KDF salt，再本地派生凭据，API payload 不含明文密码；
+- 首次改密同样只发送当前/新派生凭据；
+- 管理员新增账号时浏览器派生初始凭据，邮箱不是字段；
+- 管理员/非管理员页面行为、自定义范围前端阻断、编辑时保留版本和授权范围。
 
 后续页面优先测试“用户操作 → 请求 payload → 错误/成功状态”的合同，不做低价值像素快照。关键金额、数量和状态推导应优先测试纯函数/服务端规则。
 
@@ -119,9 +121,9 @@ CI 只认完整门禁结果，不允许以“我本地只跑了某个测试文�
 
 以下项目不能用本地模拟结果替代：
 
-- Cloudflare Access 真实邮箱验证码 / IdP 登录和真实 JWT；
-- 真实 D1/R2 资源、CPU/配额；
-- 自定义域名、Access 策略、account-owned CI Token；
+- 真实 D1/R2 资源、Workers CPU/配额；
+- 自定义域名、HTTPS/Cookie 实际行为、account-owned CI Token；
+- 客户端 Argon2id 在低性能手机/浏览器上的真实耗时和交互体验；
 - 目标地区网络；
 - 真实邮件投递；
 - 正式备份恢复与运维移交。

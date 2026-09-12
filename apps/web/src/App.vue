@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import {
   NAlert,
+  NButton,
   NConfigProvider,
   NLayout,
   NLayoutContent,
@@ -15,12 +16,15 @@ import {
   type MenuOption,
 } from 'naive-ui';
 import type { ApiResponse, CurrentUser } from '@tpm/shared';
+import LoginView from './views/LoginView.vue';
+import ChangePasswordView from './views/ChangePasswordView.vue';
 
 const route = useRoute();
 const router = useRouter();
 const currentUser = ref<CurrentUser | null>(null);
-const authError = ref('');
 const loading = ref(true);
+const connectionError = ref('');
+const loggingOut = ref(false);
 
 const menuOptions: MenuOption[] = [
   { label: '总览', key: '/' },
@@ -37,21 +41,48 @@ const pageTitle = computed(() => String(route.meta.title ?? '输电项目全流�
 
 async function loadIdentity() {
   loading.value = true;
-  authError.value = '';
+  connectionError.value = '';
   try {
     const response = await fetch('/api/me', { headers: { Accept: 'application/json' } });
     const result = await response.json() as ApiResponse<CurrentUser>;
     if (!response.ok || !result.ok) {
-      authError.value = result.ok ? '身份验证失败' : result.error.message;
-      currentUser.value = null;
+      if (response.status === 401 || response.status === 403) {
+        currentUser.value = null;
+      } else {
+        connectionError.value = result.ok ? '读取登录状态失败' : result.error.message;
+      }
       return;
     }
     currentUser.value = result.data;
   } catch {
-    authError.value = '无法连接身份接口，请确认 API 服务与数据库迁移已经启动。';
-    currentUser.value = null;
+    connectionError.value = '无法连接系统接口，请确认本地 API 服务已经启动。';
   } finally {
     loading.value = false;
+  }
+}
+
+function authenticated(user: CurrentUser) {
+  connectionError.value = '';
+  currentUser.value = user;
+}
+
+function passwordChanged(user: CurrentUser) {
+  currentUser.value = user;
+  if (route.path === '/administration' && user.role !== 'admin') void router.push('/');
+}
+
+async function logout() {
+  loggingOut.value = true;
+  try {
+    await fetch('/api/auth/logout', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    });
+  } finally {
+    currentUser.value = null;
+    loggingOut.value = false;
+    if (route.path !== '/') void router.push('/');
   }
 }
 
@@ -65,7 +96,29 @@ onMounted(loadIdentity);
 <template>
   <n-config-provider>
     <n-message-provider>
-      <n-layout has-sider class="app-shell">
+      <div v-if="loading" class="auth-loading">
+        <n-spin size="large" />
+      </div>
+
+      <div v-else-if="connectionError && !currentUser" class="auth-loading">
+        <n-alert type="error" title="系统接口不可用" class="auth-alert">
+          {{ connectionError }}
+          <div class="auth-retry"><n-button size="small" @click="loadIdentity">重新连接</n-button></div>
+        </n-alert>
+      </div>
+
+      <login-view
+        v-else-if="!currentUser"
+        @authenticated="authenticated"
+      />
+
+      <change-password-view
+        v-else-if="currentUser.mustChangePassword"
+        :current-user="currentUser"
+        @changed="passwordChanged"
+      />
+
+      <n-layout v-else has-sider class="app-shell">
         <n-layout-sider
           bordered
           collapse-mode="width"
@@ -86,8 +139,8 @@ onMounted(loadIdentity);
             @update:value="navigate"
           />
           <div class="phase-badge">
-            <span>P1.1</span>
-            <small>成员管理与运维移交</small>
+            <span>P1.2</span>
+            <small>本地账号与会话</small>
           </div>
         </n-layout-sider>
 
@@ -97,22 +150,18 @@ onMounted(loadIdentity);
               <div class="page-kicker">输电项目全流程管理台</div>
               <h1>{{ pageTitle }}</h1>
             </div>
-            <div v-if="currentUser" class="identity-card">
+            <div class="identity-card">
               <div>
                 <strong>{{ currentUser.displayName }}</strong>
-                <small>{{ currentUser.email }}</small>
+                <small>@{{ currentUser.username }}</small>
               </div>
               <n-tag size="small" :bordered="false">{{ currentUser.role }}</n-tag>
+              <n-button size="small" quaternary :loading="loggingOut" @click="logout">退出</n-button>
             </div>
           </n-layout-header>
 
           <n-layout-content class="content-wrap">
-            <n-spin :show="loading">
-              <n-alert v-if="authError" type="error" title="身份未就绪" class="auth-alert">
-                {{ authError }}
-              </n-alert>
-              <router-view v-else-if="currentUser" :current-user="currentUser" />
-            </n-spin>
+            <router-view :current-user="currentUser" />
           </n-layout-content>
         </n-layout>
       </n-layout>

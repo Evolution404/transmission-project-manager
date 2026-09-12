@@ -15,7 +15,7 @@ defineProps<{ currentUser: CurrentUser }>();
     </n-grid>
 
     <n-card title="当前开发状态">
-      <template #header-extra><n-tag type="success" :bordered="false">P1 进行中</n-tag></template>
+      <template #header-extra><n-tag type="success" :bordered="false">P1.2 认证重构</n-tag></template>
       <n-empty description="尚未导入正式业务数据">
         <template #extra>
           <p class="empty-copy">当前只展示已实现能力。需求、储备、出库、实施、结算和资金数据不会使用硬编码样本冒充正式结果。</p>
@@ -28,7 +28,7 @@ defineProps<{ currentUser: CurrentUser }>();
         <div><span>成员</span><strong>{{ currentUser.displayName }}</strong></div>
         <div><span>角色</span><strong>{{ currentUser.role }}</strong></div>
         <div><span>授权范围</span><strong>{{ currentUser.scopes.length ? currentUser.scopes.length + ' 项' : '未配置' }}</strong></div>
-        <div><span>认证来源</span><strong>{{ currentUser.authSource === 'development' ? '本地开发身份' : 'Cloudflare Access' }}</strong></div>
+        <div><span>登录账号</span><strong>@{{ currentUser.username }}</strong></div>
       </div>
     </n-card>
   </div>

@@ -56,11 +56,11 @@ export async function startWranglerServer({
   stateDir,
   port,
   vars = [],
-  seed = true,
+  seed = false,
   migrate = true,
 }) {
   if (migrate) applyLocalMigrations(stateDir);
-  if (seed) executeLocalD1(stateDir, { file: 'seeds/local.sql' });
+  if (seed) throw new Error('local seed mode has been removed; bootstrap accounts through the auth API');
 
   const args = [
     wranglerCli,

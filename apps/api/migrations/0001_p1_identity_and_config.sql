@@ -2,14 +2,31 @@ PRAGMA foreign_keys = ON;
 
 CREATE TABLE members (
   id TEXT PRIMARY KEY,
-  email TEXT NOT NULL COLLATE NOCASE UNIQUE,
+  username TEXT NOT NULL COLLATE NOCASE UNIQUE,
   display_name TEXT NOT NULL,
   role TEXT NOT NULL CHECK (role IN ('admin', 'project_manager', 'implementation', 'finance', 'readonly')),
   enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
   version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
+  credential_salt TEXT NOT NULL,
+  credential_verifier TEXT NOT NULL,
+  credential_algorithm TEXT NOT NULL CHECK (credential_algorithm = 'argon2id-v1'),
+  credential_params_json TEXT NOT NULL,
+  must_change_password INTEGER NOT NULL DEFAULT 1 CHECK (must_change_password IN (0, 1)),
+  session_version INTEGER NOT NULL DEFAULT 1 CHECK (session_version >= 1),
+  failed_login_count INTEGER NOT NULL DEFAULT 0 CHECK (failed_login_count >= 0),
+  locked_until TEXT,
+  last_failed_login_at TEXT,
+  credential_changed_at TEXT NOT NULL,
+  invited_at TEXT,
+  first_login_at TEXT,
+  last_login_at TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
+
+CREATE INDEX idx_members_enabled_role ON members(enabled, role);
+CREATE INDEX idx_members_last_login ON members(last_login_at);
+CREATE INDEX idx_members_locked_until ON members(locked_until);
 
 CREATE TABLE member_scopes (
   id TEXT PRIMARY KEY,
@@ -23,6 +40,20 @@ CREATE TABLE member_scopes (
 
 CREATE INDEX idx_member_scopes_member ON member_scopes(member_id);
 CREATE INDEX idx_member_scopes_target ON member_scopes(scope_type, scope_id);
+
+CREATE TABLE auth_sessions (
+  id TEXT PRIMARY KEY,
+  member_id TEXT NOT NULL REFERENCES members(id) ON DELETE CASCADE,
+  token_hash TEXT NOT NULL UNIQUE,
+  session_version INTEGER NOT NULL CHECK (session_version >= 1),
+  created_at TEXT NOT NULL,
+  last_seen_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  revoked_at TEXT
+);
+
+CREATE INDEX idx_auth_sessions_token ON auth_sessions(token_hash);
+CREATE INDEX idx_auth_sessions_member_active ON auth_sessions(member_id, revoked_at, expires_at);
 
 CREATE TABLE settings_versions (
   id TEXT PRIMARY KEY,
@@ -80,23 +111,9 @@ CREATE TABLE idempotency_records (
 CREATE INDEX idx_idempotency_actor_created ON idempotency_records(actor_member_id, created_at DESC);
 
 INSERT INTO settings_versions (id, setting_key, version, value_json, effective_from, created_by, created_at)
-VALUES (
-  '00000000-0000-4000-8000-000000000010',
-  'business.timezone',
-  1,
-  '{"timezone":"Asia/Shanghai"}',
-  '2026-09-12T00:00:00.000Z',
-  NULL,
-  '2026-09-12T00:00:00.000Z'
-), (
-  '00000000-0000-4000-8000-000000000011',
-  'pagination.default',
-  1,
-  '{"defaultPageSize":50,"maxPageSize":100}',
-  '2026-09-12T00:00:00.000Z',
-  NULL,
-  '2026-09-12T00:00:00.000Z'
-);
+VALUES
+  ('00000000-0000-4000-8000-000000000010', 'business.timezone', 1, '{"timezone":"Asia/Shanghai"}', '2026-09-12T00:00:00.000Z', NULL, '2026-09-12T00:00:00.000Z'),
+  ('00000000-0000-4000-8000-000000000011', 'pagination.default', 1, '{"defaultPageSize":50,"maxPageSize":100}', '2026-09-12T00:00:00.000Z', NULL, '2026-09-12T00:00:00.000Z');
 
 INSERT INTO dictionary_items (id, dictionary_key, item_key, label, value_json, enabled, sort_order, version, created_at, updated_at)
 VALUES

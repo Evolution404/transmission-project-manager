@@ -2,13 +2,13 @@
 
 ## 当前状态
 
-P0、P1（身份权限、基础配置、初始迁移、应用框架）和 P1.1（成员管理与可移交运维）已完成并通过本地验收。
+P0、P1、P1.1、P1.2 已完成并通过本地验收。业务登录现为系统自维护 `username + password`：浏览器 Web Worker 执行 Argon2id，服务端保存带运行时 pepper 的 HMAC verifier，并使用 7 天 HttpOnly 服务端会话。邮箱和 Cloudflare Access 均不参与业务认证。
 
-已建立：npm workspaces、Vue Router + Naive UI 管理台框架、Hono API、Cloudflare Access JWT 验证、D1 成员/范围/生命周期/配置版本/字典/审计/幂等表、首管理员 bootstrap、完整成员新增/编辑/启停/范围管理、本地 seed、共享接口类型、Wrangler 本地 D1/R2 配置、构建/类型检查/workerd+D1 集成测试入口、GitHub CI和完整设计文档。
+P2 的认证改造前 WIP 仍保存在 Git stash `wip P2 before P1.2 local account auth`，下一步应恢复该 stash、解决与新认证基线的冲突后继续 P2。当前已建立 npm workspaces、Vue Router + Naive UI 管理台、Hono API、账号/会话/成员范围/配置版本/字典/审计/幂等、完整认证页面和 42 项自动门禁。
 
 尚未实现：Excel导入、需求/储备/物资业务表、框架协议预算、出库实施结算、分类分析、定时任务、发信、备份及正式Cloudflare部署。P7 还需要完成真实 Cloudflare/GitHub 运维身份、account-owned CI token 和完整移交演练。后续业务入口当前均为真实空状态，不得把页面框架解释为这些业务已完成。
 
-**下一步从 P2 开始。** 不要重新搭建仓库、重做 P1/P1.1 或推翻已确认的 Cloudflare 路线。
+**下一步恢复并继续 P2。** Cloudflare 仍是托管路线，但不参与业务身份认证；恢复 P2 时保留 P1.2 的账号、会话和权限中间件，不得把旧 Access/邮箱身份代码带回来。
 
 ## 阅读顺序
 
@@ -24,8 +24,8 @@ P0、P1（身份权限、基础配置、初始迁移、应用框架）和 P1.1�
 ```text
 请接手这个仓库的后续实现。先阅读 AGENTS.md、docs/AI_HANDOFF.md、
 docs/DESIGN.md、docs/DATA_MODEL.md、docs/IMPLEMENTATION_PLAN.md。
-P0、P1、P1.1 已完成。按实施计划直接进入 P2（Excel导入、需求池与物资字典），
-不要重做身份/成员管理框架，也不要将 P3–P7 的未实现能力标为完成。
+P0、P1、P1.1、P1.2 已完成。恢复 `wip P2 before P1.2 local account auth` 中的 P2 工作，
+解决与当前账号/会话认证基线的冲突后继续 Excel 导入、需求池和物资字典；不要重做认证，也不要将 P3–P7 未实现能力标为完成。
 严格遵守 docs/TESTING.md：先写 P2 验收/回归测试并验证测试确实有约束力，再修改生产代码；任何缺陷先补复现用例。
 保持 Cloudflare 免费起步、Vue + TypeScript + Hono + D1 + R2 的架构。
 不需要再次询问已经在文档中确定的需求。原始Excel缺失时使用明确标注的合成测试数据，
@@ -43,7 +43,7 @@ npm run dev
 npm run check
 ```
 
-开发端口：5173/8787，集成测试端口：8799。`npm run dev` 会先应用本地迁移并执行 `apps/api/seeds/local.sql`，该 seed 只含 `.invalid` 合成身份且不会随生产迁移部署。生产资源ID未配置；`npm run build:worker`只是dry-run打包，不发布资源。
+开发端口：5173/8787，集成测试使用独立端口和临时 D1。`npm run dev` 只应用本地迁移，不再注入账号 seed；空库首次进入登录页时使用一次性 bootstrap 创建管理员。生产资源ID未配置；`npm run build:worker`只是 dry-run 打包，不发布资源。
 
 ## 不能遗漏的设计细节
 
@@ -55,15 +55,15 @@ npm run check
 - 提醒在服务端调度，关闭浏览器仍应执行。免费10ms是CPU时间，不是网络等待；异步不绕过CPU限制。
 - 默认全球网络、不备案、不买服务器，不承诺大陆必然快速或固定香港路由。
 - 不共享资产所有者 Cloudflare 密码/Global API Key/个人长期 Token。业务管理员在应用内管理成员；技术维护人使用自己的 Cloudflare Account Member 身份；生产 CI 最终使用 account-owned API token。
-- 普通新用户不得通过首次 Access 登录自动创建账号；应用管理员预建成员，Access 身份与启用成员匹配后才进入系统。
+- 业务认证不依赖 Cloudflare Access、邮箱或邮箱验证码。管理员预建 username + 初始密码 + 角色/范围；首次登录强制改密。忘记密码联系管理员重置。
 
 ## 外部材料与待验证项
 
 - 可读参考：https://www.workbuddy.link/p/plhvulKoyaQX5vic8Oaeoy?source=2 。仅作为功能和布局参考。
 - 尚缺：原始需求Excel、“一年工作早知道”、“项目储备类别”、真实单价/框架/协议资料。
-- 尚缺：生产Cloudflare账户资源、可用自定义域名、Access成员名单和验证后的邮件收件人。
-- 未测：真实 Cloudflare Access 租户/JWT、完整业务、真实文件映射、Cloudflare线上CPU/配额、大陆网络、真实发信与恢复。
-- 测试体系已独立增强：历史迁移 SHA-256 锁定、P1→P1.1 升级数据保留、production fail-closed、并发管理员保护、失败写入原子性、Vue 行为合同与测试代码类型检查均进入 `npm run check`；详见 `docs/TESTING.md`。CI 实际结果以仓库 Actions 为准。
+- 尚缺：生产 Cloudflare 账户资源、可用自定义域名、正式运行时 Secrets 和后续通知收件资料。
+- 未测：真实 Cloudflare Workers CPU/配额与目标地区网络、低性能手机 Argon2id 体验、完整业务、真实文件映射、真实发信与恢复。
+- P1.2 本地门禁已全绿：31/31 Node/workerd+D1 + 11/11 Vue，共 42 项；覆盖 production 认证、客户端 KDF 合同、会话撤销、登录锁定、并发管理员保护和失败写入原子性。CI 实际结果以仓库 Actions 为准。
 
 ## 后续交接记录
 
@@ -82,7 +82,7 @@ npm run check
 - 数据：新增追加式迁移 `0002_p1_1_member_lifecycle.sql`，未修改 P1 已交付迁移；本地 seed 仍只用于 `.invalid` 合成身份。
 - 运维：新增 `docs/OPERATIONS_HANDOVER.md`，将资产所有者、应用管理员、技术运维负责人和 CI/CD 服务身份分离；正式 Cloudflare/GitHub 移交演练仍留 P7。
 - 测试：`npm run check` 全绿，12/12 workerd+D1 集成测试 PASS；测试从空临时 D1 执行 bootstrap 开始。
-- 未验证：真实 Access 租户、正式成员邮箱、线上 D1/R2、account-owned CI token 与真实移交；不影响进入 P2。
-- 下一步：P2 Excel导入、需求池与物资字典。
+- 此阶段的 Access/邮箱认证结论已被 P1.2 新需求取代；成员角色、范围、最后管理员保护和审计仍继续沿用。
+- 下一步：P1.2 系统自维护账号密码认证；P2 已暂存，P1.2 完成后恢复。
 
 每完成阶段在此追加：阶段、提交号、完成内容、测试、未完成/未验证项和明确下一步。不要删除原始边界说明。

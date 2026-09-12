@@ -12,7 +12,7 @@ export type ApiResponse<T> = ApiSuccess<T> | ApiError;
 
 export type HealthResponse = ApiSuccess<{
   service: 'transmission-project-manager';
-  stage: 'p1.1';
+  stage: 'p1.2';
 }>;
 
 export const MEMBER_ROLES = [
@@ -35,7 +35,7 @@ export type MemberLifecycleStatus = 'pending_first_login' | 'active' | 'disabled
 
 export interface MemberSummary {
   id: string;
-  email: string;
+  username: string;
   displayName: string;
   role: MemberRole;
   enabled: boolean;
@@ -45,10 +45,11 @@ export interface MemberSummary {
   firstLoginAt: string | null;
   lastLoginAt: string | null;
   lifecycleStatus: MemberLifecycleStatus;
+  mustChangePassword: boolean;
 }
 
 export interface CurrentUser extends MemberSummary {
-  authSource: 'cloudflare-access' | 'development';
+  authSource: 'session';
 }
 
 export interface SettingVersion<T = unknown> {
@@ -78,8 +79,33 @@ export interface UpdateSettingRequest {
   effectiveFrom?: string;
 }
 
-export interface CreateMemberRequest {
-  email: string;
+export const CREDENTIAL_KDF = {
+  algorithm: 'argon2id-v1',
+  memoryCostKiB: 19_456,
+  timeCost: 2,
+  parallelism: 1,
+  hashLength: 32,
+  version: 19,
+  saltLength: 16,
+} as const;
+
+export interface CredentialKdfDescriptor {
+  algorithm: typeof CREDENTIAL_KDF.algorithm;
+  salt: string;
+  memoryCostKiB: typeof CREDENTIAL_KDF.memoryCostKiB;
+  timeCost: typeof CREDENTIAL_KDF.timeCost;
+  parallelism: typeof CREDENTIAL_KDF.parallelism;
+  hashLength: typeof CREDENTIAL_KDF.hashLength;
+  version: typeof CREDENTIAL_KDF.version;
+}
+
+export interface DerivedCredentialInput {
+  salt: string;
+  credential: string;
+}
+
+export interface CreateMemberRequest extends DerivedCredentialInput {
+  username: string;
   displayName: string;
   role: MemberRole;
   enabled?: boolean;
@@ -94,6 +120,23 @@ export interface UpdateMemberRequest {
   scopes?: MemberScope[];
 }
 
-export interface BootstrapAdminRequest {
+export interface BootstrapAdminRequest extends DerivedCredentialInput {
+  username: string;
   displayName: string;
 }
+
+export interface LoginKdfRequest {
+  username: string;
+}
+
+export interface LoginRequest {
+  username: string;
+  credential: string;
+}
+
+export interface ChangePasswordRequest {
+  currentCredential: string;
+  next: DerivedCredentialInput;
+}
+
+export type ResetPasswordRequest = DerivedCredentialInput;

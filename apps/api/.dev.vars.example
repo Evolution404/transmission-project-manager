@@ -1,0 +1,4 @@
+# Copy to apps/api/.dev.vars for local development only.
+# Never reuse local values in production.
+AUTH_CREDENTIAL_PEPPER=replace-with-random-local-development-value
+BOOTSTRAP_TOKEN=replace-with-one-time-local-bootstrap-token

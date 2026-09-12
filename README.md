@@ -2,20 +2,20 @@
 
 面向 20 人以内团队的项目管理应用，计划采用 Cloudflare Workers、D1、R2，免费额度内运行，支持电脑和手机访问。
 
-**当前状态：P0、P1、P1.1 已完成并通过本地验收；下一步进入 P2 Excel 导入、需求池与物资字典；尚未部署到 Cloudflare。**
-已有 Vue Router + Naive UI 管理台框架、Cloudflare Access JWT 鉴权、D1 成员/范围/配置版本/字典/审计/幂等表、本地开发 seed、共享接口类型和 CI。需求、储备、资金、实施结算、提醒与备份仍未实现，页面中的后续模块保持真实空状态。
+**当前状态：P0、P1、P1.1、P1.2 已完成并通过本地验收；下一步恢复 P2 Excel 导入、需求池与物资字典；尚未部署到 Cloudflare。**
+当前业务认证完全由系统自身维护：用户使用 `username + 密码` 登录，浏览器 Web Worker 负责 Argon2id 派生，服务端只保存带运行时 pepper 的 HMAC verifier，并签发 7 天 HttpOnly 会话。邮箱不参与账号体系。需求、储备、资金、实施结算、提醒与备份仍按后续阶段实现。
 
 ## 交给其他 AI 的入口
 
 1. 阅读 [AGENTS.md](AGENTS.md)。
 2. 阅读 [AI 交接说明](docs/AI_HANDOFF.md)，其中有可直接复制的任务提示词。
-3. 按 [实施计划](docs/IMPLEMENTATION_PLAN.md) 从 **P2** 开始；P1.1 的成员生命周期、范围授权和运维移交边界已完成。
+3. 按 [实施计划](docs/IMPLEMENTATION_PLAN.md) 从 **P2** 继续；P1.2 本地账号认证已经完成并通过质量门禁。
 4. 开发前先阅读 [测试策略](docs/TESTING.md)：所有新阶段和缺陷修复必须先写验收/回归测试，再改生产代码。
 5. 业务依据为 [设计方案](docs/DESIGN.md)，数据与 API 约定见 [数据模型](docs/DATA_MODEL.md)。
 
 ## 本地运行
 
-建议 Node.js 24、npm 11（`.nvmrc` 已固定主版本）。不需要 Cloudflare 账号或令牌即可运行本地开发环境。`npm run dev` 会先应用本地 D1 迁移并执行仅本地使用的合成身份 seed。
+建议 Node.js 24、npm 11（`.nvmrc` 已固定主版本）。不需要 Cloudflare 账号或令牌即可运行本地开发环境。`npm run dev` 会先应用本地 D1 迁移；空库首次打开时通过一次性 bootstrap 创建首个管理员，不再注入合成账号 seed。
 
 ```sh
 npm ci
@@ -33,7 +33,7 @@ npm run dev
 npm run check
 ```
 
-该命令是统一质量门禁：运行生产代码和测试代码 TypeScript 检查、前端构建、Worker **dry-run** 打包、迁移锁/旧库升级、真实本地 workerd + D1 集成测试、production 鉴权 fail-closed、并发/原子性，以及 Vue 行为合同测试。Node 测试均使用独立临时 D1，不污染日常本地库。详细规则见 `docs/TESTING.md`。
+该命令是统一质量门禁：运行生产代码和测试代码 TypeScript 检查、前端构建、Worker **dry-run** 打包、当前开发迁移基线检查、真实本地 workerd + D1 集成测试、production 认证、会话/权限/并发/原子性，以及 Vue 行为合同测试。Node 测试均使用独立临时 D1，不污染日常本地库。详细规则见 `docs/TESTING.md`。
 
 `npm run build` 不会发布网站。当前没有自动部署工作流，也没有生产凭据。
 
@@ -42,8 +42,7 @@ npm run check
 ```text
 apps/web/                Vue 3 + Vite + Router + Naive UI 管理台
 apps/api/                Hono + Workers 鉴权/基础配置接口与 Wrangler 配置
-apps/api/migrations/     D1 追加式数据库迁移
-apps/api/seeds/          仅本地开发/测试使用的合成数据
+apps/api/migrations/     当前开发期 D1 数据库基线；正式上线后改为追加式迁移
 packages/shared/         前后端共享接口类型
 tests/                   迁移守卫、Workers+D1、并发/原子性、production 鉴权测试
 apps/web/tests/          Vue 行为合同测试
@@ -53,7 +52,7 @@ docs/                   完整设计、实施计划、测试策略、数据模�
 
 ## 已确定的业务边界
 
-需求 → 储备 → 项目出库 → 实施 → 结算。出库指项目获准进入实施，不包含完整物资仓库管理。需求转储备采用系统建议、人工确认，预算统计口径可配置，通知采用邮件。账号采用 Cloudflare Access 身份认证 + 应用内成员授权双层模型；日常业务成员管理不应要求资产所有者登录 Cloudflare，后续技术维护使用受托人的独立 Cloudflare 身份和 CI 服务身份。
+需求 → 储备 → 项目出库 → 实施 → 结算。出库指项目获准进入实施，不包含完整物资仓库管理。需求转储备采用系统建议、人工确认，预算统计口径可配置。业务账号由系统自己维护 username、密码、会话、角色和授权范围；不依赖 Cloudflare Access，也不要求邮箱验证。Cloudflare 仅作为托管/网络基础设施，后续技术维护仍使用受托人的独立 Cloudflare 身份和 CI 服务身份。
 
 尚未取得原始需求 Excel、“一年工作早知道”和“项目储备类别”文件；开发可以使用明确标注的合成数据，真实字段映射和价格规则需用原件验收。
 

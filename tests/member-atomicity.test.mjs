@@ -1,60 +1,41 @@
 import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
-import {
-  cleanupStateDir,
-  makeStateDir,
-  queryLocalD1,
-  startWranglerServer,
-} from './helpers/wrangler.mjs';
+import { cleanupStateDir, makeStateDir, queryLocalD1, startWranglerServer } from './helpers/wrangler.mjs';
+import { bootstrapAdmin, cookiePair, createMember, jsonRequest, mutation } from './helpers/auth.mjs';
 
 const stateDir = makeStateDir('tpm-member-atomicity-');
 let runtime;
+let adminCookie;
 let member;
 let successfulKey;
-
-async function jsonRequest(path, init = {}) {
-  const response = await runtime.request(path, init);
-  return { response, body: await response.json() };
-}
 
 function rows(sql) {
   return queryLocalD1(stateDir, sql).flatMap((entry) => entry.results ?? []);
 }
 
 before(async () => {
-  runtime = await startWranglerServer({ stateDir, port: 8802, seed: false, migrate: true });
-
-  const bootstrap = await jsonRequest('/api/bootstrap/admin', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Dev-User-Email': 'dev-admin@example.invalid' },
-    body: JSON.stringify({ displayName: '原子性管理员' }),
+  runtime = await startWranglerServer({
+    stateDir, port: 8802, migrate: true,
+    vars: ['AUTH_CREDENTIAL_PEPPER:atomicity-pepper', 'BOOTSTRAP_TOKEN:atomicity-bootstrap'],
   });
-  assert.equal(bootstrap.response.status, 201);
 
-  const created = await jsonRequest('/api/members', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Idempotency-Key': `atomic-create-${crypto.randomUUID()}`,
-    },
-    body: JSON.stringify({
-      email: 'atomic-member@example.invalid', displayName: '原子性成员', role: 'readonly', enabled: true,
-      scopes: [{ type: 'project', id: 'project-old' }],
-    }),
+  const bootstrap = await bootstrapAdmin(runtime, { token: 'atomicity-bootstrap', displayName: '原子性管理员' });
+  assert.equal(bootstrap.response.status, 201);
+  adminCookie = cookiePair(bootstrap.response.headers.get('set-cookie'));
+
+  const created = await createMember(runtime, adminCookie, {
+    username: 'atomic-member', displayName: '原子性成员',
+    scopes: [{ type: 'project', id: 'project-old' }],
   });
   assert.equal(created.response.status, 201);
   member = created.body.data;
 
   successfulKey = `atomic-update-${crypto.randomUUID()}`;
-  const updated = await jsonRequest(`/api/members/${member.id}`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json', 'Idempotency-Key': successfulKey },
-    body: JSON.stringify({
-      expectedVersion: 1,
-      role: 'project_manager',
-      scopes: [{ type: 'framework', id: 'framework-new' }],
-    }),
-  });
+  const updated = await jsonRequest(runtime, `/api/members/${member.id}`, mutation('PATCH', {
+    expectedVersion: 1,
+    role: 'project_manager',
+    scopes: [{ type: 'framework', id: 'framework-new' }],
+  }, { Cookie: adminCookie, 'Idempotency-Key': successfulKey }));
   assert.equal(updated.response.status, 200);
 }, { timeout: 80000 });
 
@@ -68,15 +49,11 @@ test('a stale member update cannot leave orphan scopes, audit rows or idempotenc
   const idemBefore = rows(`SELECT COUNT(*) AS count FROM idempotency_records WHERE operation='members.patch:${member.id}';`)[0].count;
   const staleKey = `atomic-stale-${crypto.randomUUID()}`;
 
-  const stale = await jsonRequest(`/api/members/${member.id}`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json', 'Idempotency-Key': staleKey },
-    body: JSON.stringify({
-      expectedVersion: 1,
-      role: 'finance',
-      scopes: [{ type: 'project', id: 'project-should-not-exist' }],
-    }),
-  });
+  const stale = await jsonRequest(runtime, `/api/members/${member.id}`, mutation('PATCH', {
+    expectedVersion: 1,
+    role: 'finance',
+    scopes: [{ type: 'project', id: 'project-should-not-exist' }],
+  }, { Cookie: adminCookie, 'Idempotency-Key': staleKey }));
   assert.equal(stale.response.status, 409);
   assert.equal(stale.body.error.code, 'VERSION_CONFLICT');
 
@@ -94,15 +71,11 @@ test('idempotent replay returns the stored response without duplicating audit hi
   const auditBefore = rows(`SELECT COUNT(*) AS count FROM audit_events WHERE object_type='member' AND object_id='${member.id}' AND action='member.update';`)[0].count;
   const idemBefore = rows(`SELECT COUNT(*) AS count FROM idempotency_records WHERE idempotency_key='${successfulKey}';`)[0].count;
 
-  const replay = await jsonRequest(`/api/members/${member.id}`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json', 'Idempotency-Key': successfulKey },
-    body: JSON.stringify({
-      expectedVersion: 1,
-      role: 'project_manager',
-      scopes: [{ type: 'framework', id: 'framework-new' }],
-    }),
-  });
+  const replay = await jsonRequest(runtime, `/api/members/${member.id}`, mutation('PATCH', {
+    expectedVersion: 1,
+    role: 'project_manager',
+    scopes: [{ type: 'framework', id: 'framework-new' }],
+  }, { Cookie: adminCookie, 'Idempotency-Key': successfulKey }));
   assert.equal(replay.response.status, 200);
   assert.equal(replay.body.data.version, 2);
 

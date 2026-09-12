@@ -1,96 +1,69 @@
-import { createRemoteJWKSet, jwtVerify } from 'jose';
 import type { Context, MiddlewareHandler } from 'hono';
 import type { CurrentUser, MemberRole, MemberScope } from '@tpm/shared';
-import { findMemberByEmail, recordSuccessfulLogin } from './db';
+import { findMemberById } from './db';
 import type { WorkerBindings } from './env';
+import { clearSessionCookie, getSessionToken, hashSessionToken } from './session';
 
 type AppVariables = { currentUser: CurrentUser };
 type AppEnv = { Bindings: WorkerBindings; Variables: AppVariables };
 
-export interface ResolvedIdentity {
-  email: string;
-  authSource: CurrentUser['authSource'];
+interface SessionRow {
+  member_id: string;
+  session_version: number;
+  member_session_version: number;
+  last_seen_at: string;
+  expires_at: string;
+  revoked_at: string | null;
 }
 
-const jwksByIssuer = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
-
-function normalizeTeamDomain(value: string): string {
-  return value.replace(/^https?:\/\//, '').replace(/\/$/, '');
-}
-
-function unauthorized(c: Context<AppEnv>, code: string, message: string, status: 401 | 403 | 503 = 401) {
+function authError(c: Context<AppEnv>, code: string, message: string, status: 401 | 403 | 503 = 401) {
   return c.json({ ok: false as const, error: { code, message } }, status);
 }
 
-async function accessEmail(c: Context<AppEnv>): Promise<string | null> {
-  const teamDomain = c.env.ACCESS_TEAM_DOMAIN?.trim();
-  const audience = c.env.ACCESS_AUD?.trim();
-  if (!teamDomain || !audience) return null;
-
-  const assertion = c.req.header('Cf-Access-Jwt-Assertion');
-  if (!assertion) throw new Error('ACCESS_ASSERTION_MISSING');
-
-  const host = normalizeTeamDomain(teamDomain);
-  const issuer = `https://${host}`;
-  let jwks = jwksByIssuer.get(issuer);
-  if (!jwks) {
-    jwks = createRemoteJWKSet(new URL(`${issuer}/cdn-cgi/access/certs`));
-    jwksByIssuer.set(issuer, jwks);
-  }
-
-  const { payload } = await jwtVerify(assertion, jwks, { issuer, audience });
-  const email = typeof payload.email === 'string' ? payload.email.trim().toLowerCase() : '';
-  if (!email) throw new Error('ACCESS_EMAIL_MISSING');
-  return email;
-}
-
-function developmentEmail(c: Context<AppEnv>): string | null {
-  if (c.env.APP_ENV !== 'development' && c.env.APP_ENV !== 'test') return null;
-  const fromHeader = c.req.header('X-Dev-User-Email')?.trim().toLowerCase();
-  const configured = c.env.DEV_AUTH_EMAIL?.trim().toLowerCase();
-  return fromHeader || configured || null;
-}
-
-export async function resolveIdentity(c: Context<AppEnv>): Promise<ResolvedIdentity | Response> {
-  if (c.env.APP_ENV === 'production') {
-    if (!c.env.ACCESS_TEAM_DOMAIN?.trim() || !c.env.ACCESS_AUD?.trim()) {
-      return unauthorized(c, 'AUTH_CONFIG_MISSING', '生产环境缺少 Cloudflare Access 配置', 503);
-    }
-    try {
-      const email = await accessEmail(c);
-      if (!email) return unauthorized(c, 'UNAUTHENTICATED', 'Cloudflare Access 身份验证失败');
-      return { email, authSource: 'cloudflare-access' };
-    } catch {
-      return unauthorized(c, 'UNAUTHENTICATED', 'Cloudflare Access 身份验证失败');
-    }
-  }
-
-  const development = developmentEmail(c);
-  if (development) return { email: development, authSource: 'development' };
-
-  if (c.env.ACCESS_TEAM_DOMAIN?.trim() && c.env.ACCESS_AUD?.trim()) {
-    try {
-      const email = await accessEmail(c);
-      if (!email) return unauthorized(c, 'UNAUTHENTICATED', '身份验证失败');
-      return { email, authSource: 'cloudflare-access' };
-    } catch {
-      return unauthorized(c, 'UNAUTHENTICATED', '身份验证失败');
-    }
-  }
-
-  return unauthorized(c, 'UNAUTHENTICATED', '本地开发身份未配置');
-}
+const passwordChangeAllowedPaths = new Set([
+  '/api/me',
+  '/api/auth/change-password',
+  '/api/auth/logout',
+]);
 
 export const requireAuthentication: MiddlewareHandler<AppEnv> = async (c, next) => {
-  const identity = await resolveIdentity(c);
-  if (identity instanceof Response) return identity;
+  const token = getSessionToken(c);
+  if (!token) return authError(c, 'UNAUTHENTICATED', '请先登录');
 
-  const member = await findMemberByEmail(c.env.DB, identity.email);
-  if (!member) return unauthorized(c, 'MEMBER_NOT_FOUND', '当前身份未加入系统成员', 403);
-  if (!member.enabled) return unauthorized(c, 'MEMBER_DISABLED', '当前成员已停用', 403);
+  const tokenHash = await hashSessionToken(token);
+  const session = await c.env.DB.prepare(
+    `SELECT s.member_id, s.session_version, s.last_seen_at, s.expires_at, s.revoked_at,
+            m.session_version AS member_session_version
+     FROM auth_sessions s
+     INNER JOIN members m ON m.id = s.member_id
+     WHERE s.token_hash = ? LIMIT 1`,
+  ).bind(tokenHash).first<SessionRow>();
 
-  const activeMember = await recordSuccessfulLogin(c.env.DB, member);
-  c.set('currentUser', { ...activeMember, authSource: identity.authSource });
+  const now = new Date();
+  if (!session || session.revoked_at || session.expires_at <= now.toISOString() || session.session_version !== session.member_session_version) {
+    clearSessionCookie(c);
+    return authError(c, 'UNAUTHENTICATED', '登录状态已失效，请重新登录');
+  }
+
+  const member = await findMemberById(c.env.DB, session.member_id);
+  if (!member) {
+    clearSessionCookie(c);
+    return authError(c, 'UNAUTHENTICATED', '登录状态已失效，请重新登录');
+  }
+  if (!member.enabled) return authError(c, 'MEMBER_DISABLED', '当前账号已停用', 403);
+
+  const staleBefore = new Date(now.getTime() - 60 * 60 * 1000).toISOString();
+  if (session.last_seen_at < staleBefore) {
+    await c.env.DB.prepare(
+      `UPDATE auth_sessions SET last_seen_at = ? WHERE token_hash = ? AND last_seen_at < ? AND revoked_at IS NULL`,
+    ).bind(now.toISOString(), tokenHash, staleBefore).run();
+  }
+
+  const currentUser: CurrentUser = { ...member, authSource: 'session' };
+  c.set('currentUser', currentUser);
+  if (currentUser.mustChangePassword && !passwordChangeAllowedPaths.has(c.req.path)) {
+    return authError(c, 'PASSWORD_CHANGE_REQUIRED', '首次登录必须先修改密码', 403);
+  }
   await next();
 };
 
@@ -98,7 +71,7 @@ export function requireRoles(...roles: MemberRole[]): MiddlewareHandler<AppEnv> 
   return async (c, next) => {
     const user = c.get('currentUser');
     if (!roles.includes(user.role)) {
-      return unauthorized(c, 'FORBIDDEN', '当前角色没有此操作权限', 403);
+      return authError(c, 'FORBIDDEN', '当前角色没有此操作权限', 403);
     }
     await next();
   };
@@ -117,7 +90,7 @@ export function requireScope(type: Exclude<MemberScope['type'], 'all'>, paramNam
     }
     const id = c.req.param(paramName);
     if (!id || !hasScope(user.scopes, type, id)) {
-      return unauthorized(c, 'SCOPE_FORBIDDEN', '当前成员无权访问该业务范围', 403);
+      return authError(c, 'SCOPE_FORBIDDEN', '当前成员无权访问该业务范围', 403);
     }
     await next();
   };

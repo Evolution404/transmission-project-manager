@@ -3,6 +3,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { defineComponent, h } from 'vue';
 import type { CurrentUser, MemberSummary, SettingVersion } from '@tpm/shared';
 
+const authMocks = vi.hoisted(() => ({ createDerivedCredential: vi.fn() }));
+vi.mock('../src/auth/credentials', () => ({
+  normalizeUsername: (value: string) => value.trim().toLowerCase(),
+  validatePasswordForClient: (value: string) => value.length < 15 ? '密码至少需要 15 个字符' : null,
+  createDerivedCredential: authMocks.createDerivedCredential,
+}));
+
 vi.mock('naive-ui', async () => {
   const vue = await import('vue');
   const wrap = (name: string) => vue.defineComponent({
@@ -75,7 +82,7 @@ vi.mock('naive-ui', async () => {
     props: { columns: { type: Array, default: () => [] }, data: { type: Array, default: () => [] } },
     setup(props) {
       return () => vue.h('div', { 'data-stub': 'NDataTable' }, (props.data as MemberSummary[]).map((row) =>
-        vue.h('div', { 'data-row': row.email }, (props.columns as Array<{ key: string; render?: (row: MemberSummary) => unknown }>).map((column) =>
+        vue.h('div', { 'data-row': row.username }, (props.columns as Array<{ key: string; render?: (row: MemberSummary) => unknown }>).map((column) =>
           vue.h('div', { 'data-cell': column.key }, column.render ? column.render(row) as never : String((row as never)[column.key] ?? ''))))));
     },
   });
@@ -117,7 +124,7 @@ import AdministrationView from '../src/views/AdministrationView.vue';
 
 const admin: CurrentUser = {
   id: 'admin-1',
-  email: 'admin@example.test',
+  username: 'admin',
   displayName: '管理员',
   role: 'admin',
   enabled: true,
@@ -127,10 +134,11 @@ const admin: CurrentUser = {
   firstLoginAt: '2026-09-12T00:01:00.000Z',
   lastLoginAt: '2026-09-12T00:02:00.000Z',
   lifecycleStatus: 'active',
-  authSource: 'development',
+  mustChangePassword: false,
+  authSource: 'session',
 };
 
-const readonlyUser: CurrentUser = { ...admin, id: 'readonly-1', email: 'readonly@example.test', role: 'readonly' };
+const readonlyUser: CurrentUser = { ...admin, id: 'readonly-1', username: 'readonly-user', role: 'readonly' };
 const settings: SettingVersion[] = [{
   id: 'setting-1', key: 'business.timezone', version: 1, value: { timezone: 'Asia/Shanghai' },
   effectiveFrom: '2026-09-12T00:00:00.000Z', createdBy: null, createdAt: '2026-09-12T00:00:00.000Z',
@@ -138,9 +146,9 @@ const settings: SettingVersion[] = [{
 
 function member(overrides: Partial<MemberSummary> = {}): MemberSummary {
   return {
-    id: 'member-1', email: 'member@example.test', displayName: '测试成员', role: 'readonly', enabled: true, version: 1,
+    id: 'member-1', username: 'member', displayName: '测试成员', role: 'readonly', enabled: true, version: 1,
     scopes: [{ type: 'all', id: null }], invitedAt: '2026-09-12T00:00:00.000Z', firstLoginAt: null, lastLoginAt: null,
-    lifecycleStatus: 'pending_first_login', ...overrides,
+    lifecycleStatus: 'pending_first_login', mustChangePassword: true, ...overrides,
   };
 }
 
@@ -166,6 +174,10 @@ describe('AdministrationView member management contract', () => {
   beforeEach(() => {
     members = [member()];
     writes.length = 0;
+    authMocks.createDerivedCredential.mockReset().mockResolvedValue({
+      salt: 'AAAAAAAAAAAAAAAAAAAAAA',
+      credential: 'derived-credential-value-12345678901234567890',
+    });
     fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = init?.method ?? 'GET';
@@ -174,7 +186,7 @@ describe('AdministrationView member management contract', () => {
       if (url === '/api/members' && method === 'POST') {
         const body = JSON.parse(String(init?.body));
         writes.push({ url, method, body });
-        const created = member({ id: 'created-1', email: body.email, displayName: body.displayName, role: body.role, enabled: body.enabled, scopes: body.scopes });
+        const created = member({ id: 'created-1', username: body.username, displayName: body.displayName, role: body.role, enabled: body.enabled, scopes: body.scopes, mustChangePassword: true });
         members = [...members, created];
         return ok(created);
       }
@@ -202,7 +214,7 @@ describe('AdministrationView member management contract', () => {
     expect(fetchMock).toHaveBeenCalledWith('/api/members', undefined);
     expect(wrapper.text()).toContain('新增成员');
     expect(wrapper.text()).toContain('待首次登录');
-    expect(wrapper.text()).toContain('member@example.test');
+    expect(wrapper.text()).toContain('member');
   });
 
   it('does not fetch or expose member administration for a non-admin role', async () => {
@@ -214,23 +226,26 @@ describe('AdministrationView member management contract', () => {
     expect(wrapper.text()).toContain('当前角色没有成员管理权限');
   });
 
-  it('normalizes a new member email and submits the default all scope', async () => {
+  it('creates a username/password account without requiring email and submits the default all scope', async () => {
     const wrapper = mount(AdministrationView, { props: { currentUser: admin } });
     await flushPromises();
     await buttonByText(wrapper, '新增成员').trigger('click');
     await wrapper.get('[data-form-label="姓名"] input').setValue(' 张三 ');
-    await wrapper.get('[data-form-label="邮箱"] input').setValue(' ZhangSan@Example.COM ');
+    await wrapper.get('[data-form-label="账号"] input').setValue(' ZhangSan ');
+    await wrapper.get('[data-form-label="初始密码"] input').setValue('成员初始长口令-2026-安全');
     await buttonByText(wrapper, '保存').trigger('click');
     await flushPromises();
 
     expect(writes).toHaveLength(1);
     expect(writes[0]).toEqual({
       url: '/api/members', method: 'POST', body: {
-        displayName: '张三', email: 'zhangsan@example.com', role: 'readonly', enabled: true,
-        scopes: [{ type: 'all', id: null }],
+        displayName: '张三', username: 'zhangsan',
+        salt: 'AAAAAAAAAAAAAAAAAAAAAA', credential: 'derived-credential-value-12345678901234567890',
+        role: 'readonly', enabled: true, scopes: [{ type: 'all', id: null }],
       },
     });
-    expect(wrapper.text()).toContain('zhangsan@example.com');
+    expect(wrapper.text()).toContain('zhangsan');
+    expect(wrapper.text()).not.toContain('邮箱');
   });
 
   it('blocks an empty custom scope before any member write request is sent', async () => {
@@ -238,7 +253,8 @@ describe('AdministrationView member management contract', () => {
     await flushPromises();
     await buttonByText(wrapper, '新增成员').trigger('click');
     await wrapper.get('[data-form-label="姓名"] input').setValue('范围测试');
-    await wrapper.get('[data-form-label="邮箱"] input').setValue('scope@example.com');
+    await wrapper.get('[data-form-label="账号"] input').setValue('scope-user');
+    await wrapper.get('[data-form-label="初始密码"] input').setValue('范围测试初始长口令-2026-安全');
     await wrapper.get('[data-form-label="授权范围"] select').setValue('custom');
     await buttonByText(wrapper, '保存').trigger('click');
     await flushPromises();

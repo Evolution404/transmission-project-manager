@@ -1,47 +1,46 @@
 import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
+import { cleanupStateDir, makeStateDir, queryLocalD1, startWranglerServer } from './helpers/wrangler.mjs';
 import {
-  cleanupStateDir,
-  makeStateDir,
-  queryLocalD1,
-  startWranglerServer,
-} from './helpers/wrangler.mjs';
+  bootstrapAdmin, cookiePair, createMember, fixedCredential, fixedSalt, jsonRequest, loginWithCredential, mutation,
+} from './helpers/auth.mjs';
 
 const stateDir = makeStateDir('tpm-admin-race-');
 let runtime;
 let firstAdmin;
 let secondAdmin;
-
-async function jsonRequest(path, init = {}) {
-  const response = await runtime.request(path, init);
-  return { response, body: await response.json() };
-}
+let firstCookie;
+let secondCookie;
 
 before(async () => {
-  runtime = await startWranglerServer({ stateDir, port: 8801, seed: false, migrate: true });
+  runtime = await startWranglerServer({
+    stateDir, port: 8801, migrate: true,
+    vars: ['AUTH_CREDENTIAL_PEPPER:race-pepper', 'BOOTSTRAP_TOKEN:race-bootstrap'],
+  });
 
-  const bootstrap = await jsonRequest('/api/bootstrap/admin', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Dev-User-Email': 'dev-admin@example.invalid' },
-    body: JSON.stringify({ displayName: '并发管理员 A' }),
+  const bootstrap = await bootstrapAdmin(runtime, {
+    token: 'race-bootstrap', displayName: '并发管理员 A', salt: fixedSalt(1), credential: fixedCredential(1),
   });
   assert.equal(bootstrap.response.status, 201);
   firstAdmin = bootstrap.body.data;
+  firstCookie = cookiePair(bootstrap.response.headers.get('set-cookie'));
 
-  const create = await jsonRequest('/api/members', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Idempotency-Key': `race-create-${crypto.randomUUID()}`,
-      'X-Dev-User-Email': 'dev-admin@example.invalid',
-    },
-    body: JSON.stringify({
-      email: 'admin-b@example.invalid', displayName: '并发管理员 B', role: 'admin', enabled: true,
-      scopes: [{ type: 'all', id: null }],
-    }),
+  const create = await createMember(runtime, firstCookie, {
+    username: 'admin-b', displayName: '并发管理员 B', role: 'admin',
+    salt: fixedSalt(2), credential: fixedCredential(2), scopes: [{ type: 'all', id: null }],
   });
   assert.equal(create.response.status, 201);
   secondAdmin = create.body.data;
+
+  const login = await loginWithCredential(runtime, 'admin-b', fixedCredential(2));
+  assert.equal(login.response.status, 200);
+  const initialCookie = cookiePair(login.response.headers.get('set-cookie'));
+  const changed = await jsonRequest(runtime, '/api/auth/change-password', mutation('POST', {
+    currentCredential: fixedCredential(2),
+    next: { salt: fixedSalt(3), credential: fixedCredential(3) },
+  }, { Cookie: initialCookie }));
+  assert.equal(changed.response.status, 200);
+  secondCookie = cookiePair(changed.response.headers.get('set-cookie'));
 }, { timeout: 80000 });
 
 after(async () => {
@@ -51,24 +50,12 @@ after(async () => {
 
 test('concurrent demotions can never leave the system with zero enabled administrators', async () => {
   const [demoteA, demoteB] = await Promise.all([
-    jsonRequest(`/api/members/${firstAdmin.id}`, {
-      method: 'PATCH',
-      headers: {
-        'Content-Type': 'application/json',
-        'Idempotency-Key': `race-a-${crypto.randomUUID()}`,
-        'X-Dev-User-Email': 'admin-b@example.invalid',
-      },
-      body: JSON.stringify({ expectedVersion: firstAdmin.version, role: 'readonly', scopes: [] }),
-    }),
-    jsonRequest(`/api/members/${secondAdmin.id}`, {
-      method: 'PATCH',
-      headers: {
-        'Content-Type': 'application/json',
-        'Idempotency-Key': `race-b-${crypto.randomUUID()}`,
-        'X-Dev-User-Email': 'dev-admin@example.invalid',
-      },
-      body: JSON.stringify({ expectedVersion: secondAdmin.version, role: 'readonly', scopes: [] }),
-    }),
+    jsonRequest(runtime, `/api/members/${firstAdmin.id}`, mutation('PATCH', {
+      expectedVersion: firstAdmin.version, role: 'readonly', scopes: [],
+    }, { Cookie: secondCookie, 'Idempotency-Key': `race-a-${crypto.randomUUID()}` })),
+    jsonRequest(runtime, `/api/members/${secondAdmin.id}`, mutation('PATCH', {
+      expectedVersion: secondAdmin.version, role: 'readonly', scopes: [],
+    }, { Cookie: firstCookie, 'Idempotency-Key': `race-b-${crypto.randomUUID()}` })),
   ]);
 
   const successCount = [demoteA, demoteB].filter((item) => item.response.status === 200).length;

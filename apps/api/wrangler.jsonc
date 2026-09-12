@@ -12,9 +12,7 @@
     "run_worker_first": ["/api", "/api/*"]
   },
   "vars": {
-    "APP_ENV": "development",
-    "DEV_AUTH_EMAIL": "dev-admin@example.invalid",
-    "BOOTSTRAP_ADMIN_EMAIL": "dev-admin@example.invalid"
+    "APP_ENV": "development"
   },
   "d1_databases": [
     {
