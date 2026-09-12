@@ -87,6 +87,22 @@ describe('LoginView local account contract', () => {
 
   afterEach(() => vi.unstubAllGlobals());
 
+  it('uses Chinese placeholders and explains the one-time bootstrap token on first initialization', async () => {
+    fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === '/api/auth/status') return response(true, { initialized: false });
+      throw new Error(`unexpected ${url}`);
+    });
+
+    const wrapper = mount(LoginView);
+    await flushPromises();
+    expect(wrapper.text()).toContain('初始化令牌仅用于首次创建系统管理员');
+    expect(wrapper.get('[data-test="login-username"]').attributes('placeholder')).toBe('请输入管理员账号');
+    expect(wrapper.get('[data-test="login-password"]').attributes('placeholder')).toBe('请输入密码');
+    expect(wrapper.get('[data-test="bootstrap-confirm-password"]').attributes('placeholder')).toBe('请再次输入密码');
+    expect(wrapper.get('[data-test="bootstrap-token"]').attributes('placeholder')).toBe('请输入一次性初始化令牌');
+  });
+
   it('uses account and password only, with no email verification UI', async () => {
     const wrapper = mount(LoginView);
     await flushPromises();

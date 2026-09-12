@@ -135,7 +135,7 @@ onMounted(loadStatus);
               v-model:value="username"
               data-test="login-username"
               autocomplete="username"
-              placeholder="例如：zhangsan"
+              :placeholder="initialized === false ? '请输入管理员账号' : '请输入账号'"
             />
           </n-form-item>
           <n-form-item label="密码">
@@ -144,6 +144,7 @@ onMounted(loadStatus);
               data-test="login-password"
               type="password"
               show-password-on="mousedown"
+              placeholder="请输入密码"
               :autocomplete="initialized === false ? 'new-password' : 'current-password'"
               @keyup.enter="initialized === false ? bootstrap() : login()"
             />
@@ -151,11 +152,24 @@ onMounted(loadStatus);
 
           <template v-if="initialized === false">
             <n-form-item label="确认密码">
-              <n-input v-model:value="confirmPassword" type="password" autocomplete="new-password" />
+              <n-input
+                v-model:value="confirmPassword"
+                data-test="bootstrap-confirm-password"
+                type="password"
+                placeholder="请再次输入密码"
+                autocomplete="new-password"
+              />
             </n-form-item>
-            <n-form-item label="初始化令牌">
-              <n-input v-model:value="bootstrapToken" type="password" autocomplete="off" />
+            <n-form-item label="初始化令牌（仅首次使用）">
+              <n-input
+                v-model:value="bootstrapToken"
+                data-test="bootstrap-token"
+                type="password"
+                placeholder="请输入一次性初始化令牌"
+                autocomplete="off"
+              />
             </n-form-item>
+            <p class="login-help">初始化令牌仅用于首次创建系统管理员，由部署方提供；创建成功后该初始化入口自动关闭。</p>
             <n-button data-test="login-submit" type="primary" block :loading="loading" @click="bootstrap">
               创建首个管理员
             </n-button>
