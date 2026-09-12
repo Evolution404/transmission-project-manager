@@ -57,7 +57,7 @@ npm run check
 - 可读参考：https://www.workbuddy.link/p/plhvulKoyaQX5vic8Oaeoy?source=2 。仅作为功能和布局参考。
 - 尚缺：原始需求Excel、“一年工作早知道”、“项目储备类别”、真实单价/框架/协议资料。
 - 尚缺：生产 Cloudflare 账户资源、可用自定义域名、正式运行时 Secrets 和后续通知收件资料。
-- 未测：真实 Cloudflare Workers CPU/配额与目标地区网络、低性能手机 Argon2id 体验、真实文件映射、真实发信、正式环境恢复与运维移交；这些全部属于 P7。
+- 未测：真实 Cloudflare Workers CPU/配额与目标地区网络、低性能手机 Argon2id 体验、标准模板填报后的真实业务值抽检、真实发信、正式环境恢复与运维移交；这些全部属于 P7。
 - P4 完整本地门禁已全绿：70/70 Node/workerd+D1 + 38/38 Vue/Vitest，共 108 项；覆盖 P1.2/P2/P3 全量回归、P3→P4 数据保留、预算/发生分离、协议归属、预算版本、冲销、并发/幂等、精确阈值、105+ 流水游标分页和 `/finance` 页面合同。CI 实际结果以仓库 Actions 为准。
 
 ## 后续交接记录
@@ -151,7 +151,7 @@ npm run check
 - 备份：按表和 100 行分片导出至私有 R2，保存 chunk SHA-256 与 manifest；测试已把 manifest/chunk 回灌到第二个独立临时 D1 并对账核心业务事实，且不恢复 `auth_sessions`。
 - 前端：ECharts 采用按需注册并动态拆包，`AnalysisView` 约 19.48 kB（gzip 6.25 kB），独立图表运行块约 488.44 kB（gzip 164.84 kB）；Worker dry-run 上传约 411.87 KiB（gzip 78.17 KiB）。
 - 测试：分段完整门禁全绿，93/93 Node/workerd+D1 + 48/48 Vue/Vitest，共 141 项 PASS；TypeScript、Vite 生产构建、Worker dry-run 均通过。当前工具单次 300 秒限制导致完整 `npm run check` 不宜单次运行，因此 Node 测试按全部 `tests/*.test.mjs` 文件组分段实际跑完，无跳过。
-- 未验证：真实 Excel/年度事项/分类文件、真实邮件供应商与域名、真实 Cloudflare CPU/免费额度、目标地区网络、正式环境恢复、Cloudflare/GitHub 运维移交和正式发布，全部进入 P7。
+- 未验证：标准需求模板填报后的真实业务值、年度事项/分类等真实业务资料、真实邮件供应商与域名、真实 Cloudflare CPU/免费额度、目标地区网络、正式环境恢复、Cloudflare/GitHub 运维移交和正式发布，全部进入 P7。
 - 下一步：P7 仅做真实数据与正式环境验收/上线，不扩写新业务功能；任何口径差异先回到现有设计和不变量核对，不能用真实数据接入覆盖历史事实。
 
 每完成阶段在此追加：阶段、提交号、完成内容、测试、未完成/未验证项和明确下一步。不要删除原始边界说明。
@@ -161,7 +161,8 @@ npm run check
 - 完成：非 Secret production config 模板与拒绝占位/错误绑定/旧认证的校验；13 项真实验收记录模板/结构检查；私有文件哈希清单；P6 manifest/chunk/附件存在性离线检查；发布、迁移、停写备份、隔离恢复、回退和运维撤权手册。
 - CI：普通 push 仍只验证；新增手工 production preflight 仅 dry-run，不使用云 Token。生产部署模板位于 workflows 外，必须另行授权、配置并验证 Environment 保护后才可启用。
 - 缺陷：真实 Excel 准备审计发现解析器忽略空行和 used-range 起点会偏移物理来源行。两个回归先复现失败，再修复保留真实行号且过滤空行；不自动改写旧批次。
-- 验证：完整单次 `npm run check` 成功（Node 测试约 228 秒），100/100 Node/workerd+D1 + 50/50 Vue/Vitest，共 150/150 PASS；TypeScript、Vite build、Worker dry-run PASS；production 示例独立 dry-run PASS；3 份 workflow YAML 语法解析 PASS；空验收记录按预期退出 2，占位 production config 按预期退出 1。
+- 验证：最新完整单次 `npm run check` 成功（Node 测试约 271 秒），100/100 Node/workerd+D1 + 53/53 Vue/Vitest，共 153/153 PASS；TypeScript、Vite build、Worker dry-run PASS。此前 production 示例独立 dry-run、3 份 workflow YAML 语法解析、空验收记录退出 2、占位 production config 退出 1 的 P7 预检结果继续有效。
 - 迁移影响：无 schema/迁移改动；认证与 P2–P6 后端数量、金额、版本、幂等、并发和状态实现保持不变。
-- 未完成：P7-01～13 真实验收仍缺原件、生产资源/授权、Secret、邮件适配器/域名、CPU/额度与现场网络、真实恢复/发布/撤权证据。没有创建资源、部署或发送邮件，未使用生产 Secret。
+- P7-01 口径后续明确为系统标准模板下载/填报/回导，而非适配任意历史 Excel；标准模板生成和回导自动测试在 P7 补齐，最终只保留真实业务值抽检。
+- 未完成：P7-01 最终真实业务值抽检及 P7-02～13 的真实业务资料、生产资源/授权、Secret、邮件适配器/域名、CPU/额度与现场网络、真实恢复/发布/撤权证据。没有创建资源、部署或发送邮件，未使用生产 Secret。
 - 下一步：按 `docs/P7_RUNBOOK.md` 和矩阵采集真实证据；JSON 记录结构通过不能代替真实验收。备份不具备跨表快照隔离，正式迁移前需可靠停写并隔离恢复对账。

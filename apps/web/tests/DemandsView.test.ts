@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { defineComponent, h } from 'vue';
 import type { CurrentUser, ImportFieldMapping } from '@tpm/shared';
 
-const { parseFileInWorker, sha256File, executeImportWorkflow, ImportReviewRequiredError } = vi.hoisted(() => {
+const { parseFileInWorker, sha256File, executeImportWorkflow, ImportReviewRequiredError, downloadDemandImportTemplate } = vi.hoisted(() => {
   class ReviewError extends Error {
     batchId: string;
     errorRows: number;
@@ -20,9 +20,11 @@ const { parseFileInWorker, sha256File, executeImportWorkflow, ImportReviewRequir
     sha256File: vi.fn(),
     executeImportWorkflow: vi.fn(),
     ImportReviewRequiredError: ReviewError,
+    downloadDemandImportTemplate: vi.fn(),
   };
 });
 
+vi.mock('../src/imports/demandTemplate', () => ({ downloadDemandImportTemplate }));
 vi.mock('../src/imports/workerClient', () => ({ parseFileInWorker }));
 vi.mock('../src/imports/workflow', () => ({
   sha256File,
@@ -122,6 +124,7 @@ describe('DemandsView P2 behavior', () => {
     parseFileInWorker.mockReset();
     sha256File.mockReset();
     executeImportWorkflow.mockReset();
+    downloadDemandImportTemplate.mockReset();
   });
 
   afterEach(() => vi.unstubAllGlobals());
@@ -133,6 +136,13 @@ describe('DemandsView P2 behavior', () => {
     expect(wrapper.text()).toContain('仅管理员或项目管理角色可以导入需求');
     expect(wrapper.find('[data-test="file-input"]').exists()).toBe(false);
     expect(wrapper.find('[data-test="add-material"]').exists()).toBe(false);
+  });
+
+  it('lets write roles download the canonical import template before selecting a file', async () => {
+    const wrapper = mount(DemandsView, { props: { currentUser: admin } });
+    await flushPromises();
+    await wrapper.get('[data-test="download-demand-template"]').trigger('click');
+    expect(downloadDemandImportTemplate).toHaveBeenCalledTimes(1);
   });
 
   it('loads source details on demand instead of treating list data as complete provenance', async () => {

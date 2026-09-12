@@ -28,6 +28,7 @@ import type {
   ImportRowSummary,
   MaterialSummary,
 } from '@tpm/shared';
+import { downloadDemandImportTemplate } from '../imports/demandTemplate';
 import { parseFileInWorker } from '../imports/workerClient';
 import type { ParsedSpreadsheet } from '../imports/parser';
 import {
@@ -194,6 +195,14 @@ function applyTemplate(id: string | null) {
   if (template) mapping.value = { ...template.mapping };
 }
 
+async function downloadTemplate() {
+  try {
+    await downloadDemandImportTemplate();
+  } catch (cause) {
+    message.error(cause instanceof Error ? cause.message : '标准模板下载失败');
+  }
+}
+
 async function saveTemplate() {
   const name = templateName.value.trim();
   if (!name) {
@@ -357,9 +366,12 @@ onMounted(loadInitial);
           </n-alert>
 
           <template v-else>
-            <n-card title="1. 选择并解析文件">
+            <n-card title="1. 下载模板并选择文件">
+              <template #header-extra>
+                <n-button data-test="download-demand-template" secondary @click="downloadTemplate">下载标准模板</n-button>
+              </template>
               <n-alert type="info" :bordered="false" class="section-note">
-                文件仅在浏览器 Web Worker 中解析；支持 .xlsx 和 UTF-8 .csv。旧 .xls 请先另存为 .xlsx。
+                推荐先下载系统标准模板填写后导入；标准模板可直接自动映射。文件仅在浏览器 Web Worker 中解析；同时兼容 .xlsx 和 UTF-8 .csv，旧 .xls 请先另存为 .xlsx。
               </n-alert>
               <input data-test="file-input" type="file" accept=".xlsx,.csv" :disabled="parsing || importing" @change="onFileChange" />
               <div v-if="parsing" class="status-line">正在后台解析文件…</div>
