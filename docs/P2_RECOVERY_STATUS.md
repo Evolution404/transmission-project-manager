@@ -1,8 +1,8 @@
-# P2 恢复状态（2026-09-12）
+# P2 恢复与完成记录（2026-09-12）
 
-## 1. 当前基线
+## 1. 恢复时基线
 
-远端 `main` 当前 HEAD：`ea72d8c`。
+本记录中的恢复起点是远端 `main` HEAD `ea72d8c`；该值只用于说明 P2 从何处恢复，不代表当前远端 HEAD。
 
 P1.2 已完成并推送：
 - `ad05dd0 feat: replace Access with local account authentication`
@@ -10,7 +10,7 @@ P1.2 已完成并推送：
 
 P1.2 完整门禁结果：31/31 Node/workerd+D1 + 11/11 Vue，共 42 项 PASS。认证模型已经锁定：系统自维护 username/password；浏览器 Web Worker 执行 Argon2id；服务端只做 HMAC-SHA256 verifier；数据库不保存明文密码或浏览器派生凭据；7 天 HttpOnly 会话；邮箱/Cloudflare Access 不参与业务认证。
 
-## 2. P2 WIP 当前工作区状态
+## 2. P2 WIP 恢复历史
 
 P2 在 P1.2 重构前保存于：
 `stash@{0}: On main: wip P2 before P1.2 local account auth`
@@ -44,19 +44,15 @@ P2 当前新增/恢复文件主要包括：
 
 P2 路由已经重新挂载：`app.route('/api', p2App)`。
 
-## 3. 当前已知失败点
+## 3. 恢复后问题处理结果
 
-恢复并解决冲突后已运行：
-`npm run typecheck`
+恢复时的旧认证测试夹具已经修复：`DemandsView.test.ts` 改用 `authSource: 'session'`、删除 `email`，并补齐 P1.2 后必填的 `username`、`mustChangePassword`。随后 `npm run typecheck` 转绿。
 
-API 和 shared 类型检查通过；Web 只剩两个旧认证测试夹具错误，均在：
-`apps/web/tests/DemandsView.test.ts`
+进一步测试审计发现并修复了三个真实 P2 收尾问题：
 
-错误：
-1. `authSource: 'development'` 已不再合法，应改为 `authSource: 'session'`。
-2. `CurrentUser` 已没有 `email` 字段，应删除该测试夹具中的 `email`。
-
-先修这两个测试夹具，再重新运行 `npm run typecheck`。
+1. 分片上传、校验和发布原先没有由客户端显式提交 `expectedVersion`，条件更新失败后存在返回 409 但前序语句已写入的半批风险。现在三类写操作都要求 `expectedVersion`，版本/状态守卫、业务写入和幂等记录处于同一个 D1 batch，并有 stale version/并发回归测试。
+2. `/demands` 虽已有 `DemandsView.vue`，路由仍指向占位页。现已切换为真实页面，并改成懒加载以避免把 P2 重业务页塞进首屏主包。
+3. `/api/health` 与界面阶段徽标仍停留在 P1.2。现已统一更新为 P2。
 
 ## 4. P2 已有实现/测试意图
 
@@ -75,20 +71,18 @@ P2 目标仍是：Excel 导入、需求池、物资字典。
 - 需求列表/详情与标准物资维护。
 - 失败校验应展示工作表、源行号、错误/警告明细。
 
-在 P1.2 插入前，P2 的核心 API、解析器、Worker、workflow 测试曾分别转绿，但恢复到新认证基线后必须重新跑完整门禁，不能沿用旧结论直接标完成。
+恢复到 P1.2 新认证基线后已经重新执行完整门禁，不再沿用旧测试结论。最终 `npm run check` 全绿：43/43 Node/workerd+D1 + 26/26 Vue/Vitest，共 69 项 PASS；TypeScript、Vite 生产构建和 Worker dry-run 同时通过。
 
-## 5. 下一步顺序
+## 5. 完成核对结果
 
-1. 修 `DemandsView.test.ts` 两个旧认证夹具。
-2. 运行 `npm run typecheck`。
-3. 运行 P2 定向测试：`tests/p2-import.test.mjs` 和 `apps/web/tests/*import*`、`DemandsView.test.ts`。
-4. 检查 `0002_p2_import_demands_materials.sql` 与当前 `0001` 的外键/字段是否完全一致。
-5. 补/恢复“P1.2 已有账号/范围/审计 → P2 迁移后数据不丢”的迁移测试。
-6. 继续审查分片上传、校验、发布的原子性；特别确认失败/版本冲突不留下半批数据。
-7. 把 `/demands` 路由从占位页切换到 `DemandsView.vue`（若尚未完成）。
-8. 完整运行 `npm run check`。
-9. 更新 `docs/IMPLEMENTATION_PLAN.md`、`docs/AI_HANDOFF.md`；P2 真正全绿后再提交、推送。
-10. 确认 P2 提交稳定后才考虑 `git stash drop stash@{0}`。
+1. `DemandsView.test.ts` 旧认证夹具已迁到 P1.2 当前模型。
+2. P2 定向后端测试 11/11、P2/路由相关前端测试全部通过。
+3. `0002_p2_import_demands_materials.sql` 已与当前 `0001` 对齐，并加入 `tests/migrations.lock.json` checksum 锁。
+4. P1.2→P2 数据保留测试覆盖成员、scope、活动会话、自定义设置和审计。
+5. 分片上传、校验、发布均覆盖 stale version 和并发原子性，失败写入不会留下半批数据。
+6. `/demands` 已懒加载真实 `DemandsView.vue`；生产构建主入口 JS 降至约 458.65 kB，不再触发 500 kB 主包警告。
+7. 完整 `npm run check` 已全绿，实施计划、测试策略、完整交接和短交接均已更新。
+8. 恢复用 stash 仍保留作本机备份；P2 已完成，后续入口改为 P3。除非明确需要清理，本次不 drop stash。
 
 ## 6. 不能回退的决定
 

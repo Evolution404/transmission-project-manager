@@ -44,6 +44,7 @@ import {
   getSessionToken,
   revokeSessionToken,
 } from './session';
+import { p2App } from './p2';
 
 export const app = new Hono<AppEnv>();
 
@@ -155,7 +156,7 @@ function currentUserData<T extends { mustChangePassword: boolean }>(member: T) {
 app.get('/api/health', (c) => {
   const body: HealthResponse = {
     ok: true,
-    data: { service: 'transmission-project-manager', stage: 'p1.2' },
+    data: { service: 'transmission-project-manager', stage: 'p2' },
   };
   c.header('Cache-Control', 'no-store');
   return c.json(body);
@@ -688,5 +689,7 @@ app.get('/api/scopes/:scopeType/:scopeId/check', async (c) => {
   }
   return c.json({ ok: true as const, data: { allowed: true } });
 });
+
+app.route('/api', p2App);
 
 app.notFound((c) => c.json(apiError('NOT_FOUND', '接口不存在或尚未实现'), 404));

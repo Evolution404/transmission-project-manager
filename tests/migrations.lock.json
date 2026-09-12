@@ -1,3 +1,4 @@
 {
-  "apps/api/migrations/0001_p1_identity_and_config.sql": "971bfb708b84d25073957adbd2419943353988d996b7d6d07b7e461adbb760e6"
+  "apps/api/migrations/0001_p1_identity_and_config.sql": "971bfb708b84d25073957adbd2419943353988d996b7d6d07b7e461adbb760e6",
+  "apps/api/migrations/0002_p2_import_demands_materials.sql": "649f55c8f30980f71c80f788815f2e1d33fff0ca4949a6ebaae881f2156cb5ae"
 }

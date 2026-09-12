@@ -1,6 +1,6 @@
 # 数据关系与接口约定
 
-这是一份实现约定。P1.2 已将身份模型重整为系统自维护账号、浏览器派生凭据与服务端会话；当前开发 schema 不再包含邮箱身份或 Cloudflare Access 认证字段。其余 P2–P7 业务对象仍按阶段实现。表名和字段可在迁移中作不影响语义的细化；改变业务口径必须同步 DESIGN.md。使用 D1/SQLite，不依赖 PostgreSQL 专有语法。
+这是一份实现约定。P1.2 已将身份模型重整为系统自维护账号、浏览器派生凭据与服务端会话；P2 已实现导入批次、需求池、来源追溯与标准物资。当前开发 schema 不包含邮箱身份或 Cloudflare Access 认证字段。P3–P7 业务对象仍按阶段实现。表名和字段可在迁移中作不影响语义的细化；改变业务口径必须同步 DESIGN.md。使用 D1/SQLite，不依赖 PostgreSQL 专有语法。
 
 ## 1. 通用约定
 
@@ -63,12 +63,14 @@
 14. 慢 KDF 只在浏览器 Web Worker 执行：Argon2id 当前参数为 `m=19456 KiB,t=2,p=1,hash=32,version=19`，每账号随机 16-byte salt。服务端只保存 `HMAC-SHA256(AUTH_CREDENTIAL_PEPPER, derivedCredential)` verifier 和公开 KDF 参数；不得保存明文密码或浏览器派生凭据，也不得在服务端执行 PBKDF2/Argon2。
 15. 会话 token 至少 256 bit 随机，数据库只存 token SHA-256 哈希。每次鉴权检查会话未撤销/未过期、session_version 一致和成员启用；停用、改密或管理员重置密码必须使旧会话失效。
 16. `must_change_password` 为真时，只允许 `/api/me`、改密和退出等最小接口，不能访问业务数据或成员管理。
+17. P2 导入批次的 chunk/validate/publish 都必须携带当前 `expectedVersion`；版本/状态守卫、源行或需求写入、幂等记录必须处于同一个 D1 batch。stale version 或并发竞争失败不得留下源行、需求、需求物资、错误发布状态或孤立幂等记录。
+18. 同一源文件 SHA-256 + 工作表 + 源行用于来源幂等；业务字段相同但来源不同只能标记疑似重复供人工核对，不能自动删除合法需求。未知标准物资保留原始型号并标警告，不能伪造成零价或已映射。
 
 建议索引至少覆盖：来源幂等键；需求年度/类别/线路；需求物资分配；框架和协议归属；项目及财务条目的业务月；到期且待处理的通知；附件所属对象。按实际查询计划验收读行数。
 
 ## 4. API 合同
 
-当前已实现 P1/P1.2 接口：
+当前已实现 P1/P1.2/P2 接口：
 
 ```http
 GET /api/health
@@ -88,16 +90,25 @@ GET /api/settings/:key/history
 PUT /api/settings/:key
 GET /api/dictionaries?key=...
 GET /api/scopes/:scopeType/:scopeId/check
+GET /api/import-mappings
+POST /api/import-mappings
+GET /api/materials
+POST /api/materials
+POST /api/imports
+POST /api/imports/:id/chunks
+POST /api/imports/:id/validate
+GET /api/imports/:id
+POST /api/imports/:id/publish
+GET /api/demands
+GET /api/demands/:id
 ```
 
-`/api/health` 当前返回 `stage: "p1.2"`。业务接口先验证系统自身会话 Cookie，再根据 D1 成员启用状态、角色和范围授权；不解析 Cloudflare Access JWT，也不信任任何请求头 username/email/role。成员角色、启停和范围继续受服务端权限、版本/幂等/审计约束；最后一个启用管理员不可被停用或降权。配置变更继续保存历史版本与审计。未知 `/api` 路径返回 JSON 404，不回退到前端 HTML。
+`/api/health` 当前返回 `stage: "p2"`。业务接口先验证系统自身会话 Cookie，再根据 D1 成员启用状态、角色和范围授权；不解析 Cloudflare Access JWT，也不信任任何请求头 username/email/role。成员角色、启停和范围继续受服务端权限、版本/幂等/审计约束；最后一个启用管理员不可被停用或降权。配置变更继续保存历史版本与审计。P2 导入写接口仅允许 `admin/project_manager`，需求与物资读取仍经过统一会话中间件。未知 `/api` 路径返回 JSON 404，不回退到前端 HTML。
 
 其余待实现接口族：
 
 | 接口族 | 能力 |
 |---|---|
-| `/api/imports` | 创建批次、`/:id/chunks`上传、`/:id/validate`校验、`/:id/publish`发布、进度及错误 |
-| `/api/demands` | 分页检索、详情、修订、来源及数量反馈 |
 | `/api/projects` | 储备草稿、归并建议、分配、估算、确认版本、出库批次 |
 | `/api/implementations`、`/api/settlements` | 分批记录、历史导入关联、确认与更正 |
 | `/api/frameworks`、`/api/agreements` | 框架和协议的版本管理 |
@@ -107,6 +118,6 @@ GET /api/scopes/:scopeType/:scopeId/check
 
 通用响应沿用 `packages/shared` 的 `ApiResponse<T>`。列表默认50项、最大100项，返回 `items` 和不透明 `nextCursor`；大导出使用分页，不能无限制返回全库。
 
-每个创建/确认/出库/发生/结算等变更请求携带 `Idempotency-Key`；更新携带 `version`。错误使用明确状态：400格式、401未认证、403无权限、404不存在、409版本/幂等冲突、422业务校验、429限流。接口不接受前端提交的汇总值或最终权限判断为事实。
+每个创建/确认/出库/发生/结算等变更请求携带 `Idempotency-Key`；更新携带 `version`。P2 的多步导入写请求使用 `expectedVersion` 显式推进批次版本。错误使用明确状态：400格式、401未认证、403无权限、404不存在、409版本/幂等冲突、422业务校验、429限流。接口不接受前端提交的汇总值或最终权限判断为事实。
 
 每个阶段开始时先补齐该接口族的共享类型，再实现 API 和前端，保持类型、迁移和文档同步。生产鉴权只接受系统签发的服务端会话 Cookie；请求头 username、email、角色或 Cloudflare Access JWT 都不构成业务身份。

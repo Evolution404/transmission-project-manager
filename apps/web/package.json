@@ -14,7 +14,8 @@
     "@tpm/shared": "*",
     "naive-ui": "^2.42.0",
     "vue": "3.5.42",
-    "vue-router": "^4.6.3"
+    "vue-router": "^4.6.3",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "6.0.8",

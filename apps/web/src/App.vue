@@ -139,8 +139,8 @@ onMounted(loadIdentity);
             @update:value="navigate"
           />
           <div class="phase-badge">
-            <span>P1.2</span>
-            <small>本地账号与会话</small>
+            <span>P2</span>
+            <small>需求导入与物资</small>
           </div>
         </n-layout-sider>
 
