@@ -1,0 +1,27 @@
+{
+  "name": "transmission-project-manager",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "输电项目全流程管理台：Cloudflare 免费起步的项目骨架与 AI 实施计划",
+  "workspaces": ["apps/*", "packages/*"],
+  "engines": { "node": ">=24 <27", "npm": ">=11" },
+  "packageManager": "npm@11.17.0",
+  "scripts": {
+    "dev": "npm run build:web && concurrently --kill-others --names api,web npm:dev:api npm:dev:web",
+    "dev:api": "npm run dev --workspace @tpm/api",
+    "dev:web": "npm run dev --workspace @tpm/web",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "build:web": "npm run build --workspace @tpm/web",
+    "build:worker": "npm run build --workspace @tpm/api",
+    "build": "npm run build:web && npm run build:worker",
+    "test": "node --test tests/scaffold.test.mjs",
+    "check": "npm run typecheck && npm run build && npm test"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20260911.1",
+    "@types/node": "^24.0.0",
+    "concurrently": "10.0.5",
+    "typescript": "5.9.3"
+  }
+}

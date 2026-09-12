@@ -1,0 +1,17 @@
+{
+  "name": "@tpm/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 5173 --strictPort",
+    "build": "vite build",
+    "typecheck": "vue-tsc --noEmit && tsc -p tsconfig.node.json"
+  },
+  "dependencies": { "@tpm/shared": "*", "vue": "3.5.42" },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "6.0.8",
+    "vite": "8.3.0",
+    "vue-tsc": "3.3.11"
+  }
+}
