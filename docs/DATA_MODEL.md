@@ -1,6 +1,6 @@
 # 数据关系与接口约定
 
-这是一份实现约定。P1.2 已将身份模型重整为系统自维护账号、浏览器派生凭据与服务端会话；P2 已实现导入批次、需求池、来源追溯与标准物资。当前开发 schema 不包含邮箱身份或 Cloudflare Access 认证字段。P3–P7 业务对象仍按阶段实现。表名和字段可在迁移中作不影响语义的细化；改变业务口径必须同步 DESIGN.md。使用 D1/SQLite，不依赖 PostgreSQL 专有语法。
+这是一份实现约定。P1.2 已将身份模型重整为系统自维护账号、浏览器派生凭据与服务端会话；P2 已实现导入批次、需求池、来源追溯与标准物资；P3 已实现储备项目、需求物资分配、估算、储备分类与确认版本。当前开发 schema 不包含邮箱身份或 Cloudflare Access 认证字段。P4–P7 业务对象仍按阶段实现。表名和字段可在迁移中作不影响语义的细化；改变业务口径必须同步 DESIGN.md。使用 D1/SQLite，不依赖 PostgreSQL 专有语法。
 
 ## 1. 通用约定
 
@@ -65,12 +65,17 @@
 16. `must_change_password` 为真时，只允许 `/api/me`、改密和退出等最小接口，不能访问业务数据或成员管理。
 17. P2 导入批次的 chunk/validate/publish 都必须携带当前 `expectedVersion`；版本/状态守卫、源行或需求写入、幂等记录必须处于同一个 D1 batch。stale version 或并发竞争失败不得留下源行、需求、需求物资、错误发布状态或孤立幂等记录。
 18. 同一源文件 SHA-256 + 工作表 + 源行用于来源幂等；业务字段相同但来源不同只能标记疑似重复供人工核对，不能自动删除合法需求。未知标准物资保留原始型号并标警告，不能伪造成零价或已映射。
+19. P3 的需求物资数量必须满足 `原始 quantity_scaled = 有效 demand_allocations 合计 + 剩余 quantity_scaled`。创建/替换分配的版本守卫、释放旧分配、写入新分配、审计和幂等记录必须处于同一个 D1 batch；并发竞争或 stale version 失败不能超分配或留下半笔数据。
+20. P3 物资估算只使用定点整数：`quantity_scaled` 为万分之一单位、`unit_price_scaled` 为万分之一元，乘算使用精确整数并四舍五入到分。`unit_price_scaled = null` 表示未知，`0` 表示明确零价；任何固定费用或合计超过 JS 安全整数范围必须拒绝。
+21. P3 同一型号不同单位不得合并。项目物资汇总和来源明细必须能反查到 `demand_materials`、需求线路/杆段以及源文件/工作表/行号。
+22. 每条金额已知的 `project_cost_lines` 分类分摊合计必须精确等于该费用金额；共同费用允许拆分到多个 `reserve_categories`，但不能因多个类别重复增加项目金额。未知金额费用不能参与金额分摊。
+23. 储备确认写入不可变 `project_versions` 快照并递增 `reserve_version`；后续修改当前项目只能形成新的草稿状态，再次确认生成新版本，不能覆盖旧快照。
 
 建议索引至少覆盖：来源幂等键；需求年度/类别/线路；需求物资分配；框架和协议归属；项目及财务条目的业务月；到期且待处理的通知；附件所属对象。按实际查询计划验收读行数。
 
 ## 4. API 合同
 
-当前已实现 P1/P1.2/P2 接口：
+当前已实现 P1/P1.2/P2/P3 接口：
 
 ```http
 GET /api/health
@@ -101,23 +106,37 @@ GET /api/imports/:id
 POST /api/imports/:id/publish
 GET /api/demands
 GET /api/demands/:id
+GET /api/projects/candidates
+GET /api/projects/suggestions
+GET /api/projects
+POST /api/projects
+GET /api/projects/:id
+PUT /api/projects/:id/allocations
+PUT /api/projects/:id/costs
+PUT /api/projects/:id/category-allocations
+POST /api/projects/:id/confirm
+GET /api/projects/:id/history
+GET /api/reserve-categories
+POST /api/reserve-categories
+GET /api/category-mappings
+PUT /api/category-mappings/:demandCategory
 ```
 
-`/api/health` 当前返回 `stage: "p2"`。业务接口先验证系统自身会话 Cookie，再根据 D1 成员启用状态、角色和范围授权；不解析 Cloudflare Access JWT，也不信任任何请求头 username/email/role。成员角色、启停和范围继续受服务端权限、版本/幂等/审计约束；最后一个启用管理员不可被停用或降权。配置变更继续保存历史版本与审计。P2 导入写接口仅允许 `admin/project_manager`，需求与物资读取仍经过统一会话中间件。未知 `/api` 路径返回 JSON 404，不回退到前端 HTML。
+`/api/health` 当前返回 `stage: "p3"`。业务接口先验证系统自身会话 Cookie，再根据 D1 成员启用状态、角色和范围授权；不解析 Cloudflare Access JWT，也不信任任何请求头 username/email/role。成员角色、启停和范围继续受服务端权限、版本/幂等/审计约束；最后一个启用管理员不可被停用或降权。配置变更继续保存历史版本与审计。P2/P3 写接口仅允许相应的 `admin/project_manager`；项目列表/详情还按 `all/project` scope 过滤。未知 `/api` 路径返回 JSON 404，不回退到前端 HTML。
 
 其余待实现接口族：
 
 | 接口族 | 能力 |
 |---|---|
-| `/api/projects` | 储备草稿、归并建议、分配、估算、确认版本、出库批次 |
+| `/api/projects`（后续扩展） | P4 绑定框架/预算，P5 增加出库批次；不得重做或绕过 P3 已有储备身份/版本 |
 | `/api/implementations`、`/api/settlements` | 分批记录、历史导入关联、确认与更正 |
 | `/api/frameworks`、`/api/agreements` | 框架和协议的版本管理 |
 | `/api/budgets`、`/api/financial-entries` | 预算草稿/确认、协议分配、发生记录及冲销 |
 | `/api/reports`、`/api/milestones`、`/api/alerts` | 汇总、月报、年度事项、待办和预警 |
 | `/api/attachments` | 私有文件分片上传、元数据、授权下载 |
 
-通用响应沿用 `packages/shared` 的 `ApiResponse<T>`。列表默认50项、最大100项，返回 `items` 和不透明 `nextCursor`；大导出使用分页，不能无限制返回全库。
+通用响应沿用 `packages/shared` 的 `ApiResponse<T>`。列表默认50项、最大100项，返回 `items` 和不透明 `nextCursor`；P3 待分配候选池同样最多每页100项并用游标继续读取，归并建议在数据库内聚合完整剩余池。大导出使用分页，不能无限制返回全库。
 
-每个创建/确认/出库/发生/结算等变更请求携带 `Idempotency-Key`；更新携带 `version`。P2 的多步导入写请求使用 `expectedVersion` 显式推进批次版本。错误使用明确状态：400格式、401未认证、403无权限、404不存在、409版本/幂等冲突、422业务校验、429限流。接口不接受前端提交的汇总值或最终权限判断为事实。
+每个创建/确认/出库/发生/结算等变更请求携带 `Idempotency-Key`；更新携带 `version`。P2 的多步导入和 P3 的项目分配/估算/分类/确认写请求都使用 `expectedVersion` 显式推进对象版本。错误使用明确状态：400格式、401未认证、403无权限、404不存在、409版本/幂等冲突、422业务校验、429限流。接口不接受前端提交的汇总值、剩余数量、最终金额或最终权限判断为事实；这些均由服务端从明细重算。
 
 每个阶段开始时先补齐该接口族的共享类型，再实现 API 和前端，保持类型、迁移和文档同步。生产鉴权只接受系统签发的服务端会话 Cookie；请求头 username、email、角色或 Cloudflare Access JWT 都不构成业务身份。

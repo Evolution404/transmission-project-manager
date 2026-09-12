@@ -88,7 +88,48 @@ test('P1.2 database upgrades to P2 without losing account, scope, settings or au
   ))[0].count, 5);
 });
 
-test('clean database applies the current P2 development schema and remains repeatable', () => {
+test('P2 database upgrades to P3 without losing imported demand and material provenance', () => {
+  const state = tempState('tpm-migration-p3-upgrade-');
+  executeLocalD1(state, { file: 'migrations/0001_p1_identity_and_config.sql' });
+  executeLocalD1(state, { file: 'migrations/0002_p2_import_demands_materials.sql' });
+  executeLocalD1(state, {
+    command: `
+      INSERT INTO members
+        (id,username,display_name,role,enabled,version,credential_salt,credential_verifier,
+         credential_algorithm,credential_params_json,must_change_password,session_version,
+         failed_login_count,credential_changed_at,created_at,updated_at)
+      VALUES
+        ('p3-existing','p3-existing','P3升级保留成员','admin',1,1,'salt','verifier','argon2id-v1',
+         '{"algorithm":"argon2id-v1"}',0,1,0,'2026-09-01T00:00:00.000Z','2026-09-01T00:00:00.000Z','2026-09-01T00:00:00.000Z');
+      INSERT INTO materials (id,code,name,model,unit,enabled,version,created_by,created_at,updated_at)
+      VALUES ('p3-material','P3-M','保留物资','JX-01','套',1,1,'p3-existing','2026-09-01T00:00:00.000Z','2026-09-01T00:00:00.000Z');
+      INSERT INTO import_batches
+        (id,file_name,file_sha256,file_type,mapping_json,status,uploaded_rows,valid_rows,error_rows,warning_rows,published_rows,version,created_by,created_at,updated_at,published_at)
+      VALUES ('p3-batch','保留.xlsx','${'5'.repeat(64)}','xlsx','{}','published',1,1,0,0,1,1,'p3-existing','2026-09-01T00:00:00.000Z','2026-09-01T00:00:00.000Z','2026-09-01T00:00:00.000Z');
+      INSERT INTO demands
+        (id,source_key,source_batch_id,source_file_sha256,source_file_name,source_sheet,source_row_number,sequence_no,business_year,voltage_raw,voltage_verified,line_name,section_text,category_key,owner,business_signature,raw_json,extra_json,version,created_by,created_at,updated_at)
+      VALUES ('p3-demand','p3-source','p3-batch','${'5'.repeat(64)}','保留.xlsx','需求',2,'1',2026,'220kV','220kV','保留线','#1','防断线',NULL,'p3-signature','{}','{}',1,'p3-existing','2026-09-01T00:00:00.000Z','2026-09-01T00:00:00.000Z');
+      INSERT INTO demand_materials (id,demand_id,raw_model,material_id,quantity_scaled,unit,created_at)
+      VALUES ('p3-demand-material','p3-demand','JX-01','p3-material',10000,'套','2026-09-01T00:00:00.000Z');
+    `,
+  });
+
+  executeLocalD1(state, { file: 'migrations/0003_p3_reserve_projects.sql' });
+
+  assert.deepEqual(rows(queryLocalD1(state,
+    "SELECT source_file_name,source_sheet,source_row_number,line_name FROM demands WHERE id='p3-demand';",
+  ))[0], {
+    source_file_name: '保留.xlsx', source_sheet: '需求', source_row_number: 2, line_name: '保留线',
+  });
+  assert.deepEqual(rows(queryLocalD1(state,
+    "SELECT raw_model,material_id,quantity_scaled,unit FROM demand_materials WHERE id='p3-demand-material';",
+  ))[0], { raw_model: 'JX-01', material_id: 'p3-material', quantity_scaled: 10000, unit: '套' });
+  assert.equal(rows(queryLocalD1(state,
+    "SELECT COUNT(*) AS count FROM sqlite_master WHERE type='table' AND name IN ('projects','project_versions','demand_allocations','project_cost_lines','reserve_categories','category_mappings','category_cost_allocations');",
+  ))[0].count, 7);
+});
+
+test('clean database applies the current P3 development schema and remains repeatable', () => {
   const state = tempState('tpm-migration-clean-');
   applyLocalMigrations(state);
   applyLocalMigrations(state);
@@ -97,6 +138,7 @@ test('clean database applies the current P2 development schema and remains repea
   assert.deepEqual(migrations, [
     '0001_p1_identity_and_config.sql',
     '0002_p2_import_demands_materials.sql',
+    '0003_p3_reserve_projects.sql',
   ]);
 
   const tables = rows(queryLocalD1(state,
@@ -106,10 +148,12 @@ test('clean database applies the current P2 development schema and remains repea
     'members', 'member_scopes', 'auth_sessions', 'settings_versions', 'dictionary_items',
     'audit_events', 'idempotency_records', 'materials', 'import_mapping_templates',
     'import_batches', 'import_rows', 'demands', 'demand_materials', 'field_definitions',
+    'projects', 'project_versions', 'demand_allocations', 'project_cost_lines',
+    'reserve_categories', 'category_mappings', 'category_cost_allocations',
   ]) assert.ok(tables.includes(table), `missing table ${table}`);
 });
 
-test('member schema remains username/credential based after P2 migration', () => {
+test('member schema remains username/credential based after P3 migration', () => {
   const state = tempState('tpm-migration-auth-schema-');
   applyLocalMigrations(state);
   const columns = rows(queryLocalD1(state, 'PRAGMA table_info(members);')).map((row) => row.name);

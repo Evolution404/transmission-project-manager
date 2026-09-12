@@ -52,11 +52,11 @@ test('built SPA is served by the local Workers asset binding', async () => {
   assert.match(await response.text(), /输电项目全流程管理台/);
 });
 
-test('API health reports P2 after demand import and material management are completed', async () => {
+test('API health reports P3 after reserve conversion is completed', async () => {
   const response = await runtime.request('/api/health');
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), {
-    ok: true, data: { service: 'transmission-project-manager', stage: 'p2' },
+    ok: true, data: { service: 'transmission-project-manager', stage: 'p3' },
   });
   assert.equal(response.headers.get('cache-control'), 'no-store');
 });

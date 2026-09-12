@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { router } from '../src/router';
 import DemandsView from '../src/views/DemandsView.vue';
+import ReservesView from '../src/views/ReservesView.vue';
 
-describe('P2 routes', () => {
+describe('business routes', () => {
   it('lazy-loads the real demand pool at /demands instead of the P2 placeholder', async () => {
     const route = router.getRoutes().find((item) => item.path === '/demands');
     expect(route).toBeTruthy();
@@ -10,5 +11,14 @@ describe('P2 routes', () => {
     expect(typeof loader).toBe('function');
     const resolved = await (loader as () => Promise<{ default: unknown }>)();
     expect(resolved.default).toBe(DemandsView);
+  });
+
+  it('lazy-loads the real reserve conversion page at /reserves instead of the P3 placeholder', async () => {
+    const route = router.getRoutes().find((item) => item.path === '/reserves');
+    expect(route).toBeTruthy();
+    const loader = route?.components?.default;
+    expect(typeof loader).toBe('function');
+    const resolved = await (loader as () => Promise<{ default: unknown }>)();
+    expect(resolved.default).toBe(ReservesView);
   });
 });
