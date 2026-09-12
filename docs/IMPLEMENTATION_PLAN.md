@@ -120,6 +120,8 @@ P1.1 完成记录（2026-09-12，主要实现提交 `1b8139c`）：
 - 修复成员 PATCH 审计 SQL 占位符错误，并将“至少一个启用管理员”升级为数据库条件写入，确保并发请求不能把管理员数量降为 0。
 - `npm run check` 全绿：31/31 Node/workerd+D1 测试、11/11 Vue 行为测试，共 42 项 PASS；Vite 成功产出独立 Argon2 worker 与约 28.9 kB WASM，Worker dry-run 通过。
 
+P1.2 完成记录（2026-09-12，主要实现提交 `ad05dd0`）：完整 `npm run check` 全绿，31/31 Node/workerd+D1 + 11/11 Vue，共 42 项 PASS；Argon2 worker/WASM 生产构建和 Worker dry-run 均通过。
+
 未完成/未验证：真实 Cloudflare 线上 CPU/网络/配额仍留 P7；客户端 Argon2id 的低性能手机体验需要在真实设备验收。P1.2 本身已经完成，下一步恢复 P2。
 
 ## P2：需求导入与物资

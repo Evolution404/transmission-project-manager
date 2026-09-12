@@ -79,10 +79,20 @@ npm run check
 
 - 主要实现提交：`1b8139c`（`feat: complete P1.1 member management handover`）。
 - 完成：成员新增/编辑/启停、角色与 `all/framework/project` 范围；成员邀请/首次/最近登录生命周期；一次性首管理员 bootstrap；最后一个启用管理员保护；完整前端成员管理界面。
-- 数据：新增追加式迁移 `0002_p1_1_member_lifecycle.sql`，未修改 P1 已交付迁移；本地 seed 仍只用于 `.invalid` 合成身份。
+- 数据：当时采用追加式 `0002_p1_1_member_lifecycle.sql` 和本地 seed；P1.2 按用户明确要求在尚未上线阶段重整开发 schema 后，这些历史文件已从当前仓库删除。
 - 运维：新增 `docs/OPERATIONS_HANDOVER.md`，将资产所有者、应用管理员、技术运维负责人和 CI/CD 服务身份分离；正式 Cloudflare/GitHub 移交演练仍留 P7。
-- 测试：`npm run check` 全绿，12/12 workerd+D1 集成测试 PASS；测试从空临时 D1 执行 bootstrap 开始。
-- 此阶段的 Access/邮箱认证结论已被 P1.2 新需求取代；成员角色、范围、最后管理员保护和审计仍继续沿用。
-- 下一步：P1.2 系统自维护账号密码认证；P2 已暂存，P1.2 完成后恢复。
+- 测试：当时 `npm run check` 全绿，12/12 workerd+D1 集成测试 PASS。
+- 此阶段的 Access/邮箱认证结论已被 P1.2 取代；成员角色、范围、最后管理员保护和审计继续沿用。
+
+### P1.2 · 2026-09-12
+
+- 主要实现提交：`ad05dd0`（`feat: replace Access with local account authentication`）。
+- 完成：系统自维护 username、一次性首管理员 bootstrap、登录/退出、首次强制改密、管理员重置密码、5 次失败临时锁定、7 天 HttpOnly 会话、停用/改密/重置撤销旧会话。
+- 凭据：浏览器 Web Worker 使用 Argon2id（19 MiB / t=2 / p=1 / 32 bytes），服务端只计算 `HMAC-SHA256(AUTH_CREDENTIAL_PEPPER, derivedCredential)`；数据库不保存明文密码或浏览器派生凭据。
+- 数据：按“尚未上线、无需兼容”决定重整当前 `0001`；删除旧 `0002` 和账号 seed，`members` 直接承载 username/credential/session_version 等字段，新增 `auth_sessions`。
+- 安全：生产不读取 Cloudflare Access JWT 或开发身份头；最后管理员保护升级为数据库条件写入；修复成员 PATCH 审计 SQL 占位符导致的错误 409。
+- 测试：`npm run check` 全绿，31/31 Node/workerd+D1 + 11/11 Vue，共 42 项 PASS；Argon2 worker/WASM 正常生产构建，Worker dry-run PASS。
+- 未验证：真实 Cloudflare 线上 CPU/配额/网络，以及低性能手机 Argon2id 交互体验，留 P7。
+- 下一步：恢复 P2 stash，解决与 P1.2 新基线的冲突后继续 Excel 导入、需求池和物资字典。
 
 每完成阶段在此追加：阶段、提交号、完成内容、测试、未完成/未验证项和明确下一步。不要删除原始边界说明。
