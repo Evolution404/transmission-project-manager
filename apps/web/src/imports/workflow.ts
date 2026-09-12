@@ -7,6 +7,7 @@ import type {
   ImportPublishResult,
   ParsedImportRow,
 } from '@tpm/shared';
+import { parseApiResponse } from '../api/response';
 import type { ParsedSpreadsheet } from './parser';
 
 const CHUNK_SIZE = 20;
@@ -60,7 +61,7 @@ export class ImportReviewRequiredError extends Error {
 
 async function apiRequest<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init);
-  const result = await response.json() as ApiResponse<T>;
+  const result = await parseApiResponse<T>(response);
   if (!response.ok || !result.ok) {
     const code = result.ok ? 'HTTP_ERROR' : result.error.code;
     const message = result.ok ? `HTTP ${response.status}` : result.error.message;

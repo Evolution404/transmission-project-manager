@@ -28,6 +28,7 @@ import type {
   ImportRowSummary,
   MaterialSummary,
 } from '@tpm/shared';
+import { parseApiResponse } from '../api/response';
 import { downloadDemandImportTemplate } from '../imports/demandTemplate';
 import { parseFileInWorker } from '../imports/workerClient';
 import type { ParsedSpreadsheet } from '../imports/parser';
@@ -111,7 +112,7 @@ const importReady = computed(() => Boolean(
 
 async function apiRequest<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init);
-  const result = await response.json() as ApiResponse<T>;
+  const result = await parseApiResponse<T>(response);
   if (!response.ok || !result.ok) throw new Error(result.ok ? `HTTP ${response.status}` : result.error.message);
   return result.data;
 }

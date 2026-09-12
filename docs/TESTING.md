@@ -226,4 +226,4 @@ P7 必须使用测试/生产资源进行端到端验收，并保留结果记录�
 
 `npm run p7 -- ...` 的退出码和边界见 P7_RUNBOOK.md。备份完整性不等于恢复/快照一致性，验收 JSON 结构通过不证明证据真实。正式 5 万行、5 并发、Cloudflare CPU/用量、低性能手机/地区网络与真实投递仍必须另验。
 
-最新完整 `npm run check` 一次通过：100/100 Node/workerd+D1、53/53 Vue/Vitest，共 153/153 PASS，Node 约 271 秒；类型检查、生产构建、Worker dry-run 同时通过。此前“单次 300 秒限制”的记录仅描述 P6 当时运行情况，本轮无需分段替代。
+最新门禁覆盖 100/100 Node/workerd+D1、58/58 Vue/Vitest，共 158/158 PASS；类型检查、生产构建、Worker dry-run 同时通过。本轮新增统一 API 响应解析回归：开发代理/API 临时不可用返回纯文本 `Internal Server Error` 或畸形 JSON 时，前端必须显示稳定中文错误，禁止泄漏 `Unexpected token` 等 JSON 解析异常。整条 `npm run check` 在工具 300 秒上限被截断，因此随后等价分段完整执行：类型+构建+58 项前端测试、Node 36+64 两组，共覆盖全部测试且无跳过。

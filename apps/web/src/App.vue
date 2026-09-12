@@ -16,6 +16,7 @@ import {
   type MenuOption,
 } from 'naive-ui';
 import type { ApiResponse, CurrentUser } from '@tpm/shared';
+import { parseApiResponse } from './api/response';
 import LoginView from './views/LoginView.vue';
 import ChangePasswordView from './views/ChangePasswordView.vue';
 
@@ -44,7 +45,7 @@ async function loadIdentity() {
   connectionError.value = '';
   try {
     const response = await fetch('/api/me', { headers: { Accept: 'application/json' } });
-    const result = await response.json() as ApiResponse<CurrentUser>;
+    const result = await parseApiResponse<CurrentUser>(response);
     if (!response.ok || !result.ok) {
       if (response.status === 401 || response.status === 403) {
         currentUser.value = null;

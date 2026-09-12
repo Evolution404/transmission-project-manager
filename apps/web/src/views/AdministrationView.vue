@@ -29,6 +29,7 @@ import type {
   SettingVersion,
   UpdateMemberRequest,
 } from '@tpm/shared';
+import { parseApiResponse } from '../api/response';
 import { createDerivedCredential, normalizeUsername, validatePasswordForClient } from '../auth/credentials';
 
 const props = defineProps<{ currentUser: CurrentUser }>();
@@ -97,7 +98,7 @@ function scopeLabel(row: MemberSummary) {
 
 async function apiRequest<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init);
-  const result = await response.json() as ApiResponse<T>;
+  const result = await parseApiResponse<T>(response);
   if (!response.ok || !result.ok) throw new Error(result.ok ? '请求失败' : result.error.message);
   return result.data;
 }

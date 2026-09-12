@@ -18,6 +18,7 @@ import {
   NTag,
   useMessage,
 } from 'naive-ui';
+import { parseApiResponse } from '../api/response';
 import type {
   ApiResponse,
   AttachmentSummary,
@@ -121,7 +122,7 @@ function stateTagType(state: LifecycleState): 'success' | 'warning' | 'error' | 
 
 async function apiRequest<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init);
-  const result = await response.json() as ApiResponse<T>;
+  const result = await parseApiResponse<T>(response);
   if (!response.ok || !result.ok) throw new Error(result.ok ? `HTTP ${response.status}` : result.error.message);
   return result.data;
 }
@@ -405,7 +406,7 @@ async function uploadAttachment() {
       headers: { 'Content-Type': file.type || 'application/octet-stream', 'Idempotency-Key': crypto.randomUUID() },
       body: file,
     });
-    const result = await response.json() as ApiResponse<AttachmentSummary>;
+    const result = await parseApiResponse<AttachmentSummary>(response);
     if (!response.ok || !result.ok) throw new Error(result.ok ? `HTTP ${response.status}` : result.error.message);
     attachmentFile.value = null;
     const data = await apiRequest<{ items: AttachmentSummary[] }>(`/api/attachments?objectType=project&objectId=${encodeURIComponent(projectId)}`);

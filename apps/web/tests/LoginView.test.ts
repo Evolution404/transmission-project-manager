@@ -87,6 +87,22 @@ describe('LoginView local account contract', () => {
 
   afterEach(() => vi.unstubAllGlobals());
 
+  it('shows a stable Chinese message when the dev proxy returns plaintext instead of JSON', async () => {
+    fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === '/api/auth/status') return new Response('Internal Server Error', {
+        status: 500,
+        headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+      });
+      throw new Error(`unexpected ${url}`);
+    });
+
+    const wrapper = mount(LoginView);
+    await flushPromises();
+    expect(wrapper.text()).toContain('系统接口暂时不可用，请稍后重试');
+    expect(wrapper.text()).not.toContain('Unexpected token');
+  });
+
   it('uses Chinese placeholders and explains the one-time bootstrap token on first initialization', async () => {
     fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
       const url = String(input);

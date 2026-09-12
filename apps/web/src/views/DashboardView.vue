@@ -2,6 +2,7 @@
 import { onMounted, ref } from 'vue';
 import { NAlert, NCard, NGrid, NGridItem, NSpin, NStatistic, NTag } from 'naive-ui';
 import type { AnalysisDashboardSummary, ApiResponse, CurrentUser } from '@tpm/shared';
+import { parseApiResponse } from '../api/response';
 
 defineProps<{ currentUser: CurrentUser }>();
 
@@ -20,7 +21,7 @@ async function loadDashboard() {
   error.value = '';
   try {
     const response = await fetch(`/api/analysis/dashboard?asOf=${businessToday()}`);
-    const result = await response.json() as ApiResponse<AnalysisDashboardSummary>;
+    const result = await parseApiResponse<AnalysisDashboardSummary>(response);
     if (!response.ok || !result.ok) throw new Error(result.ok ? `HTTP ${response.status}` : result.error.message);
     dashboard.value = result.data;
   } catch (cause) {

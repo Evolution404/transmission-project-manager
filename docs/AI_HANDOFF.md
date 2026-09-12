@@ -161,7 +161,7 @@ npm run check
 - 完成：非 Secret production config 模板与拒绝占位/错误绑定/旧认证的校验；13 项真实验收记录模板/结构检查；私有文件哈希清单；P6 manifest/chunk/附件存在性离线检查；发布、迁移、停写备份、隔离恢复、回退和运维撤权手册。
 - CI：普通 push 仍只验证；新增手工 production preflight 仅 dry-run，不使用云 Token。生产部署模板位于 workflows 外，必须另行授权、配置并验证 Environment 保护后才可启用。
 - 缺陷：真实 Excel 准备审计发现解析器忽略空行和 used-range 起点会偏移物理来源行。两个回归先复现失败，再修复保留真实行号且过滤空行；不自动改写旧批次。
-- 验证：最新完整单次 `npm run check` 成功（Node 测试约 271 秒），100/100 Node/workerd+D1 + 53/53 Vue/Vitest，共 153/153 PASS；TypeScript、Vite build、Worker dry-run PASS。此前 production 示例独立 dry-run、3 份 workflow YAML 语法解析、空验收记录退出 2、占位 production config 退出 1 的 P7 预检结果继续有效。
+- 验证：当前完整门禁为 100/100 Node/workerd+D1 + 58/58 Vue/Vitest，共 158/158 PASS；TypeScript、Vite build、Worker dry-run PASS。整条 `npm run check` 因工具单次 300 秒上限被截断，随后按类型+构建+全部前端测试、Node 36+64 两组等价完整执行，无跳过。新增统一 API 响应解析，开发代理/API 临时返回纯文本 `Internal Server Error` 或畸形 JSON 时只显示稳定中文错误，不再把 `Unexpected token` 暴露给用户。此前 production 示例独立 dry-run、3 份 workflow YAML 语法解析、空验收记录退出 2、占位 production config 退出 1 的 P7 预检结果继续有效。
 - 迁移影响：无 schema/迁移改动；认证与 P2–P6 后端数量、金额、版本、幂等、并发和状态实现保持不变。
 - P7-01 口径后续明确为系统标准模板下载/填报/回导，而非适配任意历史 Excel；标准模板生成和回导自动测试在 P7 补齐，最终只保留真实业务值抽检。
 - 未完成：P7-01 最终真实业务值抽检及 P7-02～13 的真实业务资料、生产资源/授权、Secret、邮件适配器/域名、CPU/额度与现场网络、真实恢复/发布/撤权证据。没有创建资源、部署或发送邮件，未使用生产 Secret。

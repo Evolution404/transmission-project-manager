@@ -2,6 +2,7 @@
 import { onMounted, ref } from 'vue';
 import { NAlert, NButton, NCard, NForm, NFormItem, NInput, NSpin } from 'naive-ui';
 import type { ApiResponse, CredentialKdfDescriptor, CurrentUser } from '@tpm/shared';
+import { parseApiResponse } from '../api/response';
 import {
   createDerivedCredential,
   deriveCredential,
@@ -21,7 +22,7 @@ const confirmPassword = ref('');
 
 async function api<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init);
-  const result = await response.json() as ApiResponse<T>;
+  const result = await parseApiResponse<T>(response);
   if (!response.ok || !result.ok) throw new Error(result.ok ? '请求失败' : result.error.message);
   return result.data;
 }
