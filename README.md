@@ -2,19 +2,19 @@
 
 面向 20 人以内团队的项目管理应用，计划采用 Cloudflare Workers、D1、R2，免费额度内运行，支持电脑和手机访问。
 
-**当前状态：仅完成项目初始化，业务功能尚未实现，未部署到 Cloudflare。**
-已有 Vue 占位页、Hono 健康接口、共享接口类型、本地资源配置及 CI。健康检查成功只表示接口运行，不代表数据库、权限、邮件或业务功能已经可用。
+**当前状态：P0 初始化与 P1 身份/基础配置已完成；P2–P7 业务阶段尚未实现，未部署到 Cloudflare。**
+已有 Vue Router + Naive UI 管理台框架、Cloudflare Access JWT 鉴权、D1 成员/范围/配置版本/字典/审计/幂等表、本地开发 seed、共享接口类型和 CI。需求、储备、资金、实施结算、提醒与备份仍未实现，页面中的后续模块保持真实空状态。
 
 ## 交给其他 AI 的入口
 
 1. 阅读 [AGENTS.md](AGENTS.md)。
 2. 阅读 [AI 交接说明](docs/AI_HANDOFF.md)，其中有可直接复制的任务提示词。
-3. 按 [实施计划](docs/IMPLEMENTATION_PLAN.md) 从 **P1** 开始，完成一个阶段后更新状态。
+3. 按 [实施计划](docs/IMPLEMENTATION_PLAN.md) 从 **P2** 开始，完成一个阶段后更新状态。
 4. 业务依据为 [设计方案](docs/DESIGN.md)，数据与 API 约定见 [数据模型](docs/DATA_MODEL.md)。
 
 ## 本地运行
 
-建议 Node.js 24、npm 11（`.nvmrc` 已固定主版本）。不需要 Cloudflare 账号或令牌即可运行本地骨架。
+建议 Node.js 24、npm 11（`.nvmrc` 已固定主版本）。不需要 Cloudflare 账号或令牌即可运行本地开发环境。`npm run dev` 会先应用本地 D1 迁移并执行仅本地使用的合成身份 seed。
 
 ```sh
 npm ci
@@ -32,18 +32,19 @@ npm run dev
 npm run check
 ```
 
-该命令依次运行 TypeScript 检查、前端构建、Worker **dry-run** 打包，以及真实本地 workerd 的静态资源/API 路由冒烟测试。`npm test` 单独运行时需先 `npm run build`；测试使用端口 8799。
+该命令依次运行 TypeScript 检查、前端构建、Worker **dry-run** 打包，以及真实本地 workerd + D1 的 P1 集成测试。测试会应用本地迁移和合成 seed，覆盖身份、角色、范围、停用成员、配置版本/幂等、字典与API回退；测试使用端口 8799。
 
 `npm run build` 不会发布网站。当前没有自动部署工作流，也没有生产凭据。
 
 ## 目录
 
 ```text
-apps/web/                Vue 3 + Vite 前端骨架
-apps/api/                Hono + Workers 接口骨架与本地 Wrangler 配置
-apps/api/migrations/     后续数据库迁移目录（当前无业务表）
-packages/shared/        前后端共享接口类型
-tests/                  本地 Workers 集成冒烟测试
+apps/web/                Vue 3 + Vite + Router + Naive UI 管理台
+apps/api/                Hono + Workers 鉴权/基础配置接口与 Wrangler 配置
+apps/api/migrations/     D1 追加式数据库迁移
+apps/api/seeds/          仅本地开发/测试使用的合成数据
+packages/shared/         前后端共享接口类型
+tests/                   本地 Workers + D1 集成测试
 docs/                   完整设计、实施计划、数据模型、部署与 AI 交接
 .github/workflows/      仅检查、不部署的 CI
 ```

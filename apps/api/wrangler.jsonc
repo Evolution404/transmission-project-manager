@@ -11,7 +11,10 @@
     "not_found_handling": "single-page-application",
     "run_worker_first": ["/api", "/api/*"]
   },
-  "vars": { "APP_ENV": "development" },
+  "vars": {
+    "APP_ENV": "development",
+    "DEV_AUTH_EMAIL": "dev-admin@example.invalid"
+  },
   "d1_databases": [
     {
       "binding": "DB",

@@ -1,6 +1,6 @@
 # 数据关系与接口约定
 
-这是一份实现约定，**当前尚未创建下列业务表或业务接口**。表名和字段可在迁移中作不影响语义的细化；改变业务口径必须同步 DESIGN.md。使用 D1/SQLite，不依赖 PostgreSQL 专有语法。
+这是一份实现约定。P1 已创建身份/权限/基础配置相关表与接口；其余 P2–P7 业务对象仍是待实现约定。表名和字段可在迁移中作不影响语义的细化；改变业务口径必须同步 DESIGN.md。使用 D1/SQLite，不依赖 PostgreSQL 专有语法。
 
 ## 1. 通用约定
 
@@ -61,22 +61,26 @@
 
 ## 4. API 合同
 
-当前已实现：
+当前已实现 P1 接口：
 
 ```http
 GET /api/health
+GET /api/me
+GET /api/members
+PATCH /api/members/:id
+GET /api/settings
+GET /api/settings/:key/history
+PUT /api/settings/:key
+GET /api/dictionaries?key=...
+GET /api/scopes/:scopeType/:scopeId/check
 ```
 
-```json
-{"ok":true,"data":{"service":"transmission-project-manager","stage":"scaffold"}}
-```
+`/api/health` 当前返回 `stage: "p1"`。生产业务接口先验证 Cloudflare Access JWT，再根据 D1 成员启用状态、角色和范围授权；开发/测试身份只在非生产模式显式启用。配置变更要求版本检查和 `Idempotency-Key`，并保存历史版本与审计。未知 `/api` 路径返回 JSON 404，不回退到前端HTML。
 
-未知 `/api` 路径返回 JSON 404，不回退到前端HTML。只有健康接口已实现，其余全部为待实现接口族：
+其余待实现接口族：
 
 | 接口族 | 能力 |
 |---|---|
-| `/api/me`、`/api/members` | 当前身份、角色和成员授权 |
-| `/api/settings`、`/api/dictionaries` | 版本化口径、字段、物资、分类映射 |
 | `/api/imports` | 创建批次、`/:id/chunks`上传、`/:id/validate`校验、`/:id/publish`发布、进度及错误 |
 | `/api/demands` | 分页检索、详情、修订、来源及数量反馈 |
 | `/api/projects` | 储备草稿、归并建议、分配、估算、确认版本、出库批次 |

@@ -8,7 +8,12 @@
     "build": "vite build",
     "typecheck": "vue-tsc --noEmit && tsc -p tsconfig.node.json"
   },
-  "dependencies": { "@tpm/shared": "*", "vue": "3.5.42" },
+  "dependencies": {
+    "@tpm/shared": "*",
+    "naive-ui": "^2.42.0",
+    "vue": "3.5.42",
+    "vue-router": "^4.6.3"
+  },
   "devDependencies": {
     "@vitejs/plugin-vue": "6.0.8",
     "vite": "8.3.0",

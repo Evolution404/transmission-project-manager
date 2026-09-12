@@ -2,13 +2,13 @@
 
 ## 当前状态
 
-用户要求本轮只初始化项目、将计划写入仓库并提交GitHub，剩余业务实现交给其他AI。
+P0 初始化和 P1（身份权限、基础配置、初始迁移、应用框架）已完成并通过本地验收。
 
-已建立：npm workspaces、Vue占位页、Hono `/api/health`、共享API类型、Wrangler本地D1/R2占位配置、构建/类型检查/workerd冒烟测试入口、GitHub CI和完整设计文档。
+已建立：npm workspaces、Vue Router + Naive UI 管理台框架、Hono API、Cloudflare Access JWT 验证、D1 成员/范围/配置版本/字典/审计/幂等表、本地 seed、共享接口类型、Wrangler 本地 D1/R2 配置、构建/类型检查/workerd+D1 集成测试入口、GitHub CI和完整设计文档。
 
-尚未实现：业务数据库迁移、Excel导入、需求/储备/物资、框架协议预算、出库实施结算、登录权限、分类分析、定时任务、发信、备份及正式Cloudflare部署。页面“接口已连接”只验证进程存活，不能代表这些功能完成。
+尚未实现：Excel导入、需求/储备/物资业务表、框架协议预算、出库实施结算、分类分析、定时任务、发信、备份及正式Cloudflare部署。后续业务入口当前均为真实空状态，不得把页面框架解释为这些业务已完成。
 
-**下一步从 P1 开始。** 不要重新搭建仓库或推翻已确认的Cloudflare路线。
+**下一步从 P2 开始。** 不要重新搭建仓库或推翻已确认的 Cloudflare 路线。
 
 ## 阅读顺序
 
@@ -23,12 +23,12 @@
 ```text
 请接手这个仓库的后续实现。先阅读 AGENTS.md、docs/AI_HANDOFF.md、
 docs/DESIGN.md、docs/DATA_MODEL.md、docs/IMPLEMENTATION_PLAN.md。
-当前只有初始化骨架。按实施计划先完成 P1（身份权限、配置、迁移和应用框架），
-不要将其他未实现阶段标为完成，也不要用示例数据伪造真实业务。
+P0、P1 已完成。按实施计划直接进入 P2（Excel导入、需求池与物资字典），
+不要重复实现身份框架，也不要将 P3–P7 的未实现能力标为完成。
 保持 Cloudflare 免费起步、Vue + TypeScript + Hono + D1 + R2 的架构。
-不需要再次询问已经在文档中确定的需求。原始Excel缺失时使用合成测试数据，
-将真实文件核验留到 P7；缺少Cloudflare生产凭据时先完成本地可验证实现。
-完成 P1 后运行 npm run check 和该阶段验收，更新实施计划与交接说明，
+不需要再次询问已经在文档中确定的需求。原始Excel缺失时使用明确标注的合成测试数据，
+将真实文件核验留到 P7；浏览器负责 Excel 解析，Worker 负责分片校验、暂存和发布。
+P2 完成后运行 npm run check 和该阶段验收，更新实施计划与交接说明，
 总结完成范围、检查结果、迁移与未验证事项，并按当前任务授权提交代码。
 ```
 
@@ -41,7 +41,7 @@ npm run dev
 npm run check
 ```
 
-开发端口：5173/8787，冒烟测试端口：8799。生产资源ID未配置，无需登录Cloudflare即可运行骨架。`npm run build:worker`只是dry-run打包，不发布资源。
+开发端口：5173/8787，集成测试端口：8799。`npm run dev` 会先应用本地迁移并执行 `apps/api/seeds/local.sql`，该 seed 只含 `.invalid` 合成身份且不会随生产迁移部署。生产资源ID未配置；`npm run build:worker`只是dry-run打包，不发布资源。
 
 ## 不能遗漏的设计细节
 
@@ -58,9 +58,16 @@ npm run check
 - 可读参考：https://www.workbuddy.link/p/plhvulKoyaQX5vic8Oaeoy?source=2 。仅作为功能和布局参考。
 - 尚缺：原始需求Excel、“一年工作早知道”、“项目储备类别”、真实单价/框架/协议资料。
 - 尚缺：生产Cloudflare账户资源、可用自定义域名、Access成员名单和验证后的邮件收件人。
-- 未测：完整业务、真实文件映射、Cloudflare线上CPU/配额、大陆网络、真实发信与恢复。
-- 已提供的本地测试只覆盖骨架集成路由。CI实际结果查看仓库Actions。
+- 未测：真实 Cloudflare Access 租户/JWT、完整业务、真实文件映射、Cloudflare线上CPU/配额、大陆网络、真实发信与恢复。
+- P1 本地集成测试已覆盖身份解析、停用成员、角色越权、跨项目范围、配置版本与幂等、字典和API回退；CI实际结果以仓库 Actions 为准。
 
 ## 后续交接记录
+
+### P1 · 2026-09-12
+
+- 完成：Access JWT 鉴权；成员角色/范围；基础设置版本；字典、审计与幂等；Vue Router + Naive UI 应用壳；规则与成员读取页；本地 seed 与 P1 集成测试。
+- 测试：从空本地 D1 执行 `npm run check` 全绿，9/9 集成测试 PASS；前端路由拆包后主包约 363KB；生产模式缺 Access 配置实测 fail-closed（503）。
+- 未验证：真实 Access 租户、线上资源、正式成员名单；不影响进入 P2，本事项留生产部署/P7 验证。
+- 下一步：P2 Excel导入、需求池与物资字典。
 
 每完成阶段在此追加：阶段、提交号、完成内容、测试、未完成/未验证项和明确下一步。不要删除原始边界说明。
