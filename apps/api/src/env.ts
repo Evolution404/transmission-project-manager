@@ -6,4 +6,5 @@ export interface WorkerBindings {
   ACCESS_TEAM_DOMAIN?: string;
   ACCESS_AUD?: string;
   DEV_AUTH_EMAIL?: string;
+  BOOTSTRAP_ADMIN_EMAIL?: string;
 }

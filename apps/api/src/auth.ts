@@ -1,11 +1,16 @@
 import { createRemoteJWKSet, jwtVerify } from 'jose';
 import type { Context, MiddlewareHandler } from 'hono';
 import type { CurrentUser, MemberRole, MemberScope } from '@tpm/shared';
-import { findMemberByEmail } from './db';
+import { findMemberByEmail, recordSuccessfulLogin } from './db';
 import type { WorkerBindings } from './env';
 
 type AppVariables = { currentUser: CurrentUser };
 type AppEnv = { Bindings: WorkerBindings; Variables: AppVariables };
+
+export interface ResolvedIdentity {
+  email: string;
+  authSource: CurrentUser['authSource'];
+}
 
 const jwksByIssuer = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
 
@@ -46,40 +51,46 @@ function developmentEmail(c: Context<AppEnv>): string | null {
   return fromHeader || configured || null;
 }
 
-export const requireAuthentication: MiddlewareHandler<AppEnv> = async (c, next) => {
-  let email: string | null = null;
-  let authSource: CurrentUser['authSource'] = 'cloudflare-access';
-
+export async function resolveIdentity(c: Context<AppEnv>): Promise<ResolvedIdentity | Response> {
   if (c.env.APP_ENV === 'production') {
     if (!c.env.ACCESS_TEAM_DOMAIN?.trim() || !c.env.ACCESS_AUD?.trim()) {
       return unauthorized(c, 'AUTH_CONFIG_MISSING', '生产环境缺少 Cloudflare Access 配置', 503);
     }
     try {
-      email = await accessEmail(c);
+      const email = await accessEmail(c);
+      if (!email) return unauthorized(c, 'UNAUTHENTICATED', 'Cloudflare Access 身份验证失败');
+      return { email, authSource: 'cloudflare-access' };
     } catch {
       return unauthorized(c, 'UNAUTHENTICATED', 'Cloudflare Access 身份验证失败');
     }
-  } else {
-    email = developmentEmail(c);
-    authSource = 'development';
-    if (!email && c.env.ACCESS_TEAM_DOMAIN?.trim() && c.env.ACCESS_AUD?.trim()) {
-      try {
-        email = await accessEmail(c);
-        authSource = 'cloudflare-access';
-      } catch {
-        return unauthorized(c, 'UNAUTHENTICATED', '身份验证失败');
-      }
-    }
-    if (!email) return unauthorized(c, 'UNAUTHENTICATED', '本地开发身份未配置');
   }
 
-  if (!email) return unauthorized(c, 'UNAUTHENTICATED', '身份验证失败');
+  const development = developmentEmail(c);
+  if (development) return { email: development, authSource: 'development' };
 
-  const member = await findMemberByEmail(c.env.DB, email);
+  if (c.env.ACCESS_TEAM_DOMAIN?.trim() && c.env.ACCESS_AUD?.trim()) {
+    try {
+      const email = await accessEmail(c);
+      if (!email) return unauthorized(c, 'UNAUTHENTICATED', '身份验证失败');
+      return { email, authSource: 'cloudflare-access' };
+    } catch {
+      return unauthorized(c, 'UNAUTHENTICATED', '身份验证失败');
+    }
+  }
+
+  return unauthorized(c, 'UNAUTHENTICATED', '本地开发身份未配置');
+}
+
+export const requireAuthentication: MiddlewareHandler<AppEnv> = async (c, next) => {
+  const identity = await resolveIdentity(c);
+  if (identity instanceof Response) return identity;
+
+  const member = await findMemberByEmail(c.env.DB, identity.email);
   if (!member) return unauthorized(c, 'MEMBER_NOT_FOUND', '当前身份未加入系统成员', 403);
   if (!member.enabled) return unauthorized(c, 'MEMBER_DISABLED', '当前成员已停用', 403);
 
-  c.set('currentUser', { ...member, authSource });
+  const activeMember = await recordSuccessfulLogin(c.env.DB, member);
+  c.set('currentUser', { ...activeMember, authSource: identity.authSource });
   await next();
 };
 

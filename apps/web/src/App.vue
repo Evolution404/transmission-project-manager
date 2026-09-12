@@ -86,8 +86,8 @@ onMounted(loadIdentity);
             @update:value="navigate"
           />
           <div class="phase-badge">
-            <span>P1</span>
-            <small>身份与基础配置</small>
+            <span>P1.1</span>
+            <small>成员管理与运维移交</small>
           </div>
         </n-layout-sider>
 

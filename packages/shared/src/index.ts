@@ -12,7 +12,7 @@ export type ApiResponse<T> = ApiSuccess<T> | ApiError;
 
 export type HealthResponse = ApiSuccess<{
   service: 'transmission-project-manager';
-  stage: 'p1';
+  stage: 'p1.1';
 }>;
 
 export const MEMBER_ROLES = [
@@ -31,6 +31,8 @@ export interface MemberScope {
   id: string | null;
 }
 
+export type MemberLifecycleStatus = 'pending_first_login' | 'active' | 'disabled';
+
 export interface MemberSummary {
   id: string;
   email: string;
@@ -39,6 +41,10 @@ export interface MemberSummary {
   enabled: boolean;
   version: number;
   scopes: MemberScope[];
+  invitedAt: string | null;
+  firstLoginAt: string | null;
+  lastLoginAt: string | null;
+  lifecycleStatus: MemberLifecycleStatus;
 }
 
 export interface CurrentUser extends MemberSummary {
@@ -72,9 +78,22 @@ export interface UpdateSettingRequest {
   effectiveFrom?: string;
 }
 
+export interface CreateMemberRequest {
+  email: string;
+  displayName: string;
+  role: MemberRole;
+  enabled?: boolean;
+  scopes: MemberScope[];
+}
+
 export interface UpdateMemberRequest {
   expectedVersion: number;
   displayName?: string;
   role?: MemberRole;
   enabled?: boolean;
+  scopes?: MemberScope[];
+}
+
+export interface BootstrapAdminRequest {
+  displayName: string;
 }

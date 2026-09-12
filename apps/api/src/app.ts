@@ -2,13 +2,24 @@ import { Hono, type Context } from 'hono';
 import {
   MEMBER_ROLES,
   type ApiError,
+  type BootstrapAdminRequest,
+  type CreateMemberRequest,
   type HealthResponse,
   type MemberRole,
+  type MemberScope,
   type UpdateMemberRequest,
   type UpdateSettingRequest,
 } from '@tpm/shared';
-import { hasScope, requireAuthentication, requireRoles, type AppEnv } from './auth';
-import { getSettingHistory, listCurrentSettings, listDictionary, listMembers } from './db';
+import { hasScope, requireAuthentication, requireRoles, resolveIdentity, type AppEnv } from './auth';
+import {
+  countEnabledAdmins,
+  countMembers,
+  findMemberById,
+  getSettingHistory,
+  listCurrentSettings,
+  listDictionary,
+  listMembers,
+} from './db';
 
 export const app = new Hono<AppEnv>();
 
@@ -20,6 +31,37 @@ function apiError(code: string, message: string, details?: unknown): ApiError {
 
 function isMemberRole(value: unknown): value is MemberRole {
   return typeof value === 'string' && MEMBER_ROLES.includes(value as MemberRole);
+}
+
+function normalizeEmail(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const email = value.trim().toLowerCase();
+  if (email.length < 3 || email.length > 254) return null;
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return null;
+  return email;
+}
+
+function normalizeScopes(value: unknown, role: MemberRole): MemberScope[] | null {
+  if (role === 'admin') return [{ type: 'all', id: null }];
+  if (!Array.isArray(value)) return null;
+
+  const scopes: MemberScope[] = [];
+  const seen = new Set<string>();
+  for (const candidate of value) {
+    if (!candidate || typeof candidate !== 'object') return null;
+    const scope = candidate as Partial<MemberScope>;
+    if (scope.type !== 'all' && scope.type !== 'framework' && scope.type !== 'project') return null;
+    const id = scope.type === 'all' ? null : typeof scope.id === 'string' ? scope.id.trim() : '';
+    if (scope.type !== 'all' && (!id || id.length > 120)) return null;
+    if (scope.type === 'all' && scope.id !== null && scope.id !== undefined) return null;
+    const key = `${scope.type}:${id ?? ''}`;
+    if (!seen.has(key)) {
+      scopes.push({ type: scope.type, id });
+      seen.add(key);
+    }
+  }
+  if (scopes.some((scope) => scope.type === 'all') && scopes.length !== 1) return null;
+  return scopes;
 }
 
 async function requestHash(value: unknown): Promise<string> {
@@ -60,17 +102,113 @@ function requireIdempotencyKey(c: Context<AppEnv>): string | Response {
   return key;
 }
 
+function scopeStatements(
+  c: Context<AppEnv>,
+  memberId: string,
+  scopes: MemberScope[],
+  conditionVersion?: number,
+  conditionUpdatedAt?: string,
+) {
+  const statements: D1PreparedStatement[] = [];
+  for (const scope of scopes) {
+    if (conditionVersion !== undefined && conditionUpdatedAt) {
+      statements.push(c.env.DB.prepare(
+        `INSERT INTO member_scopes (id, member_id, scope_type, scope_id, created_at)
+         SELECT ?, ?, ?, ?, ?
+         WHERE EXISTS (
+           SELECT 1 FROM members WHERE id = ? AND version = ? AND updated_at = ?
+         )`,
+      ).bind(
+        crypto.randomUUID(), memberId, scope.type, scope.id, conditionUpdatedAt,
+        memberId, conditionVersion, conditionUpdatedAt,
+      ));
+    } else {
+      statements.push(c.env.DB.prepare(
+        `INSERT INTO member_scopes (id, member_id, scope_type, scope_id, created_at)
+         VALUES (?, ?, ?, ?, ?)`,
+      ).bind(crypto.randomUUID(), memberId, scope.type, scope.id, new Date().toISOString()));
+    }
+  }
+  return statements;
+}
+
 app.get('/api/health', (c) => {
   const body: HealthResponse = {
     ok: true,
-    data: { service: 'transmission-project-manager', stage: 'p1' },
+    data: { service: 'transmission-project-manager', stage: 'p1.1' },
   };
   c.header('Cache-Control', 'no-store');
   return c.json(body);
 });
 
+app.post('/api/bootstrap/admin', async (c) => {
+  const configuredEmail = normalizeEmail(c.env.BOOTSTRAP_ADMIN_EMAIL);
+  if (!configuredEmail) {
+    return c.json(apiError('BOOTSTRAP_NOT_CONFIGURED', '未配置首个管理员邮箱'), 503);
+  }
+
+  const identity = await resolveIdentity(c);
+  if (identity instanceof Response) return identity;
+  if (identity.email !== configuredEmail) {
+    return c.json(apiError('BOOTSTRAP_FORBIDDEN', '当前身份不是已配置的首个管理员'), 403);
+  }
+
+  let body: BootstrapAdminRequest;
+  try {
+    body = await c.req.json<BootstrapAdminRequest>();
+  } catch {
+    return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400);
+  }
+  const displayName = typeof body.displayName === 'string' ? body.displayName.trim() : '';
+  if (!displayName || displayName.length > 80) {
+    return c.json(apiError('INVALID_DISPLAY_NAME', '管理员名称不能为空且最多 80 个字符'), 422);
+  }
+  if (await countMembers(c.env.DB) > 0) {
+    return c.json(apiError('BOOTSTRAP_CLOSED', '系统已有成员，首管理员初始化已关闭'), 409);
+  }
+
+  const memberId = crypto.randomUUID();
+  const now = new Date().toISOString();
+  const data = {
+    id: memberId,
+    email: configuredEmail,
+    displayName,
+    role: 'admin' as const,
+    enabled: true,
+    version: 1,
+    scopes: [{ type: 'all' as const, id: null }],
+    invitedAt: now,
+    firstLoginAt: now,
+    lastLoginAt: now,
+    lifecycleStatus: 'active' as const,
+  };
+
+  const results = await c.env.DB.batch([
+    c.env.DB.prepare(
+      `INSERT INTO members
+       (id, email, display_name, role, enabled, version, created_at, updated_at, invited_at, first_login_at, last_login_at)
+       SELECT ?, ?, ?, 'admin', 1, 1, ?, ?, ?, ?, ?
+       WHERE NOT EXISTS (SELECT 1 FROM members)`,
+    ).bind(memberId, configuredEmail, displayName, now, now, now, now, now),
+    c.env.DB.prepare(
+      `INSERT INTO member_scopes (id, member_id, scope_type, scope_id, created_at)
+       SELECT ?, ?, 'all', NULL, ? WHERE EXISTS (SELECT 1 FROM members WHERE id = ?)`,
+    ).bind(crypto.randomUUID(), memberId, now, memberId),
+    c.env.DB.prepare(
+      `INSERT INTO audit_events
+       (id, actor_member_id, action, object_type, object_id, before_json, after_json, created_at)
+       SELECT ?, NULL, 'member.bootstrap_admin', 'member', ?, NULL, ?, ?
+       WHERE EXISTS (SELECT 1 FROM members WHERE id = ?)`,
+    ).bind(crypto.randomUUID(), memberId, JSON.stringify(data), now, memberId),
+  ]);
+  if (Number(results[0]?.meta.changes ?? 0) !== 1) {
+    return c.json(apiError('BOOTSTRAP_CLOSED', '首管理员已被其他请求初始化'), 409);
+  }
+  return c.json({ ok: true as const, data }, 201);
+});
+
 app.use('/api/*', async (c, next) => {
-  if (c.req.path === '/api/health') return next();
+  if (c.req.path === '/api/health' || c.req.path === '/api/bootstrap/admin') return next();
   return requireAuthentication(c, next);
 });
 
@@ -82,6 +220,81 @@ app.get('/api/me', (c) => {
 app.get('/api/members', requireRoles('admin'), async (c) => {
   c.header('Cache-Control', 'no-store');
   return c.json({ ok: true as const, data: { items: await listMembers(c.env.DB) } });
+});
+
+app.post('/api/members', requireRoles('admin'), async (c) => {
+  const idempotency = requireIdempotencyKey(c);
+  if (idempotency instanceof Response) return idempotency;
+
+  let body: CreateMemberRequest;
+  try {
+    body = await c.req.json<CreateMemberRequest>();
+  } catch {
+    return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400);
+  }
+
+  const email = normalizeEmail(body.email);
+  const displayName = typeof body.displayName === 'string' ? body.displayName.trim() : '';
+  if (!email) return c.json(apiError('INVALID_EMAIL', '成员邮箱格式无效'), 422);
+  if (!displayName || displayName.length > 80) {
+    return c.json(apiError('INVALID_DISPLAY_NAME', '成员名称不能为空且最多 80 个字符'), 422);
+  }
+  if (!isMemberRole(body.role)) return c.json(apiError('INVALID_ROLE', '成员角色无效'), 422);
+  const scopes = normalizeScopes(body.scopes, body.role);
+  if (!scopes) return c.json(apiError('INVALID_SCOPES', '授权范围格式无效'), 422);
+
+  const normalizedBody = { ...body, email, displayName, enabled: body.enabled !== false, scopes };
+  const hash = await requestHash(normalizedBody);
+  const operation = `members.create:${email}`;
+  const replay = await replayIdempotentResponse(c, idempotency, operation, hash);
+  if (replay) return replay;
+
+  const actor = c.get('currentUser');
+  const memberId = crypto.randomUUID();
+  const now = new Date().toISOString();
+  const enabled = body.enabled === false ? 0 : 1;
+  const data = {
+    id: memberId,
+    email,
+    displayName,
+    role: body.role,
+    enabled: enabled === 1,
+    version: 1,
+    scopes,
+    invitedAt: now,
+    firstLoginAt: null,
+    lastLoginAt: null,
+    lifecycleStatus: enabled === 1 ? 'pending_first_login' as const : 'disabled' as const,
+  };
+  const response = { ok: true as const, data };
+  const responseJson = JSON.stringify(response);
+
+  try {
+    await c.env.DB.batch([
+      c.env.DB.prepare(
+        `INSERT INTO members
+         (id, email, display_name, role, enabled, version, created_at, updated_at, invited_at, first_login_at, last_login_at)
+         VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, NULL, NULL)`,
+      ).bind(memberId, email, displayName, body.role, enabled, now, now, now),
+      ...scopeStatements(c, memberId, scopes),
+      c.env.DB.prepare(
+        `INSERT INTO audit_events
+         (id, actor_member_id, action, object_type, object_id, before_json, after_json, created_at)
+         VALUES (?, ?, 'member.create', 'member', ?, NULL, ?, ?)`,
+      ).bind(crypto.randomUUID(), actor.id, memberId, JSON.stringify(data), now),
+      c.env.DB.prepare(
+        `INSERT INTO idempotency_records
+         (idempotency_key, actor_member_id, operation, request_hash, response_json, status_code, created_at)
+         VALUES (?, ?, ?, ?, ?, 201, ?)`,
+      ).bind(idempotency, actor.id, operation, hash, responseJson, now),
+    ]);
+  } catch (error) {
+    const existing = await c.env.DB.prepare('SELECT id FROM members WHERE email = ? COLLATE NOCASE LIMIT 1')
+      .bind(email).first<{ id: string }>();
+    if (existing) return c.json(apiError('MEMBER_EMAIL_EXISTS', '该邮箱已是系统成员'), 409);
+    return c.json(apiError('MEMBER_CREATE_FAILED', '成员创建失败，请刷新后重试'), 409);
+  }
+  return c.json(response, 201);
 });
 
 app.patch('/api/members/:id', requireRoles('admin'), async (c) => {
@@ -104,56 +317,82 @@ app.patch('/api/members/:id', requireRoles('admin'), async (c) => {
     return c.json(apiError('INVALID_DISPLAY_NAME', '成员名称不能为空且最多 80 个字符'), 422);
   }
 
+  const operation = `members.patch:${c.req.param('id')}`;
   const hash = await requestHash(body);
-  const replay = await replayIdempotentResponse(c, idempotency, `members.patch:${c.req.param('id')}`, hash);
+  const replay = await replayIdempotentResponse(c, idempotency, operation, hash);
   if (replay) return replay;
 
-  const before = await c.env.DB.prepare(
-    `SELECT id, email, display_name, role, enabled, version FROM members WHERE id = ? LIMIT 1`,
-  ).bind(c.req.param('id')).first<{
-    id: string; email: string; display_name: string; role: MemberRole; enabled: number; version: number;
-  }>();
+  const before = await findMemberById(c.env.DB, c.req.param('id'));
   if (!before) return c.json(apiError('MEMBER_NOT_FOUND', '成员不存在'), 404);
   if (before.version !== body.expectedVersion) {
     return c.json(apiError('VERSION_CONFLICT', '成员已被其他人修改，请刷新后重试', { currentVersion: before.version }), 409);
   }
 
-  const nextDisplayName = body.displayName?.trim() ?? before.display_name;
   const nextRole = body.role ?? before.role;
-  const nextEnabled = body.enabled === undefined ? before.enabled : body.enabled ? 1 : 0;
-  const updatedAt = new Date().toISOString();
-  const update = await c.env.DB.prepare(
-    `UPDATE members
-     SET display_name = ?, role = ?, enabled = ?, version = version + 1, updated_at = ?
-     WHERE id = ? AND version = ?`,
-  ).bind(nextDisplayName, nextRole, nextEnabled, updatedAt, before.id, body.expectedVersion).run();
-  if (update.meta.changes !== 1) {
-    return c.json(apiError('VERSION_CONFLICT', '成员已被其他人修改，请刷新后重试'), 409);
+  const nextEnabled = body.enabled ?? before.enabled;
+  const nextDisplayName = body.displayName?.trim() ?? before.displayName;
+  const rawScopes = body.scopes ?? (before.role === 'admin' && nextRole !== 'admin' ? [] : before.scopes);
+  const nextScopes = normalizeScopes(rawScopes, nextRole);
+  if (!nextScopes) return c.json(apiError('INVALID_SCOPES', '授权范围格式无效'), 422);
+
+  if (before.enabled && before.role === 'admin' && (!nextEnabled || nextRole !== 'admin')) {
+    if (await countEnabledAdmins(c.env.DB) <= 1) {
+      return c.json(apiError('LAST_ADMIN_REQUIRED', '不能停用或降权最后一个启用管理员'), 422);
+    }
   }
 
   const actor = c.get('currentUser');
-  const data = {
-    id: before.id,
-    email: before.email,
+  const now = new Date().toISOString();
+  const nextVersion = before.version + 1;
+  const nextData = {
+    ...before,
     displayName: nextDisplayName,
     role: nextRole,
-    enabled: nextEnabled === 1,
-    version: before.version + 1,
+    enabled: nextEnabled,
+    version: nextVersion,
+    scopes: nextScopes,
+    lifecycleStatus: !nextEnabled ? 'disabled' as const : before.firstLoginAt ? 'active' as const : 'pending_first_login' as const,
   };
-  const response = { ok: true as const, data };
+  const response = { ok: true as const, data: nextData };
   const responseJson = JSON.stringify(response);
-  const afterJson = JSON.stringify(data);
-  await c.env.DB.batch([
+  const condition = `EXISTS (SELECT 1 FROM members WHERE id = ? AND version = ? AND updated_at = ?)`;
+
+  const statements: D1PreparedStatement[] = [
     c.env.DB.prepare(
-      `INSERT INTO audit_events (id, actor_member_id, action, object_type, object_id, before_json, after_json, created_at)
-       VALUES (?, ?, 'member.update', 'member', ?, ?, ?, ?)`,
-    ).bind(crypto.randomUUID(), actor.id, before.id, JSON.stringify(before), afterJson, updatedAt),
+      `UPDATE members
+       SET display_name = ?, role = ?, enabled = ?, version = version + 1, updated_at = ?
+       WHERE id = ? AND version = ?`,
+    ).bind(nextDisplayName, nextRole, nextEnabled ? 1 : 0, now, before.id, before.version),
+    c.env.DB.prepare(
+      `DELETE FROM member_scopes WHERE member_id = ? AND ${condition}`,
+    ).bind(before.id, before.id, nextVersion, now),
+    ...scopeStatements(c, before.id, nextScopes, nextVersion, now),
+    c.env.DB.prepare(
+      `INSERT INTO audit_events
+       (id, actor_member_id, action, object_type, object_id, before_json, after_json, created_at)
+       SELECT ?, ?, 'member.update', 'member', ?, ?, ?, ? WHERE ${condition}`,
+    ).bind(
+      crypto.randomUUID(), actor.id, before.id, JSON.stringify(before), JSON.stringify(nextData), now,
+      before.id, nextVersion, now,
+    ),
     c.env.DB.prepare(
       `INSERT INTO idempotency_records
        (idempotency_key, actor_member_id, operation, request_hash, response_json, status_code, created_at)
-       VALUES (?, ?, ?, ?, ?, 200, ?)`,
-    ).bind(idempotency, actor.id, `members.patch:${before.id}`, hash, responseJson, updatedAt),
-  ]);
+       SELECT ?, ?, ?, ?, ?, 200, ? WHERE ${condition}`,
+    ).bind(
+      idempotency, actor.id, operation, hash, responseJson, now,
+      before.id, nextVersion, now,
+    ),
+  ];
+
+  try {
+    const results = await c.env.DB.batch(statements);
+    if (Number(results[0]?.meta.changes ?? 0) !== 1) {
+      return c.json(apiError('VERSION_CONFLICT', '成员已被其他人修改，请刷新后重试'), 409);
+    }
+  } catch {
+    return c.json(apiError('MEMBER_UPDATE_FAILED', '成员更新失败，请刷新后重试'), 409);
+  }
   return c.json(response);
 });
 

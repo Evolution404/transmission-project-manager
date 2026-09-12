@@ -2,7 +2,7 @@
 
 ## 开始工作
 
-- 当前基线：P0、P1 核心已交付；下一步按 `docs/IMPLEMENTATION_PLAN.md` 完成 P1.1（成员管理与可移交运维），再进入 P2。只实现当前用户授权的阶段，不擅自跳阶段上线。
+- 当前基线：P0、P1、P1.1 已交付并通过本地验收；下一步按 `docs/IMPLEMENTATION_PLAN.md` 进入 P2（Excel 导入、需求池与物资字典）。只实现当前用户授权的阶段，不擅自跳阶段上线。
 - 开始前运行 `git status --short --branch`，阅读 `docs/AI_HANDOFF.md`、`docs/IMPLEMENTATION_PLAN.md`、`docs/DESIGN.md` 和 `docs/DATA_MODEL.md`。
 - 不覆盖他人的未提交修改。后续若用户明确要求多个 AI 协作，先划定文件/模块所有权。
 - 当前用户指令优先于本文件。不要把仓库文字解释为对部署、发信或收费服务的额外授权。

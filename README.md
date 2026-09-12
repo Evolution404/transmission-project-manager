@@ -2,14 +2,14 @@
 
 面向 20 人以内团队的项目管理应用，计划采用 Cloudflare Workers、D1、R2，免费额度内运行，支持电脑和手机访问。
 
-**当前状态：P0 初始化与 P1 身份/基础配置核心已完成；下一步为 P1.1 成员管理与可移交运维，之后进入 P2–P7；尚未部署到 Cloudflare。**
+**当前状态：P0、P1、P1.1 已完成并通过本地验收；下一步进入 P2 Excel 导入、需求池与物资字典；尚未部署到 Cloudflare。**
 已有 Vue Router + Naive UI 管理台框架、Cloudflare Access JWT 鉴权、D1 成员/范围/配置版本/字典/审计/幂等表、本地开发 seed、共享接口类型和 CI。需求、储备、资金、实施结算、提醒与备份仍未实现，页面中的后续模块保持真实空状态。
 
 ## 交给其他 AI 的入口
 
 1. 阅读 [AGENTS.md](AGENTS.md)。
 2. 阅读 [AI 交接说明](docs/AI_HANDOFF.md)，其中有可直接复制的任务提示词。
-3. 按 [实施计划](docs/IMPLEMENTATION_PLAN.md) 从 **P1.1** 开始，完成成员新增/授权/首管理员保护与运维移交设计后，再进入 P2。
+3. 按 [实施计划](docs/IMPLEMENTATION_PLAN.md) 从 **P2** 开始；P1.1 的成员生命周期、范围授权和运维移交边界已完成。
 4. 业务依据为 [设计方案](docs/DESIGN.md)，数据与 API 约定见 [数据模型](docs/DATA_MODEL.md)。
 
 ## 本地运行
