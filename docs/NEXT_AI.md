@@ -1,13 +1,48 @@
-# 下一位 AI：继续 P6
+# 下一位 AI：进入 P7 真实数据与正式环境验收
 
-项目：`Evolution404/transmission-project-manager`，本地路径 `/Users/zhangyuxi/Desktop/项目管理`，分支 `main`。先 fetch 并以远端最新 HEAD 为准。
+项目：`Evolution404/transmission-project-manager`
 
-P0、P1、P1.1、P1.2、P2、P3、P4、P5 已完成。认证已经定稿为系统自维护 `username + password`：浏览器 Web Worker 做 Argon2id，服务端只保存 HMAC verifier 和 7 天 HttpOnly 会话；禁止恢复 Cloudflare Access、邮箱登录或服务端慢 KDF。
+本地路径：`/Users/zhangyuxi/Desktop/项目管理`
 
-P2–P5 的核心不变量都必须保留：P2 导入的 chunk/validate/publish 继续使用 `expectedVersion` 与同一 D1 batch；P3 数量分配不能超原需求、金额只用定点整数、缺价不等于零价、分类金额必须守恒；P4 预算确认不自动生成预算发生，预算发生/实际发生独立，90%/80% 阈值用精确整数判断；P5 出库/实施/结算继续推进同一个 `projects.version`，项目需求分配不能缩小到已出库/已实施/有效结算事实以下。
+分支：`main`
 
-P5 已完成：分批出库快照、正常实施、历史实施补录与关联、独立结算/撤销、四状态投影、默认 30 天结算待办和私有 R2 附件。`/delivery` 已懒加载真实 `DeliveryView`。只有“全部有效范围覆盖完整 + 有效最终结算”才算已结算；非最终结算即使覆盖 100% 也仍是未结算，已有覆盖完整时允许 0 元、空新增覆盖的最终确认收口。附件单文件最大 10 MiB，下载必须重新做项目范围授权。
+P0–P6 已完成并通过本地/合成数据验收。P6 主实现提交：`3f4a62d`（`feat: complete P6 analysis notifications and backups`）；P6 文档收口提交以当前 `main` HEAD 为准。
 
-当前进入 P6：分析、提醒与备份。先阅读 `AGENTS.md`、`docs/AI_HANDOFF.md`、`docs/IMPLEMENTATION_PLAN.md`、`docs/DESIGN.md`、`docs/DATA_MODEL.md`、`docs/TESTING.md`。严格测试先行，优先建立：月末/季度末/跨年边界；月计划与季度累计目标；按同期计划 80% 和落后百分点两种滞后规则；年度目标为 0 时显示未配置；规则改变不覆盖历史月报；事项仅有月份时不能捏造具体日期；提醒的幂等、领取租约、超时恢复、失败退避和发送结果未知；关闭浏览器仍由服务端调度；D1 导出到 R2 的备份清单及至少一次恢复演练合同。
+开始后先执行：
 
-P5 收尾时完整 `npm run check` 全绿：80/80 Node/workerd+D1 + 43/43 Vue/Vitest，共 123 项 PASS；TypeScript、Vite 生产构建和 Worker dry-run 均通过。P6 完成前同样必须跑完整门禁、更新文档、提交并推送 GitHub。真实业务文件、真实邮件投递、真实 Cloudflare 配额/网络和正式恢复演练仍留 P7，不能用本地合成结果宣称上线。
+```sh
+cd /Users/zhangyuxi/Desktop/项目管理
+git status --short --branch
+git fetch origin
+```
+
+必须确认工作区 clean 且 `HEAD == origin/main`，然后完整阅读：
+
+1. `AGENTS.md`
+2. `docs/AI_HANDOFF.md`
+3. `docs/IMPLEMENTATION_PLAN.md`
+4. `docs/DESIGN.md`
+5. `docs/DATA_MODEL.md`
+6. `docs/TESTING.md`
+7. `docs/DEPLOYMENT.md`
+8. `docs/HANDOFF-P6-WIP-2026-09-12.md`（已更新为 P6 完成记录，文件名保留用于历史追溯）
+
+认证基线永久锁定为系统自维护 `username + password`：浏览器 Web Worker 做 Argon2id，服务端只保存带运行时 pepper 的 HMAC verifier，使用 7 天 HttpOnly 会话。禁止恢复 Cloudflare Access、邮箱业务登录、邮箱验证码或服务端慢 KDF。
+
+P6 最终门禁：**93/93 Node/workerd+D1 + 48/48 Vue/Vitest = 141/141 PASS**；TypeScript、Vite 生产构建、Worker dry-run 全绿。`AnalysisView` 约 19.48 kB（gzip 6.25 kB），ECharts 独立懒加载 chunk 约 488.44 kB（gzip 164.84 kB），Worker dry-run 上传约 411.87 KiB（gzip 78.17 KiB）。独立 D1 实际恢复测试已通过，但只代表本地合成环境。
+
+P7 不扩写新的业务模块，重点逐项完成真实验收：
+
+- 用户真实原始 Excel 映射抽检；
+- “一年工作早知道”真实数据；
+- 项目储备类别真实数据；
+- 真实框架/协议/预算/实施/结算资料；
+- 真实 Cloudflare Workers/D1/R2 CPU、免费额度与错误率；
+- 正式域名与 HTTPS/Cookie；
+- 真实邮件提供商、域名与收件配置；
+- 目标地区网络实测；
+- 正式 D1/R2 备份恢复演练；
+- Cloudflare/GitHub 运维移交、account-owned CI token、旧维护人撤权演练；
+- 正式发布与回退演练。
+
+真实资料缺失时，不要伪造数据，也不要把合成测试改名为“真实验收”。先做不依赖缺失资料的 P7 基础工作：整理验收矩阵、资源/Secret 清单、真实数据导入检查工具、生产前自检脚本与发布/回退检查表，并明确每项所需外部输入。任何发现的真实数据口径差异必须先回到 P2–P6 已锁定的不变量核对，禁止为了适配样例而静默破坏数量、金额、版本、状态或权限约束。

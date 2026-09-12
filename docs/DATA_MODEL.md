@@ -1,6 +1,6 @@
 # 数据关系与接口约定
 
-这是一份实现约定。P1.2 已将身份模型重整为系统自维护账号、浏览器派生凭据与服务端会话；P2 已实现导入批次、需求池、来源追溯与标准物资；P3 已实现储备项目、需求物资分配、估算、储备分类与确认版本；P4 已实现框架/协议版本、项目预算版本、预算发生/实际发生流水及资金汇总；P5 已实现出库、实施、结算、四状态投影与私有附件。当前开发 schema 不包含邮箱身份或 Cloudflare Access 认证字段。P6–P7 业务对象仍按阶段实现。表名和字段可在迁移中作不影响语义的细化；改变业务口径必须同步 DESIGN.md。使用 D1/SQLite，不依赖 PostgreSQL 专有语法。
+这是一份实现约定。P1.2 已将身份模型重整为系统自维护账号、浏览器派生凭据与服务端会话；P2 已实现导入批次、需求池、来源追溯与标准物资；P3 已实现储备项目、需求物资分配、估算、储备分类与确认版本；P4 已实现框架/协议版本、项目预算版本、预算发生/实际发生流水及资金汇总；P5 已实现出库、实施、结算、四状态投影与私有附件；P6 已实现分析规则、月计划/月报、年度事项、预警/通知 outbox 与 D1→R2 备份。当前开发 schema 不包含邮箱身份或 Cloudflare Access 认证字段。P7 负责真实数据和正式环境验收，不应另起一套业务口径。表名和字段可在迁移中作不影响语义的细化；改变业务口径必须同步 DESIGN.md。使用 D1/SQLite，不依赖 PostgreSQL 专有语法。
 
 ## 1. 通用约定
 
@@ -80,6 +80,11 @@
 31. 历史实施允许暂时没有项目/出库关联；后续只通过显式关联把实施行映射到项目需求物资，不补造出库。关联成功后同一历史记录不得被再次统计为第二份实施量，幂等重放返回原结果。
 32. 需求/项目“已实施”要求全部有效范围实施完成；“已结算”要求全部有效范围结算覆盖完整且存在至少一个未撤销的最终结算。非最终结算即使覆盖 100% 仍属于未结算；已有覆盖完整时允许 0 元、空新增覆盖的最终确认收口。最终结算创建时覆盖仍不完整必须拒绝。
 33. 实施与结算独立投影，允许先结算后实施；最终结算撤销后必须重新投影并恢复结算待办。项目/出库/实施/结算附件只存私有 R2 键，下载必须重新执行项目范围授权；跨项目不得访问。
+34. P6 月计划、规则和报告快照必须可版本追溯；历史月报保存当时的 rule version、规则 JSON 和完整 snapshot，当前规则修改不得覆写旧修订。年度目标为 0 时分析返回未配置。
+35. P6 预警 crossing、持续 daily summary、recovery 与 recross 是不同生命周期事件；通知 outbox 使用唯一幂等键、领取租约、失败退避和 `unknown` 状态，结果不确定时不得无限重发。
+36. P6 年度事项保留 `month/day/unknown` 日期精度；只有月份时不得补造具体日期。完成事项停止提醒。
+37. P6 储备剩余金额按尚未出库数量比例折算，并以整数分配保持分类金额守恒；施工/其他共同费用未明确分摊时不能强行按数量摊入分类。
+38. P6 D1→R2 备份按表和小分片可续跑，每个 chunk 保存 SHA-256，完成后生成 manifest；实际恢复需从 manifest/chunk 回灌独立 D1 并对账，`auth_sessions` 不恢复。
 
 建议索引至少覆盖：来源幂等键；需求年度/类别/线路；需求物资分配；框架和协议归属；项目及财务条目的业务月；到期且待处理的通知；附件所属对象。按实际查询计划验收读行数。
 
@@ -161,16 +166,36 @@ GET /api/projects/:id/lifecycle
 POST /api/attachments
 GET /api/attachments
 GET /api/attachments/:id/content
+GET /api/analysis/dashboard
+GET /api/analysis/reserve-remaining
+GET /api/analysis/rules
+PUT /api/analysis/rules
+GET /api/analysis/plans
+PUT /api/analysis/plans/:projectId/:year/:month
+GET /api/analysis/frameworks/:id/progress
+GET /api/analysis/projects/gaps
+POST /api/reports/monthly
+GET /api/reports/monthly
+POST /api/milestones
+GET /api/milestones
+GET /api/milestones/due
+PUT /api/milestones/:id/status
+POST /api/alerts/evaluate
+GET /api/alerts
+POST /api/notification-contacts
+GET /api/notification-contacts
+GET /api/notification-outbox
+POST /api/notification-outbox/claim
+POST /api/notification-outbox/:id/result
+POST /api/backups
+GET /api/backups
+POST /api/backups/:id/step
+POST /api/backups/:id/verify
 ```
 
-`/api/health` 当前返回 `stage: "p5"`。业务接口先验证系统自身会话 Cookie，再根据 D1 成员启用状态、角色和范围授权；不解析 Cloudflare Access JWT，也不信任任何请求头 username/email/role。成员角色、启停和范围继续受服务端权限、版本/幂等/审计约束；最后一个启用管理员不可被停用或降权。P2/P3 生产写接口继续由 `admin/project_manager` 管理；P4 框架/协议结构写入为 `admin/project_manager`，预算和资金流水允许 `finance` 在其业务范围内操作；P5 出库由 `admin/project_manager`，实施由 `admin/project_manager/implementation`，结算由 `admin/project_manager/finance` 操作，附件按对象项目范围再次授权。所有读写仍按 `all/framework/project` scope 服务端过滤。未知 `/api` 路径返回 JSON 404，不回退到前端 HTML。
+`/api/health` 当前返回 `stage: "p6"`。业务接口先验证系统自身会话 Cookie，再根据 D1 成员启用状态、角色和范围授权；不解析 Cloudflare Access JWT，也不信任任何请求头 username/email/role。成员角色、启停和范围继续受服务端权限、版本/幂等/审计约束；最后一个启用管理员不可被停用或降权。P2/P3 生产写接口继续由 `admin/project_manager` 管理；P4 框架/协议结构写入为 `admin/project_manager`，预算和资金流水允许 `finance` 在其业务范围内操作；P5 出库由 `admin/project_manager`，实施由 `admin/project_manager/implementation`，结算由 `admin/project_manager/finance` 操作；P6 分析计划/事项由相应管理角色维护，分析规则、通知地址和备份运维区受管理员边界约束。附件及所有业务读取仍按 `all/framework/project` scope 服务端过滤。未知 `/api` 路径返回 JSON 404，不回退到前端 HTML。
 
-其余待实现接口族：
-
-| 接口族 | 能力 |
-|---|---|
-| `/api/reports`、`/api/milestones`、`/api/alerts` | 汇总、月报、年度事项、待办和预警 |
-| `/api/backups` | 备份任务、清单、恢复演练元数据 |
+P7 不新增另一套核心接口族；重点是用真实文件、真实 Cloudflare/D1/R2/邮件资源和目标地区网络对上述合同做端到端验收，必要改动仍需保持现有不变量与版本/幂等约束。
 
 通用响应沿用 `packages/shared` 的 `ApiResponse<T>`。列表默认50项、最大100项，返回 `items` 和不透明 `nextCursor`；P3 待分配候选池和 P4 资金流水都按该约束分页，归并建议与资金汇总在数据库内做集合聚合，不能通过逐对象 N+1 查询或单请求无限制返回全库。大导出同样使用分页。
 

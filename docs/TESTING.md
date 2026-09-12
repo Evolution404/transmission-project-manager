@@ -39,7 +39,7 @@
 
 ### C. Worker + D1 集成
 
-`tests/scaffold.test.mjs`、`tests/member-atomicity.test.mjs`、`tests/admin-concurrency.test.mjs`、`tests/p2-import.test.mjs`、`tests/p3-reserves.test.mjs`、`tests/p4-finance.test.mjs`
+`tests/scaffold.test.mjs`、`tests/member-atomicity.test.mjs`、`tests/admin-concurrency.test.mjs`、`tests/p2-import.test.mjs`、`tests/p3-reserves.test.mjs`、`tests/p4-finance.test.mjs`、`tests/p5-delivery.test.mjs`、`tests/p6-analysis.test.mjs`
 
 覆盖：
 
@@ -175,7 +175,23 @@ P5 先建立出库/实施/结算事实与状态投影失败测试，再实现 sc
 
 P5 完整门禁结果为 80/80 Node/workerd+D1 + 43/43 Vue/Vitest，共 123 项 PASS；TypeScript、Vite 生产构建和 Worker dry-run 同时通过。主入口约 459.00 kB，`DeliveryView` 约 19.83 kB。真实出库/实施/结算历史、附件规模和真实云资源性能仍留 P7。
 
-## 7. 缺陷处理规则
+## 7. P6 已建立的测试基线
+
+P6 已完成分析、提醒、通知和备份收口，后续 P7 不得删除或弱化以下约束：
+
+- 同期计划达成率默认 80%，以及“落后年度目标若干百分点”两种规则都使用整数精确边界；年度目标为 0 时返回未配置，不产生 Infinity 或伪进度。
+- 季度状态按 Asia/Shanghai 真实年份/日期判断，跨年后过去季度必须是 ended；月计划 GET/PUT 使用当前版本，历史月报保存规则版本、规则 JSON 和完整 snapshot，规则修改不能覆盖旧修订。
+- 储备剩余按尚未出库数量比例折算已知物资金额，并以整数分配保持分类金额守恒；不能把整个项目金额重复计入。
+- 年度事项保存 `month/day/unknown` 精度；只知道月份时不得捏造具体日期，完成事项停止提醒。
+- 预警生命周期覆盖首次 crossing、持续期间每日摘要、recovery、同周期 recross；同一事件/收件人通过唯一键和幂等防重复。
+- 通知 outbox claim 使用租约，租约超时可回收；failed 指数退避，provider 结果不确定记 `unknown`，不能无限重复发送。未配置真实投递 URL 时 cron 不领取 outbox。
+- Worker `scheduled()` 每 5 分钟执行后台 tick，关闭浏览器不影响提醒或备份；03:00 Asia/Shanghai 对应 tick 创建 daily，月末同时创建 monthly。
+- D1→R2 备份必须按表/分片可续跑、每块保存 SHA-256、完成后生成 manifest；恢复测试必须从 manifest/chunk 回灌到第二个独立 D1 并对账核心事实，不能只做 checksum verify；`auth_sessions` 不恢复。
+- `/analysis` 与 Dashboard 必须使用真实 API 数据；月计划更新不得猜 `expectedVersion`。ECharts 运行时代码按需注册并动态拆包，避免把整套图表库塞进页面主 chunk。
+
+P6 最终分段完整门禁为 93/93 Node/workerd+D1 + 48/48 Vue/Vitest，共 141 项 PASS；TypeScript、Vite 生产构建、Worker dry-run 同时通过。`AnalysisView` 约 19.48 kB（gzip 6.25 kB），独立 `echarts` chunk 约 488.44 kB（gzip 164.84 kB），Worker dry-run 上传约 411.87 KiB（gzip 78.17 KiB）。当前工具单次调用上限 300 秒，因此 Node 测试按全部 `tests/*.test.mjs` 文件组分段跑完；这是完整覆盖，不是跳过测试。
+
+## 8. 缺陷处理规则
 
 任何线上、验收或人工测试发现的问题：
 
@@ -187,7 +203,7 @@ P5 完整门禁结果为 80/80 Node/workerd+D1 + 43/43 Vue/Vitest，共 123 项 
 
 同类问题若来自架构约束缺失，应增加守卫测试或数据库约束，避免只修单个表现路径。
 
-## 8. 真实环境留到 P7 的测试
+## 9. 真实环境留到 P7 的测试
 
 以下项目不能用本地模拟结果替代：
 

@@ -2,7 +2,7 @@
 
 ## 当前状态
 
-P0、P1、P1.1、P1.2、P2、P3、P4、P5 已完成并通过本地验收。业务登录现为系统自维护 `username + password`：浏览器 Web Worker 执行 Argon2id，服务端保存带运行时 pepper 的 HMAC verifier，并使用 7 天 HttpOnly 服务端会话。邮箱和 Cloudflare Access 均不参与业务认证。
+P0、P1、P1.1、P1.2、P2、P3、P4、P5、P6 已完成并通过本地/合成数据验收。业务登录现为系统自维护 `username + password`：浏览器 Web Worker 执行 Argon2id，服务端保存带运行时 pepper 的 HMAC verifier，并使用 7 天 HttpOnly 服务端会话。邮箱和 Cloudflare Access 均不参与业务认证。
 
 P2 已完成 Excel/CSV 浏览器解析、字段映射模板、分片导入/校验/发布、需求池列表/详情、来源追溯和标准物资字典。chunk/validate/publish 都使用显式 `expectedVersion`；版本守卫、业务写入和幂等记录处于同一个 D1 batch，stale version 及并发上传/校验/发布的失败请求不会留下半批数据。`/demands` 已懒加载真实需求页，不再指向占位页。
 
@@ -14,7 +14,7 @@ P4 已完成框架/协议版本、项目框架归属、预算草稿与确认版�
 
 P5 已完成分批出库、正常/历史实施、历史关联、独立结算与撤销、四状态投影、结算待办及私有附件；`/delivery` 已接真实实施结算工作台。P3 项目范围不能缩小到已出库/已实施/有效结算事实以下；“已结算”必须同时满足完整覆盖和有效最终结算，非最终覆盖满仍不算已结算。
 
-**下一步进入 P6：分析、提醒与备份。** Cloudflare 仍是托管路线，但不参与业务身份认证；继续保留 P1.2 的账号、会话和权限中间件，不得把旧 Access/邮箱身份代码带回来。对外简短交接直接使用 `docs/NEXT_AI.md`。
+**下一步进入 P7：真实数据、云资源、网络、恢复与正式上线验收。** Cloudflare 仍是托管路线，但不参与业务身份认证；继续保留 P1.2 的账号、会话和权限中间件，不得把旧 Access/邮箱身份代码带回来。P7 不能以真实数据接入为由破坏 P2–P6 已锁定的不变量。对外简短交接直接使用 `docs/NEXT_AI.md`。
 
 ## 阅读顺序
 
@@ -57,7 +57,7 @@ npm run check
 - 可读参考：https://www.workbuddy.link/p/plhvulKoyaQX5vic8Oaeoy?source=2 。仅作为功能和布局参考。
 - 尚缺：原始需求Excel、“一年工作早知道”、“项目储备类别”、真实单价/框架/协议资料。
 - 尚缺：生产 Cloudflare 账户资源、可用自定义域名、正式运行时 Secrets 和后续通知收件资料。
-- 未测：真实 Cloudflare Workers CPU/配额与目标地区网络、低性能手机 Argon2id 体验、完整业务、真实文件映射、真实发信与恢复。
+- 未测：真实 Cloudflare Workers CPU/配额与目标地区网络、低性能手机 Argon2id 体验、真实文件映射、真实发信、正式环境恢复与运维移交；这些全部属于 P7。
 - P4 完整本地门禁已全绿：70/70 Node/workerd+D1 + 38/38 Vue/Vitest，共 108 项；覆盖 P1.2/P2/P3 全量回归、P3→P4 数据保留、预算/发生分离、协议归属、预算版本、冲销、并发/幂等、精确阈值、105+ 流水游标分页和 `/finance` 页面合同。CI 实际结果以仓库 Actions 为准。
 
 ## 后续交接记录
@@ -141,5 +141,17 @@ npm run check
 - 测试：完整 `npm run check` 全绿，80/80 Node/workerd+D1 + 43/43 Vue/Vitest，共 123 项 PASS；生产 Web 构建和 Worker dry-run 通过。主入口约 459.00 kB，`DeliveryView` 约 19.83 kB。
 - 未验证：真实出库/实施/结算历史、真实附件规模、真实 D1/R2 配额和目标地区网络仍留 P7。
 - 下一步：P6 分析、提醒与备份。优先测试月/季度时间边界、计划/实际口径、0 分母、历史报表版本、提醒幂等/租约/重试以及备份可恢复性。
+
+### P6 · 2026-09-12
+
+- 主要实现提交：`3f4a62d`（`feat: complete P6 analysis notifications and backups`）。
+- 完成：分析规则/月计划/季度进度、月报修订快照、子项目缺口、储备剩余分析、年度事项、预警生命周期、通知 outbox 与服务端 cron、D1→R2 分片备份和独立 D1 实际恢复；Dashboard 与 `/analysis` 均使用真实 API 数据。
+- 预警：首次 crossing、持续期间每日摘要、recovery、同周期 recross 均有自动测试；通知领取使用租约，失败指数退避，provider 结果不确定记 `unknown`，避免无限重复发送。
+- 后台：Worker `scheduled()` 每 5 分钟执行 P6 tick；未配置 `NOTIFICATION_DELIVERY_URL` 时 outbox 保持 pending，关闭浏览器不影响分析/通知/备份后台任务。
+- 备份：按表和 100 行分片导出至私有 R2，保存 chunk SHA-256 与 manifest；测试已把 manifest/chunk 回灌到第二个独立临时 D1 并对账核心业务事实，且不恢复 `auth_sessions`。
+- 前端：ECharts 采用按需注册并动态拆包，`AnalysisView` 约 19.48 kB（gzip 6.25 kB），独立图表运行块约 488.44 kB（gzip 164.84 kB）；Worker dry-run 上传约 411.87 KiB（gzip 78.17 KiB）。
+- 测试：分段完整门禁全绿，93/93 Node/workerd+D1 + 48/48 Vue/Vitest，共 141 项 PASS；TypeScript、Vite 生产构建、Worker dry-run 均通过。当前工具单次 300 秒限制导致完整 `npm run check` 不宜单次运行，因此 Node 测试按全部 `tests/*.test.mjs` 文件组分段实际跑完，无跳过。
+- 未验证：真实 Excel/年度事项/分类文件、真实邮件供应商与域名、真实 Cloudflare CPU/免费额度、目标地区网络、正式环境恢复、Cloudflare/GitHub 运维移交和正式发布，全部进入 P7。
+- 下一步：P7 仅做真实数据与正式环境验收/上线，不扩写新业务功能；任何口径差异先回到现有设计和不变量核对，不能用真实数据接入覆盖历史事实。
 
 每完成阶段在此追加：阶段、提交号、完成内容、测试、未完成/未验证项和明确下一步。不要删除原始边界说明。
