@@ -35,7 +35,7 @@ GitHub推送及CI结果以仓库提交和Actions实际记录为准。P0没有实
 
 验收：缺失/伪造/过期JWT拒绝；角色越权与跨项目访问拒绝；停用成员失效；配置修改有历史；真实业务接口不信任客户端邮箱；现有健康与API路由测试继续通过。
 
-P1完成记录（2026-09-12）：
+P1完成记录（2026-09-12，主要实现提交 `4880918`）：
 
 - 建立 `members`、`member_scopes`、`settings_versions`、`dictionary_items`、`audit_events`、`idempotency_records` 初始迁移；合成本地成员只存在于 `seeds/local.sql`，不会随正式迁移进入生产。
 - 生产模式使用 Cloudflare Access JWT 的签名、issuer、audience 和 email claim 验证；Access 配置缺失时业务接口 fail-closed。开发/测试模式仅允许显式本地身份。
