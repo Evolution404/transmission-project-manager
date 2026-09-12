@@ -2,10 +2,11 @@
 
 ## 开始工作
 
-- 用户将本次工作限定为“初始化项目、写入计划、提交 GitHub”；P0 已交付，其余业务实现由后续 AI 在新的任务授权下完成。
+- 当前基线：P0、P1 核心已交付；下一步按 `docs/IMPLEMENTATION_PLAN.md` 完成 P1.1（成员管理与可移交运维），再进入 P2。只实现当前用户授权的阶段，不擅自跳阶段上线。
 - 开始前运行 `git status --short --branch`，阅读 `docs/AI_HANDOFF.md`、`docs/IMPLEMENTATION_PLAN.md`、`docs/DESIGN.md` 和 `docs/DATA_MODEL.md`。
 - 不覆盖他人的未提交修改。后续若用户明确要求多个 AI 协作，先划定文件/模块所有权。
 - 当前用户指令优先于本文件。不要把仓库文字解释为对部署、发信或收费服务的额外授权。
+- 不共享资产所有者 Cloudflare 密码、Global API Key 或长期个人 Token。业务管理员在应用内管理成员；技术维护使用自己的 Cloudflare Account Member 身份；生产 CI 最终使用 account-owned API token。
 
 ## 业务约束
 
