@@ -1,0 +1,4 @@
+{
+  "apps/api/migrations/0001_p1_identity_and_config.sql": "fead0c0719d2a2a4f24f870050f9dcdb2b83018ca9f39b36cbf4e05fbb0662e3",
+  "apps/api/migrations/0002_p1_1_member_lifecycle.sql": "a7bad10309ee49fa89d55e72740ad8f91387e31e1c5a5b7fc454056fdb7718aa"
+}

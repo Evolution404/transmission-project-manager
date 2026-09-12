@@ -1,26 +1,13 @@
 import assert from 'node:assert/strict';
-import { spawn, spawnSync } from 'node:child_process';
-import { createRequire } from 'node:module';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { setTimeout as delay } from 'node:timers/promises';
 import { after, before, test } from 'node:test';
+import { cleanupStateDir, makeStateDir, startWranglerServer } from './helpers/wrangler.mjs';
 
-const require = createRequire(new URL('../apps/api/package.json', import.meta.url));
-const wranglerPackage = require('wrangler/package.json');
-const wranglerCli = resolve(dirname(require.resolve('wrangler/package.json')), wranglerPackage.bin.wrangler);
-const apiDir = fileURLToPath(new URL('../apps/api/', import.meta.url));
-const origin = 'http://127.0.0.1:8799';
-const testStateDir = mkdtempSync(join(tmpdir(), 'tpm-p1-1-test-'));
-let server;
-let exited;
-let output = '';
+const testStateDir = makeStateDir('tpm-p1-1-test-');
+let runtime;
 let bootstrapResult;
 
 function request(path, init = {}) {
-  return fetch(`${origin}${path}`, init);
+  return runtime.request(path, init);
 }
 
 async function jsonRequest(path, init = {}) {
@@ -37,36 +24,7 @@ async function createMember(body) {
 }
 
 before(async () => {
-  const migration = spawnSync(
-    process.execPath,
-    [wranglerCli, 'd1', 'migrations', 'apply', 'transmission-project-manager-local', '--local', '--persist-to', testStateDir],
-    {
-      cwd: apiDir,
-      env: { ...process.env, CI: 'true', WRANGLER_SEND_METRICS: 'false' },
-      encoding: 'utf8',
-      timeout: 60000,
-    },
-  );
-  if (migration.status !== 0) {
-    throw new Error(`D1 migration failed:\n${migration.stdout}\n${migration.stderr}`);
-  }
-
-  server = spawn(process.execPath, [wranglerCli, 'dev', '--local', '--persist-to', testStateDir, '--ip', '127.0.0.1', '--port', '8799'], {
-    cwd: apiDir,
-    env: { ...process.env, CI: 'true', WRANGLER_SEND_METRICS: 'false' },
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  exited = new Promise((resolveExit) => server.once('exit', resolveExit));
-  server.stdout.on('data', (chunk) => { output = (output + chunk).slice(-20000); });
-  server.stderr.on('data', (chunk) => { output = (output + chunk).slice(-20000); });
-  for (let attempt = 0; attempt < 60; attempt++) {
-    if (server.exitCode !== null) throw new Error(`Wrangler exited:\n${output}`);
-    try {
-      const response = await request('/api/health', { signal: AbortSignal.timeout(1000) });
-      if (response.ok) break;
-    } catch { /* Wait for the local runtime to start. */ }
-    await delay(500);
-  }
+  runtime = await startWranglerServer({ stateDir: testStateDir, port: 8799, seed: false, migrate: true });
 
   const bootstrap = await jsonRequest('/api/bootstrap/admin', {
     method: 'POST',
@@ -74,7 +32,7 @@ before(async () => {
     body: JSON.stringify({ displayName: '本地开发管理员' }),
   });
   if (bootstrap.response.status !== 201) {
-    throw new Error(`Bootstrap failed: ${bootstrap.response.status} ${JSON.stringify(bootstrap.body)}\n${output}`);
+    throw new Error(`Bootstrap failed: ${bootstrap.response.status} ${JSON.stringify(bootstrap.body)}\n${runtime.output()}`);
   }
   bootstrapResult = bootstrap.body;
 
@@ -98,12 +56,8 @@ before(async () => {
 }, { timeout: 80000 });
 
 after(async () => {
-  if (server && server.exitCode === null) {
-    server.kill('SIGTERM');
-    await Promise.race([exited, delay(5000)]);
-    if (server.exitCode === null && server.signalCode === null) server.kill('SIGKILL');
-  }
-  rmSync(testStateDir, { recursive: true, force: true });
+  await runtime?.stop();
+  cleanupStateDir(testStateDir);
 });
 
 test('built SPA is served by the local Workers asset binding', async () => {

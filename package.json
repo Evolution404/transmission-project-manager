@@ -15,7 +15,9 @@
     "build:web": "npm run build --workspace @tpm/web",
     "build:worker": "npm run build --workspace @tpm/api",
     "build": "npm run build:web && npm run build:worker",
-    "test": "node --test tests/scaffold.test.mjs",
+    "test:node": "node --test --test-concurrency=1 tests/*.test.mjs",
+    "test:web": "npm run test --workspace @tpm/web",
+    "test": "npm run test:node && npm run test:web",
     "check": "npm run typecheck && npm run build && npm test"
   },
   "devDependencies": {

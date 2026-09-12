@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 5173 --strictPort",
     "build": "vite build",
-    "typecheck": "vue-tsc --noEmit && tsc -p tsconfig.node.json"
+    "typecheck": "vue-tsc --noEmit && tsc -p tsconfig.node.json && vue-tsc --noEmit -p tsconfig.test.json",
+    "test": "vitest run --config vitest.config.ts"
   },
   "dependencies": {
     "@tpm/shared": "*",
@@ -16,7 +17,10 @@
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "6.0.8",
+    "@vue/test-utils": "^2.5.0",
+    "happy-dom": "^20.14.5",
     "vite": "8.3.0",
+    "vitest": "^5.0.0",
     "vue-tsc": "3.3.11"
   }
 }

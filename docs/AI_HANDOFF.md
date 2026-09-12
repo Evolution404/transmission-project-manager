@@ -16,7 +16,8 @@ P0、P1（身份权限、基础配置、初始迁移、应用框架）和 P1.1�
 2. [DESIGN.md](DESIGN.md)：用户需求、口径、默认值和参考示例观察。
 3. [DATA_MODEL.md](DATA_MODEL.md)：对象、数量金额约束与API规则。
 4. [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)：P1–P7依赖、交付和验收。
-5. [DEPLOYMENT.md](DEPLOYMENT.md)：本地与生产的区别、Cloudflare限制。
+5. [TESTING.md](TESTING.md)：先测试后生产代码、迁移锁、并发/原子性和阶段门禁。
+6. [DEPLOYMENT.md](DEPLOYMENT.md)：本地与生产的区别、Cloudflare限制。
 
 ## 可直接复制给 AI 的提示词
 
@@ -25,6 +26,7 @@ P0、P1（身份权限、基础配置、初始迁移、应用框架）和 P1.1�
 docs/DESIGN.md、docs/DATA_MODEL.md、docs/IMPLEMENTATION_PLAN.md。
 P0、P1、P1.1 已完成。按实施计划直接进入 P2（Excel导入、需求池与物资字典），
 不要重做身份/成员管理框架，也不要将 P3–P7 的未实现能力标为完成。
+严格遵守 docs/TESTING.md：先写 P2 验收/回归测试并验证测试确实有约束力，再修改生产代码；任何缺陷先补复现用例。
 保持 Cloudflare 免费起步、Vue + TypeScript + Hono + D1 + R2 的架构。
 不需要再次询问已经在文档中确定的需求。原始Excel缺失时使用明确标注的合成测试数据，
 浏览器负责 Excel 解析，Worker 负责分片校验、暂存和发布；正式 Cloudflare/GitHub 运维移交演练留到 P7。
@@ -61,7 +63,7 @@ npm run check
 - 尚缺：原始需求Excel、“一年工作早知道”、“项目储备类别”、真实单价/框架/协议资料。
 - 尚缺：生产Cloudflare账户资源、可用自定义域名、Access成员名单和验证后的邮件收件人。
 - 未测：真实 Cloudflare Access 租户/JWT、完整业务、真实文件映射、Cloudflare线上CPU/配额、大陆网络、真实发信与恢复。
-- P1.1 本地集成测试已扩展到 12 项，覆盖首管理员 bootstrap、成员新增/重复邮箱、首次登录生命周期、成员幂等更新、最后管理员保护、停用成员、角色越权、跨项目/框架范围、配置版本与幂等、字典和 API 回退；CI 实际结果以仓库 Actions 为准。
+- 测试体系已独立增强：历史迁移 SHA-256 锁定、P1→P1.1 升级数据保留、production fail-closed、并发管理员保护、失败写入原子性、Vue 行为合同与测试代码类型检查均进入 `npm run check`；详见 `docs/TESTING.md`。CI 实际结果以仓库 Actions 为准。
 
 ## 后续交接记录
 

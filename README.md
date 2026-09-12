@@ -10,7 +10,8 @@
 1. 阅读 [AGENTS.md](AGENTS.md)。
 2. 阅读 [AI 交接说明](docs/AI_HANDOFF.md)，其中有可直接复制的任务提示词。
 3. 按 [实施计划](docs/IMPLEMENTATION_PLAN.md) 从 **P2** 开始；P1.1 的成员生命周期、范围授权和运维移交边界已完成。
-4. 业务依据为 [设计方案](docs/DESIGN.md)，数据与 API 约定见 [数据模型](docs/DATA_MODEL.md)。
+4. 开发前先阅读 [测试策略](docs/TESTING.md)：所有新阶段和缺陷修复必须先写验收/回归测试，再改生产代码。
+5. 业务依据为 [设计方案](docs/DESIGN.md)，数据与 API 约定见 [数据模型](docs/DATA_MODEL.md)。
 
 ## 本地运行
 
@@ -32,7 +33,7 @@ npm run dev
 npm run check
 ```
 
-该命令依次运行 TypeScript 检查、前端构建、Worker **dry-run** 打包，以及真实本地 workerd + D1 的 P1 集成测试。测试会应用本地迁移和合成 seed，覆盖身份、角色、范围、停用成员、配置版本/幂等、字典与API回退；测试使用端口 8799。
+该命令是统一质量门禁：运行生产代码和测试代码 TypeScript 检查、前端构建、Worker **dry-run** 打包、迁移锁/旧库升级、真实本地 workerd + D1 集成测试、production 鉴权 fail-closed、并发/原子性，以及 Vue 行为合同测试。Node 测试均使用独立临时 D1，不污染日常本地库。详细规则见 `docs/TESTING.md`。
 
 `npm run build` 不会发布网站。当前没有自动部署工作流，也没有生产凭据。
 
@@ -44,8 +45,9 @@ apps/api/                Hono + Workers 鉴权/基础配置接口与 Wrangler �
 apps/api/migrations/     D1 追加式数据库迁移
 apps/api/seeds/          仅本地开发/测试使用的合成数据
 packages/shared/         前后端共享接口类型
-tests/                   本地 Workers + D1 集成测试
-docs/                   完整设计、实施计划、数据模型、部署与 AI 交接
+tests/                   迁移守卫、Workers+D1、并发/原子性、production 鉴权测试
+apps/web/tests/          Vue 行为合同测试
+docs/                   完整设计、实施计划、测试策略、数据模型、部署与 AI 交接
 .github/workflows/      仅检查、不部署的 CI
 ```
 

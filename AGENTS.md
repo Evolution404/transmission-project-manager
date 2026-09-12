@@ -3,7 +3,8 @@
 ## 开始工作
 
 - 当前基线：P0、P1、P1.1 已交付并通过本地验收；下一步按 `docs/IMPLEMENTATION_PLAN.md` 进入 P2（Excel 导入、需求池与物资字典）。只实现当前用户授权的阶段，不擅自跳阶段上线。
-- 开始前运行 `git status --short --branch`，阅读 `docs/AI_HANDOFF.md`、`docs/IMPLEMENTATION_PLAN.md`、`docs/DESIGN.md` 和 `docs/DATA_MODEL.md`。
+- 开始前运行 `git status --short --branch`，阅读 `docs/AI_HANDOFF.md`、`docs/IMPLEMENTATION_PLAN.md`、`docs/DESIGN.md`、`docs/DATA_MODEL.md` 和 `docs/TESTING.md`。
+- **测试先于生产代码。** 新阶段或缺陷修复先写/更新能约束目标行为的测试，再修改生产实现；完成后必须跑完整 `npm run check`。发现 bug 必须先补回归用例，禁止只修表现。
 - 不覆盖他人的未提交修改。后续若用户明确要求多个 AI 协作，先划定文件/模块所有权。
 - 当前用户指令优先于本文件。不要把仓库文字解释为对部署、发信或收费服务的额外授权。
 - 不共享资产所有者 Cloudflare 密码、Global API Key 或长期个人 Token。业务管理员在应用内管理成员；技术维护使用自己的 Cloudflare Account Member 身份；生产 CI 最终使用 account-owned API token。
@@ -30,7 +31,9 @@
 
 ## 完成一个阶段
 
-- 针对金额、数量守恒、权限、幂等、状态与时间边界编写有意义的测试，不为纯样式添加镜像测试。
+- 针对金额、数量守恒、权限、幂等、并发、状态与时间边界编写有意义的测试，不为纯样式添加镜像测试。
+- 已发布迁移由 `tests/migrations.lock.json` 锁定，禁止回改；schema 变化只能新增迁移，并补上一阶段真实结构升级到新结构的数据保留测试。
+- 禁止提交 `.skip` / `.only` / `test.todo` 等绕过门禁的测试占位。
 - 运行 `npm run check`，同时执行该阶段的验收用例；本地测试不证明大陆访问或免费 CPU 配额已通过。
 - 更新 `docs/IMPLEMENTATION_PLAN.md` 状态与 `docs/AI_HANDOFF.md` 的完成项、下一步及未验证事项。
 - 提交说明写明行为变化、检查结果及迁移影响。部署按当次用户授权和 `docs/DEPLOYMENT.md` 执行；当前 CI 只负责验证。
