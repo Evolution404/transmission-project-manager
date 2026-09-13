@@ -79,6 +79,10 @@ test('P1.2 runtime authentication does not depend on Cloudflare Access or email 
 });
 
 test('portable backend core cannot depend on Cloudflare runtime types', () => {
+  const requiredPorts = ['database.ts', 'object-store.ts', 'job-queue.ts', 'scheduler.ts', 'clock.ts'];
+  for (const name of requiredPorts) {
+    assert.equal(existsSync(resolve(root, 'apps/api/src/ports', name)), true, `缺少可移植后端端口 ${name}`);
+  }
   const portableRoots = ['domain', 'application', 'ports']
     .map((name) => resolve(root, 'apps/api/src', name))
     .filter((directory) => existsSync(directory));
