@@ -80,7 +80,7 @@ CPU是执行代码的时间，网络/数据库等待不计入。JS解析大JSON�
 
 以下步骤在 P7 执行；逐项状态和证据要求见 [P7_ACCEPTANCE.md](P7_ACCEPTANCE.md)：
 
-1. 完成 P1.2–P6、本地检查和主要业务验收，准备正式账号与自定义域名；显式确定首个真实应用管理员 username，并生成一次性 bootstrap secret。
+1. 以当前已验证功能基线完成本地检查和主要业务验收，准备正式账号与自定义域名；显式确定首个真实应用管理员 username，并生成一次性 bootstrap secret。
 2. 由已授权的受托技术运维身份创建/配置 D1、R2 和 Workers；提供 `apac` 位置提示。提示不能锁定具体机房，也不承诺香港路由。采用全球网络，不接入中国大陆网络。
 3. 将 `apps/api/wrangler.production.example.json` 复制为被Git忽略的 `apps/api/wrangler.production.jsonc`，写入真实D1/R2绑定、`APP_ENV=production`、自定义域名和正式Worker名称；移除占位符。配置使用严格 JSON 子集，运行 `npm run p7 -- config apps/api/wrangler.production.jsonc` 检查；模板不含 Secret。
 4. 保持 `workers_dev=false`、`preview_urls=false`。生产认证只接受系统会话 Cookie；不得启用 `X-Dev-User-*`、Cloudflare Access JWT 或其他请求头身份兜底。
@@ -98,7 +98,7 @@ npm run check
 npm exec --workspace @tpm/api -- wrangler deploy --config wrangler.production.jsonc
 ```
 
-当前普通 push CI 只有检查；新增手工 production preflight 只校验非敏感配置并 dry-run，没有云凭据。生产部署 workflow 模板位于 `docs/templates/production-deploy.yml.example`，尚未启用；必须先获得授权并验证 Environment 分支/审批规则和 account-owned API token。完整操作顺序、证据与回退边界见 [P7_RUNBOOK.md](P7_RUNBOOK.md)。
+仓库默认普通 push CI 只做检查；手工 production preflight 只校验非敏感配置并 dry-run，不应携带云凭据。`docs/templates/production-deploy.yml.example` 是未激活模板；实际生产是否已经存在其他受控发布流程必须读取当前 GitHub/Cloudflare 配置确认，不能仅根据模板状态推断。任何启用/修改生产发布流程都必须先获得授权并验证 Environment 分支/审批规则和 account-owned API token。完整操作顺序、证据与回退边界见 [P7_RUNBOOK.md](P7_RUNBOOK.md)。
 
 ## 5. 数据备份和回退
 
