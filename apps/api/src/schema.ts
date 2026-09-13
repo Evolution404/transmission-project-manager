@@ -1,6 +1,6 @@
 import type { SchemaReadinessSummary } from '@tpm/shared';
 
-export const REQUIRED_MIGRATION = '0008_final_business_flow.sql';
+export const REQUIRED_MIGRATION = '0010_master_grid_relations.sql';
 
 let readyCache: SchemaReadinessSummary | null = null;
 

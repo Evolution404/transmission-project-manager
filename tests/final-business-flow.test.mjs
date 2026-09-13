@@ -42,6 +42,19 @@ before(async () => {
   const bootstrap = await bootstrapAdmin(runtime, { token: 'final-flow-bootstrap' });
   assert.equal(bootstrap.response.status, 201);
   adminCookie = cookiePair(bootstrap.response.headers.get('set-cookie'));
+
+  const line = await jsonRequest('/api/master/lines', mutation('POST', 'master-line', {
+    voltageLevelId: 'vl-ac-220', lineName: '220kV测试线', lineCode: 'TEST-220', enabled: true,
+  }));
+  assert.equal(line.response.status, 201);
+  globalThis.__finalLineId = line.body.data.id;
+  for (const [towerNo, sortIndex] of [['#10', 10], ['#20', 20]]) {
+    const tower = await jsonRequest('/api/master/towers', mutation('POST', `master-tower-${sortIndex}`, {
+      lineId: line.body.data.id, towerNo, sortIndex, towerType: '测试塔', enabled: true,
+    }));
+    assert.equal(tower.response.status, 201);
+    globalThis[`__finalTower${sortIndex}`] = tower.body.data.id;
+  }
 }, { timeout: 80000 });
 
 after(async () => {
@@ -53,9 +66,11 @@ test('abstract demand can exist without materials and later receive multiple chi
   const created = await jsonRequest('/api/demands', mutation('POST', 'demand-empty-materials', {
     sequenceNo: 'D001',
     year: 2026,
-    voltage: '220kV',
-    lineName: '220kV测试线',
-    section: '#10-#20',
+    voltageLevelId: 'vl-ac-220',
+    lineId: globalThis.__finalLineId,
+    locationType: 'tower_range',
+    startTowerId: globalThis.__finalTower10,
+    endTowerId: globalThis.__finalTower20,
     category: '防鸟治理',
     owner: '测试负责人',
     materials: [],

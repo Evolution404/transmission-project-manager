@@ -44,6 +44,7 @@ import {
   getSessionToken,
   revokeSessionToken,
 } from './session';
+import { p9App } from './p9';
 import { p8App } from './p8';
 import { p2App } from './p2';
 import { p3App } from './p3';
@@ -723,6 +724,7 @@ app.get('/api/scopes/:scopeType/:scopeId/check', async (c) => {
   return c.json({ ok: true as const, data: { allowed: true } });
 });
 
+app.route('/api', p9App);
 app.route('/api', p8App);
 app.route('/api', p2App);
 app.route('/api', p3App);

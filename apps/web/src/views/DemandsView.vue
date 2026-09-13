@@ -28,6 +28,10 @@ import type {
   ImportMappingTemplate,
   ImportRowSummary,
   MaterialSummary,
+  TransmissionLineSummary,
+  TransmissionTowerSummary,
+  VoltageLevelSummary,
+  DemandLocationType,
 } from '@tpm/shared';
 import { parseApiResponse } from '../api/response';
 import { downloadDemandImportTemplate } from '../imports/demandTemplate';
@@ -53,6 +57,9 @@ const demandQuery = ref('');
 const selectedDemand = ref<DemandDetail | null>(null);
 const materials = ref<MaterialSummary[]>([]);
 const mappingTemplates = ref<ImportMappingTemplate[]>([]);
+const voltageLevels = ref<VoltageLevelSummary[]>([]);
+const transmissionLines = ref<TransmissionLineSummary[]>([]);
+const transmissionTowers = ref<TransmissionTowerSummary[]>([]);
 
 const selectedFile = ref<File | null>(null);
 const parsedFile = ref<ParsedSpreadsheet | null>(null);
@@ -76,7 +83,8 @@ const savingManualDemand = ref(false);
 const savingDemandMaterial = ref(false);
 const demandMaterialForm = ref({ rawModel: '', quantity: '', unit: '' });
 const manualDemandForm = ref({
-  sequenceNo: '', voltage: '', lineName: '', section: '', year: '', category: '', owner: '',
+  sequenceNo: '', voltageLevelId: '', lineId: '', locationType: 'tower_range' as DemandLocationType,
+  startTowerId: '', endTowerId: '', year: '', category: '', owner: '',
 });
 const manualDemandMaterials = ref<Array<{ id: string; model: string; quantity: string; unit: string }>>([]);
 
@@ -113,6 +121,14 @@ const headerOptions = computed(() => {
   return [...names].map((name) => ({ label: name, value: name }));
 });
 const templateOptions = computed(() => mappingTemplates.value.map((item) => ({ label: item.name, value: item.id })));
+const voltageOptions = computed(() => voltageLevels.value.filter((item) => item.enabled).map((item) => ({ label: item.displayName, value: item.id })));
+const lineOptions = computed(() => transmissionLines.value.filter((item) => item.enabled && item.voltageLevelId === manualDemandForm.value.voltageLevelId).map((item) => ({ label: item.lineName, value: item.id })));
+const towerOptions = computed(() => transmissionTowers.value.filter((item) => item.enabled && item.lineId === manualDemandForm.value.lineId).map((item) => ({ label: item.towerNo, value: item.id })));
+const locationTypeOptions = [
+  { label: '整条线路', value: 'whole_line' },
+  { label: '单基杆塔', value: 'tower' },
+  { label: '连续杆段', value: 'tower_range' },
+];
 const importReady = computed(() => Boolean(
   selectedFile.value && parsedFile.value &&
   mapping.value.sequenceNo && mapping.value.voltage && mapping.value.lineName && mapping.value.section &&
@@ -162,11 +178,22 @@ async function loadTemplates() {
   mappingTemplates.value = data.items;
 }
 
+async function loadMasterData() {
+  const [voltageData, lineData, towerData] = await Promise.all([
+    apiRequest<{ items: VoltageLevelSummary[] }>('/api/master/voltage-levels'),
+    apiRequest<{ items: TransmissionLineSummary[] }>('/api/master/lines'),
+    apiRequest<{ items: TransmissionTowerSummary[] }>('/api/master/towers'),
+  ]);
+  voltageLevels.value = voltageData.items;
+  transmissionLines.value = lineData.items;
+  transmissionTowers.value = towerData.items;
+}
+
 async function loadInitial() {
   loading.value = true;
   error.value = '';
   try {
-    await Promise.all([loadDemands(), loadMaterials(), loadTemplates()]);
+    await Promise.all([loadDemands(), loadMaterials(), loadTemplates(), loadMasterData()]);
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : '读取需求数据失败';
   } finally {
@@ -294,8 +321,16 @@ function removeManualDemandMaterial(id: string) {
 
 async function createManualDemand() {
   const form = manualDemandForm.value;
-  if (!form.sequenceNo.trim() || !form.voltage.trim() || !form.lineName.trim() || !form.section.trim()) {
-    message.warning('序号、电压等级、线路名称和杆段不能为空');
+  if (!form.sequenceNo.trim() || !form.voltageLevelId || !form.lineId) {
+    message.warning('序号、电压等级和线路不能为空');
+    return;
+  }
+  if (form.locationType !== 'whole_line' && !form.startTowerId) {
+    message.warning('请选择杆塔');
+    return;
+  }
+  if (form.locationType === 'tower_range' && !form.endTowerId) {
+    message.warning('请选择终止杆塔');
     return;
   }
   const year = form.year.trim() ? Number(form.year) : null;
@@ -326,16 +361,18 @@ async function createManualDemand() {
   try {
     await apiRequest<DemandDetail>('/api/demands', writeInit('POST', {
       sequenceNo: form.sequenceNo.trim(),
-      voltage: form.voltage.trim(),
-      lineName: form.lineName.trim(),
-      section: form.section.trim(),
+      voltageLevelId: form.voltageLevelId,
+      lineId: form.lineId,
+      locationType: form.locationType,
+      startTowerId: form.locationType === 'whole_line' ? null : form.startTowerId,
+      endTowerId: form.locationType === 'tower_range' ? form.endTowerId : form.locationType === 'tower' ? form.startTowerId : null,
       materials,
       year,
       category: form.category.trim() || null,
       owner: form.owner.trim() || null,
     }));
     manualDemandForm.value = {
-      sequenceNo: '', voltage: '', lineName: '', section: '', year: '', category: '', owner: '',
+      sequenceNo: '', voltageLevelId: '', lineId: '', locationType: 'tower_range', startTowerId: '', endTowerId: '', year: '', category: '', owner: '',
     };
     manualDemandMaterials.value = [];
     manualDemandModalOpen.value = false;
@@ -577,9 +614,35 @@ onMounted(loadInitial);
         <n-form data-test="manual-demand-form" class="manual-demand-form" label-placement="top">
           <div class="form-section-title">基本信息</div>
           <n-form-item label="序号"><n-input v-model:value="manualDemandForm.sequenceNo" data-test="manual-sequence" placeholder="例如：D-001" /></n-form-item>
-          <n-form-item label="电压等级"><n-input v-model:value="manualDemandForm.voltage" data-test="manual-voltage" placeholder="例如：220kV" /></n-form-item>
-          <n-form-item label="线路名称"><n-input v-model:value="manualDemandForm.lineName" data-test="manual-line" placeholder="请输入线路名称" /></n-form-item>
-          <n-form-item label="杆段"><n-input v-model:value="manualDemandForm.section" data-test="manual-section" placeholder="例如：#10-#20" /></n-form-item>
+          <n-form-item label="电压等级">
+            <n-select
+              data-test="manual-voltage"
+              :value="manualDemandForm.voltageLevelId || null"
+              :options="voltageOptions"
+              placeholder="请选择电压等级"
+              @update:value="(value: string) => { manualDemandForm.voltageLevelId = value; manualDemandForm.lineId = ''; manualDemandForm.startTowerId = ''; manualDemandForm.endTowerId = ''; }"
+            />
+          </n-form-item>
+          <n-form-item label="线路">
+            <n-select
+              data-test="manual-line"
+              :value="manualDemandForm.lineId || null"
+              :options="lineOptions"
+              :disabled="!manualDemandForm.voltageLevelId"
+              filterable
+              placeholder="请选择线路"
+              @update:value="(value: string) => { manualDemandForm.lineId = value; manualDemandForm.startTowerId = ''; manualDemandForm.endTowerId = ''; }"
+            />
+          </n-form-item>
+          <n-form-item label="设备范围">
+            <n-select v-model:value="manualDemandForm.locationType" data-test="manual-location-type" :options="locationTypeOptions" />
+          </n-form-item>
+          <n-form-item v-if="manualDemandForm.locationType !== 'whole_line'" :label="manualDemandForm.locationType === 'tower' ? '杆塔' : '起始杆塔'">
+            <n-select v-model:value="manualDemandForm.startTowerId" data-test="manual-start-tower" :options="towerOptions" :disabled="!manualDemandForm.lineId" filterable placeholder="请选择杆塔" />
+          </n-form-item>
+          <n-form-item v-if="manualDemandForm.locationType === 'tower_range'" label="终止杆塔">
+            <n-select v-model:value="manualDemandForm.endTowerId" data-test="manual-end-tower" :options="towerOptions" :disabled="!manualDemandForm.lineId" filterable placeholder="请选择终止杆塔" />
+          </n-form-item>
           <n-form-item label="年度"><n-input v-model:value="manualDemandForm.year" data-test="manual-year" placeholder="例如：2026" /></n-form-item>
           <n-form-item label="类别"><n-input v-model:value="manualDemandForm.category" data-test="manual-category" placeholder="请输入需求类别" /></n-form-item>
           <n-form-item label="负责人"><n-input v-model:value="manualDemandForm.owner" data-test="manual-owner" placeholder="请输入负责人" /></n-form-item>

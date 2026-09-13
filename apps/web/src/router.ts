@@ -10,6 +10,7 @@ export const router = createRouter({
     { path: '/delivery', name: 'delivery', component: () => import('./views/DeliveryView.vue'), meta: { title: '实施结算' } },
     { path: '/finance', name: 'finance', component: () => import('./views/FinanceView.vue'), meta: { title: '框架费用' } },
     { path: '/analysis', name: 'analysis', component: () => import('./views/AnalysisView.vue'), meta: { title: '储备分析' } },
+    { path: '/master-data', name: 'master-data', component: () => import('./views/MasterDataView.vue'), meta: { title: '基础台账' } },
     {
       path: '/administration',
       name: 'administration',

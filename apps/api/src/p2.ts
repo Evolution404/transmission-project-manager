@@ -337,6 +337,77 @@ function materialKey(model: string, unit: string | null) {
   return `${model.trim().toLowerCase()}\u0000${(unit ?? '').trim().toLowerCase()}`;
 }
 
+function splitSectionRange(section: string): { start: string; end: string } | null {
+  const match = section.match(/^\s*(.+?)\s*(?:—|–|-|~|～|至)\s*(.+?)\s*$/);
+  if (!match) return null;
+  const start = match[1]?.trim() ?? '';
+  const end = match[2]?.trim() ?? '';
+  return start && end ? { start, end } : null;
+}
+
+async function resolveGridLocation(db: D1Database, normalized: NormalizedImportRow, errors: ImportIssue[]) {
+  const voltage = await db.prepare(
+    `SELECT id,display_name FROM voltage_levels WHERE enabled=1 AND display_name=? COLLATE NOCASE LIMIT 1`,
+  ).bind(normalized.voltageRaw).first<{ id: string; display_name: string }>();
+  if (!voltage) {
+    errors.push({ code: 'VOLTAGE_LEVEL_UNKNOWN', field: 'voltage', message: '电压等级未在基础台账中配置' });
+    return;
+  }
+  normalized.voltageLevelId = voltage.id;
+  normalized.voltageVerified = voltage.display_name;
+
+  const line = await db.prepare(
+    `SELECT id,line_name FROM transmission_lines WHERE enabled=1 AND voltage_level_id=? AND line_name=? COLLATE NOCASE LIMIT 1`,
+  ).bind(voltage.id, normalized.lineName).first<{ id: string; line_name: string }>();
+  if (!line) {
+    errors.push({ code: 'LINE_UNKNOWN', field: 'lineName', message: '线路未在所选电压等级的线路台账中配置' });
+    return;
+  }
+  normalized.lineId = line.id;
+  normalized.lineName = line.line_name;
+
+  const rawSection = normalized.section.trim();
+  if (rawSection === '全线' || rawSection === '整线') {
+    normalized.locationType = 'whole_line';
+    normalized.startTowerId = null;
+    normalized.endTowerId = null;
+    normalized.section = '全线';
+  } else {
+    const range = splitSectionRange(rawSection);
+    const towerNos = range ? [range.start, range.end] : [rawSection];
+    const placeholders = towerNos.map(() => '?').join(',');
+    const towerRows = await db.prepare(
+      `SELECT id,tower_no,sort_index FROM transmission_towers WHERE enabled=1 AND line_id=? AND tower_no IN (${placeholders}) COLLATE NOCASE`,
+    ).bind(line.id, ...towerNos).all<{ id: string; tower_no: string; sort_index: number }>();
+    const byNo = new Map((towerRows.results ?? []).map((row) => [row.tower_no.toLowerCase(), row]));
+    const start = byNo.get(towerNos[0]!.toLowerCase());
+    const end = byNo.get(towerNos[towerNos.length - 1]!.toLowerCase());
+    if (!start || !end) {
+      errors.push({ code: 'TOWER_UNKNOWN', field: 'section', message: '杆段中的杆塔未在线路台账中配置' });
+      return;
+    }
+    if (range && start.sort_index > end.sort_index) {
+      errors.push({ code: 'TOWER_RANGE_REVERSED', field: 'section', message: '起始杆塔顺序不能晚于终止杆塔' });
+      return;
+    }
+    normalized.locationType = range ? 'tower_range' : 'tower';
+    normalized.startTowerId = start.id;
+    normalized.endTowerId = end.id;
+    normalized.section = range ? `${start.tower_no}—${end.tower_no}` : start.tower_no;
+  }
+
+  normalized.businessSignature = await hashText(JSON.stringify([
+    normalized.sequenceNo,
+    normalized.year,
+    normalized.voltageLevelId,
+    normalized.lineId,
+    normalized.locationType,
+    normalized.startTowerId,
+    normalized.endTowerId,
+    normalized.category,
+  ]));
+}
+
 async function normalizeRows(
   db: D1Database,
   rows: ImportRowDb[],
@@ -372,20 +443,18 @@ async function normalizeRows(
     if (quantity.error) errors.push(quantity.error);
     if (year.error) errors.push(year.error);
     const voltageVerified = voltageRaw ? verifiedVoltage(voltageRaw) : null;
-    if (voltageRaw && !voltageVerified) warnings.push({ code: 'VOLTAGE_UNVERIFIED', field: 'voltage', message: '电压等级无法自动核实，需人工确认' });
-
     let businessSignature: string | null = null;
-    if (!errors.length) {
-      businessSignature = await hashText(JSON.stringify([
-        sequenceNo, year.year, voltageVerified ?? voltageRaw, lineName, section, category,
-      ]));
-    }
     const normalized: NormalizedImportRow = {
       sequenceNo,
       voltageRaw,
       voltageVerified,
+      voltageLevelId: null,
       lineName,
+      lineId: null,
       section,
+      locationType: null,
+      startTowerId: null,
+      endTowerId: null,
       materialModel,
       quantityScaled: quantity.scaled,
       unit,
@@ -397,6 +466,11 @@ async function normalizeRows(
     };
     return { row, normalized, errors, warnings };
   }));
+
+  for (const item of preliminary) {
+    if (!item.normalized.voltageRaw || !item.normalized.lineName || !item.normalized.section) continue;
+    await resolveGridLocation(db, item.normalized, item.errors);
+  }
 
   const materialPairs = new Map<string, { model: string; unit: string }>();
   for (const item of preliminary) {
@@ -1005,13 +1079,14 @@ p2App.post('/imports/:id/publish', requireRoles('admin', 'project_manager'), asy
     if (!existingId) {
       statements.push(c.env.DB.prepare(
         `INSERT INTO demands
-         (id,source_type,source_key,source_batch_id,source_file_sha256,source_file_name,source_sheet,source_row_number,sequence_no,business_year,voltage_raw,voltage_verified,line_name,section_text,category_key,owner,business_signature,raw_json,extra_json,version,created_by,created_at,updated_at)
-         VALUES (?,'import',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'{}',1,?,?,?)`,
+         (id,source_type,source_key,source_batch_id,source_file_sha256,source_file_name,source_sheet,source_row_number,sequence_no,business_year,voltage_raw,voltage_verified,line_name,section_text,category_key,owner,business_signature,raw_json,extra_json,version,created_by,created_at,updated_at,voltage_level_id,line_id,location_type,start_tower_id,end_tower_id)
+         VALUES (?,'import',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'{}',1,?,?,?,?,?,?,?,?)`,
       ).bind(
         demandId, row.source_key, batch.id, batch.file_sha256, batch.file_name, row.sheet_name, row.source_row_number,
         normalized.sequenceNo, normalized.year, normalized.voltageRaw, normalized.voltageVerified, normalized.lineName,
         normalized.section, normalized.category, normalized.owner, normalized.businessSignature, row.raw_json,
         actor.id, now, now,
+        normalized.voltageLevelId, normalized.lineId, normalized.locationType, normalized.startTowerId, normalized.endTowerId,
       ));
       existingBySignature.set(normalized.businessSignature, demandId);
     }
