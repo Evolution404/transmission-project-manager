@@ -78,6 +78,19 @@ test('P1.2 runtime authentication does not depend on Cloudflare Access or email 
   assert.doesNotMatch(source, /from ['\"]jose['\"]|\"jose\"\s*:/);
 });
 
+test('portable backend core cannot depend on Cloudflare runtime types', () => {
+  const portableRoots = ['domain', 'application', 'ports']
+    .map((name) => resolve(root, 'apps/api/src', name))
+    .filter((directory) => existsSync(directory));
+  const forbidden = /\b(?:D1Database|D1PreparedStatement|R2Bucket|Fetcher|ExecutionContext)\b|@cloudflare\/workers-types|\bwrangler\b|cloudflare:/i;
+  for (const directory of portableRoots) {
+    for (const file of collectSourceFiles(directory)) {
+      const source = readFileSync(file, 'utf8');
+      assert.doesNotMatch(source, forbidden, `${file} 将可移植核心重新绑定到 Cloudflare runtime`);
+    }
+  }
+});
+
 test('business batch import is never the only creation path for demand data', () => {
   const apiSource = readFileSync(resolve(root, 'apps/api/src/p2.ts'), 'utf8');
   const webSource = readFileSync(resolve(root, 'apps/web/src/views/DemandsView.vue'), 'utf8');
