@@ -1,19 +1,22 @@
 # 下一位 AI
 
-继续 `/Users/zhangyuxi/Desktop/项目管理` 的基础台账对象化重构，分支 `wip/master-data-refactor-20260913`。
-
-先执行：
+继续 `/Users/zhangyuxi/Desktop/项目管理`，先以当前 checkout 为准执行：
 
 ```sh
 git status --short --branch
-git diff
+git log --oneline -5
 ```
 
-禁止 reset/clean/覆盖 WIP。完整阅读：
+然后阅读：
 
 1. `AGENTS.md`
-2. `docs/HANDOFF-MASTER-DATA-WIP-2026-09-13.md`
-3. `docs/HANDOFF-FINAL-BUSINESS-BASELINE-2026-09-12.md`
-4. `docs/TESTING.md`
+2. `docs/README.md`
+3. `docs/BUSINESS_BASELINE.md`
+4. `docs/AI_HANDOFF.md`
+5. `docs/TESTING.md`
 
-最高优先级：历史业务数据可删除，不做旧自由文本兼容；正式模型直接使用“电压等级 -> 线路 -> 杆塔 -> 需求定位”对象关系。先把当前 WIP 收口并跑完整门禁，未全绿前不要升级线上 D1、不要 merge main。
+当前已验证的基础台账功能基线在 `wip/master-data-refactor-20260913`，提交 `484cbaf`；不要回退“电压等级 → 线路 → 杆塔 → 需求定位”对象模型，也不要修改已应用的 `0009`–`0012` migration。
+
+如果继续功能验收：先基于用户反馈补回归测试，再修改代码，完整门禁全绿后才提交/推送；未经当次授权不要部署、升级远端 D1 或合并 `main`。
+
+如果当前 checkout 是 `chore/docs-audit-20260913`：只做文档审核/清理，不混入业务代码。历史 WIP 和恢复记录已由 Git 历史承载，不要重新创建重复的 dated handoff。

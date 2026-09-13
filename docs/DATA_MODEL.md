@@ -1,6 +1,6 @@
 # 数据关系与接口约定
 
-这是一份实现约定。2026-09-13 已按最终业务基线完成结构性重构：需求本体为纯抽象业务事项，可带 0..N 条需求物资子明细；项目储备通过 `project_demand_links` 记录需求来源，同时用独立的 `project_material_requirements` 维护项目当前物资；项目通过一次 `project_releases` 项目级出库进入执行阶段，随后拆分为 1..N 个 `project_tasks`，每个任务的物资供应、现场实施、结算三条线独立推进，并由任务事实回投需求四状态。旧 `demand_allocations`、`release_batches/release_lines`、旧 implementation/settlement 表仅保留历史兼容与旧数据备份，不再是最终业务主模型。P4 框架/协议/预算发生、P6 年度节点/分析/通知/备份和 P1.2 系统自维护认证继续保留。P7 只负责真实数据和正式环境验收，不另起业务口径。使用 D1/SQLite，不依赖 PostgreSQL 专有语法。
+这是一份实现约定。长期业务事实见 `BUSINESS_BASELINE.md`。当前模型先以 `voltage_levels → transmission_lines → transmission_towers` 形成统一基础台账，再由 `demands` 保存结构化位置引用；需求本体仍是纯抽象业务事项，可带 0..N 条需求物资子明细。项目储备通过 `project_demand_links` 记录需求来源，同时用独立的 `project_material_requirements` 维护项目当前物资；项目通过一次 `project_releases` 项目级出库进入执行阶段，随后拆分为 1..N 个 `project_tasks`，每个任务的物资供应、现场实施、结算三条线独立推进，并由任务事实回投需求四状态。旧 `demand_allocations`、`release_batches/release_lines`、旧 implementation/settlement 表仅保留历史兼容与旧数据备份，不再是最终业务主模型。使用 D1/SQLite，不依赖 PostgreSQL 专有语法。
 
 ## 1. 通用约定
 
@@ -20,9 +20,12 @@
 | members / member_scopes | 唯一 username、显示姓名、角色、启用状态、授权范围、Argon2id salt/KDF 参数、服务端 HMAC verifier、强制改密、失败计数/锁定、session_version、邀请/首次/最近登录时间 | username 大小写不敏感唯一；邮箱不在认证模型；浏览器派生凭据不入库；停用立即撤销会话；至少保留一个启用管理员 |
 | auth_sessions | 随机会话 token 的 SHA-256 哈希、member_id、session_version、创建/最近访问/到期/撤销时间 | 原始 token 只存在浏览器 HttpOnly Cookie；默认 7 天绝对有效期；停用/改密/重置立即失效 |
 | settings_versions | 口径、阈值、目标、提醒参数、生效时间 | 每个报表/预警引用规则版本 |
+| voltage_levels | 电压等级编码、显示名、交流/直流制式、标称 kV、排序、启停、版本 | 统一电压对象；名称/编码唯一；被业务引用后制式/标称电压受保护 |
+| transmission_lines | 所属电压等级、线路名称/编码、启停、版本 | `VoltageLevel 1:N TransmissionLine`；同等级线路名称唯一；被需求引用后不能换所属电压等级 |
+| transmission_towers | 所属线路、字符串杆塔号、独立 `sort_index`、类型、启停、版本 | `TransmissionLine 1:N TransmissionTower`；同线路杆塔号和顺序分别唯一；引用线路上的身份/顺序/删除受保护 |
 | import_batches / import_rows | 文件哈希、工作表、映射版本、源行、原始JSON、错误、发布状态 | 批次分片幂等；未发布行不得计入正式报表 |
 | demand_categories / field_definitions | 需求类别、字段类型、必填规则、版本 | 初始6个必备字段；扩展可配置 |
-| demands | 抽象业务事项：`source_type=import/manual`、业务年份、线路、杆段、原始/核实电压、类别、负责人 | 需求无需物资即可成立；同一业务事项可由多个 Excel 来源行共同形成 |
+| demands | 抽象业务事项：`source_type=import/manual`、业务年份、类别、负责人，以及 `voltage_level_id`、`line_id`、`location_type`、起止杆塔对象；同时保留对象生成的显示快照 | 需求无需物资即可成立；正式位置只能来自基础台账；同一业务事项可由多个 Excel 来源行共同形成 |
 | demand_source_rows | 需求ID、源 import_row、文件哈希、工作表、物理行、原始JSON | 多个来源行可归到同一个抽象需求；保留完整来源追溯 |
 | materials | 标准编码、名称、型号、单位 | 原始型号通过人工确认映射；单位不同时不能直接汇总 |
 | demand_materials | 需求ID、原始型号、标准物资ID、数量、单位、来源行、版本 | 一需求可有 0..N 条物资子明细；这些只是需求阶段已知信息，不构成项目物资上限 |
@@ -50,7 +53,17 @@
 
 项目阶段与需求四状态不同：项目阶段体现储备/出库/实施进度；需求四状态由实施和结算独立投影。不能用一个顺序枚举同时代替两者。
 
-## 3. 必须保持的不变量
+## 3. 基础台账与需求位置不变量
+
+- `transmission_lines.voltage_level_id` 必须指向存在的电压等级；启用新线路时父电压必须启用。
+- `transmission_towers.line_id` 必须指向存在的线路；启用新杆塔时线路和父电压都必须启用。
+- 正式需求的 `line_id` 必须属于 `voltage_level_id`；`whole_line` 起止为空，`tower` 起止相同，`tower_range` 起止不同且 `start.sort_index < end.sort_index`。
+- 手工创建和 Excel 发布都必须在同一写事务中重新校验父子关系、启用状态和显示快照，避免“校验后停用/改名”的竞态。
+- 线路已有需求引用后不能更换电压等级；该线路所有杆塔的 `line_id/tower_no/sort_index` 和删除采用保守冻结，防止区段内部杆塔变化重写历史语义。
+- 停用不破坏历史读取；新需求和导入发布不得选择停用对象。
+- `0009_master_grid_assets.sql`、`0010_master_grid_relations.sql`、`0011_master_data_integrity.sql`、`0012_master_data_write_guards.sql` 均已冻结，只能通过后续追加 migration 修改 schema。
+
+## 4. 必须保持的不变量
 
 1. 需求是抽象业务事项，不存在“需求数量必须分配完”的总量守恒。需求物资子明细只是需求阶段已知信息；项目需求来源关系和项目物资是两类独立事实，项目物资数量不得被需求物资数量隐式限制。
 2. 同一笔费用不会因多类别、多协议、多需求关联而倍增。关联金额/数量必须显式分摊。
@@ -93,7 +106,7 @@
 
 建议索引至少覆盖：来源幂等键；需求年度/类别/线路；需求物资分配；框架和协议归属；项目及财务条目的业务月；到期且待处理的通知；附件所属对象。按实际查询计划验收读行数。
 
-## 4. API 合同
+## 5. API 合同
 
 当前已实现 P1/P1.2/P2/P3/P4/P5/P6 接口：
 
@@ -119,6 +132,19 @@ GET /api/import-mappings
 POST /api/import-mappings
 GET /api/materials
 POST /api/materials
+GET /api/master/voltage-levels
+POST /api/master/voltage-levels
+PATCH /api/master/voltage-levels/:id
+DELETE /api/master/voltage-levels/:id
+GET /api/master/lines?voltageLevelId=...
+POST /api/master/lines
+PATCH /api/master/lines/:id
+DELETE /api/master/lines/:id
+GET /api/master/towers?lineId=...
+POST /api/master/towers
+PATCH /api/master/towers/:id
+DELETE /api/master/towers/:id
+POST /api/master/lines/:id/towers/batch
 POST /api/imports
 POST /api/imports/:id/chunks
 POST /api/imports/:id/validate
