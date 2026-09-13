@@ -55,6 +55,16 @@ function collectTestFiles(directory) {
   return files;
 }
 
+function collectSourceFiles(directory) {
+  const files = [];
+  for (const name of readdirSync(directory)) {
+    const path = join(directory, name);
+    if (statSync(path).isDirectory()) files.push(...collectSourceFiles(path));
+    else if (/\.(vue|ts)$/.test(name)) files.push(path);
+  }
+  return files;
+}
+
 test('P1.2 runtime authentication does not depend on Cloudflare Access or email identity headers', () => {
   const runtimeFiles = [
     resolve(root, 'apps/api/src/auth.ts'),
@@ -73,7 +83,43 @@ test('business batch import is never the only creation path for demand data', ()
   const webSource = readFileSync(resolve(root, 'apps/web/src/views/DemandsView.vue'), 'utf8');
   assert.match(apiSource, /post\('\/imports'/, '需求存在批量导入时必须保留导入接口');
   assert.match(apiSource, /post\('\/demands'/, '需求支持批量导入时必须同时支持服务端手工新增');
-  assert.match(webSource, /data-test="manual-demand-form"/, '需求支持批量导入时必须同时提供前端手工新增入口');
+  assert.match(webSource, /data-test="manual-demand-form"/, '需求支持批量导入时必须同时支持服务端手工新增入口');
+  assert.match(webSource, /data-test="open-manual-demand"/, '手工新增需求必须由明确操作打开，不能把整张新增表单常驻主页面');
+});
+
+test('web form defaults are Chinese and English default placeholders are forbidden', () => {
+  const appSource = readFileSync(resolve(root, 'apps/web/src/App.vue'), 'utf8');
+  assert.match(appSource, /\bzhCN\b/);
+  assert.match(appSource, /\bdateZhCN\b/);
+  assert.match(appSource, /:locale="zhCN"/);
+  assert.match(appSource, /:date-locale="dateZhCN"/);
+
+  for (const file of collectSourceFiles(resolve(root, 'apps/web/src'))) {
+    const source = readFileSync(file, 'utf8');
+    assert.doesNotMatch(source, /Please\s+(?:Input|Select|Upload|Choose|Enter)/i, `${file} 出现英文默认表单占位文案`);
+    for (const match of source.matchAll(/(?:^|\s):?placeholder="([^"]+)"/g)) {
+      assert.match(match[1], /[\u3400-\u9fff]/, `${file} 存在不含中文的显式 placeholder：${match[1]}`);
+    }
+  }
+});
+
+test('local API development automatically applies and watches migrations', () => {
+  const apiPackage = JSON.parse(readFileSync(resolve(root, 'apps/api/package.json'), 'utf8'));
+  assert.equal(apiPackage.scripts.dev, 'node ../../scripts/dev/api-dev.mjs');
+  const source = readFileSync(resolve(root, 'scripts/dev/api-dev.mjs'), 'utf8');
+  assert.match(source, /migrations/);
+  assert.match(source, /watch\(/);
+  assert.match(source, /'d1',\s*'migrations',\s*'apply'/);
+});
+
+test('schema readiness guard always targets the latest committed migration', () => {
+  const latestMigration = readdirSync(migrationsDir)
+    .filter((name) => /^\d{4}_.+\.sql$/.test(name))
+    .sort()
+    .at(-1);
+  assert.ok(latestMigration);
+  const source = readFileSync(resolve(root, 'apps/api/src/schema.ts'), 'utf8');
+  assert.match(source, new RegExp(`REQUIRED_MIGRATION\\s*=\\s*['\"]${latestMigration.replaceAll('.', '\\.')}['\"]`));
 });
 
 test('server authentication never performs the browser-side slow KDF', () => {

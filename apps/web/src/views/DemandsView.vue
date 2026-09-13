@@ -9,6 +9,7 @@ import {
   NForm,
   NFormItem,
   NInput,
+  NModal,
   NProgress,
   NSelect,
   NSpace,
@@ -70,6 +71,7 @@ const mapping = ref<ImportFieldMapping>({
 const showMaterialForm = ref(false);
 const savingMaterial = ref(false);
 const materialForm = ref({ code: '', name: '', model: '', unit: '' });
+const manualDemandModalOpen = ref(false);
 const savingManualDemand = ref(false);
 const savingDemandMaterial = ref(false);
 const demandMaterialForm = ref({ rawModel: '', quantity: '', unit: '' });
@@ -166,7 +168,7 @@ async function loadInitial() {
   try {
     await Promise.all([loadDemands(), loadMaterials(), loadTemplates()]);
   } catch (cause) {
-    error.value = cause instanceof Error ? cause.message : '读取 P2 数据失败';
+    error.value = cause instanceof Error ? cause.message : '读取需求数据失败';
   } finally {
     loading.value = false;
   }
@@ -324,8 +326,9 @@ async function createManualDemand() {
       sequenceNo: '', voltage: '', lineName: '', section: '', materialModel: '', materialQuantity: '',
       unit: '', year: '', category: '', owner: '',
     };
+    manualDemandModalOpen.value = false;
     await loadDemands();
-    message.success('需求已手工创建');
+    message.success('需求已创建');
   } catch (cause) {
     message.error(cause instanceof Error ? cause.message : '需求创建失败');
   } finally {
@@ -419,76 +422,33 @@ onMounted(loadInitial);
 
       <n-tabs type="line" animated>
         <n-tab-pane name="pool" tab="需求池">
-          <n-card v-if="canWrite" title="手工新增需求" class="detail-card">
-            <n-alert type="info" :bordered="false" class="section-note">
-              需求是抽象业务事项，序号、电压等级、线路名称和杆段是核心信息；物资可以创建时填写，也可以先留空、后续再追加为需求物资子明细。
-            </n-alert>
-            <n-form data-test="manual-demand-form" class="manual-demand-form" label-placement="top">
-              <n-form-item label="序号"><n-input v-model:value="manualDemandForm.sequenceNo" data-test="manual-sequence" /></n-form-item>
-              <n-form-item label="电压等级"><n-input v-model:value="manualDemandForm.voltage" data-test="manual-voltage" /></n-form-item>
-              <n-form-item label="线路名称"><n-input v-model:value="manualDemandForm.lineName" data-test="manual-line" /></n-form-item>
-              <n-form-item label="杆段"><n-input v-model:value="manualDemandForm.section" data-test="manual-section" /></n-form-item>
-              <n-form-item label="初始物资型号（可选）"><n-input v-model:value="manualDemandForm.materialModel" data-test="manual-material-model" /></n-form-item>
-              <n-form-item label="初始物资数量（可选）"><n-input v-model:value="manualDemandForm.materialQuantity" data-test="manual-material-quantity" /></n-form-item>
-              <n-form-item label="初始物资单位（可选）"><n-input v-model:value="manualDemandForm.unit" data-test="manual-unit" /></n-form-item>
-              <n-form-item label="年度"><n-input v-model:value="manualDemandForm.year" data-test="manual-year" /></n-form-item>
-              <n-form-item label="类别"><n-input v-model:value="manualDemandForm.category" data-test="manual-category" /></n-form-item>
-              <n-form-item label="负责人"><n-input v-model:value="manualDemandForm.owner" data-test="manual-owner" /></n-form-item>
-              <n-form-item><n-button data-test="save-manual-demand" type="primary" :loading="savingManualDemand" @click="createManualDemand">新增需求</n-button></n-form-item>
-            </n-form>
-          </n-card>
+          <div class="pool-toolbar">
+            <div>
+              <span class="eyebrow">需求池</span>
+              <h2>项目需求清单</h2>
+              <p>需求本体保持抽象，物资作为子明细独立维护；项目阶段再形成项目自己的物资计划。</p>
+            </div>
+            <n-space align="center">
+              <div class="metric-chip"><strong>{{ demands.length }}</strong><span>当前加载</span></div>
+              <n-button v-if="canWrite" data-test="open-manual-demand" type="primary" @click="manualDemandModalOpen = true">新增需求</n-button>
+            </n-space>
+          </div>
 
-          <n-alert v-else type="info" title="只读模式" class="section-note">
+          <n-alert v-if="!canWrite" type="info" title="只读模式" class="section-note">
             仅管理员或项目管理角色可以手工新增或批量导入需求。
           </n-alert>
 
-          <n-card title="正式需求">
+          <n-card title="正式需求" class="primary-surface">
             <template #header-extra>
               <n-space>
-                <n-input v-model:value="demandQuery" placeholder="线路 / 杆段 / 序号" clearable @keyup.enter="loadDemands()" />
+                <n-input v-model:value="demandQuery" class="search-input" placeholder="输入线路、杆段或序号" clearable @keyup.enter="loadDemands()" />
                 <n-button @click="loadDemands()">查询</n-button>
               </n-space>
             </template>
             <n-data-table v-if="demands.length" :columns="demandColumns" :data="demands" :pagination="false" :scroll-x="900" />
-            <n-empty v-else description="暂无正式需求；可手工新增或通过模板导入。" />
+            <n-empty v-else description="暂无正式需求；可新增需求或通过模板导入。" />
             <div v-if="demandCursor" class="load-more">
               <n-button secondary @click="loadDemands(false)">加载更多</n-button>
-            </div>
-          </n-card>
-
-          <n-card v-if="selectedDemand" title="需求来源追溯" class="detail-card">
-            <div class="detail-grid">
-              <div><span>线路</span><strong>{{ selectedDemand.lineName }}</strong></div>
-              <div><span>杆段</span><strong>{{ selectedDemand.section }}</strong></div>
-              <template v-if="selectedDemand.source.type === 'import'">
-                <div><span>来源方式</span><strong>文件导入</strong></div>
-                <div><span>来源文件</span><strong>{{ selectedDemand.source.fileName }}</strong></div>
-                <div><span>来源行数</span><strong>{{ selectedDemand.source.rows?.length ?? 1 }} 行</strong></div>
-              </template>
-              <div v-else><span>来源方式</span><strong>手工创建</strong></div>
-            </div>
-            <div v-if="selectedDemand.source.type === 'import' && selectedDemand.source.rows?.length" class="material-lines">
-              <strong>Excel 来源行</strong>
-              <div v-for="source in selectedDemand.source.rows" :key="`${source.fileSha256}-${source.sheetName}-${source.rowNumber}`" class="material-line">
-                <span>{{ source.fileName }}</span><span>{{ source.sheetName }} / 第 {{ source.rowNumber }} 行</span>
-              </div>
-            </div>
-            <div class="material-lines">
-              <strong>需求物资子明细</strong>
-              <div v-for="item in selectedDemand.materials" :key="item.id" class="material-line">
-                <span>{{ item.rawModel }}</span>
-                <span>{{ item.quantityScaled / 10000 }} {{ item.unit ?? '' }}</span>
-                <n-tag size="small" :bordered="false" :type="item.material ? 'success' : 'warning'">
-                  {{ item.material ? `${item.material.model} / ${item.material.unit}` : '未匹配标准物资' }}
-                </n-tag>
-              </div>
-              <n-empty v-if="!selectedDemand.materials.length" description="该需求当前没有物资子明细，可保持纯抽象事项。" />
-              <n-form v-if="canWrite" class="material-form" label-placement="top">
-                <n-form-item label="新增物资型号"><n-input v-model:value="demandMaterialForm.rawModel" /></n-form-item>
-                <n-form-item label="数量"><n-input v-model:value="demandMaterialForm.quantity" /></n-form-item>
-                <n-form-item label="单位"><n-input v-model:value="demandMaterialForm.unit" /></n-form-item>
-                <n-form-item><n-button type="primary" :loading="savingDemandMaterial" @click="addDemandMaterial">追加需求物资</n-button></n-form-item>
-              </n-form>
             </div>
           </n-card>
         </n-tab-pane>
@@ -590,32 +550,167 @@ onMounted(loadInitial);
           </n-card>
         </n-tab-pane>
       </n-tabs>
+
+      <n-modal
+        v-model:show="manualDemandModalOpen"
+        preset="card"
+        title="新增需求"
+        class="demand-modal"
+        style="width: min(760px, calc(100vw - 32px))"
+        :mask-closable="!savingManualDemand"
+      >
+        <div class="modal-intro">
+          <strong>先建立需求事项，再按需要补充物资。</strong>
+          <span>序号、电压等级、线路名称和杆段为核心信息；初始物资可以留空。</span>
+        </div>
+        <n-form data-test="manual-demand-form" class="manual-demand-form" label-placement="top">
+          <div class="form-section-title">基本信息</div>
+          <n-form-item label="序号"><n-input v-model:value="manualDemandForm.sequenceNo" data-test="manual-sequence" placeholder="例如：D-001" /></n-form-item>
+          <n-form-item label="电压等级"><n-input v-model:value="manualDemandForm.voltage" data-test="manual-voltage" placeholder="例如：220kV" /></n-form-item>
+          <n-form-item label="线路名称"><n-input v-model:value="manualDemandForm.lineName" data-test="manual-line" placeholder="请输入线路名称" /></n-form-item>
+          <n-form-item label="杆段"><n-input v-model:value="manualDemandForm.section" data-test="manual-section" placeholder="例如：#10-#20" /></n-form-item>
+          <n-form-item label="年度"><n-input v-model:value="manualDemandForm.year" data-test="manual-year" placeholder="例如：2026" /></n-form-item>
+          <n-form-item label="类别"><n-input v-model:value="manualDemandForm.category" data-test="manual-category" placeholder="请输入需求类别" /></n-form-item>
+          <n-form-item label="负责人"><n-input v-model:value="manualDemandForm.owner" data-test="manual-owner" placeholder="请输入负责人" /></n-form-item>
+          <div class="form-section-title form-section-wide">初始物资（可选）</div>
+          <n-form-item label="物资型号"><n-input v-model:value="manualDemandForm.materialModel" data-test="manual-material-model" placeholder="可留空，后续再补充" /></n-form-item>
+          <n-form-item label="物资数量"><n-input v-model:value="manualDemandForm.materialQuantity" data-test="manual-material-quantity" placeholder="最多 4 位小数" /></n-form-item>
+          <n-form-item label="物资单位"><n-input v-model:value="manualDemandForm.unit" data-test="manual-unit" placeholder="例如：套、只、米" /></n-form-item>
+        </n-form>
+        <template #footer>
+          <div class="modal-actions">
+            <n-button :disabled="savingManualDemand" @click="manualDemandModalOpen = false">取消</n-button>
+            <n-button data-test="save-manual-demand" type="primary" :loading="savingManualDemand" @click="createManualDemand">创建需求</n-button>
+          </div>
+        </template>
+      </n-modal>
+
+      <n-modal
+        :show="Boolean(selectedDemand)"
+        preset="card"
+        title="需求详情与来源"
+        class="demand-detail-modal"
+        style="width: min(900px, calc(100vw - 32px))"
+        @update:show="(show: boolean) => { if (!show) selectedDemand = null; }"
+      >
+        <template v-if="selectedDemand">
+          <div class="detail-grid detail-grid-polished">
+            <div><span>序号</span><strong>{{ selectedDemand.sequenceNo }}</strong></div>
+            <div><span>电压等级</span><strong>{{ selectedDemand.voltageRaw }}</strong></div>
+            <div><span>线路</span><strong>{{ selectedDemand.lineName }}</strong></div>
+            <div><span>杆段</span><strong>{{ selectedDemand.section }}</strong></div>
+            <template v-if="selectedDemand.source.type === 'import'">
+              <div><span>来源方式</span><strong>文件导入</strong></div>
+              <div><span>来源文件</span><strong>{{ selectedDemand.source.fileName }}</strong></div>
+              <div><span>来源行数</span><strong>{{ selectedDemand.source.rows?.length ?? 1 }} 行</strong></div>
+            </template>
+            <div v-else><span>来源方式</span><strong>手工创建</strong></div>
+          </div>
+          <div v-if="selectedDemand.source.type === 'import' && selectedDemand.source.rows?.length" class="material-lines">
+            <strong>Excel 来源行</strong>
+            <div v-for="source in selectedDemand.source.rows" :key="`${source.fileSha256}-${source.sheetName}-${source.rowNumber}`" class="material-line">
+              <span>{{ source.fileName }}</span><span>{{ source.sheetName }} / 第 {{ source.rowNumber }} 行</span>
+            </div>
+          </div>
+          <div class="material-lines">
+            <strong>需求物资子明细</strong>
+            <div v-for="item in selectedDemand.materials" :key="item.id" class="material-line">
+              <span>{{ item.rawModel }}</span>
+              <span>{{ item.quantityScaled / 10000 }} {{ item.unit ?? '' }}</span>
+              <n-tag size="small" :bordered="false" :type="item.material ? 'success' : 'warning'">
+                {{ item.material ? `${item.material.model} / ${item.material.unit}` : '未匹配标准物资' }}
+              </n-tag>
+            </div>
+            <n-empty v-if="!selectedDemand.materials.length" description="该需求当前没有物资子明细，可保持纯抽象事项。" />
+            <n-form v-if="canWrite" class="material-form material-form-inline" label-placement="top">
+              <n-form-item label="新增物资型号"><n-input v-model:value="demandMaterialForm.rawModel" placeholder="请输入物资型号" /></n-form-item>
+              <n-form-item label="数量"><n-input v-model:value="demandMaterialForm.quantity" placeholder="请输入数量" /></n-form-item>
+              <n-form-item label="单位"><n-input v-model:value="demandMaterialForm.unit" placeholder="请输入单位" /></n-form-item>
+              <n-form-item><n-button type="primary" :loading="savingDemandMaterial" @click="addDemandMaterial">追加需求物资</n-button></n-form-item>
+            </n-form>
+          </div>
+        </template>
+      </n-modal>
     </div>
   </n-spin>
 </template>
 
 <style scoped>
 .section-note { margin-bottom: 16px; }
+.pool-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  margin: 4px 0 16px;
+  padding: 18px 20px;
+  border: 1px solid #e4e9f1;
+  border-radius: 14px;
+  background: linear-gradient(120deg, #ffffff 0%, #f7f9fd 100%);
+  box-shadow: 0 8px 24px rgba(18, 32, 61, 0.04);
+}
+.pool-toolbar h2 { margin: 3px 0 4px; font-size: 20px; letter-spacing: -.01em; color: #182033; }
+.pool-toolbar p { margin: 0; max-width: 700px; color: #7b8596; font-size: 13px; line-height: 1.6; }
+.eyebrow { color: #2457d6; font-size: 11px; font-weight: 700; letter-spacing: .08em; }
+.metric-chip {
+  min-width: 86px;
+  padding: 8px 12px;
+  border: 1px solid #e4e9f1;
+  border-radius: 10px;
+  background: #fff;
+  text-align: center;
+}
+.metric-chip strong, .metric-chip span { display: block; }
+.metric-chip strong { color: #1b2947; font-size: 17px; }
+.metric-chip span { margin-top: 1px; color: #8a94a4; font-size: 10px; }
+.primary-surface { overflow: hidden; }
+.search-input { width: min(310px, 40vw); }
 .status-line { margin-top: 14px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .template-row { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr) auto; gap: 10px; margin-bottom: 18px; }
 .mapping-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 18px; }
 .progress-block { display: grid; gap: 8px; margin-top: 18px; }
 .review-list { display: grid; gap: 10px; margin-top: 14px; }
-.review-row { display: grid; gap: 5px; padding: 12px; border: 1px solid #e5e9f0; border-radius: 8px; background: #fafbfc; }
+.review-row { display: grid; gap: 5px; padding: 12px; border: 1px solid #e5e9f0; border-radius: 9px; background: #fafbfc; }
 .review-issue { font-size: 13px; }
 .review-issue.error { color: #b42318; }
 .review-issue.warning { color: #a15c00; }
 .load-more { display: flex; justify-content: center; margin-top: 16px; }
-.detail-card { margin-top: 16px; }
-.detail-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
-.detail-grid div { display: grid; gap: 3px; }
-.detail-grid span { color: #7c8798; font-size: 12px; }
+.detail-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.detail-grid div { display: grid; gap: 4px; padding: 12px 13px; border: 1px solid #edf0f4; border-radius: 10px; background: #f9fafc; }
+.detail-grid span { color: #7c8798; font-size: 11px; }
+.detail-grid strong { color: #25314a; font-size: 13px; }
+.detail-grid-polished { margin-bottom: 6px; }
 .material-lines { display: grid; gap: 8px; margin-top: 20px; }
-.material-line { display: grid; grid-template-columns: 1fr 140px minmax(160px, auto); align-items: center; gap: 12px; padding: 8px 0; border-top: 1px solid #edf0f4; }
+.material-lines > strong { color: #35405a; font-size: 13px; }
+.material-line { display: grid; grid-template-columns: 1fr 150px minmax(160px, auto); align-items: center; gap: 12px; padding: 10px 2px; border-top: 1px solid #edf0f4; }
 .material-form { display: grid; grid-template-columns: 1fr 1fr 1fr 120px auto; gap: 12px; align-items: end; margin-bottom: 18px; }
+.material-form-inline { margin: 14px 0 0; padding-top: 14px; border-top: 1px solid #edf0f4; }
 .manual-demand-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 16px; }
+.form-section-title {
+  grid-column: 1 / -1;
+  margin: 2px 0 10px;
+  color: #2c3851;
+  font-size: 12px;
+  font-weight: 700;
+}
+.form-section-wide { margin-top: 8px; padding-top: 14px; border-top: 1px solid #edf0f4; }
+.modal-intro {
+  display: grid;
+  gap: 4px;
+  margin: -2px 0 16px;
+  padding: 12px 14px;
+  border: 1px solid #dce6fb;
+  border-radius: 10px;
+  background: #f5f8ff;
+}
+.modal-intro strong { color: #29457f; font-size: 13px; }
+.modal-intro span { color: #74819a; font-size: 12px; line-height: 1.5; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 10px; }
+:deep(.demand-modal), :deep(.demand-detail-modal) { border-radius: 15px; overflow: hidden; box-shadow: 0 22px 58px rgba(18, 32, 61, .18); }
 @media (max-width: 850px) {
+  .pool-toolbar { align-items: flex-start; flex-direction: column; }
   .template-row, .mapping-grid, .detail-grid, .material-form, .manual-demand-form { grid-template-columns: 1fr; }
   .material-line { grid-template-columns: 1fr; }
+  .search-input { width: 100%; }
 }
 </style>

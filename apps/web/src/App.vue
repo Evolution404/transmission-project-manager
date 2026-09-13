@@ -13,6 +13,9 @@ import {
   NMessageProvider,
   NSpin,
   NTag,
+  dateZhCN,
+  zhCN,
+  type GlobalThemeOverrides,
   type MenuOption,
 } from 'naive-ui';
 import type { ApiResponse, CurrentUser } from '@tpm/shared';
@@ -26,6 +29,25 @@ const currentUser = ref<CurrentUser | null>(null);
 const loading = ref(true);
 const connectionError = ref('');
 const loggingOut = ref(false);
+
+const themeOverrides: GlobalThemeOverrides = {
+  common: {
+    primaryColor: '#2457d6',
+    primaryColorHover: '#1f4fc5',
+    primaryColorPressed: '#193fa0',
+    borderRadius: '10px',
+    borderRadiusSmall: '8px',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif',
+  },
+};
+
+const roleLabels: Record<CurrentUser['role'], string> = {
+  admin: '系统管理员',
+  project_manager: '项目管理',
+  implementation: '实施人员',
+  finance: '财务人员',
+  readonly: '只读用户',
+};
 
 const menuOptions: MenuOption[] = [
   { label: '总览', key: '/' },
@@ -95,7 +117,7 @@ onMounted(loadIdentity);
 </script>
 
 <template>
-  <n-config-provider>
+  <n-config-provider :locale="zhCN" :date-locale="dateZhCN" :theme-overrides="themeOverrides">
     <n-message-provider>
       <div v-if="loading" class="auth-loading">
         <n-spin size="large" />
@@ -139,16 +161,19 @@ onMounted(loadIdentity);
             :options="menuOptions"
             @update:value="navigate"
           />
-          <div class="phase-badge">
-            <span>P6</span>
-            <small>分析提醒与备份</small>
+          <div class="sidebar-status">
+            <span class="status-dot" />
+            <div>
+              <strong>全流程业务台</strong>
+              <small>需求 · 储备 · 执行 · 结算</small>
+            </div>
           </div>
         </n-layout-sider>
 
         <n-layout>
           <n-layout-header bordered class="topbar">
             <div>
-              <div class="page-kicker">输电项目全流程管理台</div>
+              <div class="page-kicker">输电运检 · 项目全流程</div>
               <h1>{{ pageTitle }}</h1>
             </div>
             <div class="identity-card">
@@ -156,7 +181,7 @@ onMounted(loadIdentity);
                 <strong>{{ currentUser.displayName }}</strong>
                 <small>@{{ currentUser.username }}</small>
               </div>
-              <n-tag size="small" :bordered="false">{{ currentUser.role }}</n-tag>
+              <n-tag size="small" :bordered="false">{{ roleLabels[currentUser.role] }}</n-tag>
               <n-button size="small" quaternary :loading="loggingOut" @click="logout">退出</n-button>
             </div>
           </n-layout-header>

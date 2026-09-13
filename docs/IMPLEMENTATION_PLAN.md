@@ -32,7 +32,15 @@ P1.2 起全部采用“先测试、后生产代码”。详细规则见 `docs/TE
 - P3 储备已拆开“需求来源关系”和“项目自己的当前物资”。项目物资可独立增减/换型，保存修订原因与前后快照；进入任务的物资形成历史事实保护下限。
 - P5 最终执行链为一次项目级出库、多执行任务；每个任务的物资供应、实施、结算使用独立版本并行推进。供应累计约束为 `到货<=发货<=上报<=任务需求`；结算允许先于实施，首次实施产生结算提醒；最终四状态按任务需求范围回投原始需求。
 - P6 储备类别分析改为未项目级出库项目的当前项目物资金额；已出库项目整体退出储备金额，施工/其他费用不进入项目物资类别，不再按旧 `release_lines` 比例折算。
-- 完整等价门禁：14 个 Node/workerd+D1 测试文件 **114/114 PASS**，15 个 Vue/Vitest 文件 **60/60 PASS**，合计 **174 项 PASS**；TypeScript、Vite production build、Worker dry-run PASS。单次 Node 全量命令受 300 秒工具上限截断，随后按文件组完整覆盖，没有漏跑。
+- 完整等价门禁：该结构性纠偏提交时 14 个 Node/workerd+D1 测试文件 **114/114 PASS**，15 个 Vue/Vitest 文件 **60/60 PASS**，合计 **174 项 PASS**；TypeScript、Vite production build、Worker dry-run PASS。后续 schema/UI 加固的最新门禁见下节。
+
+### Schema readiness 与 UI 加固 · 2026-09-13
+
+- 新增运行时 schema readiness：健康接口报告当前/要求 migration；业务 API 在 schema 落后时统一 `503 SCHEMA_OUTDATED`，防止“新代码 + 旧数据库”继续执行到缺表 SQL。
+- 本地 API 开发入口改为 `scripts/dev/api-dev.mjs`：启动前先应用 D1 migration，运行期间监听 migration 文件变化自动同步；仓库守卫要求 `REQUIRED_MIGRATION` 永远等于最新 migration。
+- UI 全局固定 Naive UI `zhCN/dateZhCN`，仓库守卫禁止英文默认表单 placeholder；需求新增改为模态框，表单不再常驻主页面。
+- 全局应用壳、导航、顶部栏、卡片、表格、输入控件、总览页和需求页统一视觉层级，正常业务界面移除 P2/P6 等开发阶段文案。
+- 本机实际重启新开发启动器并验证 `schema.ready=true`；最新门禁为 **119/119 Node/workerd+D1 + 60/60 Vue/Vitest = 179 项 PASS**，TypeScript、Vite production build、Worker dry-run 均 PASS。
 
 ## P0：初始化（本轮交付）
 

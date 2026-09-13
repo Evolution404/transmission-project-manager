@@ -10,9 +10,16 @@ export interface ApiError {
 
 export type ApiResponse<T> = ApiSuccess<T> | ApiError;
 
+export interface SchemaReadinessSummary {
+  ready: boolean;
+  currentMigration: string | null;
+  requiredMigration: string;
+}
+
 export type HealthResponse = ApiSuccess<{
   service: 'transmission-project-manager';
   stage: 'p6';
+  schema: SchemaReadinessSummary;
 }>;
 
 export const MEMBER_ROLES = [

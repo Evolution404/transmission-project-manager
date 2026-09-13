@@ -12,7 +12,9 @@ P4 框架/协议、预算草稿/确认、预算发生/实际发生、追加式�
 
 P6 储备类别分析已改为只统计**尚未项目级出库**项目的当前 `project_material_requirements` 金额，已出库项目整体退出储备金额分析，施工/其他费不进入项目物资类别，不再按旧 `release_lines` 数量比例折算。年度节点、月报、预警、通知 outbox、D1→R2 备份继续保留。
 
-本轮门禁：全部 14 个 Node/workerd+D1 测试文件 **114/114 PASS**，全部 15 个 Vue/Vitest 文件 **60/60 PASS**，合计 **174 项 PASS**；TypeScript、Vite production build、Worker dry-run 均 PASS。单次 Node 全量命令受工具 300 秒上限截断，随后按文件组完整覆盖全部 14 个测试文件，无跳过。
+本轮最新门禁：全部 15 个 Node/workerd+D1 测试文件 **119/119 PASS**，全部 15 个 Vue/Vitest 文件 **60/60 PASS**，合计 **179 项 PASS**；TypeScript、Vite production build、Worker dry-run 均 PASS。单次 Node 全量命令受工具 300 秒上限截断，随后按文件组完整覆盖全部测试文件，无跳过。
+
+2026-09-13 另完成本地 schema readiness 与 UI 加固：`/api/health` 返回当前/要求 migration，schema 落后时业务 API 统一 `503 SCHEMA_OUTDATED`；`npm run dev` 由 `scripts/dev/api-dev.mjs` 启动，启动前自动应用 migration 并监听 migration 文件变化。Naive UI 固定 `zhCN/dateZhCN`，仓库守卫禁止 `Please Input/Select` 等英文默认占位；新增需求改为模态框。全局应用壳、总览、卡片/表格/输入控件和需求页视觉已统一重构。
 
 **下一步恢复 P7 正式环境验收，不要再次重构回旧 P3/P5 模型。** P7 只做真实业务数据抽检、真实 Cloudflare/D1/R2/邮件/目标地区网络、正式恢复和运维移交。最终业务口径以 `docs/HANDOFF-FINAL-BUSINESS-BASELINE-2026-09-12.md`、`docs/DESIGN.md`、`docs/DATA_MODEL.md` 为准。
 
@@ -38,7 +40,7 @@ npm run dev
 npm run check
 ```
 
-开发端口：5173/8787，集成测试使用独立端口和临时 D1。`npm run dev` 只应用本地迁移，不再注入账号 seed；空库首次进入登录页时使用一次性 bootstrap 创建管理员。生产资源ID未配置；`npm run build:worker`只是 dry-run 打包，不发布资源。
+开发端口：5173/8787，集成测试使用独立端口和临时 D1。`npm run dev` 启动 API 前会先应用本地 migration，并持续监听 `apps/api/migrations/*.sql` 变化自动补迁移；运行时 schema 落后会 fail-closed，不再让缺表 SQL 变成普通 500。不再注入账号 seed；空库首次进入登录页时使用一次性 bootstrap 创建管理员。生产资源ID未配置；`npm run build:worker`只是 dry-run 打包，不发布资源。
 
 ## 不能遗漏的设计细节
 
@@ -68,8 +70,15 @@ npm run check
 - P2 导入支持同一抽象需求的多行物资归并和无物资需求；`demand_source_rows` 保留全部物理来源行。
 - `/reserves` 与 `/delivery` 已切到最终模型；旧 P3/P5 API/表仅作历史兼容，不再作为新 UI 主路径。
 - P6 储备类别金额已切换为“未项目级出库项目的当前项目物资金额”。
-- 门禁：Node/workerd+D1 114/114、Vue/Vitest 60/60，共 174 项 PASS；TypeScript、production build、Worker dry-run、迁移锁/重复迁移均 PASS。
+- 门禁：该结构性重构提交时 Node/workerd+D1 114/114、Vue/Vitest 60/60，共 174 项 PASS；后续 schema/UI 加固后最新门禁见本文件顶部。
 - 下一步：P7 真实数据与正式环境验收。
+
+### Schema readiness 与 UI 加固 · 2026-09-13
+
+- 根因：开发服务长期运行时新增 migration，Wrangler 热更新加载了新代码，但旧启动方式不会自动再次迁移 D1，形成“新代码 + 旧 schema”。
+- 修复：新增 `schema.ts` 运行时门禁和 `schema-readiness.test.mjs`；健康接口报告 schema readiness，业务接口 schema 落后统一 503。开发 API 启动器先迁移再启动，并监听 migration 变化。
+- UI：全局中文 locale；禁止英文默认 placeholder；需求新增改模态框；应用壳、总览和需求页重构为统一视觉系统，移除正常业务界面的 P2/P6 开发术语。
+- 验证：本机实际重启新开发启动器，日志确认 migration 检查成功并进入 Worker Ready；`/api/health` 实测 `schema.ready=true`。最新门禁 119/119 Node + 60/60 Vue = 179 项 PASS。
 
 ### P1 · 2026-09-12
 

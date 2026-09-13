@@ -50,6 +50,7 @@ import { p3App } from './p3';
 import { p4App } from './p4';
 import { p5App } from './p5';
 import { p6App } from './p6';
+import { schemaReadiness } from './schema';
 
 export const app = new Hono<AppEnv>();
 
@@ -158,10 +159,14 @@ function currentUserData<T extends { mustChangePassword: boolean }>(member: T) {
   return { ...member, authSource: 'session' as const };
 }
 
-app.get('/api/health', (c) => {
+app.get('/api/health', async (c) => {
   const body: HealthResponse = {
     ok: true,
-    data: { service: 'transmission-project-manager', stage: 'p6' },
+    data: {
+      service: 'transmission-project-manager',
+      stage: 'p6',
+      schema: await schemaReadiness(c.env.DB),
+    },
   };
   c.header('Cache-Control', 'no-store');
   return c.json(body);
@@ -313,6 +318,29 @@ app.use('/api/*', async (c, next) => {
   const publicPaths = new Set(['/api/health', '/api/auth/status', '/api/auth/kdf', '/api/auth/bootstrap', '/api/auth/login']);
   if (publicPaths.has(c.req.path)) return next();
   return requireAuthentication(c, next);
+});
+
+app.use('/api/*', async (c, next) => {
+  const schemaExemptPaths = new Set([
+    '/api/health',
+    '/api/auth/status',
+    '/api/auth/kdf',
+    '/api/auth/bootstrap',
+    '/api/auth/login',
+    '/api/auth/logout',
+    '/api/auth/change-password',
+    '/api/me',
+  ]);
+  if (schemaExemptPaths.has(c.req.path)) return next();
+  const schema = await schemaReadiness(c.env.DB);
+  if (!schema.ready) {
+    return c.json(apiError(
+      'SCHEMA_OUTDATED',
+      `数据库结构未升级到当前代码要求（当前：${schema.currentMigration ?? '未初始化'}；要求：${schema.requiredMigration}）`,
+      schema,
+    ), 503);
+  }
+  return next();
 });
 
 app.get('/api/me', (c) => {

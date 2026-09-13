@@ -56,7 +56,16 @@ test('API health reports P6 after analysis, reminders, notifications, and backup
   const response = await runtime.request('/api/health');
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), {
-    ok: true, data: { service: 'transmission-project-manager', stage: 'p6' },
+    ok: true,
+    data: {
+      service: 'transmission-project-manager',
+      stage: 'p6',
+      schema: {
+        ready: true,
+        currentMigration: '0008_final_business_flow.sql',
+        requiredMigration: '0008_final_business_flow.sql',
+      },
+    },
   });
   assert.equal(response.headers.get('cache-control'), 'no-store');
 });

@@ -233,3 +233,13 @@ P7 必须使用测试/生产资源进行端到端验收，并保留结果记录�
 `0008_final_business_flow.sql` 已纳入迁移 checksum 锁，空库重复迁移和 P1.2→P6 历史升级门禁继续通过。新最终业务 API/UI 不再读写旧 `demand_allocations` / `release_lines`；旧表只保留历史兼容、旧回归和备份恢复。
 
 本轮完整等价门禁：全部 14 个 Node/workerd+D1 测试文件分 3 组执行，**114/114 PASS**；全部 15 个 Vue/Vitest 文件 **60/60 PASS**，合计 **174 项 PASS**；`npm run typecheck` PASS；Vite production build PASS；Worker `wrangler deploy --dry-run` PASS（上传约 511.11 KiB / gzip 93.81 KiB）。单次 `npm run test:node` 因工具 300 秒上限被截断，随后按文件组完整覆盖全部 14 个 Node 测试文件，没有 `.skip/.only/todo` 或漏跑。P7 仍必须使用真实业务数据、Cloudflare/D1/R2/邮件和目标地区网络做正式验收，本地门禁不能冒充上线验收。
+
+## 12. UI 与 schema readiness 加固 · 2026-09-13
+
+针对本地开发服务器热更新后出现“新代码 + 旧 D1 schema”的真实缺陷，新增双层门禁：`apps/api/src/schema.ts` 把最新 migration 作为运行时要求，`/api/health` 返回 `schema.ready/currentMigration/requiredMigration`；已认证业务 API 在 schema 落后时统一返回 `503 SCHEMA_OUTDATED`，不得继续执行到缺表 SQL 后才报普通 500。`tests/schema-readiness.test.mjs` 使用只到 `0007` 的真实 workerd+D1 环境验证该 fail-closed 行为；`scaffold.test.mjs` 同时验证完整迁移后 `schema.ready=true`。
+
+本地 `npm run dev` 的 API 入口改为 `scripts/dev/api-dev.mjs`：启动 Worker 前先应用全部本地 D1 migration，并监听 `apps/api/migrations/*.sql` 变化自动再次执行 migration apply。仓库守卫强制 `REQUIRED_MIGRATION` 始终等于最新 committed migration，避免新增 `0009` 后忘记同步代码门禁。该启动器已在本机实际运行验证，日志确认“启动前迁移 → No migrations to apply → schema 已就绪 → Worker Ready”。
+
+UI 门禁同时固定 Naive UI `zhCN/dateZhCN`；默认输入框/下拉占位分别为“请输入/请选择”，仓库守卫禁止生产前端源码出现 `Please Input / Please Select / Please Upload / Please Choose`。项目需求页的手工新增已改成按钮触发模态框，表单不再常驻主页面；全局应用壳、导航、卡片、表格、总览和需求页统一新的视觉层级，正常业务界面不再暴露 P2/P6 等开发阶段文字。
+
+本轮最新完整门禁：Node/workerd+D1 **119/119 PASS**，Vue/Vitest **60/60 PASS**，合计 **179 项 PASS**；TypeScript PASS；Vite production build PASS；Worker dry-run PASS（约 512.73 KiB / gzip 94.24 KiB）。

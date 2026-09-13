@@ -61,6 +61,16 @@ vi.mock('naive-ui', async () => {
         (props.options as Array<{ label: string; value: string }>).map((option) => vue.h('option', { value: option.value }, option.label)));
     },
   });
+  const NModal = vue.defineComponent({
+    name: 'NModal',
+    props: { show: Boolean },
+    emits: ['update:show'],
+    setup(props, { slots, emit, attrs }) {
+      return () => props.show
+        ? vue.h('div', { ...attrs, 'data-stub': 'NModal' }, [slots.default?.(), slots.footer?.({ close: () => emit('update:show', false) })])
+        : null;
+    },
+  });
   const NDataTable = vue.defineComponent({
     name: 'NDataTable', props: { data: { type: Array, default: () => [] }, columns: { type: Array, default: () => [] } },
     setup(props) {
@@ -77,7 +87,7 @@ vi.mock('naive-ui', async () => {
   });
   return {
     NAlert: wrap('NAlert'), NButton, NCard: wrap('NCard'), NDataTable, NEmpty: wrap('NEmpty'),
-    NForm: wrap('NForm'), NFormItem: wrap('NFormItem'), NInput, NProgress: wrap('NProgress'), NSelect,
+    NForm: wrap('NForm'), NFormItem: wrap('NFormItem'), NInput, NModal, NProgress: wrap('NProgress'), NSelect,
     NSpace: wrap('NSpace'), NSpin: wrap('NSpin'), NTabPane, NTabs: wrap('NTabs'), NTag: wrap('NTag'),
     useMessage: () => ({ success: vi.fn(), error: vi.fn(), warning: vi.fn() }),
   };
@@ -147,8 +157,11 @@ describe('DemandsView P2 behavior', () => {
     expect(wrapper.find('[data-test="add-material"]').exists()).toBe(false);
   });
 
-  it('lets write roles create a demand manually instead of requiring a file import', async () => {
+  it('opens manual demand creation in a modal instead of keeping the form on the main page', async () => {
     const wrapper = mount(DemandsView, { props: { currentUser: admin } });
+    await flushPromises();
+    expect(wrapper.find('[data-test="manual-demand-form"]').exists()).toBe(false);
+    await wrapper.get('[data-test="open-manual-demand"]').trigger('click');
     await flushPromises();
     expect(wrapper.find('[data-test="manual-demand-form"]').exists()).toBe(true);
     await wrapper.get('[data-test="manual-sequence"]').setValue('M-001');
@@ -171,6 +184,7 @@ describe('DemandsView P2 behavior', () => {
       sequenceNo: 'M-001', voltage: '220kV', lineName: '手工需求线', section: '#1-#2',
       materials: [{ rawModel: 'JX-01', quantityScaled: 25000, unit: '套' }], year: 2026, category: '临时补充', owner: '张三',
     });
+    expect(wrapper.find('[data-test="manual-demand-form"]').exists()).toBe(false);
   });
 
   it('lets write roles download the canonical import template before selecting a file', async () => {

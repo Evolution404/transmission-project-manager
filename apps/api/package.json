@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "db:setup:local": "wrangler d1 migrations apply transmission-project-manager-local --local",
-    "dev": "npm run db:setup:local && wrangler dev --local --ip 127.0.0.1 --port 8787",
+    "dev": "node ../../scripts/dev/api-dev.mjs",
     "build": "wrangler deploy --dry-run --outdir dist",
     "typecheck": "tsc --noEmit"
   },

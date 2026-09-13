@@ -60,6 +60,8 @@ git diff
 - 物资供应：`到货 <= 发货 <= 上报 <= 任务需求`；使用独立 `supply_version`，同版本并发只有一个成功。
 - 实施/结算：分别使用 `implementation_version` / `settlement_version`；允许先结算后实施；首次实施形成结算提醒。
 - P6 储备分析：只统计尚未项目级出库项目的当前项目物资金额，施工/其他费不进入项目物资储备类别。
+- schema readiness：`/api/health` 显式返回当前/要求 migration；业务 API 在数据库落后时 `503 SCHEMA_OUTDATED` fail-closed。`npm run dev` 启动前自动迁移并监听 migration 文件变化；`REQUIRED_MIGRATION` 必须始终跟随最新迁移。
+- UI 基线：Naive UI 固定 `zhCN/dateZhCN`，禁止 `Please Input/Select` 等英文默认占位；需求新增必须使用模态框，不把大表单常驻需求池主页面。全局应用壳/卡片/表格采用统一视觉层级，正常界面不显示 P2/P6 等开发阶段术语。
 
 旧 `demand_allocations`、`release_batches/release_lines`、旧 implementation/settlement 表和接口继续保留，仅用于历史兼容、旧回归、备份恢复，不得作为新功能主路径。
 
@@ -80,12 +82,12 @@ P4 框架/协议/资金线继续有效：
 
 2026-09-13 最终重构完成后的等价完整门禁：
 
-- Node/workerd+D1：14 个测试文件，`114/114 PASS`
+- Node/workerd+D1：15 个测试文件，`119/119 PASS`
 - Vue/Vitest：15 个测试文件，`60/60 PASS`
-- 合计：`174 PASS`
+- 合计：`179 PASS`
 - `npm run typecheck`：PASS
 - Vite production build：PASS
-- Worker `wrangler deploy --dry-run`：PASS，约 511.11 KiB / gzip 93.81 KiB
+- Worker `wrangler deploy --dry-run`：PASS，约 512.73 KiB / gzip 94.24 KiB
 - 迁移 checksum、空库重复迁移、历史升级：PASS
 - 无 `.skip/.only/todo`
 
