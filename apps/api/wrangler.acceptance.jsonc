@@ -6,6 +6,9 @@
   "compatibility_date": "2026-09-12",
   "workers_dev": true,
   "preview_urls": false,
+  "routes": [
+    { "pattern": "project.980923.xyz", "custom_domain": true }
+  ],
   "assets": {
     "directory": "../web/dist",
     "binding": "ASSETS",
