@@ -24,7 +24,7 @@
 | transmission_lines | 所属电压等级、线路名称/编码、启停、版本 | `VoltageLevel 1:N TransmissionLine`；同等级线路名称唯一；被需求引用后不能换所属电压等级 |
 | transmission_towers | 所属线路、字符串杆塔号、独立 `sort_index`、类型、启停、版本 | `TransmissionLine 1:N TransmissionTower`；同线路杆塔号和顺序分别唯一；引用线路上的身份/顺序/删除受保护 |
 | import_batches / import_rows | 文件哈希、工作表、映射版本、源行、原始JSON、错误、发布状态 | 批次分片幂等；未发布行不得计入正式报表 |
-| demand_categories / field_definitions | 需求类别、字段类型、必填规则、版本 | 初始6个必备字段；扩展可配置 |
+| demand_categories / field_definitions | 需求类别、模板/扩展字段定义、字段类型、版本 | 当前需求成立必填核心为序号和结构化位置；物资是 0..N 子明细，不能因旧字段定义把物资重新变成需求成立前提 |
 | demands | 抽象业务事项：`source_type=import/manual`、业务年份、类别、负责人，以及 `voltage_level_id`、`line_id`、`location_type`、起止杆塔对象；同时保留对象生成的显示快照 | 需求无需物资即可成立；正式位置只能来自基础台账；同一业务事项可由多个 Excel 来源行共同形成 |
 | demand_source_rows | 需求ID、源 import_row、文件哈希、工作表、物理行、原始JSON | 多个来源行可归到同一个抽象需求；保留完整来源追溯 |
 | materials | 标准编码、名称、型号、单位 | 原始型号通过人工确认映射；单位不同时不能直接汇总 |
