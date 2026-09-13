@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
-import { cleanupStateDir, makeStateDir, queryLocalD1, startWranglerServer } from './helpers/wrangler.mjs';
+import { cleanupStateDir, executeLocalD1, makeStateDir, queryLocalD1, startWranglerServer } from './helpers/wrangler.mjs';
 import { bootstrapAdmin, cookiePair } from './helpers/auth.mjs';
 
 const stateDir = makeStateDir('tpm-final-business-flow-');
@@ -435,4 +435,28 @@ test('project material cannot be shrunk below task assignments after execution f
   }));
   assert.equal(shrink.response.status, 422);
   assert.equal(shrink.body.error.code, 'PROJECT_MATERIAL_PROTECTED');
+});
+
+test('project execution detail stays within the D1 query budget as task count grows', async () => {
+  const projectId = globalThis.__finalProjectId;
+  const releaseId = globalThis.__projectReleaseId;
+  const demandId = globalThis.__finalDemandId;
+  const adminId = dbRows("SELECT id FROM members WHERE role='admin' ORDER BY created_at LIMIT 1;")[0].id;
+  const now = '2026-09-24T00:00:00.000Z';
+  const statements = [];
+  for (let index = 3; index <= 8; index += 1) {
+    const taskId = `query-budget-task-${index}`;
+    statements.push(
+      `INSERT INTO project_tasks (id,project_id,project_release_id,name,description,scope_text,owner,planned_date,planned_quantity_scaled,unit,version,implementation_version,settlement_version,created_by,created_at,updated_at) VALUES ('${taskId}','${projectId}','${releaseId}','查询预算任务${index}',NULL,NULL,NULL,NULL,1000,'项',1,1,1,'${adminId}','${now}','${now}');`,
+      `INSERT INTO task_demand_scopes (id,task_id,demand_id,planned_quantity_scaled,created_at) VALUES ('query-budget-scope-${index}','${taskId}','${demandId}',1000,'${now}');`,
+      `INSERT INTO task_material_requirements (id,task_id,project_material_requirement_id,material_id,model,unit,required_quantity_scaled,supply_version,created_at,updated_at) VALUES ('query-budget-material-${index}','${taskId}',NULL,NULL,'QB-${index}','件',1000,1,'${now}','${now}');`,
+    );
+  }
+  executeLocalD1(stateDir, { command: statements.join('\n') });
+
+  const detail = await jsonRequest(`/api/projects/${projectId}/execution`);
+  assert.equal(detail.response.status, 200);
+  assert.equal(detail.body.data.tasks.length, 8);
+  assert.equal(detail.body.data.demands.length, 1);
+  assert.equal(detail.body.data.tasks.filter((task) => task.name.startsWith('查询预算任务')).length, 6);
 });
