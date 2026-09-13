@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
-import { NAlert, NCard, NGrid, NGridItem, NSpin, NStatistic, NTag } from 'naive-ui';
+import { NAlert, NCard, NSpin, NStatistic, NTag } from 'naive-ui';
 import type { AnalysisDashboardSummary, CurrentUser } from '@tpm/shared';
 import { parseApiResponse } from '../api/response';
 
@@ -56,43 +56,33 @@ onMounted(loadDashboard);
     </div>
 
     <n-spin :show="loading">
-      <n-grid :cols="5" :x-gap="14" :y-gap="14" responsive="screen">
-        <n-grid-item>
-          <n-card class="metric-card">
-            <span class="metric-label">已纳入需求</span>
-            <n-statistic :value="dashboard?.demandCount ?? 0" />
-            <small>已进入项目范围的需求</small>
-          </n-card>
-        </n-grid-item>
-        <n-grid-item>
-          <n-card class="metric-card">
-            <span class="metric-label">项目总数</span>
-            <n-statistic :value="dashboard?.projectCount ?? 0" />
-            <small>当前授权范围内项目</small>
-          </n-card>
-        </n-grid-item>
-        <n-grid-item>
-          <n-card class="metric-card metric-card-attention">
-            <span class="metric-label">待项目级出库</span>
-            <n-statistic :value="dashboard?.unreleasedProjectCount ?? 0" />
-            <small>尚未正式进入执行阶段</small>
-          </n-card>
-        </n-grid-item>
-        <n-grid-item>
-          <n-card class="metric-card metric-card-attention">
-            <span class="metric-label">结算待办</span>
-            <n-statistic :value="dashboard?.pendingSettlementCount ?? 0" />
-            <small>已有实施事实、尚未最终结算</small>
-          </n-card>
-        </n-grid-item>
-        <n-grid-item>
-          <n-card class="metric-card metric-card-alert">
-            <span class="metric-label">活动预警</span>
-            <n-statistic :value="dashboard?.activeAlertCount ?? 0" />
-            <small>规则越线或年度事项提醒</small>
-          </n-card>
-        </n-grid-item>
-      </n-grid>
+      <div class="metrics-grid">
+        <n-card class="metric-card">
+          <span class="metric-label">已纳入需求</span>
+          <n-statistic :value="dashboard?.demandCount ?? 0" />
+          <small>已进入项目范围的需求</small>
+        </n-card>
+        <n-card class="metric-card">
+          <span class="metric-label">项目总数</span>
+          <n-statistic :value="dashboard?.projectCount ?? 0" />
+          <small>当前授权范围内项目</small>
+        </n-card>
+        <n-card class="metric-card metric-card-attention">
+          <span class="metric-label">待项目级出库</span>
+          <n-statistic :value="dashboard?.unreleasedProjectCount ?? 0" />
+          <small>尚未正式进入执行阶段</small>
+        </n-card>
+        <n-card class="metric-card metric-card-attention">
+          <span class="metric-label">结算待办</span>
+          <n-statistic :value="dashboard?.pendingSettlementCount ?? 0" />
+          <small>已有实施事实、尚未最终结算</small>
+        </n-card>
+        <n-card class="metric-card metric-card-alert metric-card-wide-mobile">
+          <span class="metric-label">活动预警</span>
+          <n-statistic :value="dashboard?.activeAlertCount ?? 0" />
+          <small>规则越线或年度事项提醒</small>
+        </n-card>
+      </div>
     </n-spin>
 
     <n-card title="业务主线" class="flow-card">
@@ -136,11 +126,12 @@ onMounted(loadDashboard);
 .eyebrow { color: #2457d6; font-size: 11px; font-weight: 700; letter-spacing: .08em; }
 .dashboard-hero h2 { margin: 4px 0 5px; font-size: 21px; color: #182033; letter-spacing: -.01em; }
 .dashboard-hero p { margin: 0; color: #7e8898; font-size: 13px; }
-.metric-card { position: relative; min-height: 132px; overflow: hidden; }
+.metrics-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 14px; }
+.metric-card { position: relative; min-width: 0; min-height: 132px; overflow: hidden; }
 .metric-card::before { content: ''; position: absolute; inset: 0 auto 0 0; width: 3px; background: #6f8de0; }
 .metric-card-attention::before { background: #d89a32; }
 .metric-card-alert::before { background: #c45e5e; }
-.metric-label { display: block; margin-bottom: 8px; color: #697388; font-size: 12px; font-weight: 650; }
+.metric-label { display: block; margin-bottom: 8px; color: #697388; font-size: 12px; font-weight: 650; word-break: keep-all; }
 .metric-card :deep(.n-statistic-value) { font-size: 28px; font-weight: 720; color: #1b2740; letter-spacing: -.02em; }
 .metric-card small { display: block; margin-top: 8px; color: #98a0ae; font-size: 10px; line-height: 1.5; }
 .flow-grid { display: grid; grid-template-columns: 1fr auto 1fr auto 1fr auto 1fr auto 1fr; gap: 10px; align-items: stretch; }
@@ -149,6 +140,27 @@ onMounted(loadDashboard);
 .flow-node strong { color: #2b3650; font-size: 13px; }
 .flow-node small { color: #8a94a4; font-size: 11px; line-height: 1.5; }
 .flow-arrow { align-self: center; color: #b0b7c4; font-size: 16px; }
-@media (max-width: 1100px) { .flow-grid { grid-template-columns: 1fr; } .flow-arrow { display: none; } }
-@media (max-width: 700px) { .dashboard-hero { align-items: flex-start; flex-direction: column; } }
+@media (max-width: 1100px) {
+  .metrics-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .flow-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .flow-arrow { display: none; }
+  .flow-node:last-child { grid-column: 1 / -1; }
+}
+@media (max-width: 700px) {
+  .dashboard-view { gap: 12px; }
+  .dashboard-hero { align-items: flex-start; flex-direction: column; gap: 12px; padding: 16px; }
+  .dashboard-hero h2 { font-size: 19px; line-height: 1.35; }
+  .dashboard-hero p { font-size: 12px; line-height: 1.65; }
+  .metrics-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .metric-card { min-height: 118px; }
+  .metric-card-wide-mobile { grid-column: 1 / -1; min-height: 104px; }
+  .metric-label { white-space: nowrap; font-size: 12px; }
+  .metric-card small { font-size: 10px; line-height: 1.45; word-break: normal; }
+  .metric-card :deep(.n-statistic-value) { font-size: 25px; }
+  .flow-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .flow-node { min-height: 88px; padding: 12px; }
+  .flow-node strong { font-size: 12px; }
+  .flow-node small { font-size: 10px; }
+  .identity-panel { display: none; }
+}
 </style>

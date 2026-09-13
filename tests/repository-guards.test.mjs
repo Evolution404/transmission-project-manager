@@ -103,6 +103,19 @@ test('web form defaults are Chinese and English default placeholders are forbidd
   }
 });
 
+test('mobile UI keeps usable navigation and dashboard density', () => {
+  const appSource = readFileSync(resolve(root, 'apps/web/src/App.vue'), 'utf8');
+  const dashboardSource = readFileSync(resolve(root, 'apps/web/src/views/DashboardView.vue'), 'utf8');
+  const styleSource = readFileSync(resolve(root, 'apps/web/src/styles.css'), 'utf8');
+  assert.match(appSource, /mobile-menu-button/);
+  assert.match(appSource, /n-drawer/);
+  assert.match(styleSource, /@media \(max-width: 720px\)/);
+  assert.match(styleSource, /\.mobile-menu-button \{ display: inline-flex !important; \}/);
+  assert.match(dashboardSource, /metrics-grid/);
+  assert.match(dashboardSource, /grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/);
+  assert.doesNotMatch(dashboardSource, /:cols="5"/);
+});
+
 test('local API development automatically applies and watches migrations', () => {
   const apiPackage = JSON.parse(readFileSync(resolve(root, 'apps/api/package.json'), 'utf8'));
   assert.equal(apiPackage.scripts.dev, 'node ../../scripts/dev/api-dev.mjs');

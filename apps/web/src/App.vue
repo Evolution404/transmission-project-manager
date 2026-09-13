@@ -5,6 +5,8 @@ import {
   NAlert,
   NButton,
   NConfigProvider,
+  NDrawer,
+  NDrawerContent,
   NLayout,
   NLayoutContent,
   NLayoutHeader,
@@ -29,6 +31,7 @@ const currentUser = ref<CurrentUser | null>(null);
 const loading = ref(true);
 const connectionError = ref('');
 const loggingOut = ref(false);
+const mobileMenuOpen = ref(false);
 
 const themeOverrides: GlobalThemeOverrides = {
   common: {
@@ -110,6 +113,7 @@ async function logout() {
 }
 
 function navigate(key: string) {
+  mobileMenuOpen.value = false;
   void router.push(key);
 }
 
@@ -172,9 +176,12 @@ onMounted(loadIdentity);
 
         <n-layout>
           <n-layout-header bordered class="topbar">
-            <div>
-              <div class="page-kicker">输电运检 · 项目全流程</div>
-              <h1>{{ pageTitle }}</h1>
+            <div class="topbar-title-wrap">
+              <n-button class="mobile-menu-button" quaternary circle aria-label="打开导航" @click="mobileMenuOpen = true">☰</n-button>
+              <div>
+                <div class="page-kicker">输电运检 · 项目全流程</div>
+                <h1>{{ pageTitle }}</h1>
+              </div>
             </div>
             <div class="identity-card">
               <div>
@@ -189,6 +196,23 @@ onMounted(loadIdentity);
           <n-layout-content class="content-wrap">
             <router-view :current-user="currentUser" />
           </n-layout-content>
+
+          <n-drawer v-model:show="mobileMenuOpen" placement="left" :width="280">
+            <n-drawer-content title="项目全流程" closable>
+              <div class="mobile-drawer-brand">
+                <div class="brand-mark">输</div>
+                <div>
+                  <strong>输电项目管理</strong>
+                  <small>需求 · 储备 · 执行 · 结算</small>
+                </div>
+              </div>
+              <n-menu
+                :value="activeKey"
+                :options="menuOptions"
+                @update:value="navigate"
+              />
+            </n-drawer-content>
+          </n-drawer>
         </n-layout>
       </n-layout>
     </n-message-provider>
