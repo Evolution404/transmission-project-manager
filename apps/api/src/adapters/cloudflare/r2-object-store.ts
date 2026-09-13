@@ -1,7 +1,11 @@
 import type { ObjectStorePort, ObjectStorePutOptions, StoredObject } from '../../ports/object-store';
 
 export class R2ObjectStoreAdapter implements ObjectStorePort {
-  constructor(private readonly bucket: R2Bucket) {}
+  private readonly bucket: R2Bucket;
+
+  constructor(bucket: R2Bucket) {
+    this.bucket = bucket;
+  }
 
   async put(key: string, value: Uint8Array | string, options?: ObjectStorePutOptions): Promise<void> {
     await this.bucket.put(key, value, {
