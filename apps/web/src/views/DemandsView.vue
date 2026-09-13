@@ -76,9 +76,9 @@ const savingManualDemand = ref(false);
 const savingDemandMaterial = ref(false);
 const demandMaterialForm = ref({ rawModel: '', quantity: '', unit: '' });
 const manualDemandForm = ref({
-  sequenceNo: '', voltage: '', lineName: '', section: '', materialModel: '', materialQuantity: '',
-  unit: '', year: '', category: '', owner: '',
+  sequenceNo: '', voltage: '', lineName: '', section: '', year: '', category: '', owner: '',
 });
+const manualDemandMaterials = ref<Array<{ id: string; model: string; quantity: string; unit: string }>>([]);
 
 const fieldDefinitions: Array<{ key: keyof ImportFieldMapping; label: string; required: boolean }> = [
   { key: 'sequenceNo', label: '序号', required: true },
@@ -284,14 +284,18 @@ async function openDemand(row: DemandSummary) {
   }
 }
 
+function addManualDemandMaterial() {
+  manualDemandMaterials.value.push({ id: crypto.randomUUID(), model: '', quantity: '', unit: '' });
+}
+
+function removeManualDemandMaterial(id: string) {
+  manualDemandMaterials.value = manualDemandMaterials.value.filter((item) => item.id !== id);
+}
+
 async function createManualDemand() {
   const form = manualDemandForm.value;
   if (!form.sequenceNo.trim() || !form.voltage.trim() || !form.lineName.trim() || !form.section.trim()) {
     message.warning('序号、电压等级、线路名称和杆段不能为空');
-    return;
-  }
-  if (Boolean(form.materialModel.trim()) !== Boolean(form.materialQuantity.trim())) {
-    message.warning('初始物资型号和数量要么同时填写，要么都留空');
     return;
   }
   const year = form.year.trim() ? Number(form.year) : null;
@@ -299,19 +303,27 @@ async function createManualDemand() {
     message.warning('年度必须为 1900-2200 的四位年份');
     return;
   }
-  savingManualDemand.value = true;
-  try {
-    const materials = form.materialModel.trim() && form.materialQuantity.trim()
-      ? [{
-          rawModel: form.materialModel.trim(),
-          quantityScaled: parseDecimalScaled(form.materialQuantity, 4)!,
-          unit: form.unit.trim() || null,
-        }]
-      : [];
-    if (materials.length && (!materials[0]!.quantityScaled || materials[0]!.quantityScaled <= 0)) {
-      message.warning('初始物资数量必须为正数且最多 4 位小数');
+
+  const materials: Array<{ rawModel: string; quantityScaled: number; unit: string | null }> = [];
+  for (const [index, row] of manualDemandMaterials.value.entries()) {
+    const model = row.model.trim();
+    const quantity = row.quantity.trim();
+    const unit = row.unit.trim();
+    if (!model && !quantity && !unit) continue;
+    if (!model || !quantity) {
+      message.warning(`第 ${index + 1} 条物资必须同时填写型号和数量`);
       return;
     }
+    const quantityScaled = parseDecimalScaled(quantity, 4);
+    if (quantityScaled === null || quantityScaled <= 0) {
+      message.warning(`第 ${index + 1} 条物资数量必须为正数且最多 4 位小数`);
+      return;
+    }
+    materials.push({ rawModel: model, quantityScaled, unit: unit || null });
+  }
+
+  savingManualDemand.value = true;
+  try {
     await apiRequest<DemandDetail>('/api/demands', writeInit('POST', {
       sequenceNo: form.sequenceNo.trim(),
       voltage: form.voltage.trim(),
@@ -323,9 +335,9 @@ async function createManualDemand() {
       owner: form.owner.trim() || null,
     }));
     manualDemandForm.value = {
-      sequenceNo: '', voltage: '', lineName: '', section: '', materialModel: '', materialQuantity: '',
-      unit: '', year: '', category: '', owner: '',
+      sequenceNo: '', voltage: '', lineName: '', section: '', year: '', category: '', owner: '',
     };
+    manualDemandMaterials.value = [];
     manualDemandModalOpen.value = false;
     await loadDemands();
     message.success('需求已创建');
@@ -423,22 +435,21 @@ onMounted(loadInitial);
       <n-tabs type="line" animated>
         <n-tab-pane name="pool" tab="需求池">
           <div class="pool-toolbar">
-            <div>
-              <span class="eyebrow">需求池</span>
-              <h2>项目需求清单</h2>
-              <p>需求本体保持抽象，物资作为子明细独立维护；项目阶段再形成项目自己的物资计划。</p>
+            <div class="pool-heading">
+              <span class="eyebrow">项目需求</span>
+              <h2>需求池</h2>
+              <p>维护抽象需求及其物资子明细；需求进入项目后，再独立形成项目物资计划。</p>
             </div>
-            <n-space align="center">
-              <div class="metric-chip"><strong>{{ demands.length }}</strong><span>当前加载</span></div>
+            <div class="pool-actions">
               <n-button v-if="canWrite" data-test="open-manual-demand" type="primary" @click="manualDemandModalOpen = true">新增需求</n-button>
-            </n-space>
+            </div>
           </div>
 
           <n-alert v-if="!canWrite" type="info" title="只读模式" class="section-note">
             仅管理员或项目管理角色可以手工新增或批量导入需求。
           </n-alert>
 
-          <n-card title="正式需求" class="primary-surface">
+          <n-card title="需求清单" class="primary-surface">
             <template #header-extra>
               <n-space>
                 <n-input v-model:value="demandQuery" class="search-input" placeholder="输入线路、杆段或序号" clearable @keyup.enter="loadDemands()" />
@@ -560,8 +571,8 @@ onMounted(loadInitial);
         :mask-closable="!savingManualDemand"
       >
         <div class="modal-intro">
-          <strong>先建立需求事项，再按需要补充物资。</strong>
-          <span>序号、电压等级、线路名称和杆段为核心信息；初始物资可以留空。</span>
+          <strong>先建立需求事项，再按需要附加物资。</strong>
+          <span>核心信息必须填写；初始物资可以为 0 条，也可以一次添加任意多条。</span>
         </div>
         <n-form data-test="manual-demand-form" class="manual-demand-form" label-placement="top">
           <div class="form-section-title">基本信息</div>
@@ -572,10 +583,31 @@ onMounted(loadInitial);
           <n-form-item label="年度"><n-input v-model:value="manualDemandForm.year" data-test="manual-year" placeholder="例如：2026" /></n-form-item>
           <n-form-item label="类别"><n-input v-model:value="manualDemandForm.category" data-test="manual-category" placeholder="请输入需求类别" /></n-form-item>
           <n-form-item label="负责人"><n-input v-model:value="manualDemandForm.owner" data-test="manual-owner" placeholder="请输入负责人" /></n-form-item>
-          <div class="form-section-title form-section-wide">初始物资（可选）</div>
-          <n-form-item label="物资型号"><n-input v-model:value="manualDemandForm.materialModel" data-test="manual-material-model" placeholder="可留空，后续再补充" /></n-form-item>
-          <n-form-item label="物资数量"><n-input v-model:value="manualDemandForm.materialQuantity" data-test="manual-material-quantity" placeholder="最多 4 位小数" /></n-form-item>
-          <n-form-item label="物资单位"><n-input v-model:value="manualDemandForm.unit" data-test="manual-unit" placeholder="例如：套、只、米" /></n-form-item>
+          <div class="form-section-title form-section-wide material-section-heading">
+            <div>
+              <strong>初始物资（可选）</strong>
+              <span>可添加任意条；创建后仍可继续追加物资子明细。</span>
+            </div>
+            <n-button data-test="add-manual-material" size="small" secondary @click="addManualDemandMaterial">添加物资</n-button>
+          </div>
+          <div v-if="manualDemandMaterials.length" class="manual-material-list form-section-wide">
+            <div v-for="(row, index) in manualDemandMaterials" :key="row.id" class="manual-material-row">
+              <div class="manual-material-index">{{ index + 1 }}</div>
+              <n-form-item label="物资型号">
+                <n-input v-model:value="row.model" :data-test="`manual-material-model-${index}`" placeholder="请输入物资型号" />
+              </n-form-item>
+              <n-form-item label="数量">
+                <n-input v-model:value="row.quantity" :data-test="`manual-material-quantity-${index}`" placeholder="最多 4 位小数" />
+              </n-form-item>
+              <n-form-item label="单位">
+                <n-input v-model:value="row.unit" :data-test="`manual-material-unit-${index}`" placeholder="例如：套、只、米" />
+              </n-form-item>
+              <n-button :data-test="`remove-manual-material-${index}`" quaternary type="error" class="manual-material-remove" @click="removeManualDemandMaterial(row.id)">删除</n-button>
+            </div>
+          </div>
+          <div v-else class="manual-material-empty form-section-wide">
+            当前不附带物资。需要时点击“添加物资”，可连续新增多条。
+          </div>
         </n-form>
         <template #footer>
           <div class="modal-actions">
@@ -638,31 +670,19 @@ onMounted(loadInitial);
 <style scoped>
 .section-note { margin-bottom: 16px; }
 .pool-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 20px;
-  margin: 4px 0 16px;
-  padding: 18px 20px;
-  border: 1px solid #e4e9f1;
-  border-radius: 14px;
-  background: linear-gradient(120deg, #ffffff 0%, #f7f9fd 100%);
-  box-shadow: 0 8px 24px rgba(18, 32, 61, 0.04);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 22px;
+  margin: 2px 0 16px;
+  padding: 6px 2px 2px;
 }
-.pool-toolbar h2 { margin: 3px 0 4px; font-size: 20px; letter-spacing: -.01em; color: #182033; }
-.pool-toolbar p { margin: 0; max-width: 700px; color: #7b8596; font-size: 13px; line-height: 1.6; }
+.pool-heading { min-width: 0; }
+.pool-toolbar h2 { margin: 3px 0 5px; font-size: 22px; letter-spacing: -.015em; color: #182033; }
+.pool-toolbar p { margin: 0; max-width: 720px; color: #7b8596; font-size: 13px; line-height: 1.6; }
+.pool-actions { display: flex; align-items: center; justify-content: flex-end; padding-bottom: 2px; }
+.pool-actions .n-button { min-width: 104px; }
 .eyebrow { color: #2457d6; font-size: 11px; font-weight: 700; letter-spacing: .08em; }
-.metric-chip {
-  min-width: 86px;
-  padding: 8px 12px;
-  border: 1px solid #e4e9f1;
-  border-radius: 10px;
-  background: #fff;
-  text-align: center;
-}
-.metric-chip strong, .metric-chip span { display: block; }
-.metric-chip strong { color: #1b2947; font-size: 17px; }
-.metric-chip span { margin-top: 1px; color: #8a94a4; font-size: 10px; }
 .primary-surface { overflow: hidden; }
 .search-input { width: min(310px, 40vw); }
 .status-line { margin-top: 14px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
@@ -694,6 +714,44 @@ onMounted(loadInitial);
   font-weight: 700;
 }
 .form-section-wide { margin-top: 8px; padding-top: 14px; border-top: 1px solid #edf0f4; }
+.material-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.material-section-heading > div { display: grid; gap: 3px; }
+.material-section-heading strong { color: #2c3851; font-size: 12px; }
+.material-section-heading span { color: #8a94a4; font-size: 11px; font-weight: 400; }
+.manual-material-list { display: grid; gap: 10px; }
+.manual-material-row {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1.5fr) minmax(120px, .8fr) minmax(100px, .7fr) auto;
+  gap: 10px;
+  align-items: end;
+  padding: 12px;
+  border: 1px solid #e6eaf0;
+  border-radius: 11px;
+  background: #fafbfc;
+}
+.manual-material-row .n-form-item { margin-bottom: 0; }
+.manual-material-index {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  margin-bottom: 7px;
+  border-radius: 8px;
+  background: #edf3ff;
+  color: #2457d6;
+  font-size: 11px;
+  font-weight: 750;
+}
+.manual-material-remove { margin-bottom: 2px; }
+.manual-material-empty {
+  padding: 14px 16px;
+  border: 1px dashed #d9e0ea;
+  border-radius: 10px;
+  background: #fbfcfe;
+  color: #8a94a4;
+  font-size: 12px;
+  line-height: 1.6;
+}
 .modal-intro {
   display: grid;
   gap: 4px;
@@ -708,9 +766,23 @@ onMounted(loadInitial);
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; }
 :deep(.demand-modal), :deep(.demand-detail-modal) { border-radius: 15px; overflow: hidden; box-shadow: 0 22px 58px rgba(18, 32, 61, .18); }
 @media (max-width: 850px) {
-  .pool-toolbar { align-items: flex-start; flex-direction: column; }
+  .pool-toolbar { grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 2px 0 4px; }
+  .pool-toolbar h2 { font-size: 20px; }
+  .pool-toolbar p { font-size: 12px; line-height: 1.55; }
+  .pool-actions .n-button { min-width: 96px; }
   .template-row, .mapping-grid, .detail-grid, .material-form, .manual-demand-form { grid-template-columns: 1fr; }
+  .manual-material-row { grid-template-columns: 28px minmax(0, 1fr); align-items: center; }
+  .manual-material-row .n-form-item { grid-column: 2; }
+  .manual-material-index { grid-column: 1; grid-row: 1 / span 3; align-self: start; margin-top: 28px; }
+  .manual-material-remove { grid-column: 2; justify-self: end; margin-top: -2px; }
+  .material-section-heading { align-items: center; }
   .material-line { grid-template-columns: 1fr; }
   .search-input { width: 100%; }
+}
+@media (max-width: 560px) {
+  .pool-toolbar p { display: none; }
+  .pool-toolbar { margin-bottom: 12px; }
+  .material-section-heading { align-items: flex-start; }
+  .material-section-heading span { max-width: 210px; }
 }
 </style>

@@ -157,9 +157,10 @@ describe('DemandsView P2 behavior', () => {
     expect(wrapper.find('[data-test="add-material"]').exists()).toBe(false);
   });
 
-  it('opens manual demand creation in a modal instead of keeping the form on the main page', async () => {
+  it('opens manual demand creation in a modal and supports any number of initial material lines', async () => {
     const wrapper = mount(DemandsView, { props: { currentUser: admin } });
     await flushPromises();
+    expect(wrapper.text()).not.toContain('当前加载');
     expect(wrapper.find('[data-test="manual-demand-form"]').exists()).toBe(false);
     await wrapper.get('[data-test="open-manual-demand"]').trigger('click');
     await flushPromises();
@@ -168,12 +169,19 @@ describe('DemandsView P2 behavior', () => {
     await wrapper.get('[data-test="manual-voltage"]').setValue('220kV');
     await wrapper.get('[data-test="manual-line"]').setValue('手工需求线');
     await wrapper.get('[data-test="manual-section"]').setValue('#1-#2');
-    await wrapper.get('[data-test="manual-material-model"]').setValue('JX-01');
-    await wrapper.get('[data-test="manual-material-quantity"]').setValue('2.5');
-    await wrapper.get('[data-test="manual-unit"]').setValue('套');
     await wrapper.get('[data-test="manual-year"]').setValue('2026');
     await wrapper.get('[data-test="manual-category"]').setValue('临时补充');
     await wrapper.get('[data-test="manual-owner"]').setValue('张三');
+
+    await wrapper.get('[data-test="add-manual-material"]').trigger('click');
+    await wrapper.get('[data-test="add-manual-material"]').trigger('click');
+    await wrapper.get('[data-test="manual-material-model-0"]').setValue('JX-01');
+    await wrapper.get('[data-test="manual-material-quantity-0"]').setValue('2.5');
+    await wrapper.get('[data-test="manual-material-unit-0"]').setValue('套');
+    await wrapper.get('[data-test="manual-material-model-1"]').setValue('JX-02');
+    await wrapper.get('[data-test="manual-material-quantity-1"]').setValue('12');
+    await wrapper.get('[data-test="manual-material-unit-1"]').setValue('只');
+
     await wrapper.get('[data-test="save-manual-demand"]').trigger('click');
     await flushPromises();
 
@@ -182,7 +190,11 @@ describe('DemandsView P2 behavior', () => {
     expect(call).toBeTruthy();
     expect(JSON.parse(String(call![1]!.body))).toEqual({
       sequenceNo: 'M-001', voltage: '220kV', lineName: '手工需求线', section: '#1-#2',
-      materials: [{ rawModel: 'JX-01', quantityScaled: 25000, unit: '套' }], year: 2026, category: '临时补充', owner: '张三',
+      materials: [
+        { rawModel: 'JX-01', quantityScaled: 25000, unit: '套' },
+        { rawModel: 'JX-02', quantityScaled: 120000, unit: '只' },
+      ],
+      year: 2026, category: '临时补充', owner: '张三',
     });
     expect(wrapper.find('[data-test="manual-demand-form"]').exists()).toBe(false);
   });
