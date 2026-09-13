@@ -126,12 +126,6 @@ function parseQuantityScaled(value: unknown): number | null {
   return Number.isSafeInteger(scaled) && scaled > 0 ? scaled : null;
 }
 
-function validVoltage(value: unknown): { raw: string; verified: string | null } | null {
-  const raw = cleanText(value);
-  if (!raw || raw.length > 40) return null;
-  const match = raw.match(/^(\d+(?:\.\d+)?)\s*[kK][vV]$/);
-  return { raw, verified: match ? `${match[1]}kV` : null };
-}
 
 function addDays(date: string, days: number) {
   const value = new Date(`${date}T00:00:00Z`);
@@ -652,55 +646,7 @@ async function demandExecutionSummary(db: D1Database, demandId: string) {
 
 export const p8App = new Hono<AppEnv>();
 
-p8App.post('/demands', requireRoles('admin', 'project_manager'), async (c) => {
-  const key = requireIdempotencyKey(c); if (key instanceof Response) return key;
-  let body: Record<string, unknown>; try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
-  const sequenceNo = cleanText(body.sequenceNo), voltage = validVoltage(body.voltage), lineName = cleanText(body.lineName), section = cleanText(body.section);
-  const year = validYear(body.year), category = nullableText(body.category, 120), owner = nullableText(body.owner, 80), materials = normalizeDemandMaterials(body);
-  if (!sequenceNo || sequenceNo.length > 120 || !voltage || !lineName || lineName.length > 200 || !section || section.length > 200 || year === undefined || category === undefined || owner === undefined || !materials) {
-    return c.json(apiError('INVALID_DEMAND', '需求字段或需求物资子明细无效'), 422);
-  }
-  for (const item of materials) {
-    if (item.materialId) {
-      const material = await c.env.DB.prepare(`SELECT id FROM materials WHERE id=? AND enabled=1 LIMIT 1`).bind(item.materialId).first<{ id: string }>();
-      if (!material) return c.json(apiError('MATERIAL_NOT_FOUND', '需求物资引用的标准物资不存在或已停用'), 422);
-    }
-  }
-  const request = { sequenceNo, year, voltage: voltage.raw, lineName, section, category, owner, materials };
-  const hash = await requestHash(request), operation = 'demands.create.abstract';
-  const replay = await replayIdempotentResponse(c, key, operation, hash); if (replay) return replay;
-  const actor = c.get('currentUser'), id = crypto.randomUUID(), now = new Date().toISOString();
-  const sourceKey = `manual:${id}`;
-  const businessSignature = await requestHash({ sequenceNo, year, voltage: voltage.verified ?? voltage.raw, lineName, section, category });
-  const raw = { sequenceNo, year, voltage: voltage.raw, lineName, section, category, owner, materials };
-  const materialRows = materials.map((item) => ({ id: crypto.randomUUID(), item }));
-  const data = {
-    id, sequenceNo, year, voltageRaw: voltage.raw, voltageVerified: voltage.verified, lineName, section, category, owner,
-    version: 1, createdAt: now, updatedAt: now, source: { type: 'manual' as const, raw },
-    materials: materialRows.map(({ id: materialId, item }) => ({ id: materialId, rawModel: item.rawModel, quantityScaled: item.quantityScaled, unit: item.unit, material: null, version: 1 })),
-  };
-  const response = { ok: true as const, data };
-  try {
-    await c.env.DB.batch([
-      c.env.DB.prepare(
-        `INSERT INTO demands
-         (id,source_type,source_key,source_batch_id,source_file_sha256,source_file_name,source_sheet,source_row_number,
-          sequence_no,business_year,voltage_raw,voltage_verified,line_name,section_text,category_key,owner,business_signature,raw_json,extra_json,version,created_by,created_at,updated_at)
-         VALUES (?,'manual',?,NULL,NULL,NULL,NULL,NULL,?,?,?,?,?,?,?,?,?,?,'{}',1,?,?,?)`,
-      ).bind(id, sourceKey, sequenceNo, year, voltage.raw, voltage.verified, lineName, section, category, owner, businessSignature, JSON.stringify(raw), actor.id, now, now),
-      ...materialRows.map(({ id: materialId, item }) => c.env.DB.prepare(
-        `INSERT INTO demand_materials (id,demand_id,raw_model,material_id,quantity_scaled,unit,created_at,source_import_row_id,created_by,version)
-         VALUES (?,?,?,?,?,?,?,NULL,?,1)`,
-      ).bind(materialId, id, item.rawModel, item.materialId, item.quantityScaled, item.unit, now, actor.id)),
-      auditStatement(c.env.DB, actor.id, 'demand.create.abstract', 'demand', id, null, data, now),
-      idempotencyStatement(c.env.DB, key, actor.id, operation, hash, response, 201, now),
-    ]);
-  } catch {
-    const race = await replayIdempotentResponse(c, key, operation, hash); if (race) return race;
-    return c.json(apiError('DEMAND_CREATE_CONFLICT', '需求创建发生冲突，请刷新后重试'), 409);
-  }
-  return c.json(response, 201);
-});
+
 
 p8App.post('/demands/:id/materials', requireRoles('admin', 'project_manager'), async (c) => {
   const key = requireIdempotencyKey(c); if (key instanceof Response) return key;

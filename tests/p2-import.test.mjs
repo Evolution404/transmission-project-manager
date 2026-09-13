@@ -560,3 +560,33 @@ test('chunk size, idempotency payload conflicts, pagination limits and write rol
   assert.equal(readonlyCreate.response.status, 403);
   assert.equal(readonlyCreate.body.error.code, 'FORBIDDEN');
 });
+
+test('unknown grid objects block publication and are never created by import', async () => {
+  for (const [voltage, line, section, code] of [
+    ['999kV', '未维护线路', '#1', 'VOLTAGE_LEVEL_UNKNOWN'],
+    ['220kV', '未维护线路', '#1', 'LINE_UNKNOWN'],
+    ['220kV', '手工需求线', '#MISSING', 'TOWER_UNKNOWN'],
+  ]) {
+    const batch = await createBatch({ fileSha256: crypto.randomUUID().replaceAll('-', '').repeat(2) });
+    await uploadChunk(batch, [{ sheetName: '需求', rowNumber: 2, cells: { 序号: 'UNKNOWN', 电压等级: voltage, 线路名称: line, 杆段: section } }]);
+    await validateBatch(batch);
+    const detail = await jsonRequest(`/api/imports/${batch.body.data.id}`);
+    assert.ok(detail.body.data.rows[0].errors.some((e) => e.code === code));
+    assert.equal((await publishBatch(batch)).response.status, 422);
+  }
+  assert.ok(!(await jsonRequest('/api/master/lines')).body.data.items.some((l) => l.lineName === '未维护线路'));
+});
+
+test('publication revalidates an already validated location after master data is disabled', async () => {
+  const batch = await createBatch({ fileSha256: crypto.randomUUID().replaceAll('-', '').repeat(2) });
+  await uploadChunk(batch, [{ sheetName: '需求', rowNumber: 2, cells: { 序号: 'STALE-GRID', 电压等级: '220kV', 线路名称: '手工需求线', 杆段: '#1-#2' } }]);
+  const validated = await validateBatch(batch);
+  assert.equal(validated.response.status, 200);
+  const line = (await jsonRequest('/api/master/lines')).body.data.items.find((l) => l.id === manualLineId);
+  assert.equal((await jsonRequest(`/api/master/lines/${line.id}`, mutation('PATCH', idem('disable-before-publish'), { ...line, enabled: false, expectedVersion: line.version }))).response.status, 200);
+  const result = await publishBatch(batch);
+  assert.equal(result.response.status, 422);
+  assert.equal(result.body.error.code, 'IMPORT_GRID_CHANGED');
+  assert.ok(result.body.error.details.some((e) => e.rowNumber === 2));
+  assert.equal((await jsonRequest('/api/demands?query=STALE-GRID')).body.data.items.length, 0);
+});

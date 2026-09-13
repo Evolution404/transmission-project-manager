@@ -1,4 +1,4 @@
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import type {
   ApiError,
   CreateStructuredDemandRequest,
@@ -11,6 +11,7 @@ import type {
   VoltageSystemType,
 } from '@tpm/shared';
 import { requireRoles, type AppEnv } from './auth';
+import { gridLocationGuard } from './grid-location';
 
 export const p9App = new Hono<AppEnv>();
 
@@ -19,7 +20,7 @@ function apiError(code: string, message: string, details?: unknown): ApiError {
 }
 
 function cleanText(value: unknown, max = 200): string {
-  return typeof value === 'string' ? value.trim().slice(0, max) : '';
+  return typeof value === 'string' ? (value.trim().length <= max ? value.trim() : '') : '';
 }
 
 function boolValue(value: unknown, fallback = true): boolean | null {
@@ -28,7 +29,7 @@ function boolValue(value: unknown, fallback = true): boolean | null {
 }
 
 function intValue(value: unknown, min: number, max: number): number | null {
-  const parsed = Number(value);
+  const parsed = typeof value === 'number' ? value : NaN;
   return Number.isInteger(parsed) && parsed >= min && parsed <= max ? parsed : null;
 }
 
@@ -83,112 +84,182 @@ p9App.get('/master/voltage-levels', async (c) => {
   ).all<VoltageRow>();
   return c.json({ ok: true as const, data: { items: (rows.results ?? []).map(voltageSummary) } });
 });
-
-p9App.post('/master/voltage-levels', requireRoles('admin'), async (c) => {
-  let body: Record<string, unknown>;
-  try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
-  const displayName = cleanText(body.displayName, 40);
-  const code = cleanText(body.code, 40).toUpperCase();
-  const systemType = body.systemType === 'AC' || body.systemType === 'DC' ? body.systemType : null;
-  const nominalKv = intValue(body.nominalKv, 1, 2000);
-  const sortOrder = intValue(body.sortOrder ?? 0, 0, 100000);
-  if (!displayName || !code || !systemType || nominalKv === null || sortOrder === null) return c.json(apiError('INVALID_VOLTAGE_LEVEL', '电压等级参数不完整'), 422);
-  const id = crypto.randomUUID();
-  const now = new Date().toISOString();
+function listPage(c: Context<AppEnv>): { limit: number; cursor: [string, string] | null } | Response {
+  const limit = Number(c.req.query('limit') ?? '100');
+  if (!Number.isInteger(limit) || limit < 1 || limit > 100) return c.json(apiError('INVALID_PAGE_LIMIT', 'limit 必须在 1–100 之间'), 400);
   try {
-    await c.env.DB.prepare(`INSERT INTO voltage_levels (id,code,display_name,system_type,nominal_kv,sort_order,enabled,version,created_at,updated_at) VALUES (?,?,?,?,?,?,1,1,?,?)`)
-      .bind(id, code, displayName, systemType, nominalKv, sortOrder, now, now).run();
-  } catch { return c.json(apiError('VOLTAGE_LEVEL_CONFLICT', '电压等级名称或编码已存在'), 409); }
-  const row = await c.env.DB.prepare(`SELECT id,code,display_name,system_type,nominal_kv,sort_order,enabled,version FROM voltage_levels WHERE id=?`).bind(id).first<VoltageRow>();
-  return c.json({ ok: true as const, data: voltageSummary(row!) }, 201);
-});
-
-p9App.patch('/master/voltage-levels/:id', requireRoles('admin'), async (c) => {
-  let body: Record<string, unknown>;
-  try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
-  const expectedVersion = intValue(body.expectedVersion, 1, Number.MAX_SAFE_INTEGER);
-  const displayName = cleanText(body.displayName, 40);
-  const code = cleanText(body.code, 40).toUpperCase();
-  const systemType = body.systemType === 'AC' || body.systemType === 'DC' ? body.systemType : null;
-  const nominalKv = intValue(body.nominalKv, 1, 2000);
-  const sortOrder = intValue(body.sortOrder ?? 0, 0, 100000);
-  const enabled = boolValue(body.enabled);
-  if (expectedVersion === null || !displayName || !code || !systemType || nominalKv === null || sortOrder === null || enabled === null) return c.json(apiError('INVALID_VOLTAGE_LEVEL', '电压等级参数不完整'), 422);
-  const result = await c.env.DB.prepare(`UPDATE voltage_levels SET code=?,display_name=?,system_type=?,nominal_kv=?,sort_order=?,enabled=?,version=version+1,updated_at=? WHERE id=? AND version=?`)
-    .bind(code, displayName, systemType, nominalKv, sortOrder, enabled ? 1 : 0, new Date().toISOString(), c.req.param('id'), expectedVersion).run();
-  if (!result.meta.changes) return c.json(apiError('VERSION_CONFLICT', '电压等级已变化，请刷新后重试'), 409);
-  const row = await c.env.DB.prepare(`SELECT id,code,display_name,system_type,nominal_kv,sort_order,enabled,version FROM voltage_levels WHERE id=?`).bind(c.req.param('id')).first<VoltageRow>();
-  return c.json({ ok: true as const, data: voltageSummary(row!) });
-});
-
+    const cursor = c.req.query('cursor') ? JSON.parse(decodeURIComponent(atob(c.req.query('cursor')!))) : null;
+    if (cursor !== null && (!Array.isArray(cursor) || cursor.length !== 2 || cursor.some((v) => typeof v !== 'string'))) throw new Error();
+    return { limit, cursor };
+  } catch { return c.json(apiError('INVALID_CURSOR', '分页游标无效'), 400); }
+}
+function pageCursor(first: string, id: string) { return btoa(encodeURIComponent(JSON.stringify([first, id]))); }
 p9App.get('/master/lines', async (c) => {
-  const voltageLevelId = cleanText(c.req.query('voltageLevelId'), 120);
-  const where = voltageLevelId ? 'WHERE l.voltage_level_id=?' : '';
-  const stmt = c.env.DB.prepare(`SELECT l.id,l.voltage_level_id,v.display_name AS voltage_level_name,l.line_code,l.line_name,l.enabled,l.version,COUNT(t.id) AS tower_count FROM transmission_lines l JOIN voltage_levels v ON v.id=l.voltage_level_id LEFT JOIN transmission_towers t ON t.line_id=l.id ${where} GROUP BY l.id,l.voltage_level_id,v.display_name,l.line_code,l.line_name,l.enabled,l.version ORDER BY v.sort_order,l.line_name COLLATE NOCASE`);
-  const rows = voltageLevelId ? await stmt.bind(voltageLevelId).all<LineRow>() : await stmt.all<LineRow>();
-  return c.json({ ok: true as const, data: { items: (rows.results ?? []).map(lineSummary) } });
+  const page = listPage(c); if (page instanceof Response) return page;
+  const voltageLevelId = cleanText(c.req.query('voltageLevelId'), 120), conditions = [], args: (string | number)[] = [];
+  if (voltageLevelId) { conditions.push('l.voltage_level_id=?'); args.push(voltageLevelId); }
+  if (page.cursor) { conditions.push('(l.line_name COLLATE NOCASE > ? OR (l.line_name=? COLLATE NOCASE AND l.id>?))'); args.push(page.cursor[0],page.cursor[0],page.cursor[1]); }
+  const rows = await c.env.DB.prepare(`SELECT l.*,v.display_name AS voltage_level_name,(SELECT COUNT(*) FROM transmission_towers t WHERE t.line_id=l.id) AS tower_count FROM transmission_lines l JOIN voltage_levels v ON v.id=l.voltage_level_id ${conditions.length ? 'WHERE '+conditions.join(' AND ') : ''} ORDER BY l.line_name COLLATE NOCASE,l.id LIMIT ?`).bind(...args, page.limit + 1).all<LineRow>();
+  const selected = (rows.results ?? []).slice(0, page.limit), last = selected.at(-1);
+  return c.json({ ok: true as const, data: { items: selected.map(lineSummary), nextCursor: (rows.results?.length ?? 0) > page.limit && last ? pageCursor(last.line_name,last.id) : null } });
 });
-
-p9App.post('/master/lines', requireRoles('admin'), async (c) => {
-  let body: Record<string, unknown>;
-  try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
-  const voltageLevelId = cleanText(body.voltageLevelId, 120), lineName = cleanText(body.lineName, 200), lineCode = cleanText(body.lineCode, 80) || null;
-  if (!voltageLevelId || !lineName) return c.json(apiError('INVALID_LINE', '电压等级和线路名称不能为空'), 422);
-  const voltage = await c.env.DB.prepare(`SELECT id FROM voltage_levels WHERE id=? AND enabled=1`).bind(voltageLevelId).first<{ id: string }>();
-  if (!voltage) return c.json(apiError('VOLTAGE_LEVEL_NOT_FOUND', '电压等级不存在或已停用'), 422);
-  const id = crypto.randomUUID(), now = new Date().toISOString();
-  try { await c.env.DB.prepare(`INSERT INTO transmission_lines (id,voltage_level_id,line_code,line_name,enabled,version,created_at,updated_at) VALUES (?,?,?,?,1,1,?,?)`).bind(id, voltageLevelId, lineCode, lineName, now, now).run(); }
-  catch { return c.json(apiError('LINE_CONFLICT', '该电压等级下已存在同名线路'), 409); }
-  const row = await c.env.DB.prepare(`SELECT l.id,l.voltage_level_id,v.display_name AS voltage_level_name,l.line_code,l.line_name,l.enabled,l.version,0 AS tower_count FROM transmission_lines l JOIN voltage_levels v ON v.id=l.voltage_level_id WHERE l.id=?`).bind(id).first<LineRow>();
-  return c.json({ ok: true as const, data: lineSummary(row!) }, 201);
-});
-
-p9App.patch('/master/lines/:id', requireRoles('admin'), async (c) => {
-  let body: Record<string, unknown>;
-  try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
-  const expectedVersion = intValue(body.expectedVersion, 1, Number.MAX_SAFE_INTEGER), voltageLevelId = cleanText(body.voltageLevelId, 120), lineName = cleanText(body.lineName, 200), lineCode = cleanText(body.lineCode, 80) || null, enabled = boolValue(body.enabled);
-  if (expectedVersion === null || !voltageLevelId || !lineName || enabled === null) return c.json(apiError('INVALID_LINE', '线路参数不完整'), 422);
-  const result = await c.env.DB.prepare(`UPDATE transmission_lines SET voltage_level_id=?,line_code=?,line_name=?,enabled=?,version=version+1,updated_at=? WHERE id=? AND version=?`)
-    .bind(voltageLevelId, lineCode, lineName, enabled ? 1 : 0, new Date().toISOString(), c.req.param('id'), expectedVersion).run();
-  if (!result.meta.changes) return c.json(apiError('VERSION_CONFLICT', '线路已变化，请刷新后重试'), 409);
-  const row = await c.env.DB.prepare(`SELECT l.id,l.voltage_level_id,v.display_name AS voltage_level_name,l.line_code,l.line_name,l.enabled,l.version,COUNT(t.id) AS tower_count FROM transmission_lines l JOIN voltage_levels v ON v.id=l.voltage_level_id LEFT JOIN transmission_towers t ON t.line_id=l.id WHERE l.id=? GROUP BY l.id,l.voltage_level_id,v.display_name,l.line_code,l.line_name,l.enabled,l.version`).bind(c.req.param('id')).first<LineRow>();
-  return c.json({ ok: true as const, data: lineSummary(row!) });
-});
-
 p9App.get('/master/towers', async (c) => {
-  const lineId = cleanText(c.req.query('lineId'), 120);
-  const where = lineId ? 'WHERE t.line_id=?' : '';
-  const stmt = c.env.DB.prepare(`SELECT t.id,t.line_id,l.line_name,t.tower_no,t.sort_index,t.tower_type,t.enabled,t.version FROM transmission_towers t JOIN transmission_lines l ON l.id=t.line_id ${where} ORDER BY l.line_name COLLATE NOCASE,t.sort_index,t.tower_no COLLATE NOCASE`);
-  const rows = lineId ? await stmt.bind(lineId).all<TowerRow>() : await stmt.all<TowerRow>();
-  return c.json({ ok: true as const, data: { items: (rows.results ?? []).map(towerSummary) } });
+  const page = listPage(c); if (page instanceof Response) return page;
+  const lineId = cleanText(c.req.query('lineId'), 120), conditions = [], args: (string | number)[] = [];
+  if (lineId) { conditions.push('t.line_id=?'); args.push(lineId); }
+  if (page.cursor) {
+    if (!Number.isSafeInteger(Number(page.cursor[0]))) return c.json(apiError('INVALID_CURSOR', '分页游标无效'), 400);
+    conditions.push('(t.sort_index > ? OR (t.sort_index=? AND t.id>?))'); args.push(Number(page.cursor[0]),Number(page.cursor[0]),page.cursor[1]);
+  }
+  const rows = await c.env.DB.prepare(`SELECT t.*,l.line_name FROM transmission_towers t JOIN transmission_lines l ON l.id=t.line_id ${conditions.length ? 'WHERE '+conditions.join(' AND ') : ''} ORDER BY t.sort_index,t.id LIMIT ?`).bind(...args,page.limit + 1).all<TowerRow>();
+  const selected = (rows.results ?? []).slice(0,page.limit), last = selected.at(-1);
+  return c.json({ ok: true as const, data: { items: selected.map(towerSummary), nextCursor: (rows.results?.length ?? 0) > page.limit && last ? pageCursor(String(last.sort_index),last.id) : null } });
 });
 
-p9App.post('/master/towers', requireRoles('admin'), async (c) => {
-  let body: Record<string, unknown>;
-  try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
-  const lineId = cleanText(body.lineId, 120), towerNo = cleanText(body.towerNo, 80), sortIndex = intValue(body.sortIndex, 1, 1000000), towerType = cleanText(body.towerType, 80) || null;
-  if (!lineId || !towerNo || sortIndex === null) return c.json(apiError('INVALID_TOWER', '线路、杆塔号和顺序不能为空'), 422);
-  const line = await c.env.DB.prepare(`SELECT id FROM transmission_lines WHERE id=? AND enabled=1`).bind(lineId).first<{ id: string }>();
-  if (!line) return c.json(apiError('LINE_NOT_FOUND', '线路不存在或已停用'), 422);
-  const id = crypto.randomUUID(), now = new Date().toISOString();
-  try { await c.env.DB.prepare(`INSERT INTO transmission_towers (id,line_id,tower_no,sort_index,tower_type,enabled,version,created_at,updated_at) VALUES (?,?,?,?,?,1,1,?,?)`).bind(id, lineId, towerNo, sortIndex, towerType, now, now).run(); }
-  catch { return c.json(apiError('TOWER_CONFLICT', '该线路下杆塔号或顺序已存在'), 409); }
-  const row = await c.env.DB.prepare(`SELECT t.id,t.line_id,l.line_name,t.tower_no,t.sort_index,t.tower_type,t.enabled,t.version FROM transmission_towers t JOIN transmission_lines l ON l.id=t.line_id WHERE t.id=?`).bind(id).first<TowerRow>();
-  return c.json({ ok: true as const, data: towerSummary(row!) }, 201);
-});
+// The idempotency record is the first statement in the same atomic D1 batch.
+// A stale version violates NOT NULL before any business write or audit is made.
+type Mutation = { key: string; operation: string; hash: string };
+async function beginMutation(c: Context<AppEnv>, body: unknown): Promise<Mutation | Response> {
+  const key = c.req.header('Idempotency-Key')?.trim();
+  if (!key || key.length > 200) return c.json(apiError('IDEMPOTENCY_KEY_REQUIRED', '变更请求必须提供有效的 Idempotency-Key'), 400);
+  const mutation = { key, operation: `${c.req.method}:${c.req.path}`, hash: await hashValue(body) };
+  return (await replay(c, mutation)) ?? mutation;
+}
+async function replay(c: Context<AppEnv>, mutation: Mutation) {
+  const row = await c.env.DB.prepare('SELECT actor_member_id,operation,request_hash,response_json,status_code FROM idempotency_records WHERE idempotency_key=?')
+    .bind(mutation.key).first<{ actor_member_id: string; operation: string; request_hash: string; response_json: string; status_code: number }>();
+  if (!row) return null;
+  if (row.actor_member_id !== c.get('currentUser').id || row.operation !== mutation.operation || row.request_hash !== mutation.hash) return c.json(apiError('IDEMPOTENCY_CONFLICT', '该 Idempotency-Key 已用于不同请求'), 409);
+  return new Response(row.response_json, { status: row.status_code, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
+}
+const constraintMessages: Record<string, string> = {
+  VOLTAGE_LEVEL_NOT_FOUND: '电压等级不存在或已停用，请先维护基础台账',
+  LINE_NOT_FOUND: '线路或所属电压等级不存在或已停用，请先维护基础台账',
+  LINE_LOCATION_IN_USE: '线路已被需求或项目引用，不能更换电压等级',
+  TOWER_LOCATION_IN_USE: '线路已有需求区段，不能换线、改号、调整顺序或删除杆塔；可停用',
+  MASTER_DATA_IN_USE: '对象已被业务引用或仍有下级台账，不能删除；请停用',
+  VOLTAGE_LOCATION_IN_USE: '电压等级已被业务引用，不能改变制式或标称电压',
+  INVALID_GRID_LOCATION: '需求位置关联已变化或停用，请刷新并先维护基础台账',
+};
+async function commitMutation(c: Context<AppEnv>, mutation: Mutation, statements: D1PreparedStatement[], data: unknown, status: 200 | 201,
+  audits: Array<{ action: string; type: string; id: string; before: unknown; after: unknown }>,
+  versions: Array<{ table: string; id: string; version: number }> = []) {
+  const now = new Date().toISOString(), actorId = c.get('currentUser').id, response = { ok: true as const, data };
+  const condition = versions.length ? versions.map((v) => `EXISTS(SELECT 1 FROM ${v.table} WHERE id=? AND version=?)`).join(' AND ') : '1';
+  try {
+    await c.env.DB.batch([
+      c.env.DB.prepare(`INSERT INTO idempotency_records (idempotency_key,actor_member_id,operation,request_hash,response_json,status_code,created_at) VALUES (?,?,?,CASE WHEN ${condition} THEN ? ELSE NULL END,?,?,?)`)
+        .bind(mutation.key, actorId, mutation.operation, ...versions.flatMap((v) => [v.id, v.version]), mutation.hash, JSON.stringify(response), status, now),
+      ...statements,
+      ...audits.map((a) => c.env.DB.prepare(`INSERT INTO audit_events (id,actor_member_id,action,object_type,object_id,before_json,after_json,created_at) VALUES (?,?,?,?,?,?,?,?)`)
+        .bind(crypto.randomUUID(), actorId, a.action, a.type, a.id, a.before === null ? null : JSON.stringify(a.before), a.after === null ? null : JSON.stringify(a.after), now)),
+    ]);
+  } catch (cause) {
+    const raced = await replay(c, mutation); if (raced) return raced;
+    const error = String(cause);
+    for (const [code, message] of Object.entries(constraintMessages)) if (error.includes(code)) return c.json(apiError(code, message), 422);
+    if (error.includes('idempotency_records.request_hash')) return c.json(apiError('VERSION_CONFLICT', '数据已变化，请刷新后重试'), 409);
+    if (error.includes('UNIQUE constraint')) return c.json(apiError('MASTER_DATA_CONFLICT', '名称、编码、杆塔号或线路顺序重复，请检查'), 409);
+    if (error.includes('FOREIGN KEY constraint')) return c.json(apiError('MASTER_DATA_IN_USE', constraintMessages.MASTER_DATA_IN_USE!), 422);
+    throw cause;
+  }
+  return c.json(response, status);
+}
 
-p9App.patch('/master/towers/:id', requireRoles('admin'), async (c) => {
-  let body: Record<string, unknown>;
-  try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
-  const expectedVersion = intValue(body.expectedVersion, 1, Number.MAX_SAFE_INTEGER), lineId = cleanText(body.lineId, 120), towerNo = cleanText(body.towerNo, 80), sortIndex = intValue(body.sortIndex, 1, 1000000), towerType = cleanText(body.towerType, 80) || null, enabled = boolValue(body.enabled);
-  if (expectedVersion === null || !lineId || !towerNo || sortIndex === null || enabled === null) return c.json(apiError('INVALID_TOWER', '杆塔参数不完整'), 422);
-  const result = await c.env.DB.prepare(`UPDATE transmission_towers SET line_id=?,tower_no=?,sort_index=?,tower_type=?,enabled=?,version=version+1,updated_at=? WHERE id=? AND version=?`)
-    .bind(lineId, towerNo, sortIndex, towerType, enabled ? 1 : 0, new Date().toISOString(), c.req.param('id'), expectedVersion).run();
-  if (!result.meta.changes) return c.json(apiError('VERSION_CONFLICT', '杆塔已变化，请刷新后重试'), 409);
-  const row = await c.env.DB.prepare(`SELECT t.id,t.line_id,l.line_name,t.tower_no,t.sort_index,t.tower_type,t.enabled,t.version FROM transmission_towers t JOIN transmission_lines l ON l.id=t.line_id WHERE t.id=?`).bind(c.req.param('id')).first<TowerRow>();
-  return c.json({ ok: true as const, data: towerSummary(row!) });
-});
+type MasterKind = 'voltage-levels' | 'lines' | 'towers';
+const masterTables: Record<MasterKind, string> = { 'voltage-levels': 'voltage_levels', lines: 'transmission_lines', towers: 'transmission_towers' };
+type MasterRecord = Record<string, string | number | null>;
+type TowerParent = { line_name: string; enabled: number; voltage_enabled: number };
+async function prepareMaster(c: Context<AppEnv>, kind: MasterKind, body: Record<string, unknown>, id: string, before: MasterRecord | null, towerParent?: TowerParent) {
+  const db = c.env.DB, now = new Date().toISOString(), enabled = boolValue(body.enabled);
+  if (enabled === null) return c.json(apiError('INVALID_MASTER_DATA', '启用状态必须为布尔值'), 422);
+  const version = before ? Number(before.version) + 1 : 1;
+  let columns: string[], values: (string | number | null)[], data: VoltageLevelSummary | TransmissionLineSummary | TransmissionTowerSummary;
+  if (kind === 'voltage-levels') {
+    const displayName = cleanText(body.displayName, 40), code = cleanText(body.code, 40).toUpperCase();
+    const systemType = body.systemType === 'AC' || body.systemType === 'DC' ? body.systemType : null;
+    const nominalKv = intValue(body.nominalKv, 1, 2000), sortOrder = intValue(body.sortOrder ?? 0, 0, 100000);
+    if (!displayName || !code || !systemType || nominalKv === null || sortOrder === null) return c.json(apiError('INVALID_VOLTAGE_LEVEL', '电压等级参数不完整'), 422);
+    columns = ['code','display_name','system_type','nominal_kv','sort_order']; values = [code,displayName,systemType,nominalKv,sortOrder];
+    data = { id, code, displayName, systemType, nominalKv, sortOrder, enabled, version };
+  } else if (kind === 'lines') {
+    const voltageLevelId = cleanText(body.voltageLevelId, 120), lineName = cleanText(body.lineName, 200), lineCode = cleanText(body.lineCode, 80) || null;
+    if (!voltageLevelId || !lineName) return c.json(apiError('INVALID_LINE', '请选择电压等级并填写线路名称'), 422);
+    const parent = await db.prepare('SELECT display_name,enabled FROM voltage_levels WHERE id=?').bind(voltageLevelId).first<{ display_name: string; enabled: number }>();
+    if (!parent || ((!before || before.voltage_level_id !== voltageLevelId || enabled) && !parent.enabled)) return c.json(apiError('VOLTAGE_LEVEL_NOT_FOUND', constraintMessages.VOLTAGE_LEVEL_NOT_FOUND!), 422);
+    columns = ['voltage_level_id','line_name','line_code']; values = [voltageLevelId,lineName,lineCode];
+    const count = before ? await db.prepare('SELECT COUNT(*) AS total FROM transmission_towers WHERE line_id=?').bind(id).first<{ total: number }>() : null;
+    data = { id, voltageLevelId, voltageLevelName: parent.display_name, lineName, lineCode, towerCount: count?.total ?? 0, enabled, version };
+  } else {
+    const lineId = cleanText(body.lineId, 120), towerNo = cleanText(body.towerNo, 80), sortIndex = intValue(body.sortIndex, 1, 1000000), towerType = cleanText(body.towerType, 80) || null;
+    if (!lineId || !towerNo || sortIndex === null) return c.json(apiError('INVALID_TOWER', '线路、杆塔号和有效顺序不能为空'), 422);
+    const parent = towerParent ?? await db.prepare('SELECT l.line_name,l.enabled,v.enabled AS voltage_enabled FROM transmission_lines l JOIN voltage_levels v ON v.id=l.voltage_level_id WHERE l.id=?').bind(lineId).first<{ line_name: string; enabled: number; voltage_enabled: number }>();
+    if (!parent || ((!before || before.line_id !== lineId || enabled) && (!parent.enabled || !parent.voltage_enabled))) return c.json(apiError('LINE_NOT_FOUND', constraintMessages.LINE_NOT_FOUND!), 422);
+    columns = ['line_id','tower_no','sort_index','tower_type']; values = [lineId,towerNo,sortIndex,towerType];
+    data = { id, lineId, lineName: parent.line_name, towerNo, sortIndex, towerType, enabled, version };
+  }
+  columns.push('enabled'); values.push(enabled ? 1 : 0);
+  const table = masterTables[kind];
+  const statement = before
+    ? db.prepare(`UPDATE ${table} SET ${columns.map((col) => `${col}=?`).join(',')},version=version+1,updated_at=? WHERE id=?`).bind(...values, now, id)
+    : db.prepare(`INSERT INTO ${table} (id,${columns.join(',')},version,created_at,updated_at) VALUES (?,${columns.map(() => '?').join(',')},1,?,?)`).bind(id, ...values, now, now);
+  const parentGuard = kind === 'voltage-levels' ? null : db.prepare(`INSERT INTO master_data_guards (valid) VALUES (CASE WHEN EXISTS (SELECT 1 FROM ${kind === 'lines' ? 'voltage_levels' : 'transmission_lines'} WHERE id=? ${(!before || enabled || (kind === 'lines' ? before.voltage_level_id : before.line_id) !== values[0]) ? (kind === 'towers' ? 'AND enabled=1 AND EXISTS(SELECT 1 FROM voltage_levels WHERE id=transmission_lines.voltage_level_id AND enabled=1)' : 'AND enabled=1') : ''}) THEN 1 ELSE 0 END)`).bind(values[0]);
+  return { statement, parentGuard, data, audit: { action: `master.${kind}.${before ? 'update' : 'create'}`, type: table, id, before, after: data } };
+}
 
+for (const kind of Object.keys(masterTables) as MasterKind[]) {
+  for (const method of ['post', 'patch', 'delete'] as const) {
+    p9App[method](`/master/${kind}${method === 'post' ? '' : '/:id'}`, requireRoles('admin'), async (c) => {
+      let body: Record<string, unknown>; try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
+      const mutation = await beginMutation(c, body); if (mutation instanceof Response) return mutation;
+      if (!body || typeof body !== 'object' || Array.isArray(body)) return c.json(apiError('INVALID_MASTER_DATA', '请求体必须为对象'), 422);
+      const table = masterTables[kind], id = method === 'post' ? crypto.randomUUID() : c.req.param('id')!;
+      const before = method === 'post' ? null : await c.env.DB.prepare(`SELECT * FROM ${table} WHERE id=?`).bind(id).first<MasterRecord>();
+      if (method !== 'post' && !before) return c.json(apiError('MASTER_DATA_NOT_FOUND', '台账对象不存在'), 404);
+      const version = intValue(body.expectedVersion, 1, Number.MAX_SAFE_INTEGER);
+      if (method !== 'post' && version === null) return c.json(apiError('INVALID_VERSION', 'expectedVersion 必须为正整数'), 422);
+      if (before && before.version !== version) return c.json(apiError('VERSION_CONFLICT', '数据已变化，请刷新后重试'), 409);
+      const versions = before ? [{ table, id, version: version! }] : [];
+      if (method === 'delete') return commitMutation(c, mutation, [c.env.DB.prepare(`DELETE FROM ${table} WHERE id=?`).bind(id)], { id, deleted: true }, 200,
+        [{ action: `master.${kind}.delete`, type: table, id, before, after: null }], versions);
+      const prepared = await prepareMaster(c, kind, body, id, before); if (prepared instanceof Response) return prepared;
+      return commitMutation(c, mutation, [...(prepared.parentGuard ? [prepared.parentGuard] : []), prepared.statement], prepared.data, method === 'post' ? 201 : 200, [prepared.audit], versions);
+    });
+  }
+}
+
+p9App.post('/master/lines/:id/towers/batch', requireRoles('admin'), async (c) => {
+  let body: Record<string, unknown>; try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
+  const mutation = await beginMutation(c, body); if (mutation instanceof Response) return mutation;
+  if (!body || !Array.isArray(body.items) || !body.items.length || body.items.length > 20) return c.json(apiError('INVALID_TOWER_BATCH', '每次批量维护 1–20 个杆塔'), 422);
+  const parent = await c.env.DB.prepare('SELECT l.line_name,l.enabled,v.enabled AS voltage_enabled FROM transmission_lines l JOIN voltage_levels v ON v.id=l.voltage_level_id WHERE l.id=?').bind(c.req.param('id')).first<TowerParent>();
+  if (!parent || !parent.enabled || !parent.voltage_enabled) return c.json(apiError('LINE_NOT_FOUND', constraintMessages.LINE_NOT_FOUND!), 422);
+  const ids = body.items.filter((item) => item && typeof item === 'object' && typeof item.id === 'string').map((item) => item.id as string);
+  const existing = ids.length ? await c.env.DB.prepare(`SELECT * FROM transmission_towers WHERE id IN (${ids.map(() => '?').join(',')})`).bind(...ids).all<MasterRecord>() : { results: [] };
+  const byId = new Map((existing.results ?? []).map((row) => [row.id, row]));
+  const statements: D1PreparedStatement[] = [], temporary: D1PreparedStatement[] = [], items: unknown[] = [], beforeRows: unknown[] = [], versions = [], seen = new Set<string>();
+  const parentGuard = c.env.DB.prepare(`INSERT INTO master_data_guards (valid) VALUES (CASE WHEN EXISTS (SELECT 1 FROM transmission_lines l JOIN voltage_levels v ON v.id=l.voltage_level_id WHERE l.id=? AND l.enabled=1 AND v.enabled=1) THEN 1 ELSE 0 END)`).bind(c.req.param('id'));
+  for (const item of body.items) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return c.json(apiError('INVALID_TOWER', '杆塔行格式无效'), 422);
+    const id = item.id === undefined ? crypto.randomUUID() : cleanText(item.id, 120);
+    if (!id || seen.has(id)) return c.json(apiError('INVALID_TOWER', '杆塔 ID 为空或重复'), 422); seen.add(id);
+    const before = byId.get(id) ?? null;
+    if (item.id !== undefined && (!before || before.line_id !== c.req.param('id'))) return c.json(apiError('INVALID_TOWER_RELATION', '批量维护只能修改当前线路的杆塔'), 422);
+    if (before) {
+      const version = intValue(item.expectedVersion, 1, Number.MAX_SAFE_INTEGER);
+      if (version === null || before.version !== version) return c.json(apiError('VERSION_CONFLICT', '杆塔版本已变化，请刷新后重试'), 409);
+      versions.push({ table: 'transmission_towers', id, version }); beforeRows.push(before);
+      // Vacate unique keys within the transaction, so unreferenced rows can swap order.
+      // Reference triggers still reject identity/order changes, including this temporary step.
+      if (item.sortIndex !== before.sort_index || item.towerNo !== before.tower_no) temporary.push(c.env.DB.prepare('UPDATE transmission_towers SET sort_index=?,tower_no=? WHERE id=?').bind(-1000001 - temporary.length, `temporary:${id}`, id));
+    }
+    const prepared = await prepareMaster(c, 'towers', { ...item, lineId: c.req.param('id') }, id, before, parent); if (prepared instanceof Response) return prepared;
+    statements.push(prepared.statement); items.push(prepared.data);
+  }
+  return commitMutation(c, mutation, [parentGuard, ...temporary, ...statements], { items }, 201,
+    [{ action: 'master.towers.batch', type: 'transmission_line', id: c.req.param('id'), before: beforeRows, after: items }], versions);
+
+});
 function locationType(value: unknown): DemandLocationType | null {
   return value === 'whole_line' || value === 'tower' || value === 'tower_range' ? value : null;
 }
@@ -196,6 +267,8 @@ function locationType(value: unknown): DemandLocationType | null {
 p9App.post('/demands', requireRoles('admin', 'project_manager'), async (c) => {
   let body: Partial<CreateStructuredDemandRequest> & Record<string, unknown>;
   try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
+  const mutation = await beginMutation(c, body); if (mutation instanceof Response) return mutation;
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return c.json(apiError('INVALID_DEMAND', '请求体必须为对象'), 422);
   const sequenceNo = cleanText(body.sequenceNo, 120), voltageLevelId = cleanText(body.voltageLevelId, 120), lineId = cleanText(body.lineId, 120), type = locationType(body.locationType), materials = parseMaterials(body.materials);
   const year = body.year === null || body.year === undefined ? null : intValue(body.year, 1900, 2200);
   const category = body.category === null || body.category === undefined ? null : cleanText(body.category, 120) || null;
@@ -207,6 +280,7 @@ p9App.post('/demands', requireRoles('admin', 'project_manager'), async (c) => {
 
   const startTowerId = cleanText(body.startTowerId, 120) || null;
   const endTowerId = cleanText(body.endTowerId, 120) || null;
+  if ((type === 'whole_line' && (startTowerId || endTowerId)) || (type === 'tower' && endTowerId && startTowerId !== endTowerId)) return c.json(apiError('INVALID_LOCATION_SHAPE', '全线不能指定杆塔，单塔的起止必须相同'), 422);
   let sectionText = '全线';
   let normalizedStart: string | null = null;
   let normalizedEnd: string | null = null;
@@ -218,11 +292,20 @@ p9App.post('/demands', requireRoles('admin', 'project_manager'), async (c) => {
     const map = new Map((rows.results ?? []).map((row) => [row.id, row]));
     const start = map.get(startTowerId), end = type === 'tower_range' ? map.get(endTowerId ?? '') : start;
     if (!start || !end || !start.enabled || !end.enabled || start.line_id !== lineId || end.line_id !== lineId) return c.json(apiError('INVALID_TOWER_RELATION', '杆塔不存在、已停用或不属于所选线路'), 422);
-    if (type === 'tower_range' && start.sort_index > end.sort_index) return c.json(apiError('INVALID_TOWER_RANGE', '起始杆塔顺序不能晚于终止杆塔'), 422);
+    if (type === 'tower_range' && start.sort_index >= end.sort_index) return c.json(apiError('INVALID_TOWER_RANGE', '区段必须选择两个不同杆塔，起始顺序必须早于终止'), 422);
     normalizedStart = start.id;
     normalizedEnd = end.id;
     sectionText = type === 'tower' ? start.tower_no : `${start.tower_no}—${end.tower_no}`;
   }
+
+  type MaterialRow = { id: string; code: string | null; name: string; model: string; unit: string; enabled: number; version: number };
+  const referencedMaterialIds = [...new Set(materials.flatMap((material) => material.materialId ? [material.materialId] : []))];
+  const materialRows = referencedMaterialIds.length
+    ? await c.env.DB.prepare(`SELECT id,code,name,model,unit,enabled,version FROM materials WHERE enabled=1 AND id IN (SELECT value FROM json_each(?))`)
+      .bind(JSON.stringify(referencedMaterialIds)).all<MaterialRow>()
+    : { results: [] as MaterialRow[] };
+  const materialsById = new Map((materialRows.results ?? []).map((row) => [row.id, row]));
+  if (referencedMaterialIds.some((materialId) => !materialsById.has(materialId))) return c.json(apiError('MATERIAL_NOT_FOUND', '标准物资不存在或已停用'), 422);
 
   const request = { sequenceNo, year, voltageLevelId, lineId, locationType: type, startTowerId: normalizedStart, endTowerId: normalizedEnd, category, owner, materials };
   const id = crypto.randomUUID(), sourceKey = `manual:${id}`, now = new Date().toISOString(), actor = c.get('currentUser');
@@ -230,13 +313,30 @@ p9App.post('/demands', requireRoles('admin', 'project_manager'), async (c) => {
   const statements: D1PreparedStatement[] = [c.env.DB.prepare(
     `INSERT INTO demands (id,source_type,source_key,source_batch_id,source_file_sha256,source_file_name,source_sheet,source_row_number,sequence_no,business_year,voltage_raw,voltage_verified,line_name,section_text,category_key,owner,business_signature,raw_json,extra_json,version,created_by,created_at,updated_at,voltage_level_id,line_id,location_type,start_tower_id,end_tower_id) VALUES (?,'manual',?,NULL,NULL,NULL,NULL,NULL,?,?,?,?,?,?,?,?,?,?,'{}',1,?,?,?,?,?,?,?,?)`,
   ).bind(id, sourceKey, sequenceNo, year, line.voltage_name, line.voltage_name, line.line_name, sectionText, category, owner, businessSignature, JSON.stringify(request), actor.id, now, now, voltageLevelId, lineId, type, normalizedStart, normalizedEnd)];
-  for (const material of materials) statements.push(c.env.DB.prepare(`INSERT INTO demand_materials (id,demand_id,raw_model,material_id,quantity_scaled,unit,created_at,source_import_row_id,created_by,version) VALUES (?,?,?,?,?,?,?,NULL,?,1)`).bind(crypto.randomUUID(), id, material.rawModel, material.materialId ?? null, material.quantityScaled, material.unit ?? null, now, actor.id));
-  await c.env.DB.batch(statements);
-  const materialRows = await c.env.DB.prepare(`SELECT dm.id,dm.raw_model,dm.material_id,dm.quantity_scaled,dm.unit,dm.created_at,dm.version,m.id AS matched_id,m.code AS matched_code,m.name AS matched_name,m.model AS matched_model,m.unit AS matched_unit,m.enabled AS matched_enabled,m.version AS matched_version FROM demand_materials dm LEFT JOIN materials m ON m.id=dm.material_id WHERE dm.demand_id=? ORDER BY dm.created_at,dm.id`).bind(id).all<Record<string, unknown>>();
+  const materialData: DemandDetail['materials'] = [];
+  const materialInsertRows = materials.map((material) => {
+    const match = material.materialId ? materialsById.get(material.materialId) ?? null : null;
+    const materialId = crypto.randomUUID();
+    materialData.push({ id: materialId, rawModel: material.rawModel, quantityScaled: material.quantityScaled, unit: material.unit ?? null, material: match ? { ...match, enabled: Boolean(match.enabled) } : null, version: 1 });
+    return { id: materialId, rawModel: material.rawModel, materialId: material.materialId ?? null, quantityScaled: material.quantityScaled, unit: material.unit ?? null };
+  });
+  if (referencedMaterialIds.length) {
+    const expectedVersions = Object.fromEntries(referencedMaterialIds.map((materialId) => [materialId, materialsById.get(materialId)!.version]));
+    statements.push(c.env.DB.prepare(`INSERT INTO master_data_guards (valid) VALUES (CASE WHEN NOT EXISTS (
+      SELECT 1 FROM json_each(?) expected LEFT JOIN materials m ON m.id=expected.key
+      WHERE m.id IS NULL OR m.enabled<>1 OR m.version<>CAST(expected.value AS INTEGER)
+    ) THEN 1 ELSE 0 END)`).bind(JSON.stringify(expectedVersions)));
+  }
+  if (materialInsertRows.length) statements.push(c.env.DB.prepare(`INSERT INTO demand_materials
+    (id,demand_id,raw_model,material_id,quantity_scaled,unit,created_at,source_import_row_id,created_by,version)
+    SELECT json_extract(value,'$.id'),?,json_extract(value,'$.rawModel'),json_extract(value,'$.materialId'),CAST(json_extract(value,'$.quantityScaled') AS INTEGER),json_extract(value,'$.unit'),?,NULL,?,1
+    FROM json_each(?)`).bind(id, now, actor.id, JSON.stringify(materialInsertRows)));
   const detail: DemandDetail = {
-    id, sequenceNo, year, voltageRaw: line.voltage_name, voltageVerified: line.voltage_name, lineName: line.line_name, section: sectionText, category, owner, version: 1, createdAt: now,
-    source: { type: 'manual', raw: request },
-    materials: (materialRows.results ?? []).map((row) => ({ id: String(row.id), rawModel: String(row.raw_model), materialId: row.material_id ? String(row.material_id) : null, quantityScaled: Number(row.quantity_scaled), unit: row.unit ? String(row.unit) : null, createdAt: String(row.created_at), version: Number(row.version), material: row.matched_id ? { id: String(row.matched_id), code: row.matched_code ? String(row.matched_code) : null, name: String(row.matched_name), model: String(row.matched_model), unit: String(row.matched_unit), enabled: Boolean(row.matched_enabled), version: Number(row.matched_version) } : null })),
+    id, sequenceNo, year, voltageLevelId, lineId, locationType: type, startTowerId: normalizedStart, endTowerId: normalizedEnd,
+    voltageRaw: line.voltage_name, voltageVerified: line.voltage_name, lineName: line.line_name, section: sectionText, category, owner, version: 1, createdAt: now,
+    source: { type: 'manual', raw: request }, materials: materialData,
   };
-  return c.json({ ok: true as const, data: detail }, 201);
+  // Recheck the exact selected active parents/endpoints inside the write transaction.
+  const gridGuard = gridLocationGuard(c.env.DB, voltageLevelId, lineId, normalizedStart, normalizedEnd, line.voltage_name, line.line_name, sectionText);
+  return commitMutation(c, mutation, [gridGuard, ...statements], detail, 201, [{ action: 'demand.create.structured', type: 'demand', id, before: null, after: detail }], []);
 });

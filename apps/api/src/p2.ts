@@ -1,7 +1,7 @@
+import { gridLocationGuard } from './grid-location';
 import { Hono, type Context } from 'hono';
 import type {
   ApiError,
-  CreateDemandRequest,
   DemandDetail,
   DemandMaterialSummary,
   DemandSummary,
@@ -94,6 +94,11 @@ interface MaterialRow {
 }
 
 interface DemandRow {
+  voltage_level_id: string | null;
+  line_id: string | null;
+  location_type: NormalizedImportRow['locationType'];
+  start_tower_id: string | null;
+  end_tower_id: string | null;
   id: string;
   source_type: 'import' | 'manual';
   source_key: string;
@@ -185,6 +190,7 @@ function demandSummary(row: DemandRow): DemandSummary {
     id: row.id,
     sequenceNo: row.sequence_no,
     year: row.business_year,
+    voltageLevelId: row.voltage_level_id, lineId: row.line_id, locationType: row.location_type, startTowerId: row.start_tower_id, endTowerId: row.end_tower_id,
     voltageRaw: row.voltage_raw,
     voltageVerified: row.voltage_verified,
     lineName: row.line_name,
@@ -350,17 +356,18 @@ async function resolveGridLocation(db: D1Database, normalized: NormalizedImportR
     `SELECT id,display_name FROM voltage_levels WHERE enabled=1 AND display_name=? COLLATE NOCASE LIMIT 1`,
   ).bind(normalized.voltageRaw).first<{ id: string; display_name: string }>();
   if (!voltage) {
-    errors.push({ code: 'VOLTAGE_LEVEL_UNKNOWN', field: 'voltage', message: '电压等级未在基础台账中配置' });
+    errors.push({ code: 'VOLTAGE_LEVEL_UNKNOWN', field: 'voltage', message: '电压等级不存在或已停用，请先维护基础台账' });
     return;
   }
   normalized.voltageLevelId = voltage.id;
   normalized.voltageVerified = voltage.display_name;
+  normalized.voltageRaw = voltage.display_name;
 
   const line = await db.prepare(
     `SELECT id,line_name FROM transmission_lines WHERE enabled=1 AND voltage_level_id=? AND line_name=? COLLATE NOCASE LIMIT 1`,
   ).bind(voltage.id, normalized.lineName).first<{ id: string; line_name: string }>();
   if (!line) {
-    errors.push({ code: 'LINE_UNKNOWN', field: 'lineName', message: '线路未在所选电压等级的线路台账中配置' });
+    errors.push({ code: 'LINE_UNKNOWN', field: 'lineName', message: '线路不存在或已停用，请先维护所选电压等级下的线路台账' });
     return;
   }
   normalized.lineId = line.id;
@@ -373,21 +380,22 @@ async function resolveGridLocation(db: D1Database, normalized: NormalizedImportR
     normalized.endTowerId = null;
     normalized.section = '全线';
   } else {
-    const range = splitSectionRange(rawSection);
+    const exact = await db.prepare('SELECT id FROM transmission_towers WHERE line_id=? AND tower_no=? COLLATE NOCASE AND enabled=1').bind(line.id, rawSection).first();
+    const range = exact ? null : splitSectionRange(rawSection);
     const towerNos = range ? [range.start, range.end] : [rawSection];
     const placeholders = towerNos.map(() => '?').join(',');
     const towerRows = await db.prepare(
-      `SELECT id,tower_no,sort_index FROM transmission_towers WHERE enabled=1 AND line_id=? AND tower_no IN (${placeholders}) COLLATE NOCASE`,
+      `SELECT id,tower_no,sort_index FROM transmission_towers WHERE enabled=1 AND line_id=? AND tower_no COLLATE NOCASE IN (${placeholders})`,
     ).bind(line.id, ...towerNos).all<{ id: string; tower_no: string; sort_index: number }>();
     const byNo = new Map((towerRows.results ?? []).map((row) => [row.tower_no.toLowerCase(), row]));
     const start = byNo.get(towerNos[0]!.toLowerCase());
     const end = byNo.get(towerNos[towerNos.length - 1]!.toLowerCase());
     if (!start || !end) {
-      errors.push({ code: 'TOWER_UNKNOWN', field: 'section', message: '杆段中的杆塔未在线路台账中配置' });
+      errors.push({ code: 'TOWER_UNKNOWN', field: 'section', message: '杆塔不存在或已停用，请先维护当前线路下的杆塔台账' });
       return;
     }
-    if (range && start.sort_index > end.sort_index) {
-      errors.push({ code: 'TOWER_RANGE_REVERSED', field: 'section', message: '起始杆塔顺序不能晚于终止杆塔' });
+    if (range && start.sort_index >= end.sort_index) {
+      errors.push({ code: 'TOWER_RANGE_REVERSED', field: 'section', message: '区段起止必须为不同杆塔，且起始顺序早于终止' });
       return;
     }
     normalized.locationType = range ? 'tower_range' : 'tower';
@@ -642,136 +650,7 @@ p2App.get('/materials', async (c) => {
   return c.json({ ok: true as const, data: { items: (result.results ?? []).map(materialSummary) } });
 });
 
-p2App.post('/demands', requireRoles('admin', 'project_manager'), async (c) => {
-  const key = requireIdempotencyKey(c);
-  if (key instanceof Response) return key;
-  let body: Partial<CreateDemandRequest>;
-  try { body = await c.req.json<Partial<CreateDemandRequest>>(); } catch {
-    return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400);
-  }
 
-  const raw: Record<string, unknown> = {
-    sequenceNo: body.sequenceNo,
-    voltage: body.voltage,
-    lineName: body.lineName,
-    section: body.section,
-    materialModel: body.materialModel,
-    materialQuantity: body.materialQuantity,
-    unit: body.unit,
-    year: body.year,
-    category: body.category,
-    owner: body.owner,
-  };
-  const fakeRow: ImportRowDb = {
-    id: 'manual-validation',
-    batch_id: '',
-    chunk_index: 0,
-    sheet_name: '',
-    source_row_number: 1,
-    source_key: '',
-    raw_json: JSON.stringify(raw),
-    normalized_json: null,
-    errors_json: '[]',
-    warnings_json: '[]',
-    row_status: 'uploaded',
-    published_demand_id: null,
-  };
-  const [validated] = await normalizeRows(c.env.DB, [fakeRow], MANUAL_DEMAND_MAPPING);
-  if (!validated || validated.errors.length || validated.normalized.quantityScaled === null || !validated.normalized.businessSignature) {
-    return c.json(apiError('INVALID_DEMAND', '需求字段校验失败', {
-      errors: validated?.errors ?? [{ code: 'INVALID_DEMAND', message: '需求字段无效' }],
-      warnings: validated?.warnings ?? [],
-    }), 422);
-  }
-
-  const requestBody: CreateDemandRequest = {
-    sequenceNo: cleanText(body.sequenceNo),
-    voltage: cleanText(body.voltage),
-    lineName: cleanText(body.lineName),
-    section: cleanText(body.section),
-    materialModel: cleanText(body.materialModel),
-    materialQuantity: body.materialQuantity as string | number,
-    unit: cleanText(body.unit) || null,
-    year: validated.normalized.year,
-    category: cleanText(body.category) || null,
-    owner: cleanText(body.owner) || null,
-  };
-  const hash = await requestHash(requestBody);
-  const operation = 'demands.create';
-  const replay = await replayIdempotentResponse(c, key, operation, hash);
-  if (replay) return replay;
-
-  const actor = c.get('currentUser');
-  const demandId = crypto.randomUUID();
-  const demandMaterialId = crypto.randomUUID();
-  const sourceKey = `manual:${demandId}`;
-  const now = new Date().toISOString();
-  let resolvedMaterial: MaterialSummary | null = null;
-  if (validated.normalized.materialId) {
-    const material = await c.env.DB.prepare(
-      'SELECT id,code,name,model,unit,enabled,version FROM materials WHERE id=? LIMIT 1',
-    ).bind(validated.normalized.materialId).first<MaterialRow>();
-    if (material) resolvedMaterial = materialSummary(material);
-  }
-  const data: DemandDetail = {
-    id: demandId,
-    sequenceNo: validated.normalized.sequenceNo,
-    year: validated.normalized.year,
-    voltageRaw: validated.normalized.voltageRaw,
-    voltageVerified: validated.normalized.voltageVerified,
-    lineName: validated.normalized.lineName,
-    section: validated.normalized.section,
-    category: validated.normalized.category,
-    owner: validated.normalized.owner,
-    version: 1,
-    createdAt: now,
-    source: { type: 'manual', raw },
-    materials: [{
-      id: demandMaterialId,
-      rawModel: validated.normalized.materialModel,
-      quantityScaled: validated.normalized.quantityScaled,
-      unit: validated.normalized.unit,
-      material: resolvedMaterial,
-    }],
-  };
-  const response = { ok: true as const, data };
-  try {
-    await c.env.DB.batch([
-      c.env.DB.prepare(
-        `INSERT INTO demands
-         (id,source_type,source_key,source_batch_id,source_file_sha256,source_file_name,source_sheet,source_row_number,
-          sequence_no,business_year,voltage_raw,voltage_verified,line_name,section_text,category_key,owner,business_signature,
-          raw_json,extra_json,version,created_by,created_at,updated_at)
-         VALUES (?,'manual',?,NULL,NULL,NULL,NULL,NULL,?,?,?,?,?,?,?,?,?,?,'{}',1,?,?,?)`,
-      ).bind(
-        demandId, sourceKey,
-        validated.normalized.sequenceNo, validated.normalized.year, validated.normalized.voltageRaw, validated.normalized.voltageVerified,
-        validated.normalized.lineName, validated.normalized.section, validated.normalized.category, validated.normalized.owner,
-        validated.normalized.businessSignature, JSON.stringify(raw), actor.id, now, now,
-      ),
-      c.env.DB.prepare(
-        `INSERT INTO demand_materials (id,demand_id,raw_model,material_id,quantity_scaled,unit,created_at)
-         VALUES (?,?,?,?,?,?,?)`,
-      ).bind(
-        demandMaterialId, demandId, validated.normalized.materialModel, validated.normalized.materialId,
-        validated.normalized.quantityScaled, validated.normalized.unit, now,
-      ),
-      c.env.DB.prepare(
-        `INSERT INTO audit_events (id,actor_member_id,action,object_type,object_id,before_json,after_json,created_at)
-         VALUES (?,?, 'demand.create.manual','demand',?,NULL,?,?)`,
-      ).bind(crypto.randomUUID(), actor.id, demandId, JSON.stringify(data), now),
-      c.env.DB.prepare(
-        `INSERT INTO idempotency_records (idempotency_key,actor_member_id,operation,request_hash,response_json,status_code,created_at)
-         VALUES (?,?,?,?,?,201,?)`,
-      ).bind(key, actor.id, operation, hash, JSON.stringify(response), now),
-    ]);
-  } catch {
-    const replayAfterRace = await replayIdempotentResponse(c, key, operation, hash);
-    if (replayAfterRace) return replayAfterRace;
-    return c.json(apiError('DEMAND_CREATE_CONFLICT', '需求创建发生冲突，请刷新后重试'), 409);
-  }
-  return c.json(response, 201);
-});
 
 p2App.post('/imports', requireRoles('admin', 'project_manager'), async (c) => {
   const key = requireIdempotencyKey(c);
@@ -1031,6 +910,19 @@ p2App.post('/imports/:id/publish', requireRoles('admin', 'project_manager'), asy
   const rows = rowResult.results ?? [];
   const actor = c.get('currentUser');
   const now = new Date().toISOString();
+  const gridErrors: Array<{ sheetName: string; rowNumber: number; errors: ImportIssue[] }> = [];
+  for (const row of rows) {
+    const normalized = parseJson<NormalizedImportRow | null>(row.normalized_json, null);
+    const errors: ImportIssue[] = [];
+    if (!normalized) errors.push({ code: 'LOCATION_MISSING', message: '缺少位置校验结果，请重新校验' });
+    else {
+      const checked = { ...normalized };
+      await resolveGridLocation(c.env.DB, checked, errors);
+      if (!errors.length && (checked.voltageLevelId !== normalized.voltageLevelId || checked.lineId !== normalized.lineId || checked.startTowerId !== normalized.startTowerId || checked.endTowerId !== normalized.endTowerId)) errors.push({ code: 'LOCATION_CHANGED', message: '台账对象已变化，请重新校验' });
+    }
+    if (errors.length) gridErrors.push({ sheetName: row.sheet_name, rowNumber: row.source_row_number, errors });
+  }
+  if (gridErrors.length) return c.json(apiError('IMPORT_GRID_CHANGED', '台账已变化，请先维护基础台账并重新校验导入', gridErrors), 422);
   const sourceKeys = rows.map((row) => row.source_key);
   const existingBySource = new Map<string, string>();
   if (sourceKeys.length) {
@@ -1074,6 +966,7 @@ p2App.post('/imports/:id/publish', requireRoles('admin', 'project_manager'), asy
     if (!normalized || !normalized.businessSignature) {
       return c.json(apiError('IMPORT_ROW_NOT_VALIDATED', '存在缺少规范化结果的行'), 409);
     }
+    statements.push(gridLocationGuard(c.env.DB, normalized.voltageLevelId!, normalized.lineId!, normalized.startTowerId, normalized.endTowerId, normalized.voltageRaw, normalized.lineName, normalized.section));
     const existingId = existingBySource.get(row.source_key) ?? existingBySignature.get(normalized.businessSignature);
     const demandId = existingId ?? crypto.randomUUID();
     if (!existingId) {
@@ -1150,7 +1043,7 @@ p2App.get('/demands', async (c) => {
     where.push('(created_at < ? OR (created_at = ? AND id < ?))');
     params.push(cursor.createdAt, cursor.createdAt, cursor.id);
   }
-  const sql = `SELECT id,source_type,source_key,source_batch_id,source_file_sha256,source_file_name,source_sheet,source_row_number,sequence_no,business_year,voltage_raw,voltage_verified,line_name,section_text,category_key,owner,raw_json,version,created_at
+  const sql = `SELECT id,source_type,source_key,source_batch_id,source_file_sha256,source_file_name,source_sheet,source_row_number,sequence_no,business_year,voltage_raw,voltage_verified,line_name,section_text,category_key,owner,raw_json,version,created_at,voltage_level_id,line_id,location_type,start_tower_id,end_tower_id
                FROM demands ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
                ORDER BY created_at DESC,id DESC LIMIT ?`;
   params.push(limit + 1);
@@ -1170,7 +1063,7 @@ p2App.get('/demands', async (c) => {
 
 p2App.get('/demands/:id', async (c) => {
   const row = await c.env.DB.prepare(
-    `SELECT id,source_type,source_key,source_batch_id,source_file_sha256,source_file_name,source_sheet,source_row_number,sequence_no,business_year,voltage_raw,voltage_verified,line_name,section_text,category_key,owner,raw_json,version,created_at
+    `SELECT id,source_type,source_key,source_batch_id,source_file_sha256,source_file_name,source_sheet,source_row_number,sequence_no,business_year,voltage_raw,voltage_verified,line_name,section_text,category_key,owner,raw_json,version,created_at,voltage_level_id,line_id,location_type,start_tower_id,end_tower_id
      FROM demands WHERE id=? LIMIT 1`,
   ).bind(c.req.param('id')).first<DemandRow>();
   if (!row) return c.json(apiError('DEMAND_NOT_FOUND', '需求不存在'), 404);

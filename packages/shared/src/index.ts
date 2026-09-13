@@ -326,6 +326,11 @@ export interface CreateStructuredDemandRequest extends StructuredDemandLocationI
 }
 
 export interface DemandSummary {
+  voltageLevelId: string | null;
+  lineId: string | null;
+  locationType: DemandLocationType | null;
+  startTowerId: string | null;
+  endTowerId: string | null;
   id: string;
   sequenceNo: string;
   year: number | null;
@@ -346,19 +351,7 @@ export interface DemandMaterialInput {
   unit?: string | null;
 }
 
-export interface CreateDemandRequest {
-  sequenceNo: string;
-  voltage: string;
-  lineName: string;
-  section: string;
-  materials?: DemandMaterialInput[];
-  materialModel?: string;
-  materialQuantity?: string | number;
-  unit?: string | null;
-  year?: number | string | null;
-  category?: string | null;
-  owner?: string | null;
-}
+export type CreateDemandRequest = CreateStructuredDemandRequest;
 
 export type DemandSourceSummary =
   | {

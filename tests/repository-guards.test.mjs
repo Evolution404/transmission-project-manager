@@ -82,7 +82,7 @@ test('business batch import is never the only creation path for demand data', ()
   const apiSource = readFileSync(resolve(root, 'apps/api/src/p2.ts'), 'utf8');
   const webSource = readFileSync(resolve(root, 'apps/web/src/views/DemandsView.vue'), 'utf8');
   assert.match(apiSource, /post\('\/imports'/, '需求存在批量导入时必须保留导入接口');
-  assert.match(apiSource, /post\('\/demands'/, '需求支持批量导入时必须同时支持服务端手工新增');
+  assert.match(readFileSync(resolve(root, 'apps/api/src/p9.ts'), 'utf8'), /post\('\/demands'/, '需求支持批量导入时必须同时支持服务端手工新增');
   assert.match(webSource, /data-test="manual-demand-form"/, '需求支持批量导入时必须同时支持服务端手工新增入口');
   assert.match(webSource, /data-test="open-manual-demand"/, '手工新增需求必须由明确操作打开，不能把整张新增表单常驻主页面');
 });

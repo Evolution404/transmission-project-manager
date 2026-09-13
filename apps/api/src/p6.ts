@@ -32,6 +32,7 @@ const BACKUP_CHUNK_ROWS = 100;
 const MAX_OUTBOX_CLAIM = 50;
 const BACKUP_TABLES = [
   'members', 'member_scopes', 'settings_versions', 'dictionary_items', 'audit_events', 'idempotency_records',
+  'voltage_levels', 'transmission_lines', 'transmission_towers',
   'materials', 'import_mapping_templates', 'import_batches', 'import_rows', 'demands', 'demand_source_rows', 'demand_materials', 'field_definitions',
   'projects', 'project_versions', 'demand_allocations', 'project_cost_lines', 'reserve_categories', 'category_mappings', 'category_cost_allocations',
   'project_demand_links', 'project_material_requirements', 'project_material_revisions',

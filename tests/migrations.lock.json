@@ -6,5 +6,9 @@
   "apps/api/migrations/0005_p5_delivery_implementation_settlement.sql": "aa3967dd010c6005ca5293b1fbe16c2e859e2469eec60f1b972adbb2411e73fe",
   "apps/api/migrations/0006_p6_analysis_notifications_backups.sql": "facf79bc96dab059c534fa670979ed7fa3899f183c33eb63f7806090e332df9e",
   "apps/api/migrations/0007_p7_flexible_demand_sources.sql": "f51f6735ae98bc16db07f328d970ab658a0ac60f3792ca8990117d519b4fefda",
-  "apps/api/migrations/0008_final_business_flow.sql": "a0da7fcd2a7aeb334ad4d6275b7b6c5909979e4edb98c8ab02740b5142140610"
+  "apps/api/migrations/0008_final_business_flow.sql": "a0da7fcd2a7aeb334ad4d6275b7b6c5909979e4edb98c8ab02740b5142140610",
+  "apps/api/migrations/0009_master_grid_assets.sql": "860a13653d36acb75d80a1bf4ac67ce182bbf096ce19f07a070de365f11504c2",
+  "apps/api/migrations/0010_master_grid_relations.sql": "4fb47d25f71ea7873cdb590d383d2302d9b34f2aed3c53f5d45df5eb6aba28e9",
+  "apps/api/migrations/0011_master_data_integrity.sql": "58c321421d8690810b2590e4fc0a4cedabea50addffd1a351aa61c367635e293",
+  "apps/api/migrations/0012_master_data_write_guards.sql": "22d922027eafb5164165615aea7cbcfa7154733f6eb3788a9e0cb84841fd6cf4"
 }
