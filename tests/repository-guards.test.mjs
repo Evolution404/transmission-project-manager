@@ -95,6 +95,20 @@ test('portable backend core cannot depend on Cloudflare runtime types', () => {
   }
 });
 
+test('Cloudflare infrastructure adapters depend inward on portable ports', () => {
+  const adapters = [
+    ['d1-database.ts', /implements\s+DatabasePort/, /ports\/database/],
+    ['r2-object-store.ts', /implements\s+ObjectStorePort/, /ports\/object-store/],
+  ];
+  for (const [name, contract, portImport] of adapters) {
+    const file = resolve(root, 'apps/api/src/adapters/cloudflare', name);
+    assert.equal(existsSync(file), true, `缺少 Cloudflare adapter ${name}`);
+    const source = readFileSync(file, 'utf8');
+    assert.match(source, contract);
+    assert.match(source, portImport);
+  }
+});
+
 test('business batch import is never the only creation path for demand data', () => {
   const apiSource = readFileSync(resolve(root, 'apps/api/src/p2.ts'), 'utf8');
   const webSource = readFileSync(resolve(root, 'apps/web/src/views/DemandsView.vue'), 'utf8');
