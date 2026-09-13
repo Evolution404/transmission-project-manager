@@ -18,7 +18,11 @@ function runResult(result: D1Result<unknown>): DatabaseRunResult {
 }
 
 export class D1DatabaseAdapter implements DatabasePort {
-  constructor(private readonly db: D1Database) {}
+  private readonly db: D1Database;
+
+  constructor(db: D1Database) {
+    this.db = db;
+  }
 
   async first<T extends Record<string, unknown>>(statement: DatabaseStatement): Promise<T | null> {
     return prepare(this.db, statement).first<T>();

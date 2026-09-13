@@ -7,7 +7,7 @@
     "db:setup:local": "wrangler d1 migrations apply transmission-project-manager-local --local",
     "dev": "node ../../scripts/dev/api-dev.mjs",
     "build": "wrangler deploy --dry-run --outdir dist",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.node-runtime.json"
   },
   "dependencies": {
     "@tpm/shared": "*",

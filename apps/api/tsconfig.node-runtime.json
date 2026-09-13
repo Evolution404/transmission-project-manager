@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2022"],
+    "types": ["node"]
+  },
+  "include": [
+    "src/ports/**/*.ts",
+    "src/adapters/node/**/*.ts",
+    "src/runtime/node/**/*.ts"
+  ]
+}
