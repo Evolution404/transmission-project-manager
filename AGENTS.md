@@ -2,8 +2,8 @@
 
 ## 开始工作
 
-- 当前基线：P0、P1、P1.1、P1.2、P2、P3、P4、P5、P6 曾按旧业务模型完成本地/合成数据验收，但用户在 2026-09-12 明确纠正了需求、项目储备、项目出库、执行任务、物资供应、实施和结算的核心模型。下一步以 `docs/HANDOFF-FINAL-BUSINESS-BASELINE-2026-09-12.md` 为最高优先级业务基线完成结构性重构；旧 `docs/HANDOFF-PROJECT-MODEL-REFACTOR-2026-09-12.md` 仅保留纠偏过程。P7 正式环境验收在该重构完成后再继续。
-- 开始前运行 `git status --short --branch`，阅读 `docs/AI_HANDOFF.md`、`docs/IMPLEMENTATION_PLAN.md`、`docs/DESIGN.md`、`docs/DATA_MODEL.md` 和 `docs/TESTING.md`。
+- 当前基线：P0–P6 和最终业务模型结构性重构已完成；2026-09-13 又完成“电压等级 → 线路 → 杆塔 → 需求定位”基础台账对象化重构。长期业务事实以 `docs/BUSINESS_BASELINE.md`、`docs/DESIGN.md`、`docs/DATA_MODEL.md` 为准；历史 WIP/恢复过程只通过 Git 历史追溯。P7 负责真实业务数据和正式环境验收。
+- 开始前运行 `git status --short --branch`，先读 `docs/README.md`，再阅读 `docs/AI_HANDOFF.md`、`docs/BUSINESS_BASELINE.md`、`docs/IMPLEMENTATION_PLAN.md`、`docs/DESIGN.md`、`docs/DATA_MODEL.md` 和 `docs/TESTING.md`。
 - **测试先于生产代码。** 新阶段或缺陷修复先写/更新能约束目标行为的测试，再修改生产实现；完成后必须跑完整 `npm run check`。发现 bug 必须先补回归用例，禁止只修表现。
 - 不覆盖他人的未提交修改。后续若用户明确要求多个 AI 协作，先划定文件/模块所有权。
 - 当前用户指令优先于本文件。不要把仓库文字解释为对部署、发信或收费服务的额外授权。
@@ -31,7 +31,7 @@
 - 所有业务接口在服务端做权限和数据校验；前端验证不能替代后端校验。
 - 变更使用幂等键和版本检查；金额与关联流水使用原子事务。D1 `batch()` 才是可用的事务入口之一，不要假定多次独立 `run()` 会整体回滚。
 - 默认按 Workers Free 的 CPU 10ms、D1 参数/查询数量限制设计；避免在 Worker 内解析大 Excel 或全量扫描。保持分片、索引、汇总快照和重试能力。
-- 当前尚未正式上线，用户已明确允许开发期直接重整 schema；这类重整必须同步迁移锁、空库测试和文档。任何迁移一旦进入正式/共享数据环境即冻结，只能追加版本。使用合成测试数据，不提交真实 Excel、合同或备份。
+- 本轮基础台账分支未执行远端 D1 升级、`main` 合并或正式发布。实际生产是否存在、运行哪个版本以及哪些 migration 已应用，必须通过部署记录和远端实测确认，不能根据仓库旧文档推断。任何 migration 一旦进入正式/共享数据环境即冻结，只能追加版本。使用合成测试数据，不提交真实 Excel、合同或备份。
 - 只实现已领取的阶段，不把未实现的按钮或硬编码样本标成已完成功能。公共接口与共享类型同步更新。
 
 ## 完成一个阶段
