@@ -427,6 +427,34 @@ async function implementationSummary(db: D1Database, row: ImplementationRecordRo
   };
 }
 
+async function implementationSummaries(db: D1Database, rows: ImplementationRecordRow[], projectVersion: number | null): Promise<ImplementationRecordSummary[]> {
+  if (rows.length === 0) return [];
+  const placeholders = rows.map(() => '?').join(',');
+  const lineResult = await db.prepare(
+    `SELECT id,implementation_id,project_id,release_line_id,demand_material_id,description,unit,completed_quantity_scaled,actual_used_quantity_scaled,created_at
+     FROM implementation_lines WHERE implementation_id IN (${placeholders}) ORDER BY implementation_id,id`,
+  ).bind(...rows.map((row) => row.id)).all<ImplementationLineRow>();
+  const linesByImplementation = new Map<string, ImplementationLineSummary[]>();
+  for (const line of lineResult.results ?? []) {
+    const list = linesByImplementation.get(line.implementation_id) ?? [];
+    list.push(implementationLineSummary(line));
+    linesByImplementation.set(line.implementation_id, list);
+  }
+  return rows.map((row) => ({
+    id: row.id,
+    projectId: row.project_id,
+    historical: row.historical === 1,
+    recordDate: row.record_date,
+    personnel: row.personnel,
+    note: row.note,
+    version: row.version,
+    projectVersion: row.project_id ? projectVersion : null,
+    lines: linesByImplementation.get(row.id) ?? [],
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }));
+}
+
 async function findImplementation(db: D1Database, id: string) {
   return db.prepare(
     `SELECT id,project_id,historical,record_date,personnel,note,version,created_at,updated_at FROM implementation_records WHERE id=? LIMIT 1`,
@@ -468,6 +496,50 @@ async function settlementSummary(db: D1Database, row: SettlementRow, projectVers
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+async function settlementSummaries(db: D1Database, rows: SettlementRow[], projectVersion: number): Promise<SettlementSummary[]> {
+  if (rows.length === 0) return [];
+  const placeholders = rows.map(() => '?').join(',');
+  const ids = rows.map((row) => row.id);
+  const [coverageResult, allocationResult] = await Promise.all([
+    db.prepare(
+      `SELECT settlement_id,demand_material_id,quantity_scaled
+       FROM settlement_coverage WHERE settlement_id IN (${placeholders}) ORDER BY settlement_id,demand_material_id`,
+    ).bind(...ids).all<{ settlement_id: string; demand_material_id: string; quantity_scaled: number }>(),
+    db.prepare(
+      `SELECT settlement_id,agreement_id,amount_fen
+       FROM settlement_agreement_allocations WHERE settlement_id IN (${placeholders}) ORDER BY settlement_id,agreement_id`,
+    ).bind(...ids).all<{ settlement_id: string; agreement_id: string; amount_fen: number }>(),
+  ]);
+  const coverageBySettlement = new Map<string, SettlementCoverageInput[]>();
+  for (const item of coverageResult.results ?? []) {
+    const list = coverageBySettlement.get(item.settlement_id) ?? [];
+    list.push({ demandMaterialId: item.demand_material_id, quantityScaled: item.quantity_scaled });
+    coverageBySettlement.set(item.settlement_id, list);
+  }
+  const allocationsBySettlement = new Map<string, SettlementAgreementAllocationInput[]>();
+  for (const item of allocationResult.results ?? []) {
+    const list = allocationsBySettlement.get(item.settlement_id) ?? [];
+    list.push({ agreementId: item.agreement_id, amountFen: item.amount_fen });
+    allocationsBySettlement.set(item.settlement_id, list);
+  }
+  return rows.map((row) => ({
+    id: row.id,
+    projectId: row.project_id,
+    settlementDate: row.settlement_date,
+    amountFen: row.amount_fen,
+    final: row.final === 1,
+    note: row.note,
+    version: row.version,
+    voidedAt: row.voided_at,
+    voidReason: row.void_reason,
+    projectVersion,
+    coverage: coverageBySettlement.get(row.id) ?? [],
+    agreementAllocations: allocationsBySettlement.get(row.id) ?? [],
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }));
 }
 
 async function findSettlement(db: D1Database, id: string) {
@@ -692,9 +764,9 @@ p5App.get('/implementations', async (c) => {
   const result = projectId
     ? await c.env.DB.prepare(`SELECT id,project_id,historical,record_date,personnel,note,version,created_at,updated_at FROM implementation_records WHERE project_id=? ORDER BY record_date DESC,created_at DESC,id DESC LIMIT 100`).bind(projectId).all<ImplementationRecordRow>()
     : await c.env.DB.prepare(`SELECT id,project_id,historical,record_date,personnel,note,version,created_at,updated_at FROM implementation_records WHERE historical=1 AND project_id IS NULL ORDER BY record_date DESC,created_at DESC,id DESC LIMIT 100`).all<ImplementationRecordRow>();
-  const items: ImplementationRecordSummary[] = [];
-  for (const row of result.results ?? []) items.push(await implementationSummary(c.env.DB, row, row.project_id ? (await findProject(c.env.DB, row.project_id))?.version ?? null : null));
-  return c.json({ ok: true as const, data: { items } });
+  const rows = result.results ?? [];
+  const projectVersion = projectId && rows.length > 0 ? (await findProject(c.env.DB, projectId))?.version ?? null : null;
+  return c.json({ ok: true as const, data: { items: await implementationSummaries(c.env.DB, rows, projectVersion) } });
 });
 
 p5App.put('/implementations/:id/link', requireRoles('admin', 'project_manager', 'implementation'), async (c) => {
@@ -861,9 +933,7 @@ p5App.get('/settlements', async (c) => {
   const project = await findProject(c.env.DB, projectId);
   if (!project) return c.json(apiError('PROJECT_NOT_FOUND', '项目不存在'), 404);
   const result = await c.env.DB.prepare(`SELECT id,project_id,settlement_date,amount_fen,final,note,version,voided_at,void_reason,created_at,updated_at FROM settlements WHERE project_id=? ORDER BY settlement_date DESC,created_at DESC,id DESC LIMIT 100`).bind(projectId).all<SettlementRow>();
-  const items: SettlementSummary[] = [];
-  for (const row of result.results ?? []) items.push(await settlementSummary(c.env.DB, row, project.version));
-  return c.json({ ok: true as const, data: { items } });
+  return c.json({ ok: true as const, data: { items: await settlementSummaries(c.env.DB, result.results ?? [], project.version) } });
 });
 
 p5App.post('/settlements/:id/void', requireRoles('admin', 'project_manager', 'finance'), async (c) => {
