@@ -477,6 +477,37 @@ test('project execution detail stays within the D1 query budget as task count gr
   assert.equal(detail.body.data.tasks.filter((task) => task.name.startsWith('查询预算任务')).length, 6);
 });
 
+test('large reserve project creation stays within the D1 validation query budget', async () => {
+  const adminId = dbRows("SELECT id FROM members WHERE role='admin' ORDER BY created_at LIMIT 1;")[0].id;
+  const now = '2026-09-26T00:00:00.000Z';
+  const statements = [
+    `INSERT INTO materials (id,code,name,model,unit,enabled,version,created_by,created_at,updated_at) VALUES ('bulk-project-material','BULK-PROJECT','批量项目物资','BULK-MODEL','件',1,1,'${adminId}','${now}','${now}');`,
+    `INSERT INTO reserve_categories (id,category_key,label,enabled,version,created_by,created_at,updated_at) VALUES ('bulk-project-category','bulk-project','批量项目分类',1,1,'${adminId}','${now}','${now}');`,
+  ];
+  for (let index = 1; index <= 60; index += 1) {
+    statements.push(`INSERT INTO demands (id,source_type,source_key,source_batch_id,source_file_sha256,source_file_name,source_sheet,source_row_number,sequence_no,business_year,voltage_raw,voltage_verified,line_name,section_text,category_key,owner,business_signature,raw_json,extra_json,version,created_by,created_at,updated_at) VALUES ('bulk-demand-${index}','manual','bulk-source-${index}',NULL,NULL,NULL,NULL,NULL,'BULK-${index}',2026,'220kV','220kV','批量线路','批量区段',NULL,NULL,'bulk-signature-${index}','{}','{}',1,'${adminId}','${now}','${now}');`);
+  }
+  executeLocalD1(stateDir, { command: statements.join('\n') });
+
+  const created = await jsonRequest('/api/reserve-projects', mutation('POST', 'large-project-validation', {
+    name: '批量校验项目',
+    year: 2026,
+    owner: null,
+    demandIds: Array.from({ length: 60 }, (_, index) => `bulk-demand-${index + 1}`),
+    materials: Array.from({ length: 60 }, () => ({
+      materialId: 'bulk-project-material',
+      model: '',
+      unit: '',
+      requiredQuantityScaled: 10000,
+      unitPriceScaled: 1000000,
+      reserveCategoryId: 'bulk-project-category',
+    })),
+  }));
+  assert.equal(created.response.status, 201);
+  assert.equal(created.body.data.demandLinks.length, 60);
+  assert.equal(created.body.data.materialRequirements.length, 60);
+});
+
 test('reserve project list remains complete with many hydrated projects', async () => {
   const demandId = globalThis.__finalDemandId;
   const adminId = dbRows("SELECT id FROM members WHERE role='admin' ORDER BY created_at LIMIT 1;")[0].id;

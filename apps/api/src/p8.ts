@@ -487,6 +487,49 @@ function normalizeDemandMaterials(body: Record<string, unknown>): Array<{ rawMod
 
 async function normalizeProjectMaterials(db: D1Database, value: unknown, allowIds: boolean) {
   if (!Array.isArray(value) || value.length > MAX_ITEMS) return null;
+  const parsed: Array<{
+    id: string | null;
+    materialId: string | null;
+    model: string;
+    unit: string;
+    requiredQuantityScaled: number;
+    unitPriceScaled: number | null;
+    reserveCategoryId: string | null;
+  }> = [];
+  const ids = new Set<string>();
+  const materialIds = new Set<string>();
+  const categoryIds = new Set<string>();
+  for (const raw of value) {
+    if (!raw || typeof raw !== 'object') return null;
+    const item = raw as Record<string, unknown>;
+    const id = item.id === null || item.id === undefined ? null : cleanText(item.id);
+    const materialId = item.materialId === null || item.materialId === undefined ? null : cleanText(item.materialId);
+    const model = cleanText(item.model);
+    const unit = cleanText(item.unit);
+    const quantity = positiveInteger(item.requiredQuantityScaled);
+    const unitPrice = item.unitPriceScaled === null || item.unitPriceScaled === undefined ? null : nonNegativeInteger(item.unitPriceScaled);
+    const categoryId = item.reserveCategoryId === null || item.reserveCategoryId === undefined ? null : cleanText(item.reserveCategoryId);
+    if ((!allowIds && id !== null) || (id !== null && (!id || ids.has(id))) || quantity === null || (unitPrice === null && item.unitPriceScaled !== null && item.unitPriceScaled !== undefined)) return null;
+    if ((materialId !== null && !materialId) || (categoryId !== null && !categoryId)) return null;
+    if (id) ids.add(id);
+    if (materialId) materialIds.add(materialId);
+    if (categoryId) categoryIds.add(categoryId);
+    parsed.push({ id, materialId, model, unit, requiredQuantityScaled: quantity, unitPriceScaled: unitPrice, reserveCategoryId: categoryId });
+  }
+
+  const materialMap = new Map<string, { id: string; model: string; unit: string; enabled: number }>();
+  if (materialIds.size) {
+    const values = [...materialIds];
+    const result = await db.prepare(`SELECT id,model,unit,enabled FROM materials WHERE id IN (${values.map(() => '?').join(',')})`).bind(...values).all<{ id: string; model: string; unit: string; enabled: number }>();
+    for (const row of result.results ?? []) materialMap.set(row.id, row);
+  }
+  const validCategoryIds = new Set<string>();
+  if (categoryIds.size) {
+    const values = [...categoryIds];
+    const result = await db.prepare(`SELECT id FROM reserve_categories WHERE enabled=1 AND id IN (${values.map(() => '?').join(',')})`).bind(...values).all<{ id: string }>();
+    for (const row of result.results ?? []) validCategoryIds.add(row.id);
+  }
+
   const out: Array<{
     id: string | null;
     materialId: string | null;
@@ -497,33 +540,20 @@ async function normalizeProjectMaterials(db: D1Database, value: unknown, allowId
     amountFen: number | null;
     reserveCategoryId: string | null;
   }> = [];
-  const ids = new Set<string>();
-  for (const raw of value) {
-    if (!raw || typeof raw !== 'object') return null;
-    const item = raw as Record<string, unknown>;
-    const id = item.id === null || item.id === undefined ? null : cleanText(item.id);
-    const materialId = item.materialId === null || item.materialId === undefined ? null : cleanText(item.materialId);
-    let model = cleanText(item.model);
-    let unit = cleanText(item.unit);
-    const quantity = positiveInteger(item.requiredQuantityScaled);
-    const unitPrice = item.unitPriceScaled === null || item.unitPriceScaled === undefined ? null : nonNegativeInteger(item.unitPriceScaled);
-    const categoryId = item.reserveCategoryId === null || item.reserveCategoryId === undefined ? null : cleanText(item.reserveCategoryId);
-    if ((!allowIds && id !== null) || (id !== null && (!id || ids.has(id))) || quantity === null || unitPrice === null && item.unitPriceScaled !== null && item.unitPriceScaled !== undefined) return null;
-    if (id) ids.add(id);
-    if (materialId) {
-      const material = await db.prepare(`SELECT id,model,unit,enabled FROM materials WHERE id=? LIMIT 1`).bind(materialId).first<{ id: string; model: string; unit: string; enabled: number }>();
+  for (const item of parsed) {
+    let model = item.model;
+    let unit = item.unit;
+    if (item.materialId) {
+      const material = materialMap.get(item.materialId);
       if (!material || material.enabled !== 1) return null;
       if (!model) model = material.model;
       if (!unit) unit = material.unit;
     }
     if (!model || model.length > 160 || !unit || unit.length > 40) return null;
-    if (categoryId) {
-      const category = await db.prepare(`SELECT id FROM reserve_categories WHERE id=? AND enabled=1 LIMIT 1`).bind(categoryId).first<{ id: string }>();
-      if (!category) return null;
-    }
-    const amountFen = calculateAmountFen(quantity, unitPrice);
-    if (unitPrice !== null && amountFen === null) return null;
-    out.push({ id, materialId, model, unit, requiredQuantityScaled: quantity, unitPriceScaled: unitPrice, amountFen, reserveCategoryId: categoryId });
+    if (item.reserveCategoryId && !validCategoryIds.has(item.reserveCategoryId)) return null;
+    const amountFen = calculateAmountFen(item.requiredQuantityScaled, item.unitPriceScaled);
+    if (item.unitPriceScaled !== null && amountFen === null) return null;
+    out.push({ ...item, model, unit, amountFen });
   }
   return out;
 }
@@ -535,12 +565,13 @@ async function normalizeDemandIds(db: D1Database, value: unknown) {
   for (const raw of value) {
     const id = cleanText(raw);
     if (!id || seen.has(id)) return null;
-    const demand = await db.prepare(`SELECT id FROM demands WHERE id=? LIMIT 1`).bind(id).first<{ id: string }>();
-    if (!demand) return null;
     seen.add(id);
     ids.push(id);
   }
-  return ids;
+  if (!ids.length) return ids;
+  const result = await db.prepare(`SELECT id FROM demands WHERE id IN (${ids.map(() => '?').join(',')})`).bind(...ids).all<{ id: string }>();
+  const existing = new Set((result.results ?? []).map((row) => row.id));
+  return ids.every((id) => existing.has(id)) ? ids : null;
 }
 
 async function findTask(db: D1Database, id: string) {
