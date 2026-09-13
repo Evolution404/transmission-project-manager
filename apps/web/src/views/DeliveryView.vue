@@ -23,13 +23,11 @@ import type {
   ApiResponse,
   AttachmentSummary,
   CurrentUser,
-  ImplementationRecordSummary,
   LifecycleState,
-  ProjectLifecycleSummary,
-  ProjectSummary,
-  ReleaseBatchSummary,
-  ReleaseLineSummary,
-  SettlementSummary,
+  ProjectExecutionSummary,
+  ProjectReleaseSummary,
+  ProjectTaskExecutionSummary,
+  ReserveProjectSummary,
 } from '@tpm/shared';
 
 const props = defineProps<{ currentUser: CurrentUser }>();
@@ -40,36 +38,32 @@ const canSettle = computed(() => ['admin', 'project_manager', 'finance'].include
 const canUpload = computed(() => ['admin', 'project_manager', 'implementation', 'finance'].includes(props.currentUser.role));
 
 const loading = ref(true);
+const saving = ref(false);
 const error = ref('');
-const projects = ref<ProjectSummary[]>([]);
+const projects = ref<ReserveProjectSummary[]>([]);
 const selectedProjectId = ref<string | null>(null);
-const lifecycle = ref<ProjectLifecycleSummary | null>(null);
-const releases = ref<ReleaseBatchSummary[]>([]);
-const implementations = ref<ImplementationRecordSummary[]>([]);
-const settlements = ref<SettlementSummary[]>([]);
-const unlinkedHistorical = ref<ImplementationRecordSummary[]>([]);
+const project = ref<ReserveProjectSummary | null>(null);
+const execution = ref<ProjectExecutionSummary | null>(null);
+const releases = ref<ProjectReleaseSummary[]>([]);
+const selectedTaskId = ref<string | null>(null);
 const attachments = ref<AttachmentSummary[]>([]);
 
 const releaseDate = ref('');
 const releaseNote = ref('');
-const releaseQuantities = ref<Record<string, string>>({});
-const implementationReleaseLineId = ref<string | null>(null);
-const implementationQuantity = ref('');
+const taskForm = ref({ name: '', scopeText: '', owner: '', plannedDate: '', plannedQuantity: '', unit: '项' });
+const taskDemandQuantities = ref<Record<string, string>>({});
+const taskMaterialQuantities = ref<Record<string, string>>({});
+const supplyForm = ref({ taskMaterialId: null as string | null, stage: 'reported' as 'reported' | 'shipped' | 'arrived', quantity: '', eventDate: '', note: '' });
 const implementationDate = ref('');
-const implementationPersonnel = ref('');
+const implementationScopeQuantities = ref<Record<string, string>>({});
+const implementationMaterialUsages = ref<Record<string, string>>({});
 const implementationNote = ref('');
-const historicalDescription = ref('');
-const historicalUnit = ref('套');
-const historicalQuantity = ref('');
-const historicalDate = ref('');
-const historicalLinkTargets = ref<Record<string, string | null>>({});
 const settlementDate = ref('');
 const settlementAmount = ref('');
 const settlementFinal = ref(false);
+const settlementCoverage = ref<Record<string, string>>({});
 const settlementNote = ref('');
-const settlementQuantities = ref<Record<string, string>>({});
 const attachmentFile = ref<File | null>(null);
-const saving = ref(false);
 
 function businessToday() {
   const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
@@ -77,14 +71,12 @@ function businessToday() {
   return `${get('year')}-${get('month')}-${get('day')}`;
 }
 
-function parseDecimalScaled(value: string, digits = 4): number | null {
+function parseScaled(value: string, digits = 4): number | null {
   const raw = value.trim();
   const match = raw.match(/^(\d+)(?:\.(\d+))?$/);
   if (!match || (match[2]?.length ?? 0) > digits) return null;
   const scale = 10n ** BigInt(digits);
-  const integer = BigInt(match[1]!);
-  const fraction = BigInt((match[2] ?? '').padEnd(digits, '0') || '0');
-  const scaled = integer * scale + fraction;
+  const scaled = BigInt(match[1]!) * scale + BigInt((match[2] ?? '').padEnd(digits, '0') || '0');
   return scaled <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(scaled) : null;
 }
 
@@ -100,10 +92,6 @@ function formatScaled(value: number, digits = 4) {
   const whole = Math.floor(value / scale);
   const fraction = String(value % scale).padStart(digits, '0').replace(/0+$/, '');
   return fraction ? `${whole}.${fraction}` : String(whole);
-}
-
-function formatMoneyFen(value: number) {
-  return `${(value / 100).toFixed(2)} 元`;
 }
 
 const stateLabels: Record<LifecycleState, string> = {
@@ -128,87 +116,77 @@ async function apiRequest<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 function writeInit(method: 'POST' | 'PUT', body: unknown): RequestInit {
-  return {
-    method,
-    headers: { 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() },
-    body: JSON.stringify(body),
-  };
+  return { method, headers: { 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() }, body: JSON.stringify(body) };
 }
 
-const projectOptions = computed(() => projects.value.map((item) => ({ label: item.name, value: item.id })));
-const releaseLines = computed(() => releases.value.flatMap((batch) => batch.lines));
-const releaseLineOptions = computed(() => releaseLines.value.map((line) => ({
-  label: `${line.snapshot.lineName} ${line.snapshot.section} · ${formatScaled(line.quantityScaled)} ${line.snapshot.unit ?? ''}`,
-  value: line.id,
-})));
-const demandMaterialOptions = computed(() => (lifecycle.value?.lines ?? []).map((line) => ({
-  label: `${line.lineName} ${line.section} · ${line.rawModel} / ${line.unit ?? '未设单位'}`,
-  value: line.demandMaterialId,
-})));
+const projectOptions = computed(() => projects.value.map((item) => ({ label: `${item.name}${item.status === 'confirmed' ? ` · 储备v${item.reserveVersion}` : ' · 草稿'}`, value: item.id })));
+const selectedTask = computed(() => execution.value?.tasks.find((item) => item.id === selectedTaskId.value) ?? null);
+const taskOptions = computed(() => (execution.value?.tasks ?? []).map((item) => ({ label: `${item.name} · ${stateLabels[item.state]}`, value: item.id })));
+const taskMaterialOptions = computed(() => (selectedTask.value?.materials ?? []).map((item) => ({ label: `${item.model} · ${formatScaled(item.requiredQuantityScaled)} ${item.unit}`, value: item.id })));
+const supplyStageOptions = [
+  { label: '已上报', value: 'reported' },
+  { label: '已发货', value: 'shipped' },
+  { label: '已到货', value: 'arrived' },
+];
 
 async function loadProjects() {
-  const data = await apiRequest<{ items: ProjectSummary[]; nextCursor: string | null }>('/api/projects?limit=50');
+  const data = await apiRequest<{ items: ReserveProjectSummary[]; nextCursor: string | null }>('/api/reserve-projects?limit=100');
   projects.value = data.items;
   if (!selectedProjectId.value && data.items[0]) selectedProjectId.value = data.items[0].id;
 }
 
+function initializeTaskDrafts() {
+  taskDemandQuantities.value = {};
+  taskMaterialQuantities.value = {};
+  if (!project.value) return;
+  for (const link of project.value.demandLinks) taskDemandQuantities.value[link.demandId] = '';
+  for (const material of project.value.materialRequirements) taskMaterialQuantities.value[material.id] = '';
+}
+
+function initializeSelectedTaskDrafts(task: ProjectTaskExecutionSummary | null) {
+  implementationScopeQuantities.value = {};
+  implementationMaterialUsages.value = {};
+  settlementCoverage.value = {};
+  supplyForm.value.taskMaterialId = task?.materials[0]?.id ?? null;
+  if (!task) return;
+  for (const scope of task.demandScopes) {
+    const implemented = execution.value?.demands.find((item) => item.demandId === scope.demandId)?.implementedQuantityScaled ?? 0;
+    void implemented;
+    implementationScopeQuantities.value[scope.id] = '';
+    settlementCoverage.value[scope.id] = '';
+  }
+  for (const material of task.materials) implementationMaterialUsages.value[material.id] = '';
+}
+
 async function loadProjectContext() {
-  const projectId = selectedProjectId.value;
-  if (!projectId) {
-    lifecycle.value = null;
+  const id = selectedProjectId.value;
+  if (!id) {
+    project.value = null;
+    execution.value = null;
     releases.value = [];
-    implementations.value = [];
-    settlements.value = [];
-    attachments.value = [];
     return;
   }
-  const requests: Promise<unknown>[] = [
-    apiRequest<ProjectLifecycleSummary>(`/api/projects/${encodeURIComponent(projectId)}/lifecycle`),
-    apiRequest<{ items: ReleaseBatchSummary[] }>(`/api/release-batches?projectId=${encodeURIComponent(projectId)}`),
-    apiRequest<{ items: ImplementationRecordSummary[] }>(`/api/implementations?projectId=${encodeURIComponent(projectId)}`),
-    apiRequest<{ items: SettlementSummary[] }>(`/api/settlements?projectId=${encodeURIComponent(projectId)}`),
-  ];
-  const [life, releaseData, implementationData, settlementData] = await Promise.all(requests) as [
-    ProjectLifecycleSummary,
-    { items: ReleaseBatchSummary[] },
-    { items: ImplementationRecordSummary[] },
-    { items: SettlementSummary[] },
-  ];
-  lifecycle.value = life;
+  const [detail, executionData, releaseData] = await Promise.all([
+    apiRequest<ReserveProjectSummary>(`/api/reserve-projects/${encodeURIComponent(id)}`),
+    apiRequest<ProjectExecutionSummary>(`/api/projects/${encodeURIComponent(id)}/execution`),
+    apiRequest<{ items: ProjectReleaseSummary[] }>(`/api/project-releases?projectId=${encodeURIComponent(id)}`),
+  ]);
+  project.value = detail;
+  execution.value = executionData;
   releases.value = releaseData.items;
-  implementations.value = implementationData.items;
-  settlements.value = settlementData.items;
-  releaseQuantities.value = {};
-  settlementQuantities.value = {};
-  for (const line of life.lines) {
-    const releaseRemaining = Math.max(0, line.allocatedQuantityScaled - line.releasedQuantityScaled);
-    if (releaseRemaining > 0) releaseQuantities.value[line.demandMaterialId] = formatScaled(releaseRemaining);
-    const settlementRemaining = Math.max(0, line.allocatedQuantityScaled - line.settledQuantityScaled);
-    if (settlementRemaining > 0) settlementQuantities.value[line.demandMaterialId] = formatScaled(settlementRemaining);
-  }
-  if (!implementationReleaseLineId.value && releaseLines.value[0]) implementationReleaseLineId.value = releaseLines.value[0].id;
+  if (!selectedTaskId.value || !executionData.tasks.some((item) => item.id === selectedTaskId.value)) selectedTaskId.value = executionData.tasks[0]?.id ?? null;
+  initializeTaskDrafts();
+  initializeSelectedTaskDrafts(executionData.tasks.find((item) => item.id === selectedTaskId.value) ?? null);
   if (canUpload.value) {
     try {
-      const attachmentData = await apiRequest<{ items: AttachmentSummary[] }>(`/api/attachments?objectType=project&objectId=${encodeURIComponent(projectId)}`);
-      attachments.value = attachmentData.items;
-    } catch {
-      attachments.value = [];
-    }
+      attachments.value = (await apiRequest<{ items: AttachmentSummary[] }>(`/api/attachments?objectType=project&objectId=${encodeURIComponent(id)}`)).items;
+    } catch { attachments.value = []; }
   }
 }
 
-async function loadUnlinkedHistorical() {
-  if (!canImplement.value) {
-    unlinkedHistorical.value = [];
-    return;
-  }
-  const data = await apiRequest<{ items: ImplementationRecordSummary[] }>('/api/implementations?unlinked=true');
-  unlinkedHistorical.value = data.items;
-  const next: Record<string, string | null> = {};
-  for (const record of data.items) {
-    for (const line of record.lines) next[line.id] = demandMaterialOptions.value[0]?.value ?? null;
-  }
-  historicalLinkTargets.value = next;
+async function refreshProject() {
+  await loadProjects();
+  await loadProjectContext();
 }
 
 async function loadInitial() {
@@ -216,151 +194,163 @@ async function loadInitial() {
   error.value = '';
   const today = businessToday();
   releaseDate.value = today;
+  taskForm.value.plannedDate = today;
+  supplyForm.value.eventDate = today;
   implementationDate.value = today;
-  historicalDate.value = today;
   settlementDate.value = today;
   try {
     await loadProjects();
     await loadProjectContext();
-    await loadUnlinkedHistorical();
   } catch (cause) {
-    error.value = cause instanceof Error ? cause.message : '读取实施结算数据失败';
-  } finally {
-    loading.value = false;
-  }
+    error.value = cause instanceof Error ? cause.message : '读取项目执行数据失败';
+  } finally { loading.value = false; }
 }
 
 async function selectProject(value: string | null) {
   selectedProjectId.value = value;
-  implementationReleaseLineId.value = null;
+  selectedTaskId.value = null;
   await loadProjectContext();
-  await loadUnlinkedHistorical();
 }
 
-async function refreshProject() {
-  await loadProjects();
-  await loadProjectContext();
-  await loadUnlinkedHistorical();
+function selectTask(value: string | null) {
+  selectedTaskId.value = value;
+  initializeSelectedTaskDrafts(execution.value?.tasks.find((item) => item.id === value) ?? null);
 }
 
-async function createRelease() {
-  const projectId = selectedProjectId.value;
-  const life = lifecycle.value;
-  if (!projectId || !life) return;
-  const lines = life.lines.flatMap((line) => {
-    const quantityScaled = parseDecimalScaled(releaseQuantities.value[line.demandMaterialId] ?? '');
-    return quantityScaled !== null && quantityScaled > 0 ? [{ demandMaterialId: line.demandMaterialId, quantityScaled }] : [];
-  });
-  if (!lines.length) { message.warning('至少填写一条正数出库数量'); return; }
+async function createProjectRelease() {
+  if (!project.value) return;
   saving.value = true;
   try {
-    await apiRequest('/api/release-batches', writeInit('POST', {
-      projectId,
-      expectedProjectVersion: life.projectVersion,
+    await apiRequest<ProjectReleaseSummary>('/api/project-releases', writeInit('POST', {
+      projectId: project.value.id,
+      expectedProjectVersion: project.value.version,
       releaseDate: releaseDate.value,
       note: releaseNote.value.trim() || null,
-      lines,
     }));
     releaseNote.value = '';
     await refreshProject();
-    message.success('项目范围已出库');
-  } catch (cause) { message.error(cause instanceof Error ? cause.message : '出库失败'); }
+    message.success('项目已整体出库，正式进入执行阶段');
+  } catch (cause) { message.error(cause instanceof Error ? cause.message : '项目级出库失败'); }
+  finally { saving.value = false; }
+}
+
+async function createTask() {
+  if (!project.value || !execution.value) return;
+  const plannedQuantityScaled = parseScaled(taskForm.value.plannedQuantity);
+  if (!taskForm.value.name.trim() || plannedQuantityScaled === null || plannedQuantityScaled <= 0 || !taskForm.value.unit.trim()) {
+    message.warning('请填写任务名称、正数计划量和单位'); return;
+  }
+  const demandScopes = project.value.demandLinks.flatMap((link) => {
+    const quantity = parseScaled(taskDemandQuantities.value[link.demandId] ?? '');
+    return quantity !== null && quantity > 0 ? [{ demandId: link.demandId, quantityScaled: quantity }] : [];
+  });
+  if (demandScopes.reduce((sum, item) => sum + item.quantityScaled, 0) !== plannedQuantityScaled) {
+    message.warning('任务需求范围数量合计必须等于任务计划量，才能准确回投四状态'); return;
+  }
+  const materials = project.value.materialRequirements.flatMap((item) => {
+    const quantity = parseScaled(taskMaterialQuantities.value[item.id] ?? '');
+    return quantity !== null && quantity > 0 ? [{ projectMaterialRequirementId: item.id, quantityScaled: quantity }] : [];
+  });
+  saving.value = true;
+  try {
+    const created = await apiRequest<ProjectTaskExecutionSummary>('/api/project-tasks', writeInit('POST', {
+      projectId: project.value.id,
+      expectedProjectVersion: execution.value.projectVersion,
+      name: taskForm.value.name.trim(),
+      description: null,
+      scopeText: taskForm.value.scopeText.trim() || null,
+      owner: taskForm.value.owner.trim() || null,
+      plannedDate: taskForm.value.plannedDate || null,
+      plannedQuantityScaled,
+      unit: taskForm.value.unit.trim(),
+      demandScopes,
+      materials,
+    }));
+    selectedTaskId.value = created.id;
+    taskForm.value.name = '';
+    taskForm.value.scopeText = '';
+    taskForm.value.plannedQuantity = '';
+    await refreshProject();
+    selectedTaskId.value = created.id;
+    initializeSelectedTaskDrafts(execution.value?.tasks.find((item) => item.id === created.id) ?? null);
+    message.success('执行任务已创建');
+  } catch (cause) { message.error(cause instanceof Error ? cause.message : '执行任务创建失败'); }
+  finally { saving.value = false; }
+}
+
+async function addSupplyEvent() {
+  const task = selectedTask.value;
+  const material = task?.materials.find((item) => item.id === supplyForm.value.taskMaterialId);
+  const quantityScaled = parseScaled(supplyForm.value.quantity);
+  if (!task || !material || quantityScaled === null || quantityScaled <= 0) { message.warning('请选择任务物资并填写正数数量'); return; }
+  saving.value = true;
+  try {
+    await apiRequest('/api/task-material-supply-events', writeInit('POST', {
+      taskMaterialRequirementId: material.id,
+      expectedSupplyVersion: material.supplyVersion,
+      stage: supplyForm.value.stage,
+      quantityScaled,
+      eventDate: supplyForm.value.eventDate,
+      note: supplyForm.value.note.trim() || null,
+    }));
+    supplyForm.value.quantity = '';
+    supplyForm.value.note = '';
+    await loadProjectContext();
+    message.success('物资供应进度已登记');
+  } catch (cause) { message.error(cause instanceof Error ? cause.message : '物资供应登记失败'); }
   finally { saving.value = false; }
 }
 
 async function createImplementation() {
-  const projectId = selectedProjectId.value;
-  const life = lifecycle.value;
-  const releaseLineId = implementationReleaseLineId.value;
-  const completedQuantityScaled = parseDecimalScaled(implementationQuantity.value);
-  if (!projectId || !life || !releaseLineId || completedQuantityScaled === null || completedQuantityScaled <= 0) {
-    message.warning('请选择出库范围并填写有效完成数量'); return;
-  }
+  const task = selectedTask.value;
+  if (!task) return;
+  const scopeLines = task.demandScopes.flatMap((scope) => {
+    const quantity = parseScaled(implementationScopeQuantities.value[scope.id] ?? '');
+    return quantity !== null && quantity > 0 ? [{ taskDemandScopeId: scope.id, completedQuantityScaled: quantity }] : [];
+  });
+  const completedQuantityScaled = scopeLines.reduce((sum, item) => sum + item.completedQuantityScaled, 0);
+  if (!completedQuantityScaled) { message.warning('至少填写一条实施完成量'); return; }
+  const materialUsages = task.materials.flatMap((material) => {
+    const quantity = parseScaled(implementationMaterialUsages.value[material.id] ?? '');
+    return quantity !== null && quantity >= 0 && (implementationMaterialUsages.value[material.id] ?? '').trim()
+      ? [{ taskMaterialRequirementId: material.id, quantityScaled: quantity }]
+      : [];
+  });
   saving.value = true;
   try {
-    await apiRequest('/api/implementations', writeInit('POST', {
-      historical: false,
-      projectId,
-      expectedProjectVersion: life.projectVersion,
+    await apiRequest('/api/task-implementations', writeInit('POST', {
+      taskId: task.id,
+      expectedImplementationVersion: task.implementationVersion,
       recordDate: implementationDate.value,
-      personnel: implementationPersonnel.value.trim() || null,
+      completedQuantityScaled,
+      scopeLines,
+      materialUsages,
       note: implementationNote.value.trim() || null,
-      lines: [{
-        releaseLineId,
-        description: null,
-        unit: releaseLines.value.find((line) => line.id === releaseLineId)?.snapshot.unit ?? null,
-        completedQuantityScaled,
-        actualUsedQuantityScaled: completedQuantityScaled,
-      }],
     }));
-    implementationQuantity.value = '';
     implementationNote.value = '';
-    await refreshProject();
-    message.success('实施记录已保存');
+    await loadProjectContext();
+    message.success('实施事实已保存，结算提醒已同步更新');
   } catch (cause) { message.error(cause instanceof Error ? cause.message : '实施记录保存失败'); }
   finally { saving.value = false; }
 }
 
-async function createHistoricalImplementation() {
-  const quantity = parseDecimalScaled(historicalQuantity.value);
-  if (!historicalDescription.value.trim() || quantity === null || quantity <= 0) {
-    message.warning('请填写历史实施描述和有效数量'); return;
-  }
-  saving.value = true;
-  try {
-    await apiRequest('/api/implementations', writeInit('POST', {
-      historical: true,
-      projectId: null,
-      expectedProjectVersion: null,
-      recordDate: historicalDate.value,
-      personnel: implementationPersonnel.value.trim() || null,
-      note: '历史补录',
-      lines: [{ releaseLineId: null, description: historicalDescription.value.trim(), unit: historicalUnit.value.trim() || null, completedQuantityScaled: quantity, actualUsedQuantityScaled: quantity }],
-    }));
-    historicalDescription.value = '';
-    historicalQuantity.value = '';
-    await loadUnlinkedHistorical();
-    message.success('历史实施已补录，未自动生成出库记录');
-  } catch (cause) { message.error(cause instanceof Error ? cause.message : '历史实施补录失败'); }
-  finally { saving.value = false; }
-}
-
-async function linkHistorical(record: ImplementationRecordSummary) {
-  const projectId = selectedProjectId.value;
-  const life = lifecycle.value;
-  if (!projectId || !life) return;
-  const links = record.lines.map((line) => ({ implementationLineId: line.id, demandMaterialId: historicalLinkTargets.value[line.id] ?? '' }));
-  if (links.some((item) => !item.demandMaterialId)) { message.warning('请为全部历史实施明细选择项目需求物资'); return; }
-  saving.value = true;
-  try {
-    await apiRequest(`/api/implementations/${encodeURIComponent(record.id)}/link`, writeInit('PUT', {
-      expectedVersion: record.version,
-      projectId,
-      expectedProjectVersion: life.projectVersion,
-      links,
-    }));
-    await refreshProject();
-    message.success('历史实施已关联，不会补造出库记录');
-  } catch (cause) { message.error(cause instanceof Error ? cause.message : '历史实施关联失败'); }
-  finally { saving.value = false; }
-}
-
 async function createSettlement() {
-  const projectId = selectedProjectId.value;
-  const life = lifecycle.value;
+  const task = selectedTask.value;
   const amountFen = parseMoneyFen(settlementAmount.value);
-  if (!projectId || !life || amountFen === null) { message.warning('请填写有效结算金额'); return; }
-  const coverage = life.lines.flatMap((line) => {
-    const quantityScaled = parseDecimalScaled(settlementQuantities.value[line.demandMaterialId] ?? '');
-    return quantityScaled !== null && quantityScaled > 0 ? [{ demandMaterialId: line.demandMaterialId, quantityScaled }] : [];
+  if (!task || amountFen === null) { message.warning('请填写有效结算金额'); return; }
+  const coverage = task.demandScopes.flatMap((scope) => {
+    const quantity = parseScaled(settlementCoverage.value[scope.id] ?? '');
+    return quantity !== null && quantity > 0 ? [{ taskDemandScopeId: scope.id, quantityScaled: quantity }] : [];
   });
-  if (!coverage.length) { message.warning('至少填写一条结算覆盖数量'); return; }
+  const coverageQuantityScaled = coverage.reduce((sum, item) => sum + item.quantityScaled, 0);
+  if (!coverageQuantityScaled) { message.warning('至少填写一条结算覆盖量'); return; }
   saving.value = true;
   try {
-    await apiRequest('/api/settlements', writeInit('POST', {
-      projectId,
-      expectedProjectVersion: life.projectVersion,
+    await apiRequest('/api/task-settlements', writeInit('POST', {
+      taskId: task.id,
+      expectedSettlementVersion: task.settlementVersion,
       settlementDate: settlementDate.value,
+      coverageQuantityScaled,
       amountFen,
       final: settlementFinal.value,
       note: settlementNote.value.trim() || null,
@@ -370,24 +360,9 @@ async function createSettlement() {
     settlementAmount.value = '';
     settlementNote.value = '';
     settlementFinal.value = false;
-    await refreshProject();
-    message.success('结算记录已保存');
+    await loadProjectContext();
+    message.success('结算事实已保存；它与实施进度独立推进');
   } catch (cause) { message.error(cause instanceof Error ? cause.message : '结算保存失败'); }
-  finally { saving.value = false; }
-}
-
-async function voidSettlement(settlement: SettlementSummary) {
-  if (!lifecycle.value) return;
-  saving.value = true;
-  try {
-    await apiRequest(`/api/settlements/${encodeURIComponent(settlement.id)}/void`, writeInit('POST', {
-      expectedVersion: settlement.version,
-      expectedProjectVersion: lifecycle.value.projectVersion,
-      reason: '人工撤销',
-    }));
-    await refreshProject();
-    message.success('结算已撤销，状态和待办已重新计算');
-  } catch (cause) { message.error(cause instanceof Error ? cause.message : '撤销结算失败'); }
   finally { saving.value = false; }
 }
 
@@ -409,42 +384,20 @@ async function uploadAttachment() {
     const result = await parseApiResponse<AttachmentSummary>(response);
     if (!response.ok || !result.ok) throw new Error(result.ok ? `HTTP ${response.status}` : result.error.message);
     attachmentFile.value = null;
-    const data = await apiRequest<{ items: AttachmentSummary[] }>(`/api/attachments?objectType=project&objectId=${encodeURIComponent(projectId)}`);
-    attachments.value = data.items;
+    attachments.value = (await apiRequest<{ items: AttachmentSummary[] }>(`/api/attachments?objectType=project&objectId=${encodeURIComponent(projectId)}`)).items;
     message.success('附件已上传');
   } catch (cause) { message.error(cause instanceof Error ? cause.message : '附件上传失败'); }
   finally { saving.value = false; }
 }
 
-const lifecycleColumns = [
-  { title: '线路/杆段', key: 'line', render: (row: ProjectLifecycleSummary['lines'][number]) => `${row.lineName} ${row.section}` },
-  { title: '物资', key: 'rawModel', render: (row: ProjectLifecycleSummary['lines'][number]) => `${row.rawModel} / ${row.unit ?? ''}` },
-  { title: '项目量', key: 'allocatedQuantityScaled', render: (row: ProjectLifecycleSummary['lines'][number]) => formatScaled(row.allocatedQuantityScaled) },
-  { title: '已出库', key: 'releasedQuantityScaled', render: (row: ProjectLifecycleSummary['lines'][number]) => formatScaled(row.releasedQuantityScaled) },
-  { title: '已实施', key: 'implementedQuantityScaled', render: (row: ProjectLifecycleSummary['lines'][number]) => `${formatScaled(row.implementedQuantityScaled)} / ${formatScaled(row.allocatedQuantityScaled)}` },
-  { title: '已结算', key: 'settledQuantityScaled', render: (row: ProjectLifecycleSummary['lines'][number]) => `${formatScaled(row.settledQuantityScaled)} / ${formatScaled(row.allocatedQuantityScaled)}` },
-  { title: '状态', key: 'state', render: (row: ProjectLifecycleSummary['lines'][number]) => h(NTag, { size: 'small', bordered: false, type: stateTagType(row.state) }, { default: () => stateLabels[row.state] }) },
+const taskColumns = [
+  { title: '任务', key: 'name', minWidth: 170 },
+  { title: '计划量', key: 'plannedQuantityScaled', render: (row: ProjectTaskExecutionSummary) => `${formatScaled(row.plannedQuantityScaled)} ${row.unit}` },
+  { title: '已实施', key: 'implementedQuantityScaled', render: (row: ProjectTaskExecutionSummary) => formatScaled(row.implementedQuantityScaled) },
+  { title: '已结算', key: 'settledQuantityScaled', render: (row: ProjectTaskExecutionSummary) => formatScaled(row.settledQuantityScaled) },
+  { title: '状态', key: 'state', render: (row: ProjectTaskExecutionSummary) => h(NTag, { size: 'small', bordered: false, type: stateTagType(row.state) }, { default: () => stateLabels[row.state] }) },
+  { title: '操作', key: 'action', render: (row: ProjectTaskExecutionSummary) => h(NButton, { size: 'small', onClick: () => selectTask(row.id) }, { default: () => '进入任务' }) },
 ];
-
-const releaseColumns = [
-  { title: '日期', key: 'releaseDate' },
-  { title: '范围', key: 'range', render: (row: ReleaseBatchSummary) => row.lines.map((line) => `${line.snapshot.lineName} ${formatScaled(line.quantityScaled)}${line.snapshot.unit ?? ''}`).join('；') },
-  { title: '快照版本', key: 'snapshot', render: (row: ReleaseBatchSummary) => `项目 v${row.projectVersionSnapshot} / 储备 v${row.reserveVersionSnapshot}` },
-];
-
-const implementationColumns = [
-  { title: '日期', key: 'recordDate' },
-  { title: '类型', key: 'historical', render: (row: ImplementationRecordSummary) => row.historical ? '历史补录' : '正常实施' },
-  { title: '人员', key: 'personnel', render: (row: ImplementationRecordSummary) => row.personnel ?? '—' },
-  { title: '完成量', key: 'quantity', render: (row: ImplementationRecordSummary) => row.lines.map((line) => formatScaled(line.completedQuantityScaled)).join(' + ') },
-];
-
-const settlementColumns = computed(() => [
-  { title: '日期', key: 'settlementDate' },
-  { title: '金额', key: 'amountFen', render: (row: SettlementSummary) => formatMoneyFen(row.amountFen) },
-  { title: '状态', key: 'status', render: (row: SettlementSummary) => row.voidedAt ? '已撤销' : row.final ? '最终结算' : '部分结算' },
-  ...(canSettle.value ? [{ title: '操作', key: 'actions', render: (row: SettlementSummary) => row.voidedAt ? null : h(NButton, { size: 'small', quaternary: true, onClick: () => voidSettlement(row) }, { default: () => '撤销' }) }] : []),
-]);
 
 onMounted(loadInitial);
 </script>
@@ -452,121 +405,138 @@ onMounted(loadInitial);
 <template>
   <div class="view-stack delivery-view">
     <n-alert v-if="error" type="error" title="读取失败">{{ error }}</n-alert>
-    <n-card title="项目实施结算工作台">
+    <n-card title="项目执行工作台">
       <n-form label-placement="top" class="project-selector">
-        <n-form-item label="项目">
-          <n-select :value="selectedProjectId" :options="projectOptions" @update:value="selectProject" />
-        </n-form-item>
+        <n-form-item label="项目"><n-select :value="selectedProjectId" :options="projectOptions" @update:value="selectProject" /></n-form-item>
       </n-form>
-      <n-alert type="info" :bordered="false">
-        项目出库是“从储备进入实施范围”，不是仓库物资出库。实施与结算独立记录，允许先结算后实施；部分完成不会自动变成全部完成。
-      </n-alert>
+      <n-alert type="info" :bordered="false">这里的“出库”是项目级业务状态转换，不是仓库发货。项目只出库一次；出库后可拆成多个执行任务，每个任务的物资供应、现场实施、结算三条线独立推进。</n-alert>
     </n-card>
 
     <n-spin :show="loading">
-      <template v-if="lifecycle">
-        <n-card title="当前状态">
-          <template #header-extra>
-            <n-tag :type="stateTagType(lifecycle.projectState)" :bordered="false">{{ stateLabels[lifecycle.projectState] }}</n-tag>
-          </template>
+      <template v-if="project && execution">
+        <n-card title="项目总览">
+          <template #header-extra><n-tag :type="stateTagType(execution.projectState)" :bordered="false">{{ stateLabels[execution.projectState] }}</n-tag></template>
           <div class="status-grid">
-            <div><span>项目版本</span><strong>v{{ lifecycle.projectVersion }}</strong></div>
-            <div><span>实施</span><strong>{{ lifecycle.implementationComplete ? '全部完成' : '未全部完成' }}</strong></div>
-            <div><span>结算</span><strong>{{ lifecycle.settlementComplete ? '全部覆盖' : '未全部覆盖' }}</strong></div>
-            <div><span>结算待办</span><strong>{{ lifecycle.settlementTodo.needed ? `${lifecycle.settlementTodo.dueDate} 前完成` : '无' }}</strong></div>
+            <div><span>项目版本</span><strong>v{{ execution.projectVersion }}</strong></div>
+            <div><span>项目级出库</span><strong>{{ execution.released ? '已完成' : '未完成' }}</strong></div>
+            <div><span>执行任务</span><strong>{{ execution.tasks.length }}</strong></div>
+            <div><span>来源需求</span><strong>{{ execution.demands.length }}</strong></div>
           </div>
-          <n-data-table :columns="lifecycleColumns" :data="lifecycle.lines" :pagination="false" :scroll-x="980" />
+          <div v-if="execution.demands.length" class="demand-feedback">
+            <div v-for="item in execution.demands" :key="item.demandId" class="feedback-row">
+              <span>{{ item.sequenceNo }} · {{ item.lineName }} {{ item.section }}</span>
+              <span>实施 {{ formatScaled(item.implementedQuantityScaled) }}/{{ formatScaled(item.plannedQuantityScaled) }}</span>
+              <span>结算 {{ formatScaled(item.settledQuantityScaled) }}/{{ formatScaled(item.plannedQuantityScaled) }}</span>
+              <n-tag :type="stateTagType(item.state)" size="small" :bordered="false">{{ stateLabels[item.state] }}</n-tag>
+            </div>
+          </div>
         </n-card>
 
         <n-tabs type="line" animated>
-          <n-tab-pane name="release" tab="项目出库">
-            <n-card v-if="canRelease" title="新增出库批次">
-              <n-alert type="info" :bordered="false">出库后会保存当前项目范围快照。后续储备调整不能把已出库/已实施/有效结算的范围缩小。</n-alert>
-              <n-form label-placement="top">
+          <n-tab-pane name="release" tab="项目级出库">
+            <n-card title="项目级出库">
+              <n-alert type="warning" :bordered="false" class="section-note">必须先确认储备版本。出库会固化当前项目需求来源和项目物资快照；它不填写物资数量行，也不代表供应商已发货。</n-alert>
+              <n-form v-if="canRelease && !execution.released" label-placement="top">
                 <n-form-item label="出库日期"><n-input v-model:value="releaseDate" /></n-form-item>
-                <div v-for="line in lifecycle.lines" :key="line.demandMaterialId" class="line-input-row">
-                  <span>{{ line.lineName }} {{ line.section }} · 尚未出库 {{ formatScaled(Math.max(0, line.allocatedQuantityScaled - line.releasedQuantityScaled)) }} {{ line.unit ?? '' }}</span>
-                  <n-input :value="releaseQuantities[line.demandMaterialId] ?? ''" :data-test="`release-quantity-${line.demandMaterialId}`" placeholder="本批数量" @update:value="(value: string) => { releaseQuantities[line.demandMaterialId] = value; }" />
-                </div>
                 <n-form-item label="备注"><n-input v-model:value="releaseNote" /></n-form-item>
-                <n-button data-test="create-release" type="primary" :loading="saving" @click="createRelease">确认出库范围</n-button>
+                <n-button data-test="create-project-release" type="primary" :loading="saving" @click="createProjectRelease">项目整体出库</n-button>
               </n-form>
-            </n-card>
-            <n-card title="出库历史">
-              <n-data-table v-if="releases.length" :columns="releaseColumns" :data="releases" :pagination="false" :scroll-x="760" />
-              <n-empty v-else description="暂无出库记录" />
-            </n-card>
-          </n-tab-pane>
-
-          <n-tab-pane name="implementation" tab="实施记录">
-            <n-card v-if="canImplement" title="正常实施">
-              <n-alert type="info" :bordered="false">正常实施只能使用已经出库的范围，并按出库明细累计完成量。</n-alert>
-              <n-form label-placement="top">
-                <n-form-item label="实施日期"><n-input v-model:value="implementationDate" /></n-form-item>
-                <n-form-item label="出库范围"><n-select data-test="implementation-release-line" v-model:value="implementationReleaseLineId" :options="releaseLineOptions" /></n-form-item>
-                <n-form-item label="完成数量"><n-input data-test="implementation-quantity" v-model:value="implementationQuantity" /></n-form-item>
-                <n-form-item label="人员"><n-input v-model:value="implementationPersonnel" /></n-form-item>
-                <n-form-item label="备注"><n-input v-model:value="implementationNote" /></n-form-item>
-                <n-button data-test="create-implementation" type="primary" :loading="saving" @click="createImplementation">保存实施记录</n-button>
-              </n-form>
-            </n-card>
-            <n-card v-if="canImplement" title="历史实施补录" class="detail-card">
-              <n-alert type="warning" :bordered="false">历史实施可以先补录为待关联记录；系统不会因此补造出库。后续人工关联项目需求物资后才计入项目实施量。</n-alert>
-              <n-form label-placement="top">
-                <n-form-item label="历史日期"><n-input v-model:value="historicalDate" /></n-form-item>
-                <n-form-item label="描述"><n-input v-model:value="historicalDescription" /></n-form-item>
-                <n-form-item label="单位"><n-input v-model:value="historicalUnit" /></n-form-item>
-                <n-form-item label="完成数量"><n-input v-model:value="historicalQuantity" /></n-form-item>
-                <n-button type="primary" :loading="saving" @click="createHistoricalImplementation">补录历史实施</n-button>
-              </n-form>
-              <div v-if="unlinkedHistorical.length" class="historical-list">
-                <div v-for="record in unlinkedHistorical" :key="record.id" class="historical-card">
-                  <strong>{{ record.recordDate }} · {{ record.personnel ?? '未填人员' }}</strong>
-                  <div v-for="line in record.lines" :key="line.id" class="line-input-row">
-                    <span>{{ line.description }} · {{ formatScaled(line.completedQuantityScaled) }} {{ line.unit ?? '' }}</span>
-                    <n-select :value="historicalLinkTargets[line.id] ?? null" :options="demandMaterialOptions" @update:value="(value: string | null) => { historicalLinkTargets[line.id] = value; }" />
-                  </div>
-                  <n-button size="small" :loading="saving" @click="linkHistorical(record)">关联到当前项目</n-button>
-                </div>
+              <n-alert v-else-if="execution.released" type="success" :bordered="false">该项目已完成项目级出库，可建立多个执行任务。</n-alert>
+              <div v-for="item in releases" :key="item.id" class="snapshot-row">
+                <strong>{{ item.releaseDate }}</strong><span>项目 v{{ item.projectVersionSnapshot }} / 储备 v{{ item.reserveVersionSnapshot }}</span><span>{{ item.snapshot.materialRequirements.length }} 条项目物资快照</span>
               </div>
             </n-card>
-            <n-card title="实施历史" class="detail-card">
-              <n-data-table v-if="implementations.length" :columns="implementationColumns" :data="implementations" :pagination="false" />
-              <n-empty v-else description="暂无实施记录" />
+          </n-tab-pane>
+
+          <n-tab-pane name="tasks" tab="执行任务">
+            <n-card title="任务列表">
+              <n-data-table v-if="execution.tasks.length" :columns="taskColumns" :data="execution.tasks" :pagination="false" :scroll-x="800" />
+              <n-empty v-else description="项目出库后可建立第一条执行任务" />
+            </n-card>
+            <n-card v-if="canImplement && execution.released" title="新增执行任务" class="detail-card">
+              <n-alert type="info" :bordered="false" class="section-note">一个项目可以拆成多个任务。需求范围决定任务实施/结算如何回投到原始需求；任务物资来自项目物资，不等同于需求物资。</n-alert>
+              <n-form label-placement="top" class="task-form">
+                <n-form-item label="任务名称"><n-input data-test="task-name" v-model:value="taskForm.name" /></n-form-item>
+                <n-form-item label="现场范围"><n-input v-model:value="taskForm.scopeText" /></n-form-item>
+                <n-form-item label="负责人"><n-input v-model:value="taskForm.owner" /></n-form-item>
+                <n-form-item label="计划日期"><n-input v-model:value="taskForm.plannedDate" /></n-form-item>
+                <n-form-item label="任务计划量"><n-input data-test="task-planned-quantity" v-model:value="taskForm.plannedQuantity" /></n-form-item>
+                <n-form-item label="任务单位"><n-input v-model:value="taskForm.unit" /></n-form-item>
+              </n-form>
+              <strong>任务覆盖的需求范围</strong>
+              <div v-for="link in project.demandLinks" :key="link.id" class="line-input-row"><span>{{ link.sequenceNo }} · {{ link.lineName }} {{ link.section }}</span><n-input :data-test="`task-demand-${link.demandId}`" :value="taskDemandQuantities[link.demandId] ?? ''" placeholder="本任务覆盖量" @update:value="(value: string) => { taskDemandQuantities[link.demandId] = value; }" /></div>
+              <strong>任务所需项目物资</strong>
+              <div v-for="material in project.materialRequirements" :key="material.id" class="line-input-row"><span>{{ material.model }} · 项目当前 {{ formatScaled(material.requiredQuantityScaled) }} {{ material.unit }}</span><n-input :data-test="`task-material-${material.id}`" :value="taskMaterialQuantities[material.id] ?? ''" placeholder="本任务物资量，可空" @update:value="(value: string) => { taskMaterialQuantities[material.id] = value; }" /></div>
+              <n-button data-test="create-task" type="primary" :loading="saving" @click="createTask">创建执行任务</n-button>
             </n-card>
           </n-tab-pane>
 
-          <n-tab-pane name="settlement" tab="结算">
-            <n-card v-if="canSettle" title="新增结算">
-              <n-alert type="info" :bordered="false">结算可先于实施发生；这里记录结算事实和覆盖范围，不自动生成“实际费用”资金流水。</n-alert>
-              <n-form label-placement="top">
-                <n-form-item label="结算日期"><n-input v-model:value="settlementDate" /></n-form-item>
-                <n-form-item label="结算金额（元）"><n-input data-test="settlement-amount" v-model:value="settlementAmount" /></n-form-item>
-                <div v-for="line in lifecycle.lines" :key="line.demandMaterialId" class="line-input-row">
-                  <span>{{ line.lineName }} {{ line.section }} · 尚未结算 {{ formatScaled(Math.max(0, line.allocatedQuantityScaled - line.settledQuantityScaled)) }} {{ line.unit ?? '' }}</span>
-                  <n-input :value="settlementQuantities[line.demandMaterialId] ?? ''" :data-test="`settlement-quantity-${line.demandMaterialId}`" placeholder="本次覆盖数量" @update:value="(value: string) => { settlementQuantities[line.demandMaterialId] = value; }" />
+          <n-tab-pane name="parallel" tab="任务三线并行">
+            <n-card title="选择执行任务">
+              <n-select data-test="task-select" :value="selectedTaskId" :options="taskOptions" placeholder="选择任务" @update:value="selectTask" />
+            </n-card>
+            <template v-if="selectedTask">
+              <n-card title="任务状态" class="detail-card">
+                <template #header-extra><n-tag :type="stateTagType(selectedTask.state)" :bordered="false">{{ stateLabels[selectedTask.state] }}</n-tag></template>
+                <div class="status-grid">
+                  <div><span>计划量</span><strong>{{ formatScaled(selectedTask.plannedQuantityScaled) }} {{ selectedTask.unit }}</strong></div>
+                  <div><span>已实施</span><strong>{{ formatScaled(selectedTask.implementedQuantityScaled) }}</strong></div>
+                  <div><span>已结算</span><strong>{{ formatScaled(selectedTask.settledQuantityScaled) }}</strong></div>
+                  <div><span>结算提醒</span><strong>{{ selectedTask.settlementReminder.needed ? `${selectedTask.settlementReminder.dueDate} 前` : '无' }}</strong></div>
                 </div>
-                <n-form-item><n-checkbox v-model:checked="settlementFinal">最终结算（必须覆盖项目全部范围）</n-checkbox></n-form-item>
-                <n-form-item label="备注"><n-input v-model:value="settlementNote" /></n-form-item>
-                <n-button data-test="create-settlement" type="primary" :loading="saving" @click="createSettlement">保存结算</n-button>
-              </n-form>
-            </n-card>
-            <n-card title="结算历史" class="detail-card">
-              <n-data-table v-if="settlements.length" :columns="settlementColumns" :data="settlements" :pagination="false" />
-              <n-empty v-else description="暂无结算记录" />
-            </n-card>
+              </n-card>
+
+              <div class="parallel-grid">
+                <n-card title="A. 物资供应">
+                  <n-alert type="info" :bordered="false" class="section-note">累计必须满足：已到货 ≤ 已发货 ≤ 已上报 ≤ 任务物资需求。</n-alert>
+                  <div v-for="item in selectedTask.supplyTotals" :key="item.taskMaterialRequirementId" class="supply-row">
+                    <strong>{{ item.model }}</strong>
+                    <span>上报 {{ formatScaled(item.totals.reportedQuantityScaled) }} / 发货 {{ formatScaled(item.totals.shippedQuantityScaled) }} / 到货 {{ formatScaled(item.totals.arrivedQuantityScaled) }} {{ item.unit }}</span>
+                  </div>
+                  <n-form v-if="canImplement && selectedTask.materials.length" label-placement="top">
+                    <n-form-item label="任务物资"><n-select data-test="supply-material" v-model:value="supplyForm.taskMaterialId" :options="taskMaterialOptions" /></n-form-item>
+                    <n-form-item label="阶段"><n-select data-test="supply-stage" v-model:value="supplyForm.stage" :options="supplyStageOptions" /></n-form-item>
+                    <n-form-item label="数量"><n-input data-test="supply-quantity" v-model:value="supplyForm.quantity" /></n-form-item>
+                    <n-form-item label="日期"><n-input v-model:value="supplyForm.eventDate" /></n-form-item>
+                    <n-form-item label="备注"><n-input v-model:value="supplyForm.note" /></n-form-item>
+                    <n-button data-test="create-supply-event" type="primary" :loading="saving" @click="addSupplyEvent">登记供应进度</n-button>
+                  </n-form>
+                  <n-empty v-else-if="!selectedTask.materials.length" description="该任务未配置物资，可仅推进实施和结算。" />
+                </n-card>
+
+                <n-card title="B. 现场实施">
+                  <n-alert type="info" :bordered="false" class="section-note">实施不等待结算；首次实施后自动产生结算提醒。</n-alert>
+                  <n-form v-if="canImplement" label-placement="top">
+                    <n-form-item label="实施日期"><n-input v-model:value="implementationDate" /></n-form-item>
+                    <div v-for="scope in selectedTask.demandScopes" :key="scope.id" class="line-input-row"><span>{{ scope.demand?.lineName }} {{ scope.demand?.section }} · 任务范围 {{ formatScaled(scope.plannedQuantityScaled) }}</span><n-input :data-test="`implementation-scope-${scope.id}`" :value="implementationScopeQuantities[scope.id] ?? ''" placeholder="本次完成量" @update:value="(value: string) => { implementationScopeQuantities[scope.id] = value; }" /></div>
+                    <strong v-if="selectedTask.materials.length">实际物资使用（可空）</strong>
+                    <div v-for="material in selectedTask.materials" :key="material.id" class="line-input-row"><span>{{ material.model }} / {{ material.unit }}</span><n-input :value="implementationMaterialUsages[material.id] ?? ''" placeholder="本次实际使用量" @update:value="(value: string) => { implementationMaterialUsages[material.id] = value; }" /></div>
+                    <n-form-item label="备注"><n-input v-model:value="implementationNote" /></n-form-item>
+                    <n-button data-test="create-task-implementation" type="primary" :loading="saving" @click="createImplementation">保存实施事实</n-button>
+                  </n-form>
+                </n-card>
+
+                <n-card title="C. 任务结算">
+                  <n-alert type="info" :bordered="false" class="section-note">结算与实施独立，允许先结算后实施。最终结算必须覆盖任务全部需求范围。</n-alert>
+                  <n-form v-if="canSettle" label-placement="top">
+                    <n-form-item label="结算日期"><n-input v-model:value="settlementDate" /></n-form-item>
+                    <n-form-item label="结算金额（元）"><n-input data-test="task-settlement-amount" v-model:value="settlementAmount" /></n-form-item>
+                    <div v-for="scope in selectedTask.demandScopes" :key="scope.id" class="line-input-row"><span>{{ scope.demand?.lineName }} {{ scope.demand?.section }} · 任务范围 {{ formatScaled(scope.plannedQuantityScaled) }}</span><n-input :data-test="`task-settlement-scope-${scope.id}`" :value="settlementCoverage[scope.id] ?? ''" placeholder="本次结算覆盖量" @update:value="(value: string) => { settlementCoverage[scope.id] = value; }" /></div>
+                    <n-form-item><n-checkbox v-model:checked="settlementFinal">最终结算</n-checkbox></n-form-item>
+                    <n-form-item label="备注"><n-input v-model:value="settlementNote" /></n-form-item>
+                    <n-button data-test="create-task-settlement" type="primary" :loading="saving" @click="createSettlement">保存结算事实</n-button>
+                  </n-form>
+                </n-card>
+              </div>
+            </template>
+            <n-empty v-else description="先创建并选择一个执行任务" />
           </n-tab-pane>
 
           <n-tab-pane name="attachments" tab="附件">
             <n-card title="项目私有附件">
-              <n-alert type="info" :bordered="false">附件保存在私有 R2，对下载请求再次校验项目授权，不生成公开永久链接。</n-alert>
-              <div v-if="canUpload" class="attachment-upload">
-                <input type="file" @change="attachmentChanged" />
-                <n-button :loading="saving" @click="uploadAttachment">上传附件</n-button>
-              </div>
-              <div v-if="attachments.length" class="attachment-list">
-                <a v-for="item in attachments" :key="item.id" :href="`/api/attachments/${item.id}/content`">{{ item.fileName }}</a>
-              </div>
+              <n-alert type="info" :bordered="false">附件保存在私有 R2；下载仍按项目权限校验。</n-alert>
+              <div v-if="canUpload" class="attachment-upload"><input type="file" @change="attachmentChanged" /><n-button :loading="saving" @click="uploadAttachment">上传附件</n-button></div>
+              <div v-if="attachments.length" class="attachment-list"><a v-for="item in attachments" :key="item.id" :href="`/api/attachments/${item.id}/content`">{{ item.fileName }}</a></div>
               <n-empty v-else description="暂无附件" />
             </n-card>
           </n-tab-pane>
@@ -579,22 +549,21 @@ onMounted(loadInitial);
 
 <style scoped>
 .delivery-view { gap: 16px; }
-.project-selector { max-width: 520px; }
-.status-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
+.project-selector { max-width: 560px; }
+.section-note { margin-bottom: 12px; }
+.detail-card { margin-top: 14px; }
+.status-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 14px; }
 .status-grid > div { display: grid; gap: 4px; padding: 12px; border: 1px solid #e5e9f0; border-radius: 9px; }
 .status-grid span { color: #6f7b8c; font-size: 12px; }
-.line-input-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(180px, 280px); gap: 12px; align-items: center; margin-bottom: 10px; }
-.detail-card { margin-top: 14px; }
-.historical-list { display: grid; gap: 12px; margin-top: 14px; }
-.historical-card { display: grid; gap: 10px; padding: 12px; border: 1px solid #e5e9f0; border-radius: 9px; }
+.demand-feedback { display: grid; gap: 8px; }
+.feedback-row { display: grid; grid-template-columns: minmax(220px, 1.5fr) 1fr 1fr auto; gap: 12px; align-items: center; padding: 9px 0; border-bottom: 1px solid #eef1f5; }
+.snapshot-row, .supply-row { display: flex; gap: 16px; align-items: center; padding: 9px 0; border-bottom: 1px solid #eef1f5; }
+.task-form { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.line-input-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(170px, 260px); gap: 12px; align-items: center; margin: 8px 0; }
+.parallel-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-top: 14px; align-items: start; }
 .attachment-upload { display: flex; gap: 12px; align-items: center; margin: 14px 0; }
 .attachment-list { display: grid; gap: 8px; margin-top: 12px; }
-@media (max-width: 900px) {
-  .status-grid { grid-template-columns: 1fr 1fr; }
-}
-@media (max-width: 640px) {
-  .status-grid { grid-template-columns: 1fr; }
-  .line-input-row { grid-template-columns: 1fr; }
-  .attachment-upload { align-items: stretch; flex-direction: column; }
-}
+@media (max-width: 1180px) { .parallel-grid { grid-template-columns: 1fr; } }
+@media (max-width: 900px) { .status-grid, .task-form { grid-template-columns: 1fr 1fr; } .feedback-row { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 640px) { .status-grid, .task-form, .feedback-row, .line-input-row { grid-template-columns: 1fr; } .attachment-upload { align-items: stretch; flex-direction: column; } }
 </style>

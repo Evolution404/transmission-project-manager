@@ -23,10 +23,10 @@ import type {
   ApiResponse,
   CategoryMappingSummary,
   CurrentUser,
-  ProjectDetail,
-  ProjectSummary,
-  ReserveCandidate,
+  DemandSummary,
+  ProjectMaterialRequirementSummary,
   ReserveCategorySummary,
+  ReserveProjectSummary,
 } from '@tpm/shared';
 
 const props = defineProps<{ currentUser: CurrentUser }>();
@@ -35,30 +35,31 @@ const canWrite = computed(() => props.currentUser.role === 'admin' || props.curr
 
 const loading = ref(true);
 const error = ref('');
-const projects = ref<ProjectSummary[]>([]);
-const projectCursor = ref<string | null>(null);
-const candidates = ref<ReserveCandidate[]>([]);
-const candidateCursor = ref<string | null>(null);
-const suggestions = ref<Array<{ year: number | null; category: string | null; voltage: string; lineName: string; itemCount: number }>>([]);
+const projects = ref<ReserveProjectSummary[]>([]);
+const demands = ref<DemandSummary[]>([]);
 const reserveCategories = ref<ReserveCategorySummary[]>([]);
 const categoryMappings = ref<CategoryMappingSummary[]>([]);
-const selectedProject = ref<ProjectDetail | null>(null);
-
-const selectedCandidates = ref<Record<string, boolean>>({});
-const allocationQuantities = ref<Record<string, string>>({});
+const selectedProject = ref<ReserveProjectSummary | null>(null);
+const selectedCreateDemands = ref<Record<string, boolean>>({});
+const selectedProjectDemands = ref<Record<string, boolean>>({});
 const projectName = ref('');
 const projectYear = ref('');
 const projectOwner = ref('');
 const creatingProject = ref(false);
-
-const materialPriceDraft = ref<Record<string, string>>({});
-const constructionCost = ref('');
-const otherCost = ref('');
-const savingCosts = ref(false);
-const categoryDrafts = ref<Record<string, Array<{ categoryId: string | null; amountYuan: string }>>>({});
-const savingCategories = ref(false);
-const confirmationReason = ref('');
+const savingDemandLinks = ref(false);
+const savingMaterials = ref(false);
 const confirming = ref(false);
+const materialRevisionReason = ref('');
+const confirmationReason = ref('');
+const materialDrafts = ref<Array<{
+  id: string | null;
+  materialId: string | null;
+  model: string;
+  unit: string;
+  quantity: string;
+  unitPrice: string;
+  reserveCategoryId: string | null;
+}>>([]);
 
 const newCategoryKey = ref('');
 const newCategoryLabel = ref('');
@@ -81,18 +82,16 @@ function writeInit(method: 'POST' | 'PUT', body: unknown): RequestInit {
   };
 }
 
-function parseDecimalScaled(value: string, digits: number): number | null {
+function parseScaled(value: string, digits: number): number | null {
   const raw = value.trim();
   const match = raw.match(/^(\d+)(?:\.(\d+))?$/);
   if (!match || (match[2]?.length ?? 0) > digits) return null;
   const scale = 10n ** BigInt(digits);
-  const integer = BigInt(match[1]!);
-  const fraction = BigInt((match[2] ?? '').padEnd(digits, '0') || '0');
-  const scaled = integer * scale + fraction;
+  const scaled = BigInt(match[1]!) * scale + BigInt((match[2] ?? '').padEnd(digits, '0') || '0');
   return scaled <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(scaled) : null;
 }
 
-function formatScaled(value: number, digits: number) {
+function formatScaled(value: number, digits = 4) {
   const scale = 10 ** digits;
   const whole = Math.floor(value / scale);
   const fraction = String(value % scale).padStart(digits, '0').replace(/0+$/, '');
@@ -107,32 +106,18 @@ function formatCompleteness(value: number) {
   return `${(value / 100).toFixed(2)}%`;
 }
 
-async function loadProjects(reset = true) {
-  const url = reset || !projectCursor.value
-    ? '/api/projects?limit=50'
-    : `/api/projects?limit=50&cursor=${encodeURIComponent(projectCursor.value)}`;
-  const data = await apiRequest<{ items: ProjectSummary[]; nextCursor: string | null }>(url);
-  projects.value = reset ? data.items : [...projects.value, ...data.items];
-  projectCursor.value = data.nextCursor;
+const categoryOptions = computed(() => reserveCategories.value
+  .filter((item) => item.enabled)
+  .map((item) => ({ label: item.label, value: item.id })));
+
+async function loadProjects() {
+  const data = await apiRequest<{ items: ReserveProjectSummary[]; nextCursor: string | null }>('/api/reserve-projects?limit=100');
+  projects.value = data.items;
 }
 
-async function loadCandidates(reset = true) {
-  const url = reset || !candidateCursor.value
-    ? '/api/projects/candidates?limit=100'
-    : `/api/projects/candidates?limit=100&cursor=${encodeURIComponent(candidateCursor.value)}`;
-  if (reset) {
-    const [candidateData, suggestionData] = await Promise.all([
-      apiRequest<{ items: ReserveCandidate[]; nextCursor: string | null }>(url),
-      apiRequest<{ items: typeof suggestions.value }>('/api/projects/suggestions?limit=100'),
-    ]);
-    candidates.value = candidateData.items;
-    candidateCursor.value = candidateData.nextCursor;
-    suggestions.value = suggestionData.items;
-    return;
-  }
-  const candidateData = await apiRequest<{ items: ReserveCandidate[]; nextCursor: string | null }>(url);
-  candidates.value = [...candidates.value, ...candidateData.items];
-  candidateCursor.value = candidateData.nextCursor;
+async function loadDemands() {
+  const data = await apiRequest<{ items: DemandSummary[]; nextCursor: string | null }>('/api/demands?limit=100');
+  demands.value = data.items;
 }
 
 async function loadRules() {
@@ -148,55 +133,66 @@ async function loadInitial() {
   loading.value = true;
   error.value = '';
   try {
-    await Promise.all([loadProjects(), loadCandidates(), loadRules()]);
+    await Promise.all([loadProjects(), loadDemands(), loadRules()]);
   } catch (cause) {
-    error.value = cause instanceof Error ? cause.message : '读取 P3 储备数据失败';
+    error.value = cause instanceof Error ? cause.message : '读取项目储备数据失败';
   } finally {
     loading.value = false;
   }
 }
 
-function candidateChanged(candidate: ReserveCandidate, checked: boolean) {
-  selectedCandidates.value[candidate.demandMaterialId] = checked;
-  if (checked) {
-    allocationQuantities.value[candidate.demandMaterialId] ||= formatScaled(candidate.remainingQuantityScaled, 4);
-    if (!projectYear.value && candidate.year) projectYear.value = String(candidate.year);
+function initializeProjectDrafts(detail: ReserveProjectSummary) {
+  const linked = new Set(detail.demandLinks.map((item) => item.demandId));
+  selectedProjectDemands.value = Object.fromEntries(demands.value.map((item) => [item.id, linked.has(item.id)]));
+  materialDrafts.value = detail.materialRequirements.map((item) => ({
+    id: item.id,
+    materialId: item.materialId,
+    model: item.model,
+    unit: item.unit,
+    quantity: formatScaled(item.requiredQuantityScaled),
+    unitPrice: item.unitPriceScaled === null ? '' : formatScaled(item.unitPriceScaled),
+    reserveCategoryId: item.reserveCategoryId,
+  }));
+}
+
+async function openProject(row: Pick<ReserveProjectSummary, 'id'>) {
+  try {
+    const detail = await apiRequest<ReserveProjectSummary>(`/api/reserve-projects/${encodeURIComponent(row.id)}`);
+    selectedProject.value = detail;
+    initializeProjectDrafts(detail);
+  } catch (cause) {
+    message.error(cause instanceof Error ? cause.message : '储备项目详情读取失败');
   }
 }
 
+async function reloadSelectedProject() {
+  const id = selectedProject.value?.id;
+  await loadProjects();
+  if (id) await openProject({ id });
+}
+
 async function createProject() {
-  const selected = candidates.value.filter((item) => selectedCandidates.value[item.demandMaterialId]);
-  if (!projectName.value.trim() || selected.length === 0) {
-    message.warning('请输入项目名称并至少选择一条需求物资');
-    return;
-  }
-  const allocations = selected.map((item) => ({
-    demandMaterialId: item.demandMaterialId,
-    quantityScaled: parseDecimalScaled(allocationQuantities.value[item.demandMaterialId] ?? '', 4),
-  }));
-  if (allocations.some((item) => item.quantityScaled === null || item.quantityScaled <= 0)) {
-    message.warning('分配数量必须为正数且最多 4 位小数');
-    return;
-  }
+  const name = projectName.value.trim();
+  if (!name) { message.warning('请输入项目名称'); return; }
   const year = projectYear.value.trim() ? Number(projectYear.value) : null;
-  if (year !== null && (!Number.isInteger(year) || year < 1900 || year > 2200)) {
-    message.warning('年度格式无效');
-    return;
-  }
+  if (year !== null && (!Number.isInteger(year) || year < 1900 || year > 2200)) { message.warning('年度格式无效'); return; }
+  const demandIds = demands.value.filter((item) => selectedCreateDemands.value[item.id]).map((item) => item.id);
   creatingProject.value = true;
   try {
-    await apiRequest<ProjectSummary>('/api/projects', writeInit('POST', {
-      name: projectName.value.trim(),
+    const created = await apiRequest<ReserveProjectSummary>('/api/reserve-projects', writeInit('POST', {
+      name,
       year,
       owner: projectOwner.value.trim() || null,
-      allocations: allocations.map((item) => ({ demandMaterialId: item.demandMaterialId, quantityScaled: item.quantityScaled! })),
+      demandIds,
+      materials: [],
     }));
     projectName.value = '';
+    projectYear.value = '';
     projectOwner.value = '';
-    selectedCandidates.value = {};
-    allocationQuantities.value = {};
-    await Promise.all([loadProjects(), loadCandidates()]);
-    message.success('储备项目草稿已创建');
+    selectedCreateDemands.value = {};
+    await loadProjects();
+    await openProject(created);
+    message.success('储备项目已创建；项目物资可独立补充');
   } catch (cause) {
     message.error(cause instanceof Error ? cause.message : '储备项目创建失败');
   } finally {
@@ -204,122 +200,82 @@ async function createProject() {
   }
 }
 
-function initializeEstimateDraft(detail: ProjectDetail) {
-  const prices: Record<string, string> = {};
-  for (const allocation of detail.allocations) {
-    const line = detail.costLines.find((item) => item.kind === 'material' && item.demandAllocationId === allocation.id);
-    prices[allocation.id] = line?.unitPriceScaled === null || line?.unitPriceScaled === undefined
-      ? ''
-      : formatScaled(line.unitPriceScaled, 4);
-  }
-  materialPriceDraft.value = prices;
-  const construction = detail.costLines.filter((item) => item.kind === 'construction' && item.amountFen !== null).reduce((sum, item) => sum + (item.amountFen ?? 0), 0);
-  const other = detail.costLines.filter((item) => item.kind === 'other' && item.amountFen !== null).reduce((sum, item) => sum + (item.amountFen ?? 0), 0);
-  constructionCost.value = construction ? formatScaled(construction, 2) : '';
-  otherCost.value = other ? formatScaled(other, 2) : '';
-
-  const drafts: Record<string, Array<{ categoryId: string | null; amountYuan: string }>> = {};
-  for (const line of detail.costLines.filter((item) => item.amountFen !== null)) {
-    const existing = detail.categoryAllocations.filter((item) => item.costLineId === line.id);
-    drafts[line.id] = existing.length
-      ? existing.map((item) => ({ categoryId: item.reserveCategoryId, amountYuan: formatScaled(item.amountFen, 2) }))
-      : [{ categoryId: line.suggestedReserveCategoryId, amountYuan: formatScaled(line.amountFen ?? 0, 2) }];
-  }
-  categoryDrafts.value = drafts;
-}
-
-async function openProject(row: Pick<ProjectSummary, 'id'>) {
+async function saveDemandLinks() {
+  if (!selectedProject.value) return;
+  const demandIds = demands.value.filter((item) => selectedProjectDemands.value[item.id]).map((item) => item.id);
+  savingDemandLinks.value = true;
   try {
-    const detail = await apiRequest<ProjectDetail>(`/api/projects/${row.id}`);
-    selectedProject.value = detail;
-    initializeEstimateDraft(detail);
+    await apiRequest(`/api/reserve-projects/${encodeURIComponent(selectedProject.value.id)}/demands`, writeInit('PUT', {
+      expectedVersion: selectedProject.value.version,
+      demandIds,
+    }));
+    await reloadSelectedProject();
+    message.success('项目需求来源关系已保存');
   } catch (cause) {
-    message.error(cause instanceof Error ? cause.message : '储备项目详情读取失败');
+    message.error(cause instanceof Error ? cause.message : '需求来源关系保存失败');
+  } finally {
+    savingDemandLinks.value = false;
   }
 }
 
-async function reloadSelectedProject() {
-  if (!selectedProject.value) return;
-  await openProject({ id: selectedProject.value.id });
-  await loadProjects();
+function addProjectMaterial() {
+  materialDrafts.value.push({ id: null, materialId: null, model: '', unit: '', quantity: '', unitPrice: '', reserveCategoryId: null });
 }
 
-async function saveCosts() {
+function removeProjectMaterial(index: number) {
+  materialDrafts.value.splice(index, 1);
+}
+
+async function saveProjectMaterials() {
   if (!selectedProject.value) return;
-  const materialPrices = selectedProject.value.allocations.map((allocation) => {
-    const raw = materialPriceDraft.value[allocation.id]?.trim() ?? '';
-    const unitPriceScaled = raw ? parseDecimalScaled(raw, 4) : null;
-    return { demandAllocationId: allocation.id, unitPriceScaled, source: null, priceDate: null, taxInclusive: null };
-  });
-  if (materialPrices.some((item) => item.unitPriceScaled === null && (materialPriceDraft.value[item.demandAllocationId]?.trim() ?? '') !== '')) {
-    message.warning('物资单价必须为非负数且最多 4 位小数');
-    return;
-  }
-  const fixedCosts: Array<{ kind: 'construction' | 'other'; label: string; amountFen: number; source: null; priceDate: null; taxInclusive: null }> = [];
-  for (const [kind, label, raw] of [
-    ['construction', '施工费', constructionCost.value],
-    ['other', '其他费', otherCost.value],
-  ] as const) {
-    if (!raw.trim()) continue;
-    const amountFen = parseDecimalScaled(raw, 2);
-    if (amountFen === null) {
-      message.warning(`${label}必须为非负金额且最多 2 位小数`);
+  const reason = materialRevisionReason.value.trim();
+  if (!reason) { message.warning('请填写本次项目物资调整原因'); return; }
+  const materials: Array<{
+    id?: string;
+    materialId: string | null;
+    model: string;
+    unit: string;
+    requiredQuantityScaled: number;
+    unitPriceScaled: number | null;
+    reserveCategoryId: string | null;
+  }> = [];
+  for (const row of materialDrafts.value) {
+    const model = row.model.trim();
+    const unit = row.unit.trim();
+    const requiredQuantityScaled = parseScaled(row.quantity, 4);
+    const unitPriceScaled = row.unitPrice.trim() ? parseScaled(row.unitPrice, 4) : null;
+    if (!model || !unit || requiredQuantityScaled === null || requiredQuantityScaled <= 0) {
+      message.warning('每条项目物资都必须填写型号、单位和正数数量（最多 4 位小数）');
       return;
     }
-    fixedCosts.push({ kind, label, amountFen, source: null, priceDate: null, taxInclusive: null });
-  }
-  savingCosts.value = true;
-  try {
-    await apiRequest(`/api/projects/${selectedProject.value.id}/costs`, writeInit('PUT', {
-      expectedVersion: selectedProject.value.version,
-      materialPrices,
-      fixedCosts,
-    }));
-    await reloadSelectedProject();
-    message.success('估算已保存');
-  } catch (cause) {
-    message.error(cause instanceof Error ? cause.message : '估算保存失败');
-  } finally {
-    savingCosts.value = false;
-  }
-}
-
-const categoryOptions = computed(() => reserveCategories.value.filter((item) => item.enabled).map((item) => ({ label: item.label, value: item.id })));
-
-function addCategorySplit(costLineId: string) {
-  (categoryDrafts.value[costLineId] ??= []).push({ categoryId: null, amountYuan: '' });
-}
-
-function removeCategorySplit(costLineId: string, index: number) {
-  categoryDrafts.value[costLineId]?.splice(index, 1);
-}
-
-async function saveCategoryAllocations() {
-  if (!selectedProject.value) return;
-  const allocations: Array<{ costLineId: string; reserveCategoryId: string; amountFen: number }> = [];
-  for (const line of selectedProject.value.costLines.filter((item) => item.amountFen !== null)) {
-    for (const split of categoryDrafts.value[line.id] ?? []) {
-      if (!split.categoryId || !split.amountYuan.trim()) continue;
-      const amountFen = parseDecimalScaled(split.amountYuan, 2);
-      if (amountFen === null) {
-        message.warning('分类分摊金额必须为非负金额且最多 2 位小数');
-        return;
-      }
-      allocations.push({ costLineId: line.id, reserveCategoryId: split.categoryId, amountFen });
+    if (row.unitPrice.trim() && unitPriceScaled === null) {
+      message.warning('项目物资单价最多 4 位小数；留空表示未知');
+      return;
     }
+    materials.push({
+      ...(row.id ? { id: row.id } : {}),
+      materialId: row.materialId,
+      model,
+      unit,
+      requiredQuantityScaled,
+      unitPriceScaled,
+      reserveCategoryId: row.reserveCategoryId,
+    });
   }
-  savingCategories.value = true;
+  savingMaterials.value = true;
   try {
-    await apiRequest(`/api/projects/${selectedProject.value.id}/category-allocations`, writeInit('PUT', {
+    await apiRequest(`/api/reserve-projects/${encodeURIComponent(selectedProject.value.id)}/materials`, writeInit('PUT', {
       expectedVersion: selectedProject.value.version,
-      allocations,
+      reason,
+      materials,
     }));
+    materialRevisionReason.value = '';
     await reloadSelectedProject();
-    message.success('分类金额分摊已保存');
+    message.success('项目物资已按独立版本调整');
   } catch (cause) {
-    message.error(cause instanceof Error ? cause.message : '分类金额分摊失败');
+    message.error(cause instanceof Error ? cause.message : '项目物资调整失败');
   } finally {
-    savingCategories.value = false;
+    savingMaterials.value = false;
   }
 }
 
@@ -327,7 +283,7 @@ async function confirmProject() {
   if (!selectedProject.value) return;
   confirming.value = true;
   try {
-    await apiRequest(`/api/projects/${selectedProject.value.id}/confirm`, writeInit('POST', {
+    await apiRequest(`/api/reserve-projects/${encodeURIComponent(selectedProject.value.id)}/confirm`, writeInit('POST', {
       expectedVersion: selectedProject.value.version,
       reason: confirmationReason.value.trim() || null,
     }));
@@ -342,16 +298,10 @@ async function confirmProject() {
 }
 
 async function createReserveCategory() {
-  if (!newCategoryKey.value.trim() || !newCategoryLabel.value.trim()) {
-    message.warning('请填写大类 key 和名称');
-    return;
-  }
+  if (!newCategoryKey.value.trim() || !newCategoryLabel.value.trim()) { message.warning('请填写大类 key 和名称'); return; }
   savingRules.value = true;
   try {
-    await apiRequest('/api/reserve-categories', writeInit('POST', {
-      key: newCategoryKey.value.trim(),
-      label: newCategoryLabel.value.trim(),
-    }));
+    await apiRequest('/api/reserve-categories', writeInit('POST', { key: newCategoryKey.value.trim(), label: newCategoryLabel.value.trim() }));
     newCategoryKey.value = '';
     newCategoryLabel.value = '';
     await loadRules();
@@ -365,10 +315,7 @@ async function createReserveCategory() {
 
 async function saveCategoryMapping() {
   const demandCategory = mappingDemandCategory.value.trim();
-  if (!demandCategory || !mappingCategoryId.value) {
-    message.warning('请选择需求类别与储备大类');
-    return;
-  }
+  if (!demandCategory || !mappingCategoryId.value) { message.warning('请选择需求类别与储备大类'); return; }
   const current = categoryMappings.value.find((item) => item.demandCategory.toLowerCase() === demandCategory.toLowerCase());
   savingRules.value = true;
   try {
@@ -387,16 +334,13 @@ async function saveCategoryMapping() {
 
 const projectColumns = [
   { title: '项目', key: 'name', minWidth: 180 },
-  { title: '年度', key: 'year', width: 90, render: (row: ProjectSummary) => row.year ?? '—' },
-  { title: '状态', key: 'status', width: 90, render: (row: ProjectSummary) => h(NTag, { size: 'small', bordered: false, type: row.status === 'confirmed' ? 'success' : 'warning' }, { default: () => row.status === 'confirmed' ? `已确认 v${row.reserveVersion}` : '草稿' }) },
-  { title: '已知估算', key: 'knownAmountFen', width: 130, render: (row: ProjectSummary) => formatMoneyFen(row.knownAmountFen) },
-  { title: '估价完整度', key: 'completenessBasisPoints', width: 110, render: (row: ProjectSummary) => formatCompleteness(row.completenessBasisPoints) },
-  {
-    title: '操作', key: 'actions', width: 100,
-    render(row: ProjectSummary) {
-      return h(NButton, { size: 'small', 'data-test': `open-project-${row.id}`, onClick: () => void openProject(row) }, { default: () => '查看' });
-    },
-  },
+  { title: '年度', key: 'year', width: 90, render: (row: ReserveProjectSummary) => row.year ?? '—' },
+  { title: '来源需求', key: 'demandLinks', width: 100, render: (row: ReserveProjectSummary) => row.demandLinks.length },
+  { title: '项目物资', key: 'materialRequirements', width: 100, render: (row: ReserveProjectSummary) => row.materialRequirements.length },
+  { title: '状态', key: 'status', width: 110, render: (row: ReserveProjectSummary) => h(NTag, { size: 'small', bordered: false, type: row.status === 'confirmed' ? 'success' : 'warning' }, { default: () => row.status === 'confirmed' ? `已确认 v${row.reserveVersion}` : '草稿' }) },
+  { title: '当前物资金额', key: 'knownMaterialAmountFen', width: 150, render: (row: ReserveProjectSummary) => formatMoneyFen(row.knownMaterialAmountFen) },
+  { title: '估价完整度', key: 'materialPriceCompletenessBasisPoints', width: 120, render: (row: ReserveProjectSummary) => formatCompleteness(row.materialPriceCompletenessBasisPoints) },
+  { title: '操作', key: 'actions', width: 90, render: (row: ReserveProjectSummary) => h(NButton, { size: 'small', 'data-test': `open-project-${row.id}`, onClick: () => void openProject(row) }, { default: () => '查看' }) },
 ];
 
 onMounted(loadInitial);
@@ -406,177 +350,109 @@ onMounted(loadInitial);
   <n-spin :show="loading">
     <div class="view-stack reserve-view">
       <n-alert v-if="error" type="error" title="读取失败">{{ error }}</n-alert>
-
       <n-tabs type="line" animated>
-        <n-tab-pane name="convert" tab="需求转储备">
-          <n-alert v-if="!canWrite" type="info" title="只读模式" class="section-note">
-            你可以查看储备项目和来源明细；仅管理员或项目管理角色可以归并、分配、估算和确认储备。
+        <n-tab-pane name="create" tab="建立储备">
+          <n-alert type="info" :bordered="false" class="section-note">
+            需求只说明“为什么做、在哪做、做什么事项”，项目物资是项目阶段独立确认的“需要什么、需要多少”。两者只建立来源关系，不做数量继承或上限绑定。
           </n-alert>
-
-          <template v-else>
-            <n-card title="1. 选择需求与归并建议">
-              <n-alert type="info" :bordered="false" class="section-note">
-                系统按年度、类别、电压和线路给出建议，但不会自动合并。可跨线路选择，也可只分配部分数量到当前项目。
-              </n-alert>
-              <div v-if="suggestions.length" class="suggestion-grid">
-                <div v-for="group in suggestions" :key="`${group.year}-${group.category}-${group.voltage}-${group.lineName}`" class="suggestion-card">
-                  <strong>{{ group.lineName }}</strong>
-                  <span>{{ group.year ?? '未设年度' }} · {{ group.category ?? '未分类' }} · {{ group.voltage }}</span>
-                  <small>{{ group.itemCount }} 条可分配物资</small>
-                </div>
-              </div>
-              <div v-if="candidates.length" class="candidate-list">
-                <div v-for="candidate in candidates" :key="candidate.demandMaterialId" class="candidate-row">
-                  <n-checkbox
-                    :checked="Boolean(selectedCandidates[candidate.demandMaterialId])"
-                    :data-test="`candidate-${candidate.demandMaterialId}`"
-                    @update:checked="(checked: boolean) => candidateChanged(candidate, checked)"
-                  >
-                    {{ candidate.lineName }} {{ candidate.section }} · {{ candidate.rawModel }} / {{ candidate.unit ?? '未设单位' }}
-                  </n-checkbox>
-                  <span>剩余 {{ formatScaled(candidate.remainingQuantityScaled, 4) }} {{ candidate.unit ?? '' }}</span>
-                  <n-input
-                    v-if="selectedCandidates[candidate.demandMaterialId]"
-                    :value="allocationQuantities[candidate.demandMaterialId] ?? ''"
-                    :data-test="`allocation-${candidate.demandMaterialId}`"
-                    placeholder="本项目分配数量"
-                    @update:value="(value: string) => { allocationQuantities[candidate.demandMaterialId] = value; }"
-                  />
-                </div>
-              </div>
-              <div v-if="candidateCursor" class="load-more">
-                <n-button data-test="load-more-candidates" secondary @click="loadCandidates(false)">加载更多待分配需求</n-button>
-              </div>
-              <n-empty v-else-if="!candidates.length" description="暂无可分配需求物资。" />
-            </n-card>
-
-            <n-card title="2. 建立储备草稿">
-              <n-form class="project-form" label-placement="top">
-                <n-form-item label="项目名称"><n-input v-model:value="projectName" data-test="project-name" /></n-form-item>
-                <n-form-item label="年度"><n-input v-model:value="projectYear" placeholder="如 2026" /></n-form-item>
-                <n-form-item label="负责人（可选）"><n-input v-model:value="projectOwner" /></n-form-item>
-                <n-form-item>
-                  <n-button data-test="create-project" type="primary" :loading="creatingProject" @click="createProject">创建储备草稿</n-button>
-                </n-form-item>
-              </n-form>
-            </n-card>
-          </template>
+          <n-card v-if="canWrite" title="新建储备项目">
+            <n-form class="project-form" label-placement="top">
+              <n-form-item label="项目名称"><n-input v-model:value="projectName" data-test="project-name" /></n-form-item>
+              <n-form-item label="年度"><n-input v-model:value="projectYear" placeholder="如 2026" /></n-form-item>
+              <n-form-item label="负责人"><n-input v-model:value="projectOwner" /></n-form-item>
+            </n-form>
+            <div class="demand-list">
+              <strong>关联需求来源（可为空）</strong>
+              <n-checkbox v-for="demand in demands" :key="demand.id" v-model:checked="selectedCreateDemands[demand.id]" :data-test="`create-demand-${demand.id}`">
+                {{ demand.sequenceNo }} · {{ demand.lineName }} {{ demand.section }} · {{ demand.category ?? '未分类' }}
+              </n-checkbox>
+            </div>
+            <n-button data-test="create-project" type="primary" :loading="creatingProject" @click="createProject">创建储备项目</n-button>
+          </n-card>
+          <n-alert v-else type="info">当前账号只能查看储备项目。</n-alert>
         </n-tab-pane>
 
         <n-tab-pane name="projects" tab="储备项目">
           <n-card title="储备列表">
-            <n-data-table v-if="projects.length" :columns="projectColumns" :data="projects" :pagination="false" :scroll-x="850" />
-            <n-empty v-else description="暂无储备项目。" />
-            <div v-if="projectCursor" class="load-more"><n-button @click="loadProjects(false)">加载更多</n-button></div>
+            <n-data-table v-if="projects.length" :columns="projectColumns" :data="projects" :pagination="false" :scroll-x="1050" />
+            <n-empty v-else description="暂无储备项目" />
           </n-card>
 
           <template v-if="selectedProject">
             <n-card title="项目详情" class="detail-card">
               <div class="detail-grid">
                 <div><span>项目</span><strong>{{ selectedProject.name }}</strong></div>
-                <div><span>状态</span><strong>{{ selectedProject.status === 'confirmed' ? `已确认 v${selectedProject.reserveVersion}` : '草稿' }}</strong></div>
-                <div><span>已知估算</span><strong>{{ formatMoneyFen(selectedProject.knownAmountFen) }}</strong></div>
-                <div><span>估价完整度</span><strong>{{ formatCompleteness(selectedProject.completenessBasisPoints) }}</strong></div>
-              </div>
-              <div class="material-summary">
-                <strong>物资汇总</strong>
-                <div v-for="item in selectedProject.materialSummary" :key="`${item.materialId}-${item.model}-${item.unit}`" class="summary-row">
-                  <span>{{ item.name ?? '未匹配标准物资' }} · {{ item.model }}</span>
-                  <span>{{ formatScaled(item.quantityScaled, 4) }} {{ item.unit ?? '' }}</span>
-                </div>
-              </div>
-              <div class="trace-list">
-                <strong>来源明细</strong>
-                <div v-for="allocation in selectedProject.allocations" :key="allocation.id" class="summary-row">
-                  <span>{{ allocation.demand.lineName }} {{ allocation.demand.section }} · {{ allocation.rawModel }}</span>
-                  <span>{{ allocation.source.fileName }} / {{ allocation.source.sheetName }} / 第 {{ allocation.source.rowNumber }} 行</span>
-                </div>
+                <div><span>项目版本</span><strong>v{{ selectedProject.version }}</strong></div>
+                <div><span>储备状态</span><strong>{{ selectedProject.status === 'confirmed' ? `已确认 v${selectedProject.reserveVersion}` : '草稿' }}</strong></div>
+                <div><span>当前项目物资金额</span><strong>{{ formatMoneyFen(selectedProject.knownMaterialAmountFen) }}</strong></div>
               </div>
             </n-card>
 
-            <n-card title="3. 核对物资与估算" class="detail-card">
+            <n-card title="1. 需求来源关系" class="detail-card">
+              <n-alert type="info" :bordered="false" class="section-note">这里维护项目由哪些抽象需求形成，只表示业务来源，不把需求物资数量当成项目物资上限。</n-alert>
+              <div class="demand-list">
+                <n-checkbox v-for="demand in demands" :key="demand.id" v-model:checked="selectedProjectDemands[demand.id]" :disabled="!canWrite" :data-test="`project-demand-${demand.id}`">
+                  {{ demand.sequenceNo }} · {{ demand.lineName }} {{ demand.section }} · {{ demand.category ?? '未分类' }}
+                </n-checkbox>
+              </div>
+              <n-button v-if="canWrite" data-test="save-demand-links" type="primary" :loading="savingDemandLinks" @click="saveDemandLinks">保存需求来源关系</n-button>
+            </n-card>
+
+            <n-card title="2. 项目物资" class="detail-card">
               <n-alert type="info" :bordered="false" class="section-note">
-                物资单价按元/单位录入，最多 4 位小数。留空表示未知；明确填写 0 才表示零价。系统使用定点整数计算并四舍五入到分。
+                项目物资可新增、换型、增减数量并保留修订历史；已经分配到执行任务的物资不能删除、换型或缩减到任务分配量以下。单价留空表示未知。
               </n-alert>
-              <div class="estimate-list">
-                <div v-for="allocation in selectedProject.allocations" :key="allocation.id" class="estimate-row">
-                  <span>{{ allocation.material?.name ?? allocation.rawModel }} · {{ formatScaled(allocation.quantityScaled, 4) }} {{ allocation.unit ?? '' }}</span>
-                  <n-input
-                    :value="materialPriceDraft[allocation.id] ?? ''"
-                    :data-test="`material-price-${allocation.id}`"
-                    placeholder="单价（元/单位；留空=未知）"
-                    :disabled="!canWrite"
-                    @update:value="(value: string) => { materialPriceDraft[allocation.id] = value; }"
-                  />
-                </div>
-                <div class="estimate-row">
-                  <span>施工费</span>
-                  <n-input v-model:value="constructionCost" data-test="construction-cost" placeholder="金额（元）" :disabled="!canWrite" />
-                </div>
-                <div class="estimate-row">
-                  <span>其他费</span>
-                  <n-input v-model:value="otherCost" placeholder="金额（元）" :disabled="!canWrite" />
+              <div v-if="materialDrafts.length" class="material-list">
+                <div v-for="(row, index) in materialDrafts" :key="row.id ?? `new-${index}`" class="material-edit-row">
+                  <n-input v-model:value="row.model" placeholder="型号" :disabled="!canWrite" :data-test="`material-model-${row.id ?? index}`" />
+                  <n-input v-model:value="row.quantity" placeholder="数量" :disabled="!canWrite" :data-test="`material-quantity-${row.id ?? index}`" />
+                  <n-input v-model:value="row.unit" placeholder="单位" :disabled="!canWrite" :data-test="`material-unit-${row.id ?? index}`" />
+                  <n-input v-model:value="row.unitPrice" placeholder="单价 元/单位（可空）" :disabled="!canWrite" :data-test="`material-price-${row.id ?? index}`" />
+                  <n-select v-model:value="row.reserveCategoryId" :options="categoryOptions" clearable placeholder="储备大类（可空）" :disabled="!canWrite" />
+                  <n-button v-if="canWrite" quaternary type="error" @click="removeProjectMaterial(index)">移除</n-button>
                 </div>
               </div>
-              <n-button v-if="canWrite" data-test="save-costs" type="primary" :loading="savingCosts" @click="saveCosts">保存估算</n-button>
+              <n-empty v-else description="当前没有项目物资；这是有效状态。" />
+              <template v-if="canWrite">
+                <n-space vertical class="material-actions">
+                  <n-button data-test="add-project-material" secondary @click="addProjectMaterial">新增项目物资</n-button>
+                  <n-input data-test="material-revision-reason" v-model:value="materialRevisionReason" placeholder="本次调整原因（必填）" />
+                  <n-button data-test="save-project-materials" type="primary" :loading="savingMaterials" @click="saveProjectMaterials">保存项目物资修订</n-button>
+                </n-space>
+              </template>
             </n-card>
 
-            <n-card v-if="selectedProject.costLines.length" title="分类金额分摊" class="detail-card">
-              <n-alert type="info" :bordered="false" class="section-note">
-                每条已知费用必须完整分摊；共同费用可拆到多个大类。分类金额合计必须等于项目已知估算金额。
-              </n-alert>
-              <div v-for="line in selectedProject.costLines.filter((item) => item.amountFen !== null)" :key="line.id" class="classification-block">
-                <strong>{{ line.label }} · {{ formatMoneyFen(line.amountFen ?? 0) }}</strong>
-                <div v-for="(split, index) in categoryDrafts[line.id] ?? []" :key="`${line.id}-${index}`" class="split-row">
-                  <n-select
-                    :value="split.categoryId"
-                    :options="categoryOptions"
-                    :disabled="!canWrite"
-                    placeholder="选择储备大类"
-                    @update:value="(value: string | null) => { split.categoryId = value; }"
-                  />
-                  <n-input v-model:value="split.amountYuan" placeholder="分摊金额（元）" :disabled="!canWrite" />
-                  <n-button v-if="canWrite" size="small" @click="removeCategorySplit(line.id, index)">删除</n-button>
-                </div>
-                <n-button v-if="canWrite" size="small" secondary @click="addCategorySplit(line.id)">拆分一行</n-button>
-              </div>
-              <n-button v-if="canWrite" type="primary" :loading="savingCategories" @click="saveCategoryAllocations">保存分类分摊</n-button>
-            </n-card>
-
-            <n-card title="4. 确认储备版本" class="detail-card">
-              <n-alert type="warning" :bordered="false" class="section-note">
-                确认会保存不可变版本快照；后续调整会回到草稿状态，再次确认形成新的储备版本，旧版本不会被覆盖。
-              </n-alert>
-              <n-input v-if="canWrite" v-model:value="confirmationReason" type="textarea" placeholder="本次确认/修订原因（可选）" />
-              <n-button v-if="canWrite" data-test="confirm-project" type="primary" :loading="confirming" @click="confirmProject">确认当前储备版本</n-button>
+            <n-card title="3. 确认储备版本" class="detail-card">
+              <n-alert type="warning" :bordered="false" class="section-note">确认只固化当前储备版本；项目正式进入执行阶段还需要后续做一次“项目级出库”。</n-alert>
+              <template v-if="canWrite">
+                <n-input v-model:value="confirmationReason" placeholder="确认说明（可选）" />
+                <n-button data-test="confirm-project" type="primary" :loading="confirming" @click="confirmProject">确认当前储备版本</n-button>
+              </template>
             </n-card>
           </template>
         </n-tab-pane>
 
-        <n-tab-pane name="rules" tab="分类规则">
-          <n-card title="储备大类与需求类别映射">
-            <n-alert v-if="!canWrite" type="info" title="只读模式" class="section-note">你可以查看分类规则，但不能修改。</n-alert>
-            <template v-else>
-              <n-form class="rule-form" label-placement="top">
-                <n-form-item label="大类 key"><n-input v-model:value="newCategoryKey" /></n-form-item>
-                <n-form-item label="大类名称"><n-input v-model:value="newCategoryLabel" /></n-form-item>
-                <n-form-item><n-button :loading="savingRules" @click="createReserveCategory">新增大类</n-button></n-form-item>
-              </n-form>
-              <n-form class="rule-form" label-placement="top">
-                <n-form-item label="需求类别"><n-input v-model:value="mappingDemandCategory" placeholder="如 防断线" /></n-form-item>
-                <n-form-item label="映射到"><n-select v-model:value="mappingCategoryId" :options="categoryOptions" /></n-form-item>
-                <n-form-item><n-button :loading="savingRules" @click="saveCategoryMapping">保存映射</n-button></n-form-item>
-              </n-form>
-            </template>
-            <div class="rule-list">
-              <div v-for="category in reserveCategories" :key="category.id" class="summary-row">
-                <span>{{ category.label }}</span><code>{{ category.key }}</code>
-              </div>
-              <div v-for="mapping in categoryMappings" :key="mapping.id" class="summary-row">
-                <span>{{ mapping.demandCategory }}</span>
-                <span>→ {{ reserveCategories.find((item) => item.id === mapping.reserveCategoryId)?.label ?? mapping.reserveCategoryId }}</span>
-              </div>
+        <n-tab-pane name="rules" tab="储备分类规则">
+          <n-card title="储备大类">
+            <div class="category-grid">
+              <n-tag v-for="item in reserveCategories" :key="item.id" :bordered="false" :type="item.enabled ? 'success' : 'default'">{{ item.label }}</n-tag>
             </div>
+            <n-form v-if="canWrite" class="rule-form" label-placement="top">
+              <n-form-item label="大类 key"><n-input v-model:value="newCategoryKey" /></n-form-item>
+              <n-form-item label="大类名称"><n-input v-model:value="newCategoryLabel" /></n-form-item>
+              <n-form-item><n-button :loading="savingRules" @click="createReserveCategory">新增大类</n-button></n-form-item>
+            </n-form>
+          </n-card>
+          <n-card title="需求类别 → 储备大类默认映射" class="detail-card">
+            <n-alert type="info" :bordered="false" class="section-note">映射只用于建议分类，不会把需求物资自动转换成项目物资。</n-alert>
+            <div v-for="item in categoryMappings" :key="item.demandCategory" class="mapping-row">
+              <span>{{ item.demandCategory }}</span><strong>{{ reserveCategories.find((category) => category.id === item.reserveCategoryId)?.label ?? '未找到储备大类' }}</strong>
+            </div>
+            <n-form v-if="canWrite" class="rule-form" label-placement="top">
+              <n-form-item label="需求类别"><n-input v-model:value="mappingDemandCategory" /></n-form-item>
+              <n-form-item label="储备大类"><n-select v-model:value="mappingCategoryId" :options="categoryOptions" /></n-form-item>
+              <n-form-item><n-button :loading="savingRules" @click="saveCategoryMapping">保存映射</n-button></n-form-item>
+            </n-form>
           </n-card>
         </n-tab-pane>
       </n-tabs>
@@ -585,29 +461,24 @@ onMounted(loadInitial);
 </template>
 
 <style scoped>
-.section-note { margin-bottom: 16px; }
-.suggestion-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-bottom: 18px; }
-.suggestion-card { display: grid; gap: 4px; padding: 12px; border: 1px solid #e5e9f0; border-radius: 9px; background: #fafbfc; }
-.suggestion-card span, .suggestion-card small { color: #6f7b8c; }
-.candidate-list { display: grid; gap: 8px; }
-.candidate-row { display: grid; grid-template-columns: minmax(260px, 1fr) 180px 220px; gap: 12px; align-items: center; padding: 9px 0; border-top: 1px solid #edf0f4; }
-.project-form, .rule-form { display: grid; grid-template-columns: 2fr 1fr 1fr auto; gap: 12px; align-items: end; }
-.detail-card { margin-top: 16px; }
+.reserve-view { gap: 16px; }
+.section-note { margin-bottom: 14px; }
+.detail-card { margin-top: 14px; }
+.project-form, .rule-form { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; align-items: end; }
+.demand-list { display: grid; gap: 8px; margin: 14px 0; max-height: 320px; overflow: auto; }
 .detail-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
-.detail-grid div { display: grid; gap: 3px; }
-.detail-grid span { color: #7c8798; font-size: 12px; }
-.material-summary, .trace-list, .estimate-list, .classification-block, .rule-list { display: grid; gap: 8px; margin-top: 18px; }
-.summary-row { display: flex; justify-content: space-between; gap: 16px; padding: 7px 0; border-top: 1px solid #edf0f4; }
-.estimate-row { display: grid; grid-template-columns: minmax(260px, 1fr) 260px; gap: 12px; align-items: center; }
-.split-row { display: grid; grid-template-columns: minmax(180px, 1fr) 180px auto; gap: 8px; align-items: center; }
-.load-more { display: flex; justify-content: center; margin-top: 16px; }
-code { color: #667085; }
-@media (max-width: 900px) {
-  .suggestion-grid, .detail-grid { grid-template-columns: 1fr 1fr; }
-  .candidate-row, .project-form, .rule-form, .estimate-row, .split-row { grid-template-columns: 1fr; }
+.detail-grid > div { display: grid; gap: 4px; padding: 12px; border: 1px solid #e5e9f0; border-radius: 9px; }
+.detail-grid span { color: #6f7b8c; font-size: 12px; }
+.material-list { display: grid; gap: 10px; margin-bottom: 12px; }
+.material-edit-row { display: grid; grid-template-columns: 1.2fr .7fr .6fr 1fr 1fr auto; gap: 8px; align-items: center; }
+.material-actions { margin-top: 12px; }
+.category-grid { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.mapping-row { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid #eef1f5; }
+@media (max-width: 980px) {
+  .project-form, .rule-form, .detail-grid { grid-template-columns: 1fr 1fr; }
+  .material-edit-row { grid-template-columns: 1fr 1fr; }
 }
-@media (max-width: 560px) {
-  .suggestion-grid, .detail-grid { grid-template-columns: 1fr; }
-  .summary-row { flex-direction: column; }
+@media (max-width: 640px) {
+  .project-form, .rule-form, .detail-grid, .material-edit-row { grid-template-columns: 1fr; }
 }
 </style>

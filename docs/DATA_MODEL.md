@@ -1,6 +1,6 @@
 # 数据关系与接口约定
 
-这是一份实现约定。P1.2 已将身份模型重整为系统自维护账号、浏览器派生凭据与服务端会话；P2 已实现导入批次、需求池、来源追溯与标准物资；P3 已实现储备项目、需求物资分配、估算、储备分类与确认版本；P4 已实现框架/协议版本、项目预算版本、预算发生/实际发生流水及资金汇总；P5 已实现出库、实施、结算、四状态投影与私有附件；P6 已实现分析规则、月计划/月报、年度事项、预警/通知 outbox 与 D1→R2 备份。当前开发 schema 不包含邮箱身份或 Cloudflare Access 认证字段。P7 负责真实数据和正式环境验收，不应另起一套业务口径。表名和字段可在迁移中作不影响语义的细化；改变业务口径必须同步 DESIGN.md。使用 D1/SQLite，不依赖 PostgreSQL 专有语法。
+这是一份实现约定。2026-09-13 已按最终业务基线完成结构性重构：需求本体为纯抽象业务事项，可带 0..N 条需求物资子明细；项目储备通过 `project_demand_links` 记录需求来源，同时用独立的 `project_material_requirements` 维护项目当前物资；项目通过一次 `project_releases` 项目级出库进入执行阶段，随后拆分为 1..N 个 `project_tasks`，每个任务的物资供应、现场实施、结算三条线独立推进，并由任务事实回投需求四状态。旧 `demand_allocations`、`release_batches/release_lines`、旧 implementation/settlement 表仅保留历史兼容与旧数据备份，不再是最终业务主模型。P4 框架/协议/预算发生、P6 年度节点/分析/通知/备份和 P1.2 系统自维护认证继续保留。P7 只负责真实数据和正式环境验收，不另起业务口径。使用 D1/SQLite，不依赖 PostgreSQL 专有语法。
 
 ## 1. 通用约定
 
@@ -22,14 +22,19 @@
 | settings_versions | 口径、阈值、目标、提醒参数、生效时间 | 每个报表/预警引用规则版本 |
 | import_batches / import_rows | 文件哈希、工作表、映射版本、源行、原始JSON、错误、发布状态 | 批次分片幂等；未发布行不得计入正式报表 |
 | demand_categories / field_definitions | 需求类别、字段类型、必填规则、版本 | 初始6个必备字段；扩展可配置 |
-| demands | 来源、业务年份、线路、杆段、原始/核实电压、类别、负责人 | 同源业务ID可以关联版本；不按线路名直接去重 |
+| demands | 抽象业务事项：`source_type=import/manual`、业务年份、线路、杆段、原始/核实电压、类别、负责人 | 需求无需物资即可成立；同一业务事项可由多个 Excel 来源行共同形成 |
+| demand_source_rows | 需求ID、源 import_row、文件哈希、工作表、物理行、原始JSON | 多个来源行可归到同一个抽象需求；保留完整来源追溯 |
 | materials | 标准编码、名称、型号、单位 | 原始型号通过人工确认映射；单位不同时不能直接汇总 |
-| demand_materials | 原始需求ID、原始型号、标准物资ID、数量、单位 | 一需求可多物资；保留来源行关系 |
-| projects / project_versions | 项目名称、年度、阶段、框架ID、负责人、储备版本 | 同一个项目ID用于储备和框架子项目；只属于一个框架 |
-| demand_allocations | 需求物资ID、项目ID、已分配数量、有效版本 | 同一需求物资有效分配数量不超过需求量 |
-| project_cost_lines | 项目版本、物资/施工/其他费、关联分配、单价、已知金额 | 物资费用可追溯数量；缺价不可当0 |
-| release_batches / release_lines | 项目、出库日期、范围数量、需求/物资/预算快照 | 部分出库；已出库快照不可覆写 |
-| implementation_records / implementation_lines | 日期、人员、完成量、实际用量、项目/出库/需求分配、历史标识 | 正常记录必须关联出库；历史记录可暂未关联项目 |
+| demand_materials | 需求ID、原始型号、标准物资ID、数量、单位、来源行、版本 | 一需求可有 0..N 条物资子明细；这些只是需求阶段已知信息，不构成项目物资上限 |
+| projects / project_versions | 项目名称、年度、阶段、框架ID、负责人、储备版本 | 同一个项目ID用于储备和框架子项目；只属于一个框架；允许无项目物资时先建立 |
+| project_demand_links | 项目ID、需求ID | 仅表达项目由哪些抽象需求形成，不继承需求物资数量 |
+| project_material_requirements / project_material_revisions | 项目自己的型号、单位、数量、单价、储备大类、版本；每次调整前后快照和原因 | 可后补、增减、换型；已分配到任务的历史事实形成保护下限 |
+| project_releases | 项目ID、出库日期、项目/储备版本、需求与项目物资快照 | 每个项目只做一次项目级出库；不是仓库发货，也没有逐物资出库行 |
+| project_tasks / task_demand_scopes | 出库项目下的任务、现场范围、负责人、计划量，以及任务覆盖的抽象需求数量 | 只有项目级出库后才能创建；一个项目可有多个任务；需求范围用于回投实施/结算状态 |
+| task_material_requirements / material_supply_events | 任务物资、需求量、供应版本；已上报/已发货/已到货事件 | 任务物资来自项目物资但有独立数量；累计满足 到货<=发货<=上报<=任务物资需求 |
+| task_implementation_* | 任务实施记录、需求范围完成量、实际物资使用 | 与供应/结算独立版本推进；部分完成不等于全部实施 |
+| task_settlements / task_settlement_* | 任务结算金额、需求范围覆盖、最终标记、协议金额分摊、结算提醒 | 可先于实施发生；最终结算必须覆盖任务全部需求范围；首次实施后形成结算提醒 |
+| legacy demand_allocations / release_batches / release_lines / implementation_records / settlements | 旧 P3/P5 历史模型 | 仅用于历史数据兼容、旧回归和备份恢复；新页面与最终业务 API 不再读写这些表 |
 | frameworks / framework_versions | 框架编号、名称、有效总额度、期间、年度目标 | 按生效版本统计；修改额度不重写历史报告 |
 | agreements / agreement_versions | 所属框架、协议额度、有效期、状态 | 同框架才能支持子项目；历史发生保留原协议版本 |
 | project_budgets / budget_allocations | 子项目预算版本、生效状态、分配到协议的金额 | 已确认预算分配合计=预算总额；草稿可不完整 |
@@ -47,7 +52,7 @@
 
 ## 3. 必须保持的不变量
 
-1. 需求数量 = 有效分配数量 + 未分配数量。每个分配的出库、实施范围可核对；历史未关联记录独立展示，关联后不重复计算。
+1. 需求是抽象业务事项，不存在“需求数量必须分配完”的总量守恒。需求物资子明细只是需求阶段已知信息；项目需求来源关系和项目物资是两类独立事实，项目物资数量不得被需求物资数量隐式限制。
 2. 同一笔费用不会因多类别、多协议、多需求关联而倍增。关联金额/数量必须显式分摊。
 3. 框架“已发生”来自指定口径的已确认条目，不能把预算总额、预支和结算简单相加。
 4. 协议分配与条目属于同一框架，生效确认时协议有效。无效协议可以保留历史记录。
@@ -64,26 +69,26 @@
 15. 会话 token 至少 256 bit 随机，数据库只存 token SHA-256 哈希。每次鉴权检查会话未撤销/未过期、session_version 一致和成员启用；停用、改密或管理员重置密码必须使旧会话失效。
 16. `must_change_password` 为真时，只允许 `/api/me`、改密和退出等最小接口，不能访问业务数据或成员管理。
 17. P2 导入批次的 chunk/validate/publish 都必须携带当前 `expectedVersion`；版本/状态守卫、源行或需求写入、幂等记录必须处于同一个 D1 batch。stale version 或并发竞争失败不得留下源行、需求、需求物资、错误发布状态或孤立幂等记录。
-18. 同一源文件 SHA-256 + 工作表 + 源行用于来源幂等；业务字段相同但来源不同只能标记疑似重复供人工核对，不能自动删除合法需求。未知标准物资保留原始型号并标警告，不能伪造成零价或已映射。
-19. P3 的需求物资数量必须满足 `原始 quantity_scaled = 有效 demand_allocations 合计 + 剩余 quantity_scaled`。创建/替换分配的版本守卫、释放旧分配、写入新分配、审计和幂等记录必须处于同一个 D1 batch；并发竞争或 stale version 失败不能超分配或留下半笔数据。
-20. P3 物资估算只使用定点整数：`quantity_scaled` 为万分之一单位、`unit_price_scaled` 为万分之一元，乘算使用精确整数并四舍五入到分。`unit_price_scaled = null` 表示未知，`0` 表示明确零价；任何固定费用或合计超过 JS 安全整数范围必须拒绝。
-21. P3 同一型号不同单位不得合并。项目物资汇总和来源明细必须能反查到 `demand_materials`、需求线路/杆段以及源文件/工作表/行号。
-22. 每条金额已知的 `project_cost_lines` 分类分摊合计必须精确等于该费用金额；共同费用允许拆分到多个 `reserve_categories`，但不能因多个类别重复增加项目金额。未知金额费用不能参与金额分摊。
-23. 储备确认写入不可变 `project_versions` 快照并递增 `reserve_version`；后续修改当前项目只能形成新的草稿状态，再次确认生成新版本，不能覆盖旧快照。
+18. 需求有 `import` 与 `manual` 两类真实来源。文件导入使用同一源文件 SHA-256 + 工作表 + 源行做来源幂等；手工新增使用独立手工来源键，不得伪造文件、工作表或行号。两种入口使用同一业务校验；业务字段相同但来源不同只能标记疑似重复供人工核对，不能自动删除合法需求。凡存在批量导入入口的业务数据，必须同时提供手工新增入口。
+19. Excel 导入先识别抽象需求业务键，再把同一需求的多行规范化为一个 `demands` 和 0..N 条 `demand_materials`；没有物资型号/数量的需求行也可以合法发布。所有源行写入 `demand_source_rows`，不能因为归并而丢失来源追溯。
+20. 项目储备的 `project_demand_links` 与 `project_material_requirements` 必须分开维护。关联需求只说明来源；项目物资可独立新增、换型、增减数量，并把每次调整的原因、前后快照写入 `project_material_revisions`。
+21. 项目物资数量和单价使用定点整数：`required_quantity_scaled` 为万分之一单位、`unit_price_scaled` 为万分之一元，明细金额精确四舍五入到分；`unit_price_scaled=null` 表示未知，0 表示明确零价。同一型号不同单位不得合并。
+22. 当前储备类别金额只统计尚未发生项目级出库的当前有效 `project_material_requirements`。施工费/其他费不强行摊入项目物资储备大类；缺价物资单独计数，不当作零价。
+23. 储备确认写入不可变 `project_versions` 快照并递增 `reserve_version`；后续项目物资调整回到草稿并形成新的修订历史，再次确认生成新版本，不能覆盖旧快照。
 24. P4 预算草稿与预算发生流水是不同事实。预算确认只生成不可变 `budget_versions` 和协议分配快照，不得自动插入 `financial_entries`；框架当前预算合计只计每个预算对象最新确认版本，旧版本仅留历史。
 25. 预算确认和资金流水的协议分配必须属于项目当前框架，且在需要确认/发生的业务日期处于有效状态；分配金额合计必须精确等于预算/流水金额。同一协议可服务多个项目，同一项目可拆多个协议，但金额不得因关联数量重复放大。
 26. `financial_entries` 仅保存独立口径的 `budget_occurrence` 与 `actual_cost`，原流水不硬删除。更正使用独立负数冲销记录并通过 `reverses_entry_id` 关联；同一原流水最多冲销一次。
 27. 协议 90% 和框架 80% 警示使用整数交叉相乘判断真实比例，不得用四舍五入后的展示基点提前触发；预算合计仅在严格大于框架总额时提示超框架。0 分母返回未配置，不返回 Infinity 或伪造 100%。
 28. P4 可变资金对象的 `expectedVersion` guard、历史版本、审计和幂等记录必须在同一 D1 batch 中。幂等重放应优先于因首次成功后产生的版本/状态冲突判断，确保相同键和相同 payload 返回原响应而不重复落账。
-29. P5 出库总量不得超过项目当前 `demand_allocations`；正常实施必须引用已出库范围且累计完成量不得超过对应出库行。出库、实施、结算/撤销、历史实施关联都与同一个 `projects.version` 原子推进，stale version 失败不得留下半笔历史事实。
-30. P3 修改项目需求分配时，新的数量不得低于 P5 已出库、已实施或有效结算覆盖形成的保护下限。允许扩大范围，但历史事实不能通过修改储备被静默删除或缩小；并发 P3/P5 写入必须由共同项目版本守卫串行化。
-31. 历史实施允许暂时没有项目/出库关联；后续只通过显式关联把实施行映射到项目需求物资，不补造出库。关联成功后同一历史记录不得被再次统计为第二份实施量，幂等重放返回原结果。
-32. 需求/项目“已实施”要求全部有效范围实施完成；“已结算”要求全部有效范围结算覆盖完整且存在至少一个未撤销的最终结算。非最终结算即使覆盖 100% 仍属于未结算；已有覆盖完整时允许 0 元、空新增覆盖的最终确认收口。最终结算创建时覆盖仍不完整必须拒绝。
-33. 实施与结算独立投影，允许先结算后实施；最终结算撤销后必须重新投影并恢复结算待办。项目/出库/实施/结算附件只存私有 R2 键，下载必须重新执行项目范围授权；跨项目不得访问。
+29. `project_releases` 是项目级进入执行阶段的一次性节点。只有已确认储备项目才能出库；出库保存当前项目需求来源和项目物资不可变快照，并推进 `projects.version`。新业务不得生成逐物资 `release_lines`。
+30. 只有存在项目级出库后才能建立 `project_tasks`。同一项目可以建立多个任务；任务需求范围合计受项目需求关联约束，任务物资分配累计不得超过对应当前项目物资。项目物资已经分配到任务后，不得删除、换型或缩减到任务累计分配量以下。
+31. 任务物资供应使用独立 `supply_version`，实施使用独立 `implementation_version`，结算使用独立 `settlement_version`；不同业务线互不要求先后顺序。供应累计必须满足 `arrived <= shipped <= reported <= required`；相同版本并发写只有一个成功。
+32. 实施与结算分别按 `task_demand_scopes` 记录数量事实。部分完成只展示进度，不能把 60/100 判成完成；结算允许先于实施。最终结算必须覆盖任务全部需求范围；首次实施后创建/更新结算提醒，最终结算完成后关闭提醒。
+33. 需求四状态由所有关联任务的需求范围事实回投：已实施已结算 / 已实施未结算 / 未实施已结算 / 未实施未结算。实施完成和结算完成是两个独立维度；项目状态由任务汇总。附件仍只存私有 R2 键并重新执行项目范围授权。
 34. P6 月计划、规则和报告快照必须可版本追溯；历史月报保存当时的 rule version、规则 JSON 和完整 snapshot，当前规则修改不得覆写旧修订。年度目标为 0 时分析返回未配置。
 35. P6 预警 crossing、持续 daily summary、recovery 与 recross 是不同生命周期事件；通知 outbox 使用唯一幂等键、领取租约、失败退避和 `unknown` 状态，结果不确定时不得无限重发。
 36. P6 年度事项保留 `month/day/unknown` 日期精度；只有月份时不得补造具体日期。完成事项停止提醒。
-37. P6 储备剩余金额按尚未出库数量比例折算，并以整数分配保持分类金额守恒；施工/其他共同费用未明确分摊时不能强行按数量摊入分类。
+37. P6 储备类别分析以“尚未发生项目级出库的项目当前物资”为口径，直接汇总当前有效 `project_material_requirements.amount_fen`；已项目级出库项目整体退出储备金额分析，不再按旧 `release_lines` 数量比例折算。施工/其他费用不进入项目物资储备类别。
 38. P6 D1→R2 备份按表和小分片可续跑，每个 chunk 保存 SHA-256，完成后生成 manifest；实际恢复需从 manifest/chunk 回灌独立 D1 并对账，`auth_sessions` 不恢复。分片读取不具备跨表快照隔离；正式迁移前须停写并对账，manifest 只含附件 key，需另校验附件本体。
 
 建议索引至少覆盖：来源幂等键；需求年度/类别/线路；需求物资分配；框架和协议归属；项目及财务条目的业务月；到期且待处理的通知；附件所属对象。按实际查询计划验收读行数。
@@ -119,18 +124,26 @@ POST /api/imports/:id/chunks
 POST /api/imports/:id/validate
 GET /api/imports/:id
 POST /api/imports/:id/publish
+POST /api/demands
 GET /api/demands
 GET /api/demands/:id
-GET /api/projects/candidates
-GET /api/projects/suggestions
-GET /api/projects
-POST /api/projects
-GET /api/projects/:id
-PUT /api/projects/:id/allocations
-PUT /api/projects/:id/costs
-PUT /api/projects/:id/category-allocations
-POST /api/projects/:id/confirm
-GET /api/projects/:id/history
+POST /api/demands/:id/materials
+GET /api/reserve-projects
+POST /api/reserve-projects
+GET /api/reserve-projects/:id
+PUT /api/reserve-projects/:id/demands
+PUT /api/reserve-projects/:id/materials
+GET /api/reserve-projects/:id/material-revisions
+POST /api/reserve-projects/:id/confirm
+POST /api/project-releases
+GET /api/project-releases
+POST /api/project-tasks
+GET /api/project-tasks
+POST /api/task-material-supply-events
+POST /api/task-implementations
+POST /api/task-settlements
+GET /api/projects/:id/execution
+GET /api/demands/:id/execution
 GET /api/reserve-categories
 POST /api/reserve-categories
 GET /api/category-mappings
@@ -154,15 +167,6 @@ GET /api/financial-entries
 POST /api/financial-entries
 POST /api/financial-entries/:id/reverse
 GET /api/finance/summary
-POST /api/release-batches
-GET /api/release-batches
-POST /api/implementations
-GET /api/implementations
-PUT /api/implementations/:id/link
-POST /api/settlements
-GET /api/settlements
-POST /api/settlements/:id/void
-GET /api/projects/:id/lifecycle
 POST /api/attachments
 GET /api/attachments
 GET /api/attachments/:id/content
@@ -193,12 +197,12 @@ POST /api/backups/:id/step
 POST /api/backups/:id/verify
 ```
 
-`/api/health` 当前返回 `stage: "p6"`。业务接口先验证系统自身会话 Cookie，再根据 D1 成员启用状态、角色和范围授权；不解析 Cloudflare Access JWT，也不信任任何请求头 username/email/role。成员角色、启停和范围继续受服务端权限、版本/幂等/审计约束；最后一个启用管理员不可被停用或降权。P2/P3 生产写接口继续由 `admin/project_manager` 管理；P4 框架/协议结构写入为 `admin/project_manager`，预算和资金流水允许 `finance` 在其业务范围内操作；P5 出库由 `admin/project_manager`，实施由 `admin/project_manager/implementation`，结算由 `admin/project_manager/finance` 操作；P6 分析计划/事项由相应管理角色维护，分析规则、通知地址和备份运维区受管理员边界约束。附件及所有业务读取仍按 `all/framework/project` scope 服务端过滤。未知 `/api` 路径返回 JSON 404，不回退到前端 HTML。
+`/api/health` 当前仍返回 `stage: "p6"`，表示 P6 分析/提醒/备份能力层级，不代表继续采用旧 P5 数据模型。业务接口先验证系统自身会话 Cookie，再根据 D1 成员启用状态、角色和范围授权；不解析 Cloudflare Access JWT，也不信任任何请求头 username/email/role。最终业务链中，需求/储备/项目级出库由 `admin/project_manager` 管理；执行任务与实施/供应由 `admin/project_manager/implementation` 操作；任务结算由 `admin/project_manager/finance` 操作。P4 框架/协议/预算/资金流水权限维持原边界。附件及所有业务读取仍按 `all/framework/project` scope 服务端过滤。未知 `/api` 路径返回 JSON 404，不回退到前端 HTML。旧 `/api/projects` allocation、`/api/release-batches`、旧 implementation/settlement 接口仍为历史兼容面，不作为新 UI 或最终业务主路径。
 
 P7 不新增另一套核心接口族；需求数据主路径使用系统生成的标准模板填报并回导，真实业务值用于抽样核对，不要求通过任意历史 Excel 反推字段结构。其余重点是用真实 Cloudflare/D1/R2/邮件资源和目标地区网络对上述合同做端到端验收，必要改动仍需保持现有不变量与版本/幂等约束。
 
 通用响应沿用 `packages/shared` 的 `ApiResponse<T>`。列表默认50项、最大100项，返回 `items` 和不透明 `nextCursor`；P3 待分配候选池和 P4 资金流水都按该约束分页，归并建议与资金汇总在数据库内做集合聚合，不能通过逐对象 N+1 查询或单请求无限制返回全库。大导出同样使用分页。
 
-每个创建/确认/出库/发生/结算等变更请求携带 `Idempotency-Key`；更新携带 `version`。P2 的多步导入、P3 的项目分配/估算/分类/确认、P4 的框架/协议/项目归属/预算更新，以及 P5 的出库/实施/历史关联/结算/撤销都使用相应 `expectedVersion` / `expectedProjectVersion` 显式推进对象版本。错误使用明确状态：400格式、401未认证、403无权限、404不存在、409版本/幂等冲突、422业务校验、429限流。接口不接受前端提交的汇总值、剩余数量、最终金额、使用率或最终权限判断为事实；这些均由服务端从有效版本与流水明细重算。
+每个创建/确认/出库/发生/结算等变更请求携带 `Idempotency-Key`；更新携带相应版本。P2 多步导入用批次 `expectedVersion`；储备项目用 `projects.version`；任务物资供应、实施、结算分别使用 `expectedSupplyVersion`、`expectedImplementationVersion`、`expectedSettlementVersion`，从而允许三条线独立推进。P4 资金对象继续使用自己的版本守卫。错误使用明确状态：400格式、401未认证、403无权限、404不存在、409版本/幂等冲突、422业务校验、429限流。接口不接受前端提交的汇总值、剩余数量、状态或最终权限判断为事实；这些均由服务端从有效事实明细重算。
 
 每个阶段开始时先补齐该接口族的共享类型，再实现 API 和前端，保持类型、迁移和文档同步。生产鉴权只接受系统签发的服务端会话 Cookie；请求头 username、email、角色或 Cloudflare Access JWT 都不构成业务身份。

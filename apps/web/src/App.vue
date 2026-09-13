@@ -30,7 +30,7 @@ const loggingOut = ref(false);
 const menuOptions: MenuOption[] = [
   { label: '总览', key: '/' },
   { label: '项目需求', key: '/demands' },
-  { label: '储备出库', key: '/reserves' },
+  { label: '项目储备', key: '/reserves' },
   { label: '实施结算', key: '/delivery' },
   { label: '框架费用', key: '/finance' },
   { label: '储备分析', key: '/analysis' },

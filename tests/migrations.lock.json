@@ -4,5 +4,7 @@
   "apps/api/migrations/0003_p3_reserve_projects.sql": "0f05230740cb5cbdc106afcf035f7193d1a91e72a39f649ab1c9e05bbf1169c5",
   "apps/api/migrations/0004_p4_finance.sql": "288fc89eed5333ecd582c8a66a48eb7f32dca6de71bb79ee25dd604deb7f8cb5",
   "apps/api/migrations/0005_p5_delivery_implementation_settlement.sql": "aa3967dd010c6005ca5293b1fbe16c2e859e2469eec60f1b972adbb2411e73fe",
-  "apps/api/migrations/0006_p6_analysis_notifications_backups.sql": "facf79bc96dab059c534fa670979ed7fa3899f183c33eb63f7806090e332df9e"
+  "apps/api/migrations/0006_p6_analysis_notifications_backups.sql": "facf79bc96dab059c534fa670979ed7fa3899f183c33eb63f7806090e332df9e",
+  "apps/api/migrations/0007_p7_flexible_demand_sources.sql": "f51f6735ae98bc16db07f328d970ab658a0ac60f3792ca8990117d519b4fefda",
+  "apps/api/migrations/0008_final_business_flow.sql": "a0da7fcd2a7aeb334ad4d6275b7b6c5909979e4edb98c8ab02740b5142140610"
 }

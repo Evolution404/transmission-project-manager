@@ -17,9 +17,9 @@ vi.mock('naive-ui', async () => {
     },
   });
   const NInput = vue.defineComponent({
-    name: 'NInput', props: { value: { type: String, default: '' }, placeholder: String }, emits: ['update:value'],
+    name: 'NInput', props: { value: { type: String, default: '' }, placeholder: String, disabled: Boolean }, emits: ['update:value'],
     setup(props, { emit, attrs }) {
-      return () => vue.h('input', { ...attrs, value: props.value, placeholder: props.placeholder, onInput: (e: Event) => emit('update:value', (e.target as HTMLInputElement).value) });
+      return () => vue.h('input', { ...attrs, value: props.value, placeholder: props.placeholder, disabled: props.disabled, onInput: (e: Event) => emit('update:value', (e.target as HTMLInputElement).value) });
     },
   });
   const NSelect = vue.defineComponent({
@@ -30,9 +30,9 @@ vi.mock('naive-ui', async () => {
     },
   });
   const NCheckbox = vue.defineComponent({
-    name: 'NCheckbox', inheritAttrs: false, props: { checked: Boolean }, emits: ['update:checked'],
+    name: 'NCheckbox', inheritAttrs: false, props: { checked: Boolean, disabled: Boolean }, emits: ['update:checked'],
     setup(props, { emit, attrs, slots }) {
-      return () => vue.h('label', [vue.h('input', { ...attrs, type: 'checkbox', checked: props.checked, onChange: (e: Event) => emit('update:checked', (e.target as HTMLInputElement).checked) }), slots.default?.()]);
+      return () => vue.h('label', [vue.h('input', { ...attrs, type: 'checkbox', checked: props.checked, disabled: props.disabled, onChange: (e: Event) => emit('update:checked', (e.target as HTMLInputElement).checked) }), slots.default?.()]);
     },
   });
   const NDataTable = vue.defineComponent({
@@ -70,112 +70,117 @@ function ok(data: unknown, status = 200) {
   return new Response(JSON.stringify({ ok: true, data }), { status, headers: { 'Content-Type': 'application/json' } });
 }
 
-const projectSummary = {
-  id: 'p1', name: '储备A', year: 2026, owner: null, status: 'draft', reserveVersion: 0, version: 1,
-  createdAt: '2026-09-12T00:00:00.000Z', updatedAt: '2026-09-12T00:00:00.000Z',
-  knownAmountFen: 0, missingPriceCount: 1, completenessBasisPoints: 0,
+const demand1 = {
+  id: 'd1', sequenceNo: 'D-001', year: 2026, voltageRaw: '220kV', voltageVerified: '220kV',
+  lineName: '龙城线', section: '#1-#2', category: '防断线', owner: null, version: 1, createdAt: '2026-09-12T00:00:00.000Z',
 };
-const projectDetail = {
-  ...projectSummary,
-  allocations: [{
-    id: 'a1', demandMaterialId: 'dm1', quantityScaled: 10000, rawModel: 'JX-01', unit: '套',
-    material: { id: 'm1', code: null, name: '线夹', model: 'JX-01', unit: '套', enabled: true, version: 1 },
-    demand: { id: 'd1', sequenceNo: '1', year: 2026, category: '防断线', voltage: '220kV', lineName: '龙城线', section: '#1' },
-    source: { fileName: '需求.xlsx', sheetName: '需求', rowNumber: 2 },
-  }],
-  materialSummary: [{ materialId: 'm1', rawModel: 'JX-01', model: 'JX-01', name: '线夹', unit: '套', quantityScaled: 10000 }],
-  costLines: [], categoryAllocations: [], categories: [], classifiedAmountFen: 0, unclassifiedAmountFen: 0,
+const demand2 = {
+  id: 'd2', sequenceNo: 'D-002', year: 2026, voltageRaw: '110kV', voltageVerified: '110kV',
+  lineName: '江北线', section: '#3-#4', category: '通道治理', owner: null, version: 1, createdAt: '2026-09-12T00:00:00.000Z',
+};
+const demandLink = {
+  id: 'link1', demandId: 'd1', sequenceNo: 'D-001', year: 2026, voltage: '220kV', lineName: '龙城线', section: '#1-#2',
+  category: '防断线', owner: null, createdAt: '2026-09-12T00:00:00.000Z',
+};
+const materialRequirement = {
+  id: 'pm1', projectId: 'p1', materialId: null, model: 'JX-01', unit: '套', requiredQuantityScaled: 10000,
+  unitPriceScaled: 100000, amountFen: 10000, reserveCategoryId: 'cat1', reserveCategory: { id: 'cat1', key: 'line', label: '防断线' },
+  version: 1, createdAt: '2026-09-12T00:00:00.000Z', updatedAt: '2026-09-12T00:00:00.000Z',
+};
+const project = {
+  id: 'p1', name: '储备A', year: 2026, owner: null, status: 'draft' as const, reserveVersion: 0, frameworkId: null, version: 1,
+  demandLinks: [demandLink], materialRequirements: [materialRequirement], knownMaterialAmountFen: 10000,
+  missingPriceCount: 0, materialPriceCompletenessBasisPoints: 10000,
+  createdAt: '2026-09-12T00:00:00.000Z', updatedAt: '2026-09-12T00:00:00.000Z',
+};
+const createdProject = {
+  ...project, id: 'new-project', name: '新储备', demandLinks: [demandLink], materialRequirements: [], knownMaterialAmountFen: 0,
+  missingPriceCount: 0, materialPriceCompletenessBasisPoints: 10000,
 };
 
 function installFetch() {
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
-    if (url === '/api/projects?limit=50') return ok({ items: [projectSummary], nextCursor: null });
-    if (url === '/api/projects/candidates?limit=100') return ok({ items: [{
-      demandMaterialId: 'dm1', demandId: 'd1', sequenceNo: '1', year: 2026, category: '防断线', voltage: '220kV',
-      lineName: '龙城线', section: '#1', rawModel: 'JX-01', unit: '套', material: projectDetail.allocations[0]!.material,
-      originalQuantityScaled: 100000, allocatedQuantityScaled: 0, remainingQuantityScaled: 100000,
-      source: { fileName: '需求.xlsx', sheetName: '需求', rowNumber: 2 },
-    }], nextCursor: 'candidate-next' });
-    if (url === '/api/projects/candidates?limit=100&cursor=candidate-next') return ok({ items: [{
-      demandMaterialId: 'dm2', demandId: 'd2', sequenceNo: '2', year: 2026, category: '防鸟', voltage: '110kV',
-      lineName: '江北线', section: '#2', rawModel: 'JX-02', unit: '只', material: null,
-      originalQuantityScaled: 20000, allocatedQuantityScaled: 0, remainingQuantityScaled: 20000,
-      source: { fileName: '需求.xlsx', sheetName: '需求', rowNumber: 3 },
-    }], nextCursor: null });
-    if (url === '/api/projects/suggestions?limit=100') return ok({ items: [{ year: 2026, category: '防断线', voltage: '220kV', lineName: '龙城线', itemCount: 1 }] });
+    if (url === '/api/reserve-projects?limit=100') return ok({ items: [project], nextCursor: null });
+    if (url === '/api/demands?limit=100') return ok({ items: [demand1, demand2], nextCursor: null });
     if (url === '/api/reserve-categories') return ok({ items: [{ id: 'cat1', key: 'line', label: '防断线', enabled: true, version: 1 }] });
     if (url === '/api/category-mappings') return ok({ items: [] });
-    if (url === '/api/projects/p1') return ok(projectDetail);
-    if (url === '/api/projects' && init?.method === 'POST') return ok({ ...projectSummary, id: 'new-project', name: '新储备', missingPriceCount: 1 }, 201);
-    if (url === '/api/projects/p1/costs' && init?.method === 'PUT') return ok({ version: 2, knownAmountFen: 11260, missingPriceCount: 0, completenessBasisPoints: 10000 });
-    if (url === '/api/projects/p1/confirm' && init?.method === 'POST') return ok({ id: 'p1', status: 'confirmed', version: 2, reserveVersion: 1, knownAmountFen: 0, missingPriceCount: 1, completenessBasisPoints: 0 });
+    if (url === '/api/reserve-projects/p1') return ok(project);
+    if (url === '/api/reserve-projects/new-project') return ok(createdProject);
+    if (url === '/api/reserve-projects' && init?.method === 'POST') return ok(createdProject, 201);
+    if (url === '/api/reserve-projects/p1/demands' && init?.method === 'PUT') return ok({ projectId: 'p1', version: 2, demandIds: ['d2'] });
+    if (url === '/api/reserve-projects/p1/materials' && init?.method === 'PUT') return ok({ projectId: 'p1', version: 2, materialRequirements: [] });
+    if (url === '/api/reserve-projects/p1/confirm' && init?.method === 'POST') return ok({ id: 'p1', status: 'confirmed', version: 2, reserveVersion: 1 });
     throw new Error(`unexpected request ${init?.method ?? 'GET'} ${url}`);
   }));
 }
 
-describe('ReservesView P3 behavior', () => {
+describe('ReservesView final business baseline', () => {
   beforeEach(() => installFetch());
   afterEach(() => vi.unstubAllGlobals());
 
-  it('lets readonly users inspect reserves but hides conversion write controls', async () => {
+  it('lets readonly users inspect reserve projects while hiding all project mutation controls', async () => {
     const wrapper = mount(ReservesView, { props: { currentUser: readonly } });
     await flushPromises();
     expect(wrapper.text()).toContain('储备A');
-    expect(wrapper.text()).toContain('仅管理员或项目管理角色可以归并、分配、估算和确认储备');
+    expect(wrapper.text()).toContain('当前账号只能查看储备项目');
     expect(wrapper.find('[data-test="create-project"]').exists()).toBe(false);
   });
 
-  it('loads candidate demand materials page by page instead of capping the conversion pool at 100 rows', async () => {
+  it('creates a reserve project from abstract demand links without inheriting demand material quantities', async () => {
     const wrapper = mount(ReservesView, { props: { currentUser: admin } });
     await flushPromises();
-    expect(wrapper.find('[data-test="candidate-dm1"]').exists()).toBe(true);
-    expect(wrapper.find('[data-test="candidate-dm2"]').exists()).toBe(false);
-    await wrapper.get('[data-test="load-more-candidates"]').trigger('click');
-    await flushPromises();
-    expect(wrapper.find('[data-test="candidate-dm2"]').exists()).toBe(true);
-    expect(wrapper.find('[data-test="load-more-candidates"]').exists()).toBe(false);
-  });
-
-  it('converts selected demand quantities to fixed-point allocation payloads', async () => {
-    const wrapper = mount(ReservesView, { props: { currentUser: admin } });
-    await flushPromises();
-    await wrapper.get('[data-test="candidate-dm1"]').setValue(true);
+    await wrapper.get('[data-test="create-demand-d1"]').setValue(true);
     await wrapper.get('[data-test="project-name"]').setValue('新储备');
-    await wrapper.get('[data-test="allocation-dm1"]').setValue('6.5');
     await wrapper.get('[data-test="create-project"]').trigger('click');
     await flushPromises();
 
-    const fetchMock = vi.mocked(fetch);
-    const call = fetchMock.mock.calls.find(([url, init]) => String(url) === '/api/projects' && init?.method === 'POST');
+    const call = vi.mocked(fetch).mock.calls.find(([url, init]) => String(url) === '/api/reserve-projects' && init?.method === 'POST');
     expect(call).toBeTruthy();
     expect(JSON.parse(String(call![1]!.body))).toEqual({
-      name: '新储备', year: 2026, owner: null,
-      allocations: [{ demandMaterialId: 'dm1', quantityScaled: 65000 }],
+      name: '新储备', year: null, owner: null, demandIds: ['d1'], materials: [],
     });
   });
 
-  it('converts yuan inputs into exact scaled price and fen payloads', async () => {
+  it('updates demand provenance independently from project material requirements', async () => {
     const wrapper = mount(ReservesView, { props: { currentUser: admin } });
     await flushPromises();
     await wrapper.get('[data-test="open-project-p1"]').trigger('click');
     await flushPromises();
-    await wrapper.get('[data-test="material-price-a1"]').setValue('12.3456');
-    await wrapper.get('[data-test="construction-cost"]').setValue('100.25');
-    await wrapper.get('[data-test="save-costs"]').trigger('click');
+    await wrapper.get('[data-test="project-demand-d1"]').setValue(false);
+    await wrapper.get('[data-test="project-demand-d2"]').setValue(true);
+    await wrapper.get('[data-test="save-demand-links"]').trigger('click');
     await flushPromises();
 
-    const fetchMock = vi.mocked(fetch);
-    const call = fetchMock.mock.calls.find(([url, init]) => String(url) === '/api/projects/p1/costs' && init?.method === 'PUT');
+    const call = vi.mocked(fetch).mock.calls.find(([url, init]) => String(url) === '/api/reserve-projects/p1/demands' && init?.method === 'PUT');
+    expect(call).toBeTruthy();
+    expect(JSON.parse(String(call![1]!.body))).toEqual({ expectedVersion: 1, demandIds: ['d2'] });
+  });
+
+  it('revises project materials with fixed-point quantity and unit price plus an explicit reason', async () => {
+    const wrapper = mount(ReservesView, { props: { currentUser: admin } });
+    await flushPromises();
+    await wrapper.get('[data-test="open-project-p1"]').trigger('click');
+    await flushPromises();
+    await wrapper.get('[data-test="material-quantity-pm1"]').setValue('1.5');
+    await wrapper.get('[data-test="material-price-pm1"]').setValue('12.3456');
+    await wrapper.get('[data-test="material-revision-reason"]').setValue('设计复核调整');
+    await wrapper.get('[data-test="save-project-materials"]').trigger('click');
+    await flushPromises();
+
+    const call = vi.mocked(fetch).mock.calls.find(([url, init]) => String(url) === '/api/reserve-projects/p1/materials' && init?.method === 'PUT');
     expect(call).toBeTruthy();
     expect(JSON.parse(String(call![1]!.body))).toEqual({
       expectedVersion: 1,
-      materialPrices: [{ demandAllocationId: 'a1', unitPriceScaled: 123456, source: null, priceDate: null, taxInclusive: null }],
-      fixedCosts: [{ kind: 'construction', label: '施工费', amountFen: 10025, source: null, priceDate: null, taxInclusive: null }],
+      reason: '设计复核调整',
+      materials: [{
+        id: 'pm1', materialId: null, model: 'JX-01', unit: '套', requiredQuantityScaled: 15000,
+        unitPriceScaled: 123456, reserveCategoryId: 'cat1',
+      }],
     });
   });
 
-  it('confirms the currently loaded project version instead of a stale hard-coded version', async () => {
+  it('confirms the currently loaded reserve version instead of a stale hard-coded version', async () => {
     const wrapper = mount(ReservesView, { props: { currentUser: admin } });
     await flushPromises();
     await wrapper.get('[data-test="open-project-p1"]').trigger('click');
@@ -183,8 +188,7 @@ describe('ReservesView P3 behavior', () => {
     await wrapper.get('[data-test="confirm-project"]').trigger('click');
     await flushPromises();
 
-    const fetchMock = vi.mocked(fetch);
-    const call = fetchMock.mock.calls.find(([url, init]) => String(url) === '/api/projects/p1/confirm' && init?.method === 'POST');
+    const call = vi.mocked(fetch).mock.calls.find(([url, init]) => String(url) === '/api/reserve-projects/p1/confirm' && init?.method === 'POST');
     expect(call).toBeTruthy();
     expect(JSON.parse(String(call![1]!.body))).toEqual({ expectedVersion: 1, reason: null });
   });

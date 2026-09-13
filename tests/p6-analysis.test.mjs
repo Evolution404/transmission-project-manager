@@ -41,11 +41,16 @@ function rows(command) {
 
 const restoreTableOrder = [
   'members', 'member_scopes', 'settings_versions', 'dictionary_items', 'audit_events', 'idempotency_records',
-  'materials', 'import_mapping_templates', 'import_batches', 'import_rows', 'demands', 'demand_materials', 'field_definitions',
+  'materials', 'import_mapping_templates', 'import_batches', 'import_rows', 'demands', 'demand_source_rows', 'demand_materials', 'field_definitions',
   'projects', 'project_versions', 'demand_allocations', 'project_cost_lines', 'reserve_categories', 'category_mappings', 'category_cost_allocations',
+  'project_demand_links', 'project_material_requirements', 'project_material_revisions',
   'frameworks', 'framework_versions', 'agreements', 'agreement_versions', 'project_budgets', 'budget_allocations', 'budget_versions',
-  'budget_version_allocations', 'financial_entries', 'financial_entry_allocations', 'release_batches', 'release_lines',
-  'implementation_records', 'implementation_lines', 'settlements', 'settlement_coverage', 'settlement_agreement_allocations', 'attachments',
+  'budget_version_allocations', 'financial_entries', 'financial_entry_allocations',
+  'project_releases', 'project_tasks', 'task_demand_scopes', 'task_material_requirements', 'material_supply_events',
+  'task_implementation_records', 'task_implementation_scope_lines', 'task_material_usage_lines',
+  'task_settlements', 'task_settlement_scope_lines', 'task_settlement_agreement_allocations', 'task_settlement_reminders',
+  'release_batches', 'release_lines', 'implementation_records', 'implementation_lines', 'settlements', 'settlement_coverage',
+  'settlement_agreement_allocations', 'attachments',
   'analysis_rules', 'monthly_plans', 'report_snapshots', 'annual_milestones', 'notification_contacts', 'alert_events', 'notification_outbox',
 ];
 function sqlLiteral(value) {
@@ -114,6 +119,21 @@ function seedFinanceFacts() {
       VALUES ('p6-release','p6-reserve','2026-02-01',NULL,1,1,'${adminId}','${now}');
       INSERT INTO release_lines (id,release_batch_id,project_id,demand_material_id,quantity_scaled,snapshot_json,created_at)
       VALUES ('p6-release-line','p6-release','p6-reserve','p6-reserve-dm',400000,'{}','${now}');
+
+      INSERT INTO projects (id,name,business_year,owner,status,reserve_version,framework_id,version,created_by,created_at,updated_at)
+      VALUES
+        ('p6-final-reserve','最终口径未出库储备',2026,NULL,'confirmed',1,NULL,1,'${adminId}','${now}','${now}'),
+        ('p6-final-released','最终口径已出库项目',2026,NULL,'confirmed',1,NULL,2,'${adminId}','${now}','${now}');
+      INSERT INTO project_material_requirements
+        (id,project_id,material_id,model,unit,required_quantity_scaled,unit_price_scaled,amount_fen,reserve_category_id,active,version,created_by,created_at,updated_at)
+      VALUES
+        ('p6-pmr-cat','p6-final-reserve','p6-material','JX-P6','套',1000000,1000000,100000,'p6-category',1,1,'${adminId}','${now}','${now}'),
+        ('p6-pmr-unclassified','p6-final-reserve',NULL,'OTHER-P6','项',500000,1000000,50000,NULL,1,1,'${adminId}','${now}','${now}'),
+        ('p6-pmr-missing','p6-final-reserve',NULL,'UNKNOWN-P6','项',100000,NULL,NULL,'p6-category',1,1,'${adminId}','${now}','${now}'),
+        ('p6-pmr-released','p6-final-released','p6-material','JX-P6','套',900000,1000000,999999,'p6-category',1,1,'${adminId}','${now}','${now}');
+      INSERT INTO project_releases
+        (id,project_id,release_date,note,project_version_snapshot,reserve_version_snapshot,snapshot_json,created_by,created_at)
+      VALUES ('p6-final-project-release','p6-final-released','2026-02-01',NULL,1,1,'{}','${adminId}','${now}');
     `,
   });
 }
@@ -250,14 +270,17 @@ test('monthly report revisions preserve the original rule version and snapshot',
   assert.equal(history.body.data.items[1].ruleVersion, firstRuleVersion);
 });
 
-test('current reserve analysis prorates categorized material cost by unreleased quantity without re-counting the full project', async () => {
+test('current reserve analysis uses current project materials and excludes project-level released projects and non-material costs', async () => {
   const remaining = await jsonRequest('/api/analysis/reserve-remaining');
   assert.equal(remaining.response.status, 200);
-  assert.equal(remaining.body.data.knownRemainingFen, 60000);
+  assert.equal(remaining.body.data.currentMaterialQuantityScaled, 1600000);
+  assert.equal(remaining.body.data.knownCurrentMaterialAmountFen, 150000);
+  assert.equal(remaining.body.data.missingPriceCount, 1);
+  assert.equal(remaining.body.data.unclassifiedCurrentMaterialFen, 50000);
+  assert.equal(remaining.body.data.unscopedCommonCostFen, 0, '施工/其他费用不得进入储备类别金额分析');
   const category = remaining.body.data.categories.find((item) => item.reserveCategoryId === 'p6-category');
-  assert.equal(category.knownRemainingFen, 60000);
-  assert.equal(remaining.body.data.releasedQuantityScaled, 400000);
-  assert.equal(remaining.body.data.allocatedQuantityScaled, 1000000);
+  assert.equal(category.knownCurrentAmountFen, 100000);
+  assert.equal(remaining.body.data.releasedProjectCount, 1);
 });
 
 test('milestones preserve month/day/unknown precision without inventing dates', async () => {

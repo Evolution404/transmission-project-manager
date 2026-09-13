@@ -1,6 +1,7 @@
 import { Hono, type Context } from 'hono';
 import type {
   ApiError,
+  CreateDemandRequest,
   DemandDetail,
   DemandMaterialSummary,
   DemandSummary,
@@ -24,6 +25,18 @@ const REQUIRED_MAPPING_KEYS = [
   'sequenceNo', 'voltage', 'lineName', 'section', 'materialModel', 'materialQuantity',
 ] as const;
 const OPTIONAL_MAPPING_KEYS = ['unit', 'year', 'category', 'owner'] as const;
+const MANUAL_DEMAND_MAPPING: ImportFieldMapping = {
+  sequenceNo: 'sequenceNo',
+  voltage: 'voltage',
+  lineName: 'lineName',
+  section: 'section',
+  materialModel: 'materialModel',
+  materialQuantity: 'materialQuantity',
+  unit: 'unit',
+  year: 'year',
+  category: 'category',
+  owner: 'owner',
+};
 const MAX_CHUNK_ROWS = 20;
 const MAX_VALIDATION_ROWS = 20;
 const MAX_PUBLISH_ROWS = 10;
@@ -82,12 +95,13 @@ interface MaterialRow {
 
 interface DemandRow {
   id: string;
+  source_type: 'import' | 'manual';
   source_key: string;
-  source_batch_id: string;
-  source_file_sha256: string;
-  source_file_name: string;
-  source_sheet: string;
-  source_row_number: number;
+  source_batch_id: string | null;
+  source_file_sha256: string | null;
+  source_file_name: string | null;
+  source_sheet: string | null;
+  source_row_number: number | null;
   sequence_no: string;
   business_year: number | null;
   voltage_raw: string;
@@ -97,6 +111,7 @@ interface DemandRow {
   category_key: string | null;
   owner: string | null;
   raw_json: string;
+  version: number;
   created_at: string;
 }
 
@@ -176,6 +191,7 @@ function demandSummary(row: DemandRow): DemandSummary {
     section: row.section_text,
     category: row.category_key,
     owner: row.owner,
+    version: row.version,
     createdAt: row.created_at,
   };
 }
@@ -333,10 +349,11 @@ async function normalizeRows(
     const lineName = cleanText(mappedValue(raw, mapping, 'lineName'));
     const section = cleanText(mappedValue(raw, mapping, 'section'));
     const materialModel = cleanText(mappedValue(raw, mapping, 'materialModel'));
+    const materialQuantityRaw = cleanText(mappedValue(raw, mapping, 'materialQuantity'));
     const unit = cleanText(mappedValue(raw, mapping, 'unit')) || null;
     const category = cleanText(mappedValue(raw, mapping, 'category')) || null;
     const owner = cleanText(mappedValue(raw, mapping, 'owner')) || null;
-    const quantity = quantityScaled(mappedValue(raw, mapping, 'materialQuantity'));
+    const quantity = materialQuantityRaw ? quantityScaled(materialQuantityRaw) : { scaled: null as number | null };
     const year = validYear(mappedValue(raw, mapping, 'year'));
     const errors: ImportIssue[] = [];
     const warnings: ImportIssue[] = [];
@@ -346,9 +363,11 @@ async function normalizeRows(
       ['voltage', voltageRaw, '电压等级'],
       ['lineName', lineName, '线路名称'],
       ['section', section, '杆段'],
-      ['materialModel', materialModel, '物资型号'],
     ] as const) {
       if (!value) errors.push({ code: 'REQUIRED_FIELD', field, message: `${label}不能为空` });
+    }
+    if (Boolean(materialModel) !== Boolean(materialQuantityRaw)) {
+      errors.push({ code: 'MATERIAL_PAIR_INCOMPLETE', field: materialModel ? 'materialQuantity' : 'materialModel', message: '物资型号与物资数量必须同时填写；两者都留空表示该抽象需求暂未明确物资' });
     }
     if (quantity.error) errors.push(quantity.error);
     if (year.error) errors.push(year.error);
@@ -356,9 +375,9 @@ async function normalizeRows(
     if (voltageRaw && !voltageVerified) warnings.push({ code: 'VOLTAGE_UNVERIFIED', field: 'voltage', message: '电压等级无法自动核实，需人工确认' });
 
     let businessSignature: string | null = null;
-    if (!errors.length && quantity.scaled !== null) {
+    if (!errors.length) {
       businessSignature = await hashText(JSON.stringify([
-        year.year, voltageVerified ?? voltageRaw, lineName, section, materialModel.toLowerCase(), quantity.scaled, unit?.toLowerCase() ?? null,
+        sequenceNo, year.year, voltageVerified ?? voltageRaw, lineName, section, category,
       ]));
     }
     const normalized: NormalizedImportRow = {
@@ -547,6 +566,137 @@ p2App.get('/materials', async (c) => {
       `SELECT id,code,name,model,unit,enabled,version FROM materials ORDER BY model COLLATE NOCASE, unit COLLATE NOCASE LIMIT ?`,
     ).bind(limit).all<MaterialRow>();
   return c.json({ ok: true as const, data: { items: (result.results ?? []).map(materialSummary) } });
+});
+
+p2App.post('/demands', requireRoles('admin', 'project_manager'), async (c) => {
+  const key = requireIdempotencyKey(c);
+  if (key instanceof Response) return key;
+  let body: Partial<CreateDemandRequest>;
+  try { body = await c.req.json<Partial<CreateDemandRequest>>(); } catch {
+    return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400);
+  }
+
+  const raw: Record<string, unknown> = {
+    sequenceNo: body.sequenceNo,
+    voltage: body.voltage,
+    lineName: body.lineName,
+    section: body.section,
+    materialModel: body.materialModel,
+    materialQuantity: body.materialQuantity,
+    unit: body.unit,
+    year: body.year,
+    category: body.category,
+    owner: body.owner,
+  };
+  const fakeRow: ImportRowDb = {
+    id: 'manual-validation',
+    batch_id: '',
+    chunk_index: 0,
+    sheet_name: '',
+    source_row_number: 1,
+    source_key: '',
+    raw_json: JSON.stringify(raw),
+    normalized_json: null,
+    errors_json: '[]',
+    warnings_json: '[]',
+    row_status: 'uploaded',
+    published_demand_id: null,
+  };
+  const [validated] = await normalizeRows(c.env.DB, [fakeRow], MANUAL_DEMAND_MAPPING);
+  if (!validated || validated.errors.length || validated.normalized.quantityScaled === null || !validated.normalized.businessSignature) {
+    return c.json(apiError('INVALID_DEMAND', '需求字段校验失败', {
+      errors: validated?.errors ?? [{ code: 'INVALID_DEMAND', message: '需求字段无效' }],
+      warnings: validated?.warnings ?? [],
+    }), 422);
+  }
+
+  const requestBody: CreateDemandRequest = {
+    sequenceNo: cleanText(body.sequenceNo),
+    voltage: cleanText(body.voltage),
+    lineName: cleanText(body.lineName),
+    section: cleanText(body.section),
+    materialModel: cleanText(body.materialModel),
+    materialQuantity: body.materialQuantity as string | number,
+    unit: cleanText(body.unit) || null,
+    year: validated.normalized.year,
+    category: cleanText(body.category) || null,
+    owner: cleanText(body.owner) || null,
+  };
+  const hash = await requestHash(requestBody);
+  const operation = 'demands.create';
+  const replay = await replayIdempotentResponse(c, key, operation, hash);
+  if (replay) return replay;
+
+  const actor = c.get('currentUser');
+  const demandId = crypto.randomUUID();
+  const demandMaterialId = crypto.randomUUID();
+  const sourceKey = `manual:${demandId}`;
+  const now = new Date().toISOString();
+  let resolvedMaterial: MaterialSummary | null = null;
+  if (validated.normalized.materialId) {
+    const material = await c.env.DB.prepare(
+      'SELECT id,code,name,model,unit,enabled,version FROM materials WHERE id=? LIMIT 1',
+    ).bind(validated.normalized.materialId).first<MaterialRow>();
+    if (material) resolvedMaterial = materialSummary(material);
+  }
+  const data: DemandDetail = {
+    id: demandId,
+    sequenceNo: validated.normalized.sequenceNo,
+    year: validated.normalized.year,
+    voltageRaw: validated.normalized.voltageRaw,
+    voltageVerified: validated.normalized.voltageVerified,
+    lineName: validated.normalized.lineName,
+    section: validated.normalized.section,
+    category: validated.normalized.category,
+    owner: validated.normalized.owner,
+    version: 1,
+    createdAt: now,
+    source: { type: 'manual', raw },
+    materials: [{
+      id: demandMaterialId,
+      rawModel: validated.normalized.materialModel,
+      quantityScaled: validated.normalized.quantityScaled,
+      unit: validated.normalized.unit,
+      material: resolvedMaterial,
+    }],
+  };
+  const response = { ok: true as const, data };
+  try {
+    await c.env.DB.batch([
+      c.env.DB.prepare(
+        `INSERT INTO demands
+         (id,source_type,source_key,source_batch_id,source_file_sha256,source_file_name,source_sheet,source_row_number,
+          sequence_no,business_year,voltage_raw,voltage_verified,line_name,section_text,category_key,owner,business_signature,
+          raw_json,extra_json,version,created_by,created_at,updated_at)
+         VALUES (?,'manual',?,NULL,NULL,NULL,NULL,NULL,?,?,?,?,?,?,?,?,?,?,'{}',1,?,?,?)`,
+      ).bind(
+        demandId, sourceKey,
+        validated.normalized.sequenceNo, validated.normalized.year, validated.normalized.voltageRaw, validated.normalized.voltageVerified,
+        validated.normalized.lineName, validated.normalized.section, validated.normalized.category, validated.normalized.owner,
+        validated.normalized.businessSignature, JSON.stringify(raw), actor.id, now, now,
+      ),
+      c.env.DB.prepare(
+        `INSERT INTO demand_materials (id,demand_id,raw_model,material_id,quantity_scaled,unit,created_at)
+         VALUES (?,?,?,?,?,?,?)`,
+      ).bind(
+        demandMaterialId, demandId, validated.normalized.materialModel, validated.normalized.materialId,
+        validated.normalized.quantityScaled, validated.normalized.unit, now,
+      ),
+      c.env.DB.prepare(
+        `INSERT INTO audit_events (id,actor_member_id,action,object_type,object_id,before_json,after_json,created_at)
+         VALUES (?,?, 'demand.create.manual','demand',?,NULL,?,?)`,
+      ).bind(crypto.randomUUID(), actor.id, demandId, JSON.stringify(data), now),
+      c.env.DB.prepare(
+        `INSERT INTO idempotency_records (idempotency_key,actor_member_id,operation,request_hash,response_json,status_code,created_at)
+         VALUES (?,?,?,?,?,201,?)`,
+      ).bind(key, actor.id, operation, hash, JSON.stringify(response), now),
+    ]);
+  } catch {
+    const replayAfterRace = await replayIdempotentResponse(c, key, operation, hash);
+    if (replayAfterRace) return replayAfterRace;
+    return c.json(apiError('DEMAND_CREATE_CONFLICT', '需求创建发生冲突，请刷新后重试'), 409);
+  }
+  return c.json(response, 201);
 });
 
 p2App.post('/imports', requireRoles('admin', 'project_manager'), async (c) => {
@@ -811,8 +961,21 @@ p2App.post('/imports/:id/publish', requireRoles('admin', 'project_manager'), asy
   const existingBySource = new Map<string, string>();
   if (sourceKeys.length) {
     const placeholders = sourceKeys.map(() => '?').join(',');
-    const existing = await c.env.DB.prepare(`SELECT id,source_key FROM demands WHERE source_key IN (${placeholders})`).bind(...sourceKeys).all<{ id: string; source_key: string }>();
-    for (const demand of existing.results ?? []) existingBySource.set(demand.source_key, demand.id);
+    const direct = await c.env.DB.prepare(`SELECT id,source_key FROM demands WHERE source_key IN (${placeholders})`).bind(...sourceKeys).all<{ id: string; source_key: string }>();
+    for (const demand of direct.results ?? []) existingBySource.set(demand.source_key, demand.id);
+    const linked = await c.env.DB.prepare(`SELECT demand_id,source_key FROM demand_source_rows WHERE source_key IN (${placeholders})`).bind(...sourceKeys).all<{ demand_id: string; source_key: string }>();
+    for (const source of linked.results ?? []) existingBySource.set(source.source_key, source.demand_id);
+  }
+  const signatures = rows
+    .map((row) => parseJson<NormalizedImportRow | null>(row.normalized_json, null)?.businessSignature ?? null)
+    .filter((value): value is string => Boolean(value));
+  const existingBySignature = new Map<string, string>();
+  if (signatures.length) {
+    const placeholders = signatures.map(() => '?').join(',');
+    const existing = await c.env.DB.prepare(
+      `SELECT id,business_signature FROM demands WHERE source_type='import' AND source_batch_id=? AND business_signature IN (${placeholders})`,
+    ).bind(batch.id, ...signatures).all<{ id: string; business_signature: string }>();
+    for (const demand of existing.results ?? []) existingBySignature.set(demand.business_signature, demand.id);
   }
 
   const publishedRows = batch.published_rows + rows.length;
@@ -834,26 +997,35 @@ p2App.post('/imports/:id/publish', requireRoles('admin', 'project_manager'), asy
   })];
   for (const row of rows) {
     const normalized = parseJson<NormalizedImportRow | null>(row.normalized_json, null);
-    if (!normalized || normalized.quantityScaled === null || !normalized.businessSignature) {
+    if (!normalized || !normalized.businessSignature) {
       return c.json(apiError('IMPORT_ROW_NOT_VALIDATED', '存在缺少规范化结果的行'), 409);
     }
-    const existingId = existingBySource.get(row.source_key);
+    const existingId = existingBySource.get(row.source_key) ?? existingBySignature.get(normalized.businessSignature);
     const demandId = existingId ?? crypto.randomUUID();
     if (!existingId) {
       statements.push(c.env.DB.prepare(
         `INSERT INTO demands
-         (id,source_key,source_batch_id,source_file_sha256,source_file_name,source_sheet,source_row_number,sequence_no,business_year,voltage_raw,voltage_verified,line_name,section_text,category_key,owner,business_signature,raw_json,extra_json,version,created_by,created_at,updated_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'{}',1,?,?,?)`,
+         (id,source_type,source_key,source_batch_id,source_file_sha256,source_file_name,source_sheet,source_row_number,sequence_no,business_year,voltage_raw,voltage_verified,line_name,section_text,category_key,owner,business_signature,raw_json,extra_json,version,created_by,created_at,updated_at)
+         VALUES (?,'import',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'{}',1,?,?,?)`,
       ).bind(
         demandId, row.source_key, batch.id, batch.file_sha256, batch.file_name, row.sheet_name, row.source_row_number,
         normalized.sequenceNo, normalized.year, normalized.voltageRaw, normalized.voltageVerified, normalized.lineName,
         normalized.section, normalized.category, normalized.owner, normalized.businessSignature, row.raw_json,
         actor.id, now, now,
       ));
+      existingBySignature.set(normalized.businessSignature, demandId);
+    }
+    statements.push(c.env.DB.prepare(
+      `INSERT INTO demand_source_rows
+       (id,demand_id,import_row_id,source_key,file_sha256,file_name,sheet_name,source_row_number,raw_json,created_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?)`,
+    ).bind(crypto.randomUUID(), demandId, row.id, row.source_key, batch.file_sha256, batch.file_name, row.sheet_name, row.source_row_number, row.raw_json, now));
+    if (normalized.materialModel && normalized.quantityScaled !== null) {
       statements.push(c.env.DB.prepare(
-        `INSERT INTO demand_materials (id,demand_id,raw_model,material_id,quantity_scaled,unit,created_at)
-         VALUES (?,?,?,?,?,?,?)`,
-      ).bind(crypto.randomUUID(), demandId, normalized.materialModel, normalized.materialId, normalized.quantityScaled, normalized.unit, now));
+        `INSERT INTO demand_materials
+         (id,demand_id,raw_model,material_id,quantity_scaled,unit,created_at,source_import_row_id,created_by,version)
+         VALUES (?,?,?,?,?,?,?,?,?,1)`,
+      ).bind(crypto.randomUUID(), demandId, normalized.materialModel, normalized.materialId, normalized.quantityScaled, normalized.unit, now, row.id, actor.id));
     }
     statements.push(c.env.DB.prepare(
       `UPDATE import_rows SET row_status='published',published_demand_id=?,updated_at=? WHERE id=? AND batch_id=? AND row_status='valid'`,
@@ -903,7 +1075,7 @@ p2App.get('/demands', async (c) => {
     where.push('(created_at < ? OR (created_at = ? AND id < ?))');
     params.push(cursor.createdAt, cursor.createdAt, cursor.id);
   }
-  const sql = `SELECT id,source_key,source_batch_id,source_file_sha256,source_file_name,source_sheet,source_row_number,sequence_no,business_year,voltage_raw,voltage_verified,line_name,section_text,category_key,owner,raw_json,created_at
+  const sql = `SELECT id,source_type,source_key,source_batch_id,source_file_sha256,source_file_name,source_sheet,source_row_number,sequence_no,business_year,voltage_raw,voltage_verified,line_name,section_text,category_key,owner,raw_json,version,created_at
                FROM demands ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
                ORDER BY created_at DESC,id DESC LIMIT ?`;
   params.push(limit + 1);
@@ -923,7 +1095,7 @@ p2App.get('/demands', async (c) => {
 
 p2App.get('/demands/:id', async (c) => {
   const row = await c.env.DB.prepare(
-    `SELECT id,source_key,source_batch_id,source_file_sha256,source_file_name,source_sheet,source_row_number,sequence_no,business_year,voltage_raw,voltage_verified,line_name,section_text,category_key,owner,raw_json,created_at
+    `SELECT id,source_type,source_key,source_batch_id,source_file_sha256,source_file_name,source_sheet,source_row_number,sequence_no,business_year,voltage_raw,voltage_verified,line_name,section_text,category_key,owner,raw_json,version,created_at
      FROM demands WHERE id=? LIMIT 1`,
   ).bind(c.req.param('id')).first<DemandRow>();
   if (!row) return c.json(apiError('DEMAND_NOT_FOUND', '需求不存在'), 404);
@@ -953,16 +1125,33 @@ p2App.get('/demands/:id', async (c) => {
         }
       : null,
   }));
+  const raw = parseJson<Record<string, unknown>>(row.raw_json, {});
+  const sourceRows = row.source_type === 'import'
+    ? await c.env.DB.prepare(
+      `SELECT file_name,file_sha256,sheet_name,source_row_number,raw_json
+       FROM demand_source_rows WHERE demand_id=? ORDER BY source_row_number,id`,
+    ).bind(row.id).all<{ file_name: string; file_sha256: string; sheet_name: string; source_row_number: number; raw_json: string }>()
+    : null;
   const data: DemandDetail = {
     ...demandSummary(row),
-    source: {
-      batchId: row.source_batch_id,
-      fileName: row.source_file_name,
-      fileSha256: row.source_file_sha256,
-      sheetName: row.source_sheet,
-      rowNumber: row.source_row_number,
-      raw: parseJson<Record<string, unknown>>(row.raw_json, {}),
-    },
+    source: row.source_type === 'manual'
+      ? { type: 'manual', raw }
+      : {
+          type: 'import',
+          batchId: row.source_batch_id!,
+          fileName: row.source_file_name!,
+          fileSha256: row.source_file_sha256!,
+          sheetName: row.source_sheet!,
+          rowNumber: row.source_row_number!,
+          raw,
+          rows: (sourceRows?.results ?? []).map((source) => ({
+            fileName: source.file_name,
+            fileSha256: source.file_sha256,
+            sheetName: source.sheet_name,
+            rowNumber: source.source_row_number,
+            raw: parseJson<Record<string, unknown>>(source.raw_json, {}),
+          })),
+        },
     materials,
   };
   return c.json({ ok: true as const, data });

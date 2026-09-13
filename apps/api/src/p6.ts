@@ -32,11 +32,16 @@ const BACKUP_CHUNK_ROWS = 100;
 const MAX_OUTBOX_CLAIM = 50;
 const BACKUP_TABLES = [
   'members', 'member_scopes', 'settings_versions', 'dictionary_items', 'audit_events', 'idempotency_records',
-  'materials', 'import_mapping_templates', 'import_batches', 'import_rows', 'demands', 'demand_materials', 'field_definitions',
+  'materials', 'import_mapping_templates', 'import_batches', 'import_rows', 'demands', 'demand_source_rows', 'demand_materials', 'field_definitions',
   'projects', 'project_versions', 'demand_allocations', 'project_cost_lines', 'reserve_categories', 'category_mappings', 'category_cost_allocations',
+  'project_demand_links', 'project_material_requirements', 'project_material_revisions',
   'frameworks', 'framework_versions', 'agreements', 'agreement_versions', 'project_budgets', 'budget_allocations', 'budget_versions',
-  'budget_version_allocations', 'financial_entries', 'financial_entry_allocations', 'release_batches', 'release_lines',
-  'implementation_records', 'implementation_lines', 'settlements', 'settlement_coverage', 'settlement_agreement_allocations', 'attachments',
+  'budget_version_allocations', 'financial_entries', 'financial_entry_allocations',
+  'project_releases', 'project_tasks', 'task_demand_scopes', 'task_material_requirements', 'material_supply_events',
+  'task_implementation_records', 'task_implementation_scope_lines', 'task_material_usage_lines',
+  'task_settlements', 'task_settlement_scope_lines', 'task_settlement_agreement_allocations', 'task_settlement_reminders',
+  'release_batches', 'release_lines', 'implementation_records', 'implementation_lines', 'settlements', 'settlement_coverage',
+  'settlement_agreement_allocations', 'attachments',
   'analysis_rules', 'monthly_plans', 'report_snapshots', 'annual_milestones', 'notification_contacts', 'alert_events', 'notification_outbox',
 ] as const;
 
@@ -598,109 +603,72 @@ export async function runP6Tick(env: WorkerBindings, nowIso: string) {
 
 async function currentReserveRemaining(c: Context<AppEnv>): Promise<{ data: ReserveRemainingSummary | null; error: ApiError | null }> {
   const access = projectAccessFilter(c, 'p');
-  const result = await c.env.DB.prepare(
-    `SELECT p.id AS project_id,p.framework_id,da.id AS allocation_id,da.quantity_scaled AS allocated_quantity_scaled,
-            COALESCE(rel.released_quantity_scaled,0) AS released_quantity_scaled,
-            pcl.id AS cost_line_id,pcl.amount_fen,
-            cca.reserve_category_id,cca.amount_fen AS category_amount_fen,rc.category_key,rc.label
-     FROM demand_allocations da
-     INNER JOIN projects p ON p.id=da.project_id
-     LEFT JOIN (
-       SELECT project_id,demand_material_id,SUM(quantity_scaled) AS released_quantity_scaled
-       FROM release_lines GROUP BY project_id,demand_material_id
-     ) rel ON rel.project_id=da.project_id AND rel.demand_material_id=da.demand_material_id
-     LEFT JOIN project_cost_lines pcl ON pcl.project_id=da.project_id AND pcl.demand_allocation_id=da.id AND pcl.kind='material'
-     LEFT JOIN category_cost_allocations cca ON cca.cost_line_id=pcl.id
-     LEFT JOIN reserve_categories rc ON rc.id=cca.reserve_category_id
-     WHERE ${access.sql}
-     ORDER BY da.id,cca.reserve_category_id`,
+  const rows = await c.env.DB.prepare(
+    `SELECT pmr.required_quantity_scaled,pmr.amount_fen,pmr.reserve_category_id,rc.category_key,rc.label
+     FROM project_material_requirements pmr
+     INNER JOIN projects p ON p.id=pmr.project_id
+     LEFT JOIN reserve_categories rc ON rc.id=pmr.reserve_category_id
+     WHERE pmr.active=1
+       AND NOT EXISTS (SELECT 1 FROM project_releases pr WHERE pr.project_id=p.id)
+       AND ${access.sql}
+     ORDER BY pmr.project_id,pmr.id`,
   ).bind(...access.binds).all<{
-    project_id: string; framework_id: string | null; allocation_id: string; allocated_quantity_scaled: number;
-    released_quantity_scaled: number; cost_line_id: string | null; amount_fen: number | null;
-    reserve_category_id: string | null; category_amount_fen: number | null; category_key: string | null; label: string | null;
+    required_quantity_scaled: number;
+    amount_fen: number | null;
+    reserve_category_id: string | null;
+    category_key: string | null;
+    label: string | null;
   }>();
 
-  type CategoryPart = { reserveCategoryId: string; categoryKey: string; label: string; amountFen: number };
-  type AllocationPart = { allocated: number; released: number; amountFen: number | null; categories: CategoryPart[] };
-  const allocations = new Map<string, AllocationPart>();
-  for (const row of result.results ?? []) {
-    let item = allocations.get(row.allocation_id);
-    if (!item) {
-      item = {
-        allocated: Number(row.allocated_quantity_scaled),
-        released: Math.max(0, Number(row.released_quantity_scaled)),
-        amountFen: row.amount_fen === null ? null : Number(row.amount_fen),
-        categories: [],
-      };
-      allocations.set(row.allocation_id, item);
-    }
-    if (row.reserve_category_id && row.category_amount_fen !== null && row.category_key && row.label) {
-      item.categories.push({ reserveCategoryId: row.reserve_category_id, categoryKey: row.category_key, label: row.label, amountFen: Number(row.category_amount_fen) });
-    }
-  }
-
-  let allocatedQuantity = 0n, releasedQuantity = 0n, knownRemaining = 0n, unclassifiedRemaining = 0n;
+  let currentMaterialQuantity = 0n;
+  let knownCurrentMaterialAmount = 0n;
+  let unclassifiedCurrentMaterial = 0n;
   let missingPriceCount = 0;
   const categoryTotals = new Map<string, { categoryKey: string; label: string; amount: bigint }>();
-  for (const item of allocations.values()) {
-    const allocated = Math.max(0, item.allocated), released = Math.min(allocated, Math.max(0, item.released));
-    allocatedQuantity += BigInt(allocated);
-    releasedQuantity += BigInt(released);
-    const remaining = allocated - released;
-    if (remaining <= 0) continue;
-    if (item.amountFen === null) { missingPriceCount += 1; continue; }
-    const lineAmountFen = item.amountFen;
-    const lineRemaining = prorateFen(lineAmountFen, remaining, allocated);
-    if (lineRemaining === null) return { data: null, error: apiError('ANALYSIS_AMOUNT_OVERFLOW', '储备剩余金额超出安全整数范围') };
-    knownRemaining += BigInt(lineRemaining);
-    if (lineAmountFen === 0 || item.categories.length === 0) {
-      unclassifiedRemaining += BigInt(lineRemaining);
+  for (const row of rows.results ?? []) {
+    currentMaterialQuantity += BigInt(Number(row.required_quantity_scaled));
+    if (row.amount_fen === null) {
+      missingPriceCount += 1;
       continue;
     }
-    const categoryOriginalTotal = item.categories.reduce((sum, category) => sum + BigInt(category.amountFen), 0n);
-    if (categoryOriginalTotal > BigInt(lineAmountFen)) return { data: null, error: apiError('CATEGORY_ALLOCATION_CORRUPT', '分类分摊金额超过费用金额') };
-    const shares = item.categories.map((category) => ({
-      category,
-      original: BigInt(category.amountFen),
-      base: (BigInt(lineRemaining) * BigInt(category.amountFen)) / BigInt(lineAmountFen),
-      remainder: (BigInt(lineRemaining) * BigInt(category.amountFen)) % BigInt(lineAmountFen),
-    }));
-    const unclassifiedOriginal = BigInt(lineAmountFen) - categoryOriginalTotal;
-    let unclassifiedBase = (BigInt(lineRemaining) * unclassifiedOriginal) / BigInt(lineAmountFen);
-    const candidates: Array<{ kind: 'category' | 'unclassified'; index: number; remainder: bigint }> = shares.map((share, index) => ({ kind: 'category', index, remainder: share.remainder }));
-    candidates.push({ kind: 'unclassified', index: -1, remainder: (BigInt(lineRemaining) * unclassifiedOriginal) % BigInt(lineAmountFen) });
-    let distributed = shares.reduce((sum, share) => sum + share.base, 0n) + unclassifiedBase;
-    let pennies = BigInt(lineRemaining) - distributed;
-    candidates.sort((a, b) => a.remainder === b.remainder ? a.index - b.index : a.remainder > b.remainder ? -1 : 1);
-    for (let index = 0; pennies > 0n && candidates.length; index = (index + 1) % candidates.length) {
-      const candidate = candidates[index]!;
-      if (candidate.kind === 'unclassified') unclassifiedBase += 1n;
-      else shares[candidate.index]!.base += 1n;
-      pennies -= 1n;
+    const amount = BigInt(Number(row.amount_fen));
+    knownCurrentMaterialAmount += amount;
+    if (!row.reserve_category_id || !row.category_key || !row.label) {
+      unclassifiedCurrentMaterial += amount;
+      continue;
     }
-    for (const share of shares) {
-      const current = categoryTotals.get(share.category.reserveCategoryId) ?? { categoryKey: share.category.categoryKey, label: share.category.label, amount: 0n };
-      current.amount += share.base;
-      categoryTotals.set(share.category.reserveCategoryId, current);
-    }
-    unclassifiedRemaining += unclassifiedBase;
+    const current = categoryTotals.get(row.reserve_category_id) ?? { categoryKey: row.category_key, label: row.label, amount: 0n };
+    current.amount += amount;
+    categoryTotals.set(row.reserve_category_id, current);
   }
 
-  const commonCosts = await c.env.DB.prepare(
-    `SELECT pcl.amount_fen FROM project_cost_lines pcl INNER JOIN projects p ON p.id=pcl.project_id
-     WHERE pcl.kind IN ('construction','other') AND ${access.sql}`,
-  ).bind(...access.binds).all<{ amount_fen: number }>();
-  const commonTotal = (commonCosts.results ?? []).reduce((sum, row) => sum + BigInt(Number(row.amount_fen)), 0n);
-  const allocatedNumber = bigintToSafe(allocatedQuantity), releasedNumber = bigintToSafe(releasedQuantity), knownNumber = bigintToSafe(knownRemaining), unclassifiedNumber = bigintToSafe(unclassifiedRemaining), commonNumber = bigintToSafe(commonTotal);
-  if ([allocatedNumber, releasedNumber, knownNumber, unclassifiedNumber, commonNumber].some((value) => value === null)) return { data: null, error: apiError('ANALYSIS_AMOUNT_OVERFLOW', '储备分析汇总超出安全整数范围') };
-  const categories = [...categoryTotals.entries()].map(([reserveCategoryId, value]) => ({ reserveCategoryId, categoryKey: value.categoryKey, label: value.label, knownRemainingFen: bigintToSafe(value.amount) }))
-    .filter((item): item is { reserveCategoryId: string; categoryKey: string; label: string; knownRemainingFen: number } => item.knownRemainingFen !== null)
-    .sort((a, b) => b.knownRemainingFen - a.knownRemainingFen || a.label.localeCompare(b.label));
-  if (categories.length !== categoryTotals.size) return { data: null, error: apiError('ANALYSIS_AMOUNT_OVERFLOW', '储备分类汇总超出安全整数范围') };
+  const releasedProject = await c.env.DB.prepare(
+    `SELECT COUNT(*) AS count FROM projects p
+     WHERE ${access.sql} AND EXISTS (SELECT 1 FROM project_releases pr WHERE pr.project_id=p.id)`,
+  ).bind(...access.binds).first<{ count: number }>();
+  const quantityNumber = bigintToSafe(currentMaterialQuantity);
+  const knownNumber = bigintToSafe(knownCurrentMaterialAmount);
+  const unclassifiedNumber = bigintToSafe(unclassifiedCurrentMaterial);
+  if ([quantityNumber, knownNumber, unclassifiedNumber].some((value) => value === null)) {
+    return { data: null, error: apiError('ANALYSIS_AMOUNT_OVERFLOW', '储备项目物资汇总超出安全整数范围') };
+  }
+  const categories = [...categoryTotals.entries()].map(([reserveCategoryId, value]) => ({
+    reserveCategoryId,
+    categoryKey: value.categoryKey,
+    label: value.label,
+    knownCurrentAmountFen: bigintToSafe(value.amount),
+  })).filter((item): item is { reserveCategoryId: string; categoryKey: string; label: string; knownCurrentAmountFen: number } => item.knownCurrentAmountFen !== null)
+    .sort((a, b) => b.knownCurrentAmountFen - a.knownCurrentAmountFen || a.label.localeCompare(b.label));
+  if (categories.length !== categoryTotals.size) return { data: null, error: apiError('ANALYSIS_AMOUNT_OVERFLOW', '储备类别金额汇总超出安全整数范围') };
   return {
     data: {
-      allocatedQuantityScaled: allocatedNumber!, releasedQuantityScaled: releasedNumber!, knownRemainingFen: knownNumber!,
-      missingPriceCount, unclassifiedRemainingFen: unclassifiedNumber!, unscopedCommonCostFen: commonNumber!, categories,
+      currentMaterialQuantityScaled: quantityNumber!,
+      knownCurrentMaterialAmountFen: knownNumber!,
+      missingPriceCount,
+      unclassifiedCurrentMaterialFen: unclassifiedNumber!,
+      releasedProjectCount: Number(releasedProject?.count ?? 0),
+      unscopedCommonCostFen: 0,
+      categories,
     },
     error: null,
   };
@@ -710,32 +678,27 @@ async function dashboardSummary(c: Context<AppEnv>, asOf: string): Promise<Analy
   const access = projectAccessFilter(c, 'p');
   const projectCount = await c.env.DB.prepare(`SELECT COUNT(*) AS count FROM projects p WHERE ${access.sql}`).bind(...access.binds).first<{ count: number }>();
   const demandCount = await c.env.DB.prepare(
-    `SELECT COUNT(DISTINCT dm.demand_id) AS count FROM demand_allocations da INNER JOIN projects p ON p.id=da.project_id INNER JOIN demand_materials dm ON dm.id=da.demand_material_id WHERE ${access.sql}`,
+    `SELECT COUNT(DISTINCT pdl.demand_id) AS count
+     FROM project_demand_links pdl INNER JOIN projects p ON p.id=pdl.project_id
+     WHERE ${access.sql}`,
   ).bind(...access.binds).first<{ count: number }>();
   const unreleased = await c.env.DB.prepare(
-    `SELECT COUNT(*) AS count FROM projects p WHERE ${access.sql} AND EXISTS (
-       SELECT 1 FROM demand_allocations da WHERE da.project_id=p.id AND da.quantity_scaled > COALESCE((
-         SELECT SUM(rl.quantity_scaled) FROM release_lines rl WHERE rl.project_id=p.id AND rl.demand_material_id=da.demand_material_id
-       ),0)
-     )`,
+    `SELECT COUNT(*) AS count FROM projects p
+     WHERE ${access.sql}
+       AND NOT EXISTS (SELECT 1 FROM project_releases pr WHERE pr.project_id=p.id)`,
   ).bind(...access.binds).first<{ count: number }>();
   const pendingSettlement = await c.env.DB.prepare(
     `SELECT COUNT(*) AS count FROM projects p
      WHERE ${access.sql}
-       AND EXISTS (SELECT 1 FROM demand_allocations da WHERE da.project_id=p.id)
-       AND NOT EXISTS (
-         SELECT 1 FROM demand_allocations da WHERE da.project_id=p.id AND COALESCE((
-           SELECT SUM(il.completed_quantity_scaled) FROM implementation_lines il WHERE il.project_id=p.id AND il.demand_material_id=da.demand_material_id
-         ),0) < da.quantity_scaled
-       )
-       AND NOT (
-         EXISTS (SELECT 1 FROM settlements s WHERE s.project_id=p.id AND s.final=1 AND s.voided_at IS NULL)
-         AND NOT EXISTS (
-           SELECT 1 FROM demand_allocations da WHERE da.project_id=p.id AND COALESCE((
-             SELECT SUM(sc.quantity_scaled) FROM settlement_coverage sc INNER JOIN settlements s2 ON s2.id=sc.settlement_id
-             WHERE sc.project_id=p.id AND sc.demand_material_id=da.demand_material_id AND s2.voided_at IS NULL
-           ),0) < da.quantity_scaled
-         )
+       AND EXISTS (
+         SELECT 1
+         FROM project_tasks pt
+         INNER JOIN task_implementation_records tir ON tir.task_id=pt.id
+         WHERE pt.project_id=p.id
+           AND NOT EXISTS (
+             SELECT 1 FROM task_settlements ts
+             WHERE ts.task_id=pt.id AND ts.final=1 AND ts.voided_at IS NULL
+           )
        )`,
   ).bind(...access.binds).first<{ count: number }>();
   const activeRows = await c.env.DB.prepare(

@@ -68,6 +68,14 @@ test('P1.2 runtime authentication does not depend on Cloudflare Access or email 
   assert.doesNotMatch(source, /from ['\"]jose['\"]|\"jose\"\s*:/);
 });
 
+test('business batch import is never the only creation path for demand data', () => {
+  const apiSource = readFileSync(resolve(root, 'apps/api/src/p2.ts'), 'utf8');
+  const webSource = readFileSync(resolve(root, 'apps/web/src/views/DemandsView.vue'), 'utf8');
+  assert.match(apiSource, /post\('\/imports'/, '需求存在批量导入时必须保留导入接口');
+  assert.match(apiSource, /post\('\/demands'/, '需求支持批量导入时必须同时支持服务端手工新增');
+  assert.match(webSource, /data-test="manual-demand-form"/, '需求支持批量导入时必须同时提供前端手工新增入口');
+});
+
 test('server authentication never performs the browser-side slow KDF', () => {
   const files = readdirSync(resolve(root, 'apps/api/src'))
     .filter((name) => name.endsWith('.ts'))

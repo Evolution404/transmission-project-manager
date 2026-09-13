@@ -271,8 +271,52 @@ export interface DemandSummary {
   section: string;
   category: string | null;
   owner: string | null;
+  version: number;
   createdAt: string;
 }
+
+export interface DemandMaterialInput {
+  rawModel: string;
+  materialId?: string | null;
+  quantityScaled: number;
+  unit?: string | null;
+}
+
+export interface CreateDemandRequest {
+  sequenceNo: string;
+  voltage: string;
+  lineName: string;
+  section: string;
+  materials?: DemandMaterialInput[];
+  materialModel?: string;
+  materialQuantity?: string | number;
+  unit?: string | null;
+  year?: number | string | null;
+  category?: string | null;
+  owner?: string | null;
+}
+
+export type DemandSourceSummary =
+  | {
+      type: 'import';
+      batchId: string;
+      fileName: string;
+      fileSha256: string;
+      sheetName: string;
+      rowNumber: number;
+      raw: Record<string, unknown>;
+      rows?: Array<{
+        fileName: string;
+        fileSha256: string;
+        sheetName: string;
+        rowNumber: number;
+        raw: Record<string, unknown>;
+      }>;
+    }
+  | {
+      type: 'manual';
+      raw: Record<string, unknown>;
+    };
 
 export interface DemandMaterialSummary {
   id: string;
@@ -280,18 +324,166 @@ export interface DemandMaterialSummary {
   quantityScaled: number;
   unit: string | null;
   material: MaterialSummary | null;
+  version?: number;
 }
 
 export interface DemandDetail extends DemandSummary {
-  source: {
-    batchId: string;
-    fileName: string;
-    fileSha256: string;
-    sheetName: string;
-    rowNumber: number;
-    raw: Record<string, unknown>;
-  };
+  source: DemandSourceSummary;
   materials: DemandMaterialSummary[];
+}
+
+export interface ProjectDemandLinkSummary {
+  id: string;
+  demandId: string;
+  sequenceNo: string;
+  year: number | null;
+  voltage: string;
+  lineName: string;
+  section: string;
+  category: string | null;
+  owner: string | null;
+  createdAt: string;
+}
+
+export interface ProjectMaterialRequirementSummary {
+  id: string;
+  projectId: string;
+  materialId: string | null;
+  model: string;
+  unit: string;
+  requiredQuantityScaled: number;
+  unitPriceScaled: number | null;
+  amountFen: number | null;
+  reserveCategoryId: string | null;
+  reserveCategory: { id: string; key: string; label: string } | null;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ReserveProjectSummary {
+  id: string;
+  name: string;
+  year: number | null;
+  owner: string | null;
+  status: 'draft' | 'confirmed';
+  reserveVersion: number;
+  frameworkId: string | null;
+  version: number;
+  demandLinks: ProjectDemandLinkSummary[];
+  materialRequirements: ProjectMaterialRequirementSummary[];
+  knownMaterialAmountFen: number;
+  missingPriceCount: number;
+  materialPriceCompletenessBasisPoints: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProjectReleaseSummary {
+  id: string;
+  projectId: string;
+  releaseDate: string;
+  note: string | null;
+  projectVersionSnapshot: number;
+  reserveVersionSnapshot: number;
+  projectVersion: number;
+  snapshot: {
+    demandLinks: ProjectDemandLinkSummary[];
+    materialRequirements: ProjectMaterialRequirementSummary[];
+    projectVersion: number;
+    reserveVersion: number;
+  };
+  createdAt: string;
+}
+
+export interface TaskDemandScopeSummary {
+  id: string;
+  taskId: string;
+  demandId: string;
+  plannedQuantityScaled: number;
+  demand?: { sequenceNo: string; lineName: string; section: string };
+}
+
+export interface TaskMaterialRequirementSummary {
+  id: string;
+  taskId: string;
+  projectMaterialRequirementId: string | null;
+  materialId: string | null;
+  model: string;
+  unit: string;
+  requiredQuantityScaled: number;
+  supplyVersion: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TaskMaterialSupplyTotals {
+  taskMaterialRequirementId: string;
+  model: string;
+  unit: string;
+  totals: {
+    reportedQuantityScaled: number;
+    shippedQuantityScaled: number;
+    arrivedQuantityScaled: number;
+  };
+}
+
+export interface DemandExecutionSummary {
+  demandId: string;
+  sequenceNo: string;
+  lineName: string;
+  section: string;
+  plannedQuantityScaled: number;
+  implementedQuantityScaled: number;
+  settledQuantityScaled: number;
+  implementationProgressBasisPoints: number;
+  settlementProgressBasisPoints: number;
+  implementationComplete: boolean;
+  settlementComplete: boolean;
+  state: LifecycleState;
+}
+
+export interface ProjectTaskExecutionSummary {
+  id: string;
+  projectId: string;
+  projectReleaseId: string;
+  name: string;
+  description: string | null;
+  scopeText: string | null;
+  owner: string | null;
+  plannedDate: string | null;
+  plannedQuantityScaled: number;
+  unit: string;
+  version: number;
+  implementationVersion: number;
+  settlementVersion: number;
+  demandScopes: TaskDemandScopeSummary[];
+  materials: TaskMaterialRequirementSummary[];
+  supplyTotals: TaskMaterialSupplyTotals[];
+  implementedQuantityScaled: number;
+  settledQuantityScaled: number;
+  implementationComplete: boolean;
+  settlementComplete: boolean;
+  state: LifecycleState;
+  settlementReminder: {
+    needed: boolean;
+    firstImplementationDate: string | null;
+    dueDate: string | null;
+    finalSettlementId: string | null;
+  };
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProjectExecutionSummary {
+  projectId: string;
+  projectVersion: number;
+  released: boolean;
+  tasks: ProjectTaskExecutionSummary[];
+  demands: DemandExecutionSummary[];
+  implementationComplete: boolean;
+  settlementComplete: boolean;
+  projectState: LifecycleState;
 }
 
 export type ProjectStatus = 'draft' | 'confirmed';
@@ -370,7 +562,7 @@ export interface ReserveCandidate {
   originalQuantityScaled: number;
   allocatedQuantityScaled: number;
   remainingQuantityScaled: number;
-  source: { fileName: string; sheetName: string; rowNumber: number };
+  source: { type: 'import'; fileName: string; sheetName: string; rowNumber: number } | { type: 'manual' };
 }
 
 export interface ProjectAllocationDetail {
@@ -389,7 +581,7 @@ export interface ProjectAllocationDetail {
     lineName: string;
     section: string;
   };
-  source: { fileName: string; sheetName: string; rowNumber: number };
+  source: { type: 'import'; fileName: string; sheetName: string; rowNumber: number } | { type: 'manual' };
 }
 
 export interface ProjectMaterialSummary {
@@ -843,15 +1035,15 @@ export interface ReserveRemainingCategorySummary {
   reserveCategoryId: string;
   categoryKey: string;
   label: string;
-  knownRemainingFen: number;
+  knownCurrentAmountFen: number;
 }
 
 export interface ReserveRemainingSummary {
-  allocatedQuantityScaled: number;
-  releasedQuantityScaled: number;
-  knownRemainingFen: number;
+  currentMaterialQuantityScaled: number;
+  knownCurrentMaterialAmountFen: number;
   missingPriceCount: number;
-  unclassifiedRemainingFen: number;
+  unclassifiedCurrentMaterialFen: number;
+  releasedProjectCount: number;
   unscopedCommonCostFen: number;
   categories: ReserveRemainingCategorySummary[];
 }

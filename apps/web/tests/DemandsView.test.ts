@@ -112,9 +112,18 @@ describe('DemandsView P2 behavior', () => {
       if (url === '/api/demands/d1') return ok({
         id: 'd1', sequenceNo: '1', lineName: '龙城线', section: '#1', voltageRaw: '220kV', voltageVerified: null,
         year: 2026, category: '防断线', owner: null, createdAt: '2026-09-12T00:00:00.000Z',
-        source: { batchId: 'b1', fileName: '需求.xlsx', fileSha256: 'a'.repeat(64), sheetName: '需求', rowNumber: 2, raw: { 线路名称: '龙城线' } },
+        source: { type: 'import', batchId: 'b1', fileName: '需求.xlsx', fileSha256: 'a'.repeat(64), sheetName: '需求', rowNumber: 2, raw: { 线路名称: '龙城线' }, rows: [
+          { fileName: '需求.xlsx', fileSha256: 'a'.repeat(64), sheetName: '需求', rowNumber: 2, raw: { 线路名称: '龙城线', 物资型号: 'JX-01' } },
+          { fileName: '需求.xlsx', fileSha256: 'a'.repeat(64), sheetName: '需求', rowNumber: 3, raw: { 线路名称: '龙城线', 物资型号: 'JX-02' } },
+        ] },
         materials: [{ id: 'dm1', rawModel: 'JX-01', quantityScaled: 10000, unit: '套', material: null }],
       });
+      if (url === '/api/demands' && init?.method === 'POST') return new Response(JSON.stringify({ ok: true, data: {
+        id: 'manual-1', sequenceNo: 'M-001', lineName: '手工需求线', section: '#1-#2', voltageRaw: '220kV', voltageVerified: '220kV',
+        year: 2026, category: '临时补充', owner: '张三', createdAt: '2026-09-12T00:00:00.000Z',
+        source: { type: 'manual', raw: {} },
+        materials: [{ id: 'manual-dm-1', rawModel: 'JX-01', quantityScaled: 25000, unit: '套', material: null }],
+      } }), { status: 201, headers: { 'Content-Type': 'application/json' } });
       if (url.startsWith('/api/demands')) return ok({ items: [{ id: 'd1', sequenceNo: '1', lineName: '龙城线', section: '#1', voltageRaw: '220kV', year: 2026, category: '防断线', owner: null, createdAt: '2026-09-12T00:00:00.000Z' }], nextCursor: null });
       if (url === '/api/import-mappings') return ok({ items: [] });
       if (url === '/api/materials' && init?.method === 'POST') return new Response(JSON.stringify({ ok: true, data: { id: 'm1', code: null, name: '线夹', model: 'JX-01', unit: '套', enabled: true, version: 1 } }), { status: 201, headers: { 'Content-Type': 'application/json' } });
@@ -138,6 +147,32 @@ describe('DemandsView P2 behavior', () => {
     expect(wrapper.find('[data-test="add-material"]').exists()).toBe(false);
   });
 
+  it('lets write roles create a demand manually instead of requiring a file import', async () => {
+    const wrapper = mount(DemandsView, { props: { currentUser: admin } });
+    await flushPromises();
+    expect(wrapper.find('[data-test="manual-demand-form"]').exists()).toBe(true);
+    await wrapper.get('[data-test="manual-sequence"]').setValue('M-001');
+    await wrapper.get('[data-test="manual-voltage"]').setValue('220kV');
+    await wrapper.get('[data-test="manual-line"]').setValue('手工需求线');
+    await wrapper.get('[data-test="manual-section"]').setValue('#1-#2');
+    await wrapper.get('[data-test="manual-material-model"]').setValue('JX-01');
+    await wrapper.get('[data-test="manual-material-quantity"]').setValue('2.5');
+    await wrapper.get('[data-test="manual-unit"]').setValue('套');
+    await wrapper.get('[data-test="manual-year"]').setValue('2026');
+    await wrapper.get('[data-test="manual-category"]').setValue('临时补充');
+    await wrapper.get('[data-test="manual-owner"]').setValue('张三');
+    await wrapper.get('[data-test="save-manual-demand"]').trigger('click');
+    await flushPromises();
+
+    const fetchMock = vi.mocked(fetch);
+    const call = fetchMock.mock.calls.find(([url, init]) => String(url) === '/api/demands' && init?.method === 'POST');
+    expect(call).toBeTruthy();
+    expect(JSON.parse(String(call![1]!.body))).toEqual({
+      sequenceNo: 'M-001', voltage: '220kV', lineName: '手工需求线', section: '#1-#2',
+      materials: [{ rawModel: 'JX-01', quantityScaled: 25000, unit: '套' }], year: 2026, category: '临时补充', owner: '张三',
+    });
+  });
+
   it('lets write roles download the canonical import template before selecting a file', async () => {
     const wrapper = mount(DemandsView, { props: { currentUser: admin } });
     await flushPromises();
@@ -153,7 +188,9 @@ describe('DemandsView P2 behavior', () => {
     await sourceButton!.trigger('click');
     await flushPromises();
     expect(wrapper.text()).toContain('需求.xlsx');
-    expect(wrapper.text()).toContain('需求 / 2');
+    expect(wrapper.text()).toContain('2 行');
+    expect(wrapper.text()).toContain('需求 / 第 2 行');
+    expect(wrapper.text()).toContain('需求 / 第 3 行');
     expect(wrapper.text()).toContain('未匹配标准物资');
   });
 

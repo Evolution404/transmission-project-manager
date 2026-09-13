@@ -134,7 +134,7 @@ test('reserve candidates expose remaining quantities, source trace and default g
   const split = candidates.body.data.items.find((item) => item.demandMaterialId === 'p3-dm-split');
   assert.equal(split.remainingQuantityScaled, 1000000);
   assert.deepEqual(split.source, {
-    fileName: 'P3合成需求.xlsx', sheetName: '需求', rowNumber: 2,
+    type: 'import', fileName: 'P3合成需求.xlsx', sheetName: '需求', rowNumber: 2,
   });
 
   const suggestions = await jsonRequest('/api/projects/suggestions?limit=50');
@@ -142,6 +142,55 @@ test('reserve candidates expose remaining quantities, source trace and default g
   assert.ok(suggestions.body.data.items.some((group) =>
     group.year === 2026 && group.category === '防断线' && group.voltage === '220kV' && group.lineName === '龙城线' && group.itemCount >= 2,
   ));
+});
+
+test('reserve project can be created before any material demand is known and materials can be added later', async () => {
+  executeLocalD1(stateDir, {
+    command: `
+      INSERT INTO demands
+        (id,source_key,source_batch_id,source_file_sha256,source_file_name,source_sheet,source_row_number,sequence_no,business_year,voltage_raw,voltage_verified,line_name,section_text,category_key,owner,business_signature,raw_json,extra_json,version,created_by,created_at,updated_at)
+      SELECT 'p3-d-late','p3-source-late',source_batch_id,source_file_sha256,source_file_name,source_sheet,99,'99',2026,'220kV','220kV','后补物资线','#99','临时补充',NULL,'p3-sig-late','{}','{}',1,created_by,created_at,updated_at FROM demands WHERE id='p3-d-split';
+      INSERT INTO demand_materials (id,demand_id,raw_model,material_id,quantity_scaled,unit,created_at)
+      VALUES ('p3-dm-late','p3-d-late','JX-01','p3-m-set',500000,'套','2026-09-12T00:00:00.000Z');
+    `,
+  });
+  const created = await createProject({ name: '先立项后补物资', allocations: [] });
+  assert.equal(created.response.status, 201);
+  assert.equal(created.body.data.missingPriceCount, 0);
+  assert.equal(created.body.data.completenessBasisPoints, 0);
+
+  const emptyDetail = await jsonRequest(`/api/projects/${created.body.data.id}`);
+  assert.equal(emptyDetail.response.status, 200);
+  assert.deepEqual(emptyDetail.body.data.allocations, []);
+
+  const added = await jsonRequest(`/api/projects/${created.body.data.id}/allocations`, mutation('PUT', idem('late-material'), {
+    expectedVersion: created.body.data.version,
+    allocations: [{ demandMaterialId: 'p3-dm-late', quantityScaled: 250000 }],
+  }));
+  assert.equal(added.response.status, 200);
+  assert.equal(added.body.data.version, 2);
+
+  const after = await jsonRequest(`/api/projects/${created.body.data.id}`);
+  assert.equal(after.response.status, 200);
+  assert.equal(after.body.data.allocations.length, 1);
+  assert.equal(after.body.data.allocations[0].demandMaterialId, 'p3-dm-late');
+  assert.equal(after.body.data.allocations[0].quantityScaled, 250000);
+});
+
+test('manual supplemental demand remains a real manual source when offered to reserve projects', async () => {
+  executeLocalD1(stateDir, {
+    command: `
+      INSERT INTO demands
+        (id,source_type,source_key,source_batch_id,source_file_sha256,source_file_name,source_sheet,source_row_number,sequence_no,business_year,voltage_raw,voltage_verified,line_name,section_text,category_key,owner,business_signature,raw_json,extra_json,version,created_by,created_at,updated_at)
+      SELECT 'p3-d-manual','manual','p3-source-manual',NULL,NULL,NULL,NULL,NULL,'M-1',2026,'220kV','220kV','补充需求线','#5','临时补充',NULL,'p3-sig-manual','{}','{}',1,created_by,created_at,updated_at FROM demands WHERE id='p3-d-split';
+      INSERT INTO demand_materials (id,demand_id,raw_model,material_id,quantity_scaled,unit,created_at)
+      VALUES ('p3-dm-manual','p3-d-manual','JX-01','p3-m-set',30000,'套','2026-09-12T00:00:00.000Z');
+    `,
+  });
+  const candidates = await jsonRequest('/api/projects/candidates?limit=100');
+  const manual = candidates.body.data.items.find((item) => item.demandMaterialId === 'p3-dm-manual');
+  assert.ok(manual);
+  assert.deepEqual(manual.source, { type: 'manual' });
 });
 
 test('one demand quantity can be split 60/40 but never over-allocated', async () => {
@@ -367,9 +416,21 @@ test('replacing project allocations releases quantity, advances version, and rej
   assert.equal(stale.body.error.code, 'VERSION_CONFLICT');
   assert.equal(dbRows(`SELECT quantity_scaled FROM demand_allocations WHERE project_id='${project.id}';`)[0].quantity_scaled, 40000);
 
-  const candidates = await jsonRequest('/api/projects/candidates?limit=100');
-  const candidate = candidates.body.data.items.find((item) => item.demandMaterialId === 'p3-dm-revise');
+  let candidates = await jsonRequest('/api/projects/candidates?limit=100');
+  let candidate = candidates.body.data.items.find((item) => item.demandMaterialId === 'p3-dm-revise');
   assert.equal(candidate.remainingQuantityScaled, 60000);
+
+  const removed = await jsonRequest(`/api/projects/${project.id}/allocations`, mutation('PUT', idem('remove-allocation'), {
+    expectedVersion: 2,
+    allocations: [],
+  }));
+  assert.equal(removed.response.status, 200);
+  assert.equal(removed.body.data.version, 3);
+  assert.equal(dbRows(`SELECT COUNT(*) AS count FROM demand_allocations WHERE project_id='${project.id}';`)[0].count, 0);
+
+  candidates = await jsonRequest('/api/projects/candidates?limit=100');
+  candidate = candidates.body.data.items.find((item) => item.demandMaterialId === 'p3-dm-revise');
+  assert.equal(candidate.remainingQuantityScaled, 100000);
 });
 
 test('category mapping becomes the suggested category on mapped material cost lines', async () => {

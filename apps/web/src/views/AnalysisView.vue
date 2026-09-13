@@ -282,7 +282,7 @@ async function renderCharts() {
     reserveChart.setOption({
       tooltip: { trigger: 'axis' }, grid: { left: 90, right: 24, top: 20, bottom: 36 },
       xAxis: { type: 'value' }, yAxis: { type: 'category', data: (reserve.value?.categories ?? []).map((item) => item.label) },
-      series: [{ type: 'bar', data: (reserve.value?.categories ?? []).map((item) => item.knownRemainingFen) }],
+      series: [{ type: 'bar', data: (reserve.value?.categories ?? []).map((item) => item.knownCurrentAmountFen) }],
     }, true);
   }
 }
@@ -345,12 +345,12 @@ onBeforeUnmount(() => { disposed = true; window.removeEventListener('resize', re
 
         <n-tab-pane name="reserve" tab="储备剩余">
           <n-grid :cols="3" :x-gap="16" responsive="screen">
-            <n-grid-item><n-card><n-statistic label="当前已分配数量" :value="formatQuantity(reserve?.allocatedQuantityScaled ?? 0)" /></n-card></n-grid-item>
-            <n-grid-item><n-card><n-statistic label="已出库数量" :value="formatQuantity(reserve?.releasedQuantityScaled ?? 0)" /></n-card></n-grid-item>
-            <n-grid-item><n-card><n-statistic label="已知剩余金额" :value="formatMoney(reserve?.knownRemainingFen)" /></n-card></n-grid-item>
+            <n-grid-item><n-card><n-statistic label="当前储备物资数量" :value="formatQuantity(reserve?.currentMaterialQuantityScaled ?? 0)" /></n-card></n-grid-item>
+            <n-grid-item><n-card><n-statistic label="已项目级出库项目" :value="reserve?.releasedProjectCount ?? 0" /></n-card></n-grid-item>
+            <n-grid-item><n-card><n-statistic label="当前已知物资金额" :value="formatMoney(reserve?.knownCurrentMaterialAmountFen)" /></n-card></n-grid-item>
           </n-grid>
-          <n-alert v-if="reserve && (reserve.missingPriceCount || reserve.unclassifiedRemainingFen || reserve.unscopedCommonCostFen)" type="warning" :bordered="false">缺价 {{ reserve.missingPriceCount }} 项；未分类剩余 {{ formatMoney(reserve.unclassifiedRemainingFen) }}；施工/其他共同费用 {{ formatMoney(reserve.unscopedCommonCostFen) }}。共同费用未按数量强行摊入分类。</n-alert>
-          <n-card title="按储备大类的现状剩余" class="section-card"><div ref="reserveChartEl" class="chart"></div><div class="category-list"><n-tag v-for="item in reserve?.categories ?? []" :key="item.reserveCategoryId" :bordered="false">{{ item.label }} {{ formatMoney(item.knownRemainingFen) }}</n-tag></div></n-card>
+          <n-alert v-if="reserve && (reserve.missingPriceCount || reserve.unclassifiedCurrentMaterialFen)" type="warning" :bordered="false">缺价 {{ reserve.missingPriceCount }} 项；未分类当前物资 {{ formatMoney(reserve.unclassifiedCurrentMaterialFen) }}。储备类别分析只统计当前未出库项目的项目物资，施工/其他费用不纳入。</n-alert>
+          <n-card title="按储备大类的当前项目物资金额" class="section-card"><div ref="reserveChartEl" class="chart"></div><div class="category-list"><n-tag v-for="item in reserve?.categories ?? []" :key="item.reserveCategoryId" :bordered="false">{{ item.label }} {{ formatMoney(item.knownCurrentAmountFen) }}</n-tag></div></n-card>
         </n-tab-pane>
 
         <n-tab-pane name="milestones" tab="年度事项">

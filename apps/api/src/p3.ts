@@ -62,9 +62,10 @@ interface AllocationRow {
   voltage_verified: string | null;
   line_name: string;
   section_text: string;
-  source_file_name: string;
-  source_sheet: string;
-  source_row_number: number;
+  source_type: 'import' | 'manual';
+  source_file_name: string | null;
+  source_sheet: string | null;
+  source_row_number: number | null;
 }
 
 interface CostLineRow {
@@ -118,9 +119,10 @@ interface CandidateRow {
   material_unit: string | null;
   material_enabled: number | null;
   material_version: number | null;
-  source_file_name: string;
-  source_sheet: string;
-  source_row_number: number;
+  source_type: 'import' | 'manual';
+  source_file_name: string | null;
+  source_sheet: string | null;
+  source_row_number: number | null;
 }
 
 interface SuggestionGroupRow {
@@ -244,7 +246,7 @@ function costSummary(costLines: CostLineRow[], allocationCount: number): Project
   }
   const missingPriceCount = Math.max(0, allocationCount - pricedMaterialCount);
   const completenessBasisPoints = allocationCount === 0
-    ? 10000
+    ? 0
     : Math.floor(((allocationCount - missingPriceCount) * 10000) / allocationCount);
   return { knownAmountFen, missingPriceCount, completenessBasisPoints };
 }
@@ -312,7 +314,7 @@ async function loadAllocationRows(db: D1Database, projectId: string) {
             m.id AS material_id,m.code AS material_code,m.name AS material_name,m.model AS material_model,
             m.unit AS material_unit,m.enabled AS material_enabled,m.version AS material_version,
             d.id AS demand_id,d.sequence_no,d.business_year,d.category_key,d.voltage_raw,d.voltage_verified,
-            d.line_name,d.section_text,d.source_file_name,d.source_sheet,d.source_row_number
+            d.line_name,d.section_text,d.source_type,d.source_file_name,d.source_sheet,d.source_row_number
      FROM demand_allocations da
      INNER JOIN demand_materials dm ON dm.id=da.demand_material_id
      INNER JOIN demands d ON d.id=dm.demand_id
@@ -356,11 +358,9 @@ function allocationDetail(row: AllocationRow): ProjectAllocationDetail {
       lineName: row.line_name,
       section: row.section_text,
     },
-    source: {
-      fileName: row.source_file_name,
-      sheetName: row.source_sheet,
-      rowNumber: row.source_row_number,
-    },
+    source: row.source_type === 'manual'
+      ? { type: 'manual' }
+      : { type: 'import', fileName: row.source_file_name!, sheetName: row.source_sheet!, rowNumber: row.source_row_number! },
   };
 }
 
@@ -444,7 +444,7 @@ async function fetchProjectDetail(db: D1Database, id: string): Promise<ProjectDe
 }
 
 function validateAllocationInput(value: unknown): CreateProjectRequest['allocations'] | null {
-  if (!Array.isArray(value) || value.length < 1 || value.length > MAX_PROJECT_ALLOCATIONS) return null;
+  if (!Array.isArray(value) || value.length > MAX_PROJECT_ALLOCATIONS) return null;
   const seen = new Set<string>();
   const allocations: CreateProjectRequest['allocations'] = [];
   for (const item of value) {
@@ -595,7 +595,9 @@ function candidateSummary(row: CandidateRow): ReserveCandidate {
     originalQuantityScaled: row.quantity_scaled,
     allocatedQuantityScaled: Number(row.allocated_quantity_scaled),
     remainingQuantityScaled: Number(row.remaining_quantity_scaled),
-    source: { fileName: row.source_file_name, sheetName: row.source_sheet, rowNumber: row.source_row_number },
+    source: row.source_type === 'manual'
+      ? { type: 'manual' }
+      : { type: 'import', fileName: row.source_file_name!, sheetName: row.source_sheet!, rowNumber: row.source_row_number! },
   };
 }
 
@@ -607,7 +609,7 @@ async function loadCandidates(db: D1Database, limit: number, cursor: string | nu
             dm.quantity_scaled-COALESCE(SUM(da.quantity_scaled),0) AS remaining_quantity_scaled,
             m.id AS material_id,m.code AS material_code,m.name AS material_name,m.model AS material_model,m.unit AS material_unit,
             m.enabled AS material_enabled,m.version AS material_version,
-            d.source_file_name,d.source_sheet,d.source_row_number
+            d.source_type,d.source_file_name,d.source_sheet,d.source_row_number
      FROM demand_materials dm
      INNER JOIN demands d ON d.id=dm.demand_id
      LEFT JOIN demand_allocations da ON da.demand_material_id=dm.id
@@ -615,7 +617,7 @@ async function loadCandidates(db: D1Database, limit: number, cursor: string | nu
      WHERE (? IS NULL OR dm.id > ?)
      GROUP BY dm.id,d.id,d.sequence_no,d.business_year,d.category_key,d.voltage_raw,d.voltage_verified,d.line_name,d.section_text,
               dm.raw_model,dm.unit,dm.quantity_scaled,m.id,m.code,m.name,m.model,m.unit,m.enabled,m.version,
-              d.source_file_name,d.source_sheet,d.source_row_number
+              d.source_type,d.source_file_name,d.source_sheet,d.source_row_number
      HAVING dm.quantity_scaled-COALESCE(SUM(da.quantity_scaled),0) > 0
      ORDER BY dm.id ASC
      LIMIT ?`,
@@ -786,7 +788,7 @@ p3App.get('/projects', async (c) => {
     return projectSummary(row, {
       knownAmountFen: Number(row.known_amount_fen),
       missingPriceCount,
-      completenessBasisPoints: allocationCount === 0 ? 10000 : Math.floor(((allocationCount - missingPriceCount) * 10000) / allocationCount),
+      completenessBasisPoints: allocationCount === 0 ? 0 : Math.floor(((allocationCount - missingPriceCount) * 10000) / allocationCount),
     });
   });
   const last = page.at(-1);

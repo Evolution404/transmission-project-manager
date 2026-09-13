@@ -162,6 +162,84 @@ test('material dictionary distinguishes same model with different units and reje
   assert.equal(duplicate.body.error.code, 'MATERIAL_EXISTS');
 });
 
+test('manual demand creation is available alongside batch import and keeps a real manual source', async () => {
+  const created = await jsonRequest('/api/demands', mutation('POST', idem('manual-demand'), {
+    sequenceNo: 'M-001',
+    voltage: '220kV',
+    lineName: '手工需求线',
+    section: '#1-#2',
+    materialModel: 'JX-01',
+    materialQuantity: '2.5',
+    unit: '套',
+    year: 2026,
+    category: '临时补充',
+    owner: '张三',
+  }));
+  assert.equal(created.response.status, 201);
+  assert.equal(created.body.data.sequenceNo, 'M-001');
+  assert.equal(created.body.data.source.type, 'manual');
+  assert.equal(created.body.data.source.fileName, undefined);
+  assert.equal(created.body.data.materials[0].quantityScaled, 25000);
+
+  const detail = await jsonRequest(`/api/demands/${created.body.data.id}`);
+  assert.equal(detail.response.status, 200);
+  assert.equal(detail.body.data.source.type, 'manual');
+  assert.equal(detail.body.data.source.batchId, undefined);
+  assert.equal(detail.body.data.materials[0].rawModel, 'JX-01');
+
+  const invalid = await jsonRequest('/api/demands', mutation('POST', idem('manual-demand-invalid'), {
+    sequenceNo: 'M-002', voltage: '220kV', lineName: '手工需求线', section: '#3',
+    materialModel: 'JX-01', materialQuantity: '-1', unit: '套', year: 2026,
+  }));
+  assert.equal(invalid.response.status, 422);
+  assert.equal(invalid.body.error.code, 'INVALID_DEMAND');
+});
+
+test('import normalizes repeated business rows into one abstract demand with multiple material children, and also accepts a demand with no material', async () => {
+  const batch = await createBatch({ fileName: '抽象需求归并.xlsx', fileSha256: '9'.repeat(64) });
+  assert.equal(batch.response.status, 201);
+  const uploaded = await uploadChunk(batch, [
+    {
+      sheetName: '需求', rowNumber: 2,
+      cells: { 序号: 'G-001', 年度: 2026, 电压等级: '220kV', 线路名称: '导入抽象线', 杆段: '#1-#2', 类别: '防鸟治理', 物资型号: 'A', 物资数量: 8, 单位: '套' },
+    },
+    {
+      sheetName: '需求', rowNumber: 3,
+      cells: { 序号: 'G-001', 年度: 2026, 电压等级: '220kV', 线路名称: '导入抽象线', 杆段: '#1-#2', 类别: '防鸟治理', 物资型号: 'B', 物资数量: 2, 单位: '只' },
+    },
+    {
+      sheetName: '需求', rowNumber: 4,
+      cells: { 序号: 'G-002', 年度: 2026, 电压等级: '220kV', 线路名称: '导入抽象线', 杆段: '#3-#4', 类别: '通道治理', 物资型号: '', 物资数量: '', 单位: '' },
+    },
+  ]);
+  assert.equal(uploaded.response.status, 200);
+  const validated = await validateBatch(batch);
+  assert.equal(validated.response.status, 200);
+  assert.equal(validated.body.data.errorRows, 0);
+  assert.equal(validated.body.data.validRows, 3);
+  const published = await publishBatch(batch, 10);
+  assert.equal(published.response.status, 200, JSON.stringify(published.body));
+  assert.equal(published.body.data.done, true);
+
+  const list = await jsonRequest('/api/demands?query=%E5%AF%BC%E5%85%A5%E6%8A%BD%E8%B1%A1%E7%BA%BF&limit=20');
+  assert.equal(list.response.status, 200);
+  const grouped = list.body.data.items.filter((item) => item.sequenceNo === 'G-001');
+  const noMaterial = list.body.data.items.filter((item) => item.sequenceNo === 'G-002');
+  assert.equal(grouped.length, 1, '同一批次中相同业务需求的多行物资必须归到一个抽象需求');
+  assert.equal(noMaterial.length, 1);
+
+  const groupedDetail = await jsonRequest(`/api/demands/${grouped[0].id}`);
+  assert.equal(groupedDetail.response.status, 200);
+  assert.deepEqual(groupedDetail.body.data.materials.map((item) => item.rawModel).sort(), ['A', 'B']);
+  assert.equal(groupedDetail.body.data.source.type, 'import');
+  assert.equal(groupedDetail.body.data.source.rows.length, 2, '两条源 Excel 行都必须可追溯');
+
+  const noMaterialDetail = await jsonRequest(`/api/demands/${noMaterial[0].id}`);
+  assert.equal(noMaterialDetail.response.status, 200);
+  assert.deepEqual(noMaterialDetail.body.data.materials, []);
+  assert.equal(noMaterialDetail.body.data.source.rows.length, 1);
+});
+
 test('stale import batch versions fail atomically without leaving uploaded rows', async () => {
   const batch = await createBatch({ fileSha256: '6'.repeat(64) });
   assert.equal(batch.response.status, 201);

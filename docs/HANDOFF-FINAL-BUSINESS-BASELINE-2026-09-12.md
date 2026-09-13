@@ -1,6 +1,6 @@
 # 最终业务基线交接（2026-09-12）
 
-> 本文件是下一位 AI 重构 `Evolution404/transmission-project-manager` 时的最高优先级业务基线。此前 P2/P3/P5 已按旧模型实现并通过过本地/合成测试，但用户在验收阶段持续纠正了需求、项目储备、项目出库、任务、物资供应、实施和结算的真实关系。不得继续围绕旧 `demand_allocations` / `release_lines` 局部打补丁。
+> 本文件是 `Evolution404/transmission-project-manager` 的最高优先级业务基线。此前 P2/P3/P5 曾按旧模型实现；2026-09-13 已按本文件完成结构性重构并通过完整本地/合成门禁。后续 P7 和任何缺陷修复都必须继续遵守这里的业务关系，不得重新围绕旧 `demand_allocations` / `release_lines` 建立新主路径。
 
 ## 1. 当前仓库与工作区
 

@@ -299,7 +299,64 @@ test('P5 database upgrades to P6 without losing delivery, implementation, settle
   ))[0].count, 9);
 });
 
-test('clean database applies the current P6 development schema and remains repeatable', () => {
+test('P7 database upgrades to final business flow without losing legacy demand and allocation facts', () => {
+  const state = tempState('tpm-migration-final-flow-upgrade-');
+  for (const file of [
+    'migrations/0001_p1_identity_and_config.sql',
+    'migrations/0002_p2_import_demands_materials.sql',
+    'migrations/0003_p3_reserve_projects.sql',
+    'migrations/0004_p4_finance.sql',
+    'migrations/0005_p5_delivery_implementation_settlement.sql',
+    'migrations/0006_p6_analysis_notifications_backups.sql',
+    'migrations/0007_p7_flexible_demand_sources.sql',
+  ]) executeLocalD1(state, { file });
+
+  const now = '2026-09-12T00:00:00.000Z';
+  executeLocalD1(state, {
+    command: `
+      INSERT INTO members
+        (id,username,display_name,role,enabled,version,credential_salt,credential_verifier,
+         credential_algorithm,credential_params_json,must_change_password,session_version,
+         failed_login_count,credential_changed_at,invited_at,first_login_at,last_login_at,created_at,updated_at)
+      VALUES
+        ('final-admin','final-admin','Final升级管理员','admin',1,1,'salt','verifier','argon2id-v1',
+         '{"algorithm":"argon2id-v1","memoryCostKiB":19456,"timeCost":2,"parallelism":1,"hashLength":32,"version":19}',
+         0,1,0,'${now}','${now}','${now}','${now}','${now}','${now}');
+      INSERT INTO import_batches
+        (id,file_name,file_sha256,file_type,mapping_json,status,uploaded_rows,valid_rows,error_rows,warning_rows,published_rows,version,created_by,created_at,updated_at,published_at)
+      VALUES ('final-batch','历史需求.xlsx','${'9'.repeat(64)}','xlsx','{}','published',1,1,0,0,1,1,'final-admin','${now}','${now}','${now}');
+      INSERT INTO import_rows
+        (id,batch_id,chunk_index,sheet_name,source_row_number,source_key,raw_json,normalized_json,errors_json,warnings_json,row_status,published_demand_id,created_at,updated_at)
+      VALUES ('final-row','final-batch',0,'需求',7,'final-source','{"序号":"1"}','{}','[]','[]','published','final-demand','${now}','${now}');
+      INSERT INTO demands
+        (id,source_type,source_key,source_batch_id,source_file_sha256,source_file_name,source_sheet,source_row_number,
+         sequence_no,business_year,voltage_raw,voltage_verified,line_name,section_text,category_key,owner,business_signature,
+         raw_json,extra_json,version,created_by,created_at,updated_at)
+      VALUES
+        ('final-demand','import','final-source','final-batch','${'9'.repeat(64)}','历史需求.xlsx','需求',7,
+         '1',2026,'220kV','220kV','历史线','#1-#2','防鸟',NULL,'final-signature','{"序号":"1"}','{}',1,'final-admin','${now}','${now}');
+      INSERT INTO demand_materials (id,demand_id,raw_model,material_id,quantity_scaled,unit,created_at)
+      VALUES ('final-dm','final-demand','JX-LEGACY',NULL,10000,'套','${now}');
+      INSERT INTO projects (id,name,business_year,owner,status,reserve_version,framework_id,version,created_by,created_at,updated_at)
+      VALUES ('final-project','历史储备',2026,NULL,'draft',0,NULL,1,'final-admin','${now}','${now}');
+      INSERT INTO demand_allocations (id,project_id,demand_material_id,quantity_scaled,created_at)
+      VALUES ('final-allocation','final-project','final-dm',10000,'${now}');
+    `,
+  });
+
+  executeLocalD1(state, { file: 'migrations/0008_final_business_flow.sql' });
+
+  const provenance = rows(queryLocalD1(state, "SELECT demand_id,import_row_id,file_name,sheet_name,source_row_number FROM demand_source_rows WHERE demand_id='final-demand';"));
+  assert.deepEqual(provenance, [{ demand_id: 'final-demand', import_row_id: 'final-row', file_name: '历史需求.xlsx', sheet_name: '需求', source_row_number: 7 }]);
+  const material = rows(queryLocalD1(state, "SELECT source_import_row_id,created_by,version FROM demand_materials WHERE id='final-dm';"))[0];
+  assert.deepEqual(material, { source_import_row_id: 'final-row', created_by: 'final-admin', version: 1 });
+  assert.equal(rows(queryLocalD1(state, "SELECT COUNT(*) AS count FROM demand_allocations WHERE id='final-allocation';"))[0].count, 1, 'legacy allocation remains available for history/backup compatibility');
+  for (const table of ['project_demand_links', 'project_material_requirements', 'project_releases', 'project_tasks', 'task_material_requirements', 'task_settlements']) {
+    assert.equal(rows(queryLocalD1(state, `SELECT COUNT(*) AS count FROM sqlite_master WHERE type='table' AND name='${table}';`))[0].count, 1, `missing final-flow table ${table}`);
+  }
+});
+
+test('clean database applies the current development schema and remains repeatable', () => {
   const state = tempState('tpm-migration-clean-');
   applyLocalMigrations(state);
   applyLocalMigrations(state);
@@ -312,6 +369,8 @@ test('clean database applies the current P6 development schema and remains repea
     '0004_p4_finance.sql',
     '0005_p5_delivery_implementation_settlement.sql',
     '0006_p6_analysis_notifications_backups.sql',
+    '0007_p7_flexible_demand_sources.sql',
+    '0008_final_business_flow.sql',
   ]);
 
   const tables = rows(queryLocalD1(state,
@@ -329,7 +388,23 @@ test('clean database applies the current P6 development schema and remains repea
     'settlements', 'settlement_coverage', 'settlement_agreement_allocations', 'attachments',
     'analysis_rules', 'monthly_plans', 'report_snapshots', 'annual_milestones', 'notification_contacts',
     'alert_events', 'notification_outbox', 'backup_runs', 'backup_chunks',
+    'demand_source_rows', 'project_demand_links', 'project_material_requirements', 'project_material_revisions',
+    'project_releases', 'project_tasks', 'task_demand_scopes', 'task_material_requirements', 'material_supply_events',
+    'task_implementation_records', 'task_implementation_scope_lines', 'task_material_usage_lines',
+    'task_settlements', 'task_settlement_scope_lines', 'task_settlement_agreement_allocations', 'task_settlement_reminders',
   ]) assert.ok(tables.includes(table), `missing table ${table}`);
+});
+
+test('demand schema supports real import and manual sources without fabricating file provenance', () => {
+  const state = tempState('tpm-migration-demand-source-');
+  applyLocalMigrations(state);
+  const columns = rows(queryLocalD1(state, 'PRAGMA table_info(demands);')).map((row) => row.name);
+  for (const required of ['source_type', 'source_batch_id', 'source_file_name', 'source_sheet', 'source_row_number']) {
+    assert.ok(columns.includes(required), `demands missing ${required}`);
+  }
+  const sourceType = rows(queryLocalD1(state, "SELECT sql FROM sqlite_master WHERE type='table' AND name='demands';"))[0].sql;
+  assert.match(sourceType, /source_type/);
+  assert.match(sourceType, /manual/);
 });
 
 test('member schema remains username/credential based after P6 migration', () => {
