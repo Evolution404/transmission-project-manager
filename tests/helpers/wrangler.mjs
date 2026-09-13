@@ -65,6 +65,7 @@ export async function startWranglerServer({
   const args = [
     wranglerCli,
     'dev', '--local', '--persist-to', stateDir, '--ip', '127.0.0.1', '--port', String(port),
+    '--inspector-port', String(port + 10000),
     '--show-interactive-dev-session=false',
   ];
   for (const variable of vars) args.push('--var', variable);

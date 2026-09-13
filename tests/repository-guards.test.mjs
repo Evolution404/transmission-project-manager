@@ -156,3 +156,24 @@ test('committed tests cannot silently bypass the quality gate', () => {
     assert.doesNotMatch(source, /\b(?:test|it)\.todo\s*\(/, `${file} contains test.todo`);
   }
 });
+
+test('Node integration suite is safe for file-level parallelism', () => {
+  const packageJson = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8'));
+  const match = packageJson.scripts?.['test:node']?.match(/--test-concurrency=(\d+)/);
+  assert.ok(match, 'test:node must declare explicit file-level concurrency');
+  assert.ok(Number(match[1]) >= 3, 'test:node should run at least three test files in parallel');
+
+  const wranglerHelper = readFileSync(resolve(root, 'tests/helpers/wrangler.mjs'), 'utf8');
+  assert.match(wranglerHelper, /'--inspector-port'/, 'parallel Wrangler runtimes need isolated inspector ports');
+
+  const ports = new Map();
+  for (const file of collectTestFiles(resolve(root, 'tests'))) {
+    const source = readFileSync(file, 'utf8');
+    for (const portMatch of source.matchAll(/\bport:\s*(\d+)\b/g)) {
+      const port = Number(portMatch[1]);
+      const previous = ports.get(port);
+      assert.equal(previous, undefined, `integration test port ${port} is reused by ${previous} and ${file}`);
+      ports.set(port, file);
+    }
+  }
+});

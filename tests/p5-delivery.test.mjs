@@ -124,7 +124,7 @@ async function createSettlement({ projectId, expectedProjectVersion, quantitySca
 before(async () => {
   runtime = await startWranglerServer({
     stateDir,
-    port: 8806,
+    port: 8815,
     migrate: true,
     vars: ['AUTH_CREDENTIAL_PEPPER:p5-pepper', 'BOOTSTRAP_TOKEN:p5-bootstrap'],
   });
