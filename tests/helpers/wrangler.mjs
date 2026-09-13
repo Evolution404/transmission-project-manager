@@ -1,9 +1,10 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { DatabaseSync } from 'node:sqlite';
 import { setTimeout as delay } from 'node:timers/promises';
 
 const require = createRequire(new URL('../../apps/api/package.json', import.meta.url));
@@ -17,6 +18,22 @@ export function makeStateDir(prefix = 'tpm-test-') {
 
 export function cleanupStateDir(path) {
   rmSync(path, { recursive: true, force: true });
+}
+
+export function readLocalR2Object(stateDir, bucketName, key) {
+  const metadataDir = join(stateDir, 'v3', 'r2', 'miniflare-R2BucketObject');
+  for (const name of readdirSync(metadataDir).filter((entry) => entry.endsWith('.sqlite') && entry !== 'metadata.sqlite')) {
+    const db = new DatabaseSync(join(metadataDir, name), { readOnly: true });
+    try {
+      const row = db.prepare('SELECT blob_id FROM _mf_objects WHERE key = ? LIMIT 1').get(key);
+      if (row?.blob_id) return readFileSync(join(stateDir, 'v3', 'r2', bucketName, 'blobs', row.blob_id));
+    } catch (error) {
+      if (!String(error).includes('no such table: _mf_objects')) throw error;
+    } finally {
+      db.close();
+    }
+  }
+  throw new Error(`Local R2 object not found: ${bucketName}/${key}`);
 }
 
 export function runWrangler(args, { cwd = apiDir, timeout = 60000 } = {}) {
