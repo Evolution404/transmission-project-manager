@@ -371,6 +371,10 @@ test('clean database applies the current development schema and remains repeatab
     '0006_p6_analysis_notifications_backups.sql',
     '0007_p7_flexible_demand_sources.sql',
     '0008_final_business_flow.sql',
+    '0009_master_grid_assets.sql',
+    '0010_master_grid_relations.sql',
+    '0011_master_data_integrity.sql',
+    '0012_master_data_write_guards.sql',
   ]);
 
   const tables = rows(queryLocalD1(state,
