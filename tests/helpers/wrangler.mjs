@@ -20,6 +20,30 @@ export function cleanupStateDir(path) {
   rmSync(path, { recursive: true, force: true });
 }
 
+export function findLocalD1Database(stateDir) {
+  const databaseDir = join(stateDir, 'v3', 'd1', 'miniflare-D1DatabaseObject');
+  let names;
+  try {
+    names = readdirSync(databaseDir).filter((entry) => entry.endsWith('.sqlite') && entry !== 'metadata.sqlite');
+  } catch {
+    return null;
+  }
+  if (names.length !== 1) return null;
+  return join(databaseDir, names[0]);
+}
+
+function withLocalD1(stateDir, fn) {
+  const databasePath = findLocalD1Database(stateDir);
+  if (!databasePath) return null;
+  const db = new DatabaseSync(databasePath);
+  try {
+    db.exec('PRAGMA busy_timeout = 5000;');
+    return fn(db);
+  } finally {
+    db.close();
+  }
+}
+
 export function readLocalR2Object(stateDir, bucketName, key) {
   const metadataDir = join(stateDir, 'v3', 'r2', 'miniflare-R2BucketObject');
   for (const name of readdirSync(metadataDir).filter((entry) => entry.endsWith('.sqlite') && entry !== 'metadata.sqlite')) {
@@ -80,6 +104,15 @@ export function runWranglerAsync(args, { cwd = apiDir, timeout = 60000 } = {}) {
 }
 
 export function executeLocalD1(stateDir, { file, command, json = false }) {
+  if (!file && command) {
+    const direct = withLocalD1(stateDir, (db) => {
+      if (json) return JSON.stringify([{ results: db.prepare(command).all().map((row) => ({ ...row })) }]);
+      db.exec(command);
+      return '';
+    });
+    if (direct !== null) return direct;
+  }
+
   const args = [
     'd1', 'execute', 'transmission-project-manager-local', '--local', '--persist-to', stateDir, '--yes',
   ];
