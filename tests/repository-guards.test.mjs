@@ -166,6 +166,10 @@ test('Node integration suite is safe for file-level parallelism', () => {
   const wranglerHelper = readFileSync(resolve(root, 'tests/helpers/wrangler.mjs'), 'utf8');
   assert.match(wranglerHelper, /'--inspector-port'/, 'parallel Wrangler runtimes need isolated inspector ports');
 
+  const migrationTests = readFileSync(resolve(root, 'tests/migrations.test.mjs'), 'utf8');
+  assert.match(migrationTests, /node:sqlite/, 'migration data-preservation tests should avoid one Wrangler process per SQL statement');
+  assert.match(migrationTests, /applyWranglerMigrations/, 'migration tests must retain a real Wrangler migration smoke path');
+
   const ports = new Map();
   for (const file of collectTestFiles(resolve(root, 'tests'))) {
     const source = readFileSync(file, 'utf8');
