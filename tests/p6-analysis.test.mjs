@@ -3,7 +3,7 @@ import { createServer } from 'node:http';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { after, before, test } from 'node:test';
-import { applyLocalMigrations, cleanupStateDir, executeLocalD1, makeStateDir, queryLocalD1, runWrangler, startWranglerServer } from './helpers/wrangler.mjs';
+import { applyLocalMigrations, cleanupStateDir, executeLocalD1, makeStateDir, queryLocalD1, runWranglerAsync, startWranglerServer } from './helpers/wrangler.mjs';
 import { bootstrapAdmin, cookiePair } from './helpers/auth.mjs';
 
 const stateDir = makeStateDir('tpm-p6-analysis-');
@@ -71,10 +71,24 @@ function insertSql(table, inputRows) {
   const values = inputRows.map((row) => `(${columns.map((column) => sqlLiteral(row[column])).join(',')})`).join(',');
   return `INSERT INTO "${table}" (${columns.map((column) => `"${column}"`).join(',')}) VALUES ${values};`;
 }
-function getLocalR2Json(sourceStateDir, key, artifactsDir) {
+async function getLocalR2Json(sourceStateDir, key, artifactsDir) {
   const output = join(artifactsDir, `${crypto.randomUUID()}.json`);
-  runWrangler(['r2', 'object', 'get', `transmission-project-manager-local/${key}`, '--local', '--persist-to', sourceStateDir, '--file', output]);
+  await runWranglerAsync(['r2', 'object', 'get', `transmission-project-manager-local/${key}`, '--local', '--persist-to', sourceStateDir, '--file', output]);
   return JSON.parse(readFileSync(output, 'utf8'));
+}
+
+async function mapWithConcurrency(items, concurrency, fn) {
+  const results = new Array(items.length);
+  let nextIndex = 0;
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (nextIndex < items.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await fn(items[index], index);
+    }
+  });
+  await Promise.all(workers);
+  return results;
 }
 
 function seedFinanceFacts() {
@@ -493,12 +507,15 @@ test('logical D1 backup is resumable in R2, integrity verified, and restorable i
   const restoreState = makeStateDir('tpm-p6-restored-db-');
   const artifactsDir = makeStateDir('tpm-p6-restore-artifacts-');
   try {
-    const manifest = getLocalR2Json(stateDir, backup.manifestKey, artifactsDir);
+    const manifest = await getLocalR2Json(stateDir, backup.manifestKey, artifactsDir);
     assert.equal(manifest.backupId, backup.id);
     assert.equal(manifest.chunks.length, backup.chunkCount);
+    const chunkPayloads = await mapWithConcurrency(manifest.chunks, 6, async (chunk) => ({
+      chunk,
+      payload: await getLocalR2Json(stateDir, chunk.key, artifactsDir),
+    }));
     const chunksByTable = new Map();
-    for (const chunk of manifest.chunks) {
-      const payload = getLocalR2Json(stateDir, chunk.key, artifactsDir);
+    for (const { chunk, payload } of chunkPayloads) {
       assert.equal(payload.table, chunk.table);
       const current = chunksByTable.get(chunk.table) ?? [];
       current.push({ index: chunk.index, rows: payload.rows });

@@ -32,6 +32,36 @@ export function runWrangler(args, { cwd = apiDir, timeout = 60000 } = {}) {
   return result.stdout;
 }
 
+export function runWranglerAsync(args, { cwd = apiDir, timeout = 60000 } = {}) {
+  return new Promise((resolveRun, rejectRun) => {
+    const child = spawn(process.execPath, [wranglerCli, ...args], {
+      cwd,
+      env: { ...process.env, CI: 'true', WRANGLER_SEND_METRICS: 'false' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL');
+      rejectRun(new Error(`Wrangler timed out: ${args.join(' ')}`));
+    }, timeout);
+    child.stdout.on('data', (chunk) => { stdout += chunk; });
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    child.once('error', (error) => {
+      clearTimeout(timer);
+      rejectRun(error);
+    });
+    child.once('close', (code) => {
+      clearTimeout(timer);
+      if (code !== 0) {
+        rejectRun(new Error(`Wrangler failed: ${args.join(' ')}\nSTDOUT:\n${stdout}\nSTDERR:\n${stderr}`));
+        return;
+      }
+      resolveRun(stdout);
+    });
+  });
+}
+
 export function executeLocalD1(stateDir, { file, command, json = false }) {
   const args = [
     'd1', 'execute', 'transmission-project-manager-local', '--local', '--persist-to', stateDir, '--yes',
