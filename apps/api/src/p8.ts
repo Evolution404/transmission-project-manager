@@ -299,13 +299,7 @@ async function loadProjectDemandLinks(db: D1Database, projectId: string) {
   }));
 }
 
-async function fetchReserveProject(db: D1Database, projectId: string) {
-  const project = await findProject(db, projectId);
-  if (!project) return null;
-  const [demandLinks, materialRows] = await Promise.all([
-    loadProjectDemandLinks(db, projectId),
-    loadProjectMaterials(db, projectId),
-  ]);
+function reserveProjectSummary(project: ProjectRow, demandLinks: Awaited<ReturnType<typeof loadProjectDemandLinks>>, materialRows: ProjectMaterialRow[]) {
   const materialRequirements = materialRows.map(projectMaterialSummary);
   let knownMaterialAmountFen = 0;
   let missingPriceCount = 0;
@@ -330,6 +324,66 @@ async function fetchReserveProject(db: D1Database, projectId: string) {
     createdAt: project.created_at,
     updatedAt: project.updated_at,
   };
+}
+
+async function fetchReserveProject(db: D1Database, projectId: string, knownProject?: ProjectRow) {
+  const project = knownProject ?? await findProject(db, projectId);
+  if (!project) return null;
+  const [demandLinks, materialRows] = await Promise.all([
+    loadProjectDemandLinks(db, projectId),
+    loadProjectMaterials(db, projectId),
+  ]);
+  return reserveProjectSummary(project, demandLinks, materialRows);
+}
+
+async function hydrateReserveProjects(db: D1Database, projects: ProjectRow[]) {
+  if (projects.length === 0) return [];
+  const placeholders = projects.map(() => '?').join(',');
+  const projectIds = projects.map((project) => project.id);
+  const [linkResult, materialResult] = await Promise.all([
+    db.prepare(
+      `SELECT pdl.project_id,pdl.id,pdl.demand_id,d.sequence_no,d.business_year,d.voltage_raw,d.voltage_verified,d.line_name,d.section_text,d.category_key,d.owner,pdl.created_at
+       FROM project_demand_links pdl INNER JOIN demands d ON d.id=pdl.demand_id
+       WHERE pdl.project_id IN (${placeholders})
+       ORDER BY pdl.project_id,d.sequence_no COLLATE NOCASE,pdl.id`,
+    ).bind(...projectIds).all<{
+      project_id: string; id: string; demand_id: string; sequence_no: string; business_year: number | null; voltage_raw: string; voltage_verified: string | null;
+      line_name: string; section_text: string; category_key: string | null; owner: string | null; created_at: string;
+    }>(),
+    db.prepare(
+      `SELECT pmr.id,pmr.project_id,pmr.material_id,pmr.model,pmr.unit,pmr.required_quantity_scaled,
+              pmr.unit_price_scaled,pmr.amount_fen,pmr.reserve_category_id,pmr.active,pmr.version,pmr.created_at,pmr.updated_at,
+              rc.category_key AS reserve_category_key,rc.label AS reserve_category_label
+       FROM project_material_requirements pmr
+       LEFT JOIN reserve_categories rc ON rc.id=pmr.reserve_category_id
+       WHERE pmr.project_id IN (${placeholders}) AND pmr.active=1
+       ORDER BY pmr.project_id,pmr.created_at,pmr.id`,
+    ).bind(...projectIds).all<ProjectMaterialRow>(),
+  ]);
+  const linksByProject = new Map<string, Awaited<ReturnType<typeof loadProjectDemandLinks>>>();
+  for (const row of linkResult.results ?? []) {
+    const items = linksByProject.get(row.project_id) ?? [];
+    items.push({
+      id: row.id,
+      demandId: row.demand_id,
+      sequenceNo: row.sequence_no,
+      year: row.business_year,
+      voltage: row.voltage_verified ?? row.voltage_raw,
+      lineName: row.line_name,
+      section: row.section_text,
+      category: row.category_key,
+      owner: row.owner,
+      createdAt: row.created_at,
+    });
+    linksByProject.set(row.project_id, items);
+  }
+  const materialsByProject = new Map<string, ProjectMaterialRow[]>();
+  for (const row of materialResult.results ?? []) {
+    const items = materialsByProject.get(row.project_id) ?? [];
+    items.push(row);
+    materialsByProject.set(row.project_id, items);
+  }
+  return projects.map((project) => reserveProjectSummary(project, linksByProject.get(project.id) ?? [], materialsByProject.get(project.id) ?? []));
 }
 
 async function loadDemandDetail(db: D1Database, demandId: string) {
@@ -920,13 +974,14 @@ p8App.get('/reserve-projects', async (c) => {
   const rows = await c.env.DB.prepare(
     `SELECT id,name,business_year,owner,status,reserve_version,framework_id,version,created_at,updated_at FROM projects ORDER BY created_at DESC,id DESC LIMIT ?`,
   ).bind(limit).all<ProjectRow>();
-  const items = [];
-  for (const row of rows.results ?? []) {
-    if (user.role === 'admin' || user.scopes.some((scope) => scope.type === 'all') || hasScope(user.scopes, 'project', row.id) || (row.framework_id && hasScope(user.scopes, 'framework', row.framework_id))) {
-      items.push(await fetchReserveProject(c.env.DB, row.id));
-    }
-  }
-  return c.json({ ok: true as const, data: { items: items.filter(Boolean), nextCursor: null } });
+  const allowedProjects = (rows.results ?? []).filter((row) => (
+    user.role === 'admin'
+    || user.scopes.some((scope) => scope.type === 'all')
+    || hasScope(user.scopes, 'project', row.id)
+    || Boolean(row.framework_id && hasScope(user.scopes, 'framework', row.framework_id))
+  ));
+  const items = await hydrateReserveProjects(c.env.DB, allowedProjects);
+  return c.json({ ok: true as const, data: { items, nextCursor: null } });
 });
 
 p8App.get('/reserve-projects/:id', async (c) => {

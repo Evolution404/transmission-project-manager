@@ -460,3 +460,26 @@ test('project execution detail stays within the D1 query budget as task count gr
   assert.equal(detail.body.data.demands.length, 1);
   assert.equal(detail.body.data.tasks.filter((task) => task.name.startsWith('查询预算任务')).length, 6);
 });
+
+test('reserve project list remains complete with many hydrated projects', async () => {
+  const demandId = globalThis.__finalDemandId;
+  const adminId = dbRows("SELECT id FROM members WHERE role='admin' ORDER BY created_at LIMIT 1;")[0].id;
+  const now = '2026-09-25T00:00:00.000Z';
+  const statements = [];
+  for (let index = 1; index <= 60; index += 1) {
+    const projectId = `list-project-${String(index).padStart(2, '0')}`;
+    statements.push(
+      `INSERT INTO projects (id,name,business_year,owner,status,reserve_version,framework_id,version,created_by,created_at,updated_at) VALUES ('${projectId}','批量列表项目${index}',2026,NULL,'draft',0,NULL,1,'${adminId}','${now}','${now}');`,
+      `INSERT INTO project_demand_links (id,project_id,demand_id,created_by,created_at) VALUES ('list-link-${index}','${projectId}','${demandId}','${adminId}','${now}');`,
+      `INSERT INTO project_material_requirements (id,project_id,material_id,model,unit,required_quantity_scaled,unit_price_scaled,amount_fen,reserve_category_id,active,version,created_by,created_at,updated_at) VALUES ('list-material-${index}','${projectId}',NULL,'LIST-${index}','件',10000,1000000,10000,NULL,1,1,'${adminId}','${now}','${now}');`,
+    );
+  }
+  executeLocalD1(stateDir, { command: statements.join('\n') });
+
+  const list = await jsonRequest('/api/reserve-projects?limit=100');
+  assert.equal(list.response.status, 200);
+  const bulk = list.body.data.items.filter((item) => item.id.startsWith('list-project-'));
+  assert.equal(bulk.length, 60);
+  assert.ok(bulk.every((item) => item.demandLinks.length === 1));
+  assert.ok(bulk.every((item) => item.materialRequirements.length === 1));
+});
