@@ -2,7 +2,7 @@
 
 ## 开始工作
 
-- 当前基线：P0、P1、P1.1、P1.2、P2、P3、P4、P5、P6 曾按旧业务模型完成本地/合成数据验收，但用户在 2026-09-12 明确纠正了“需求/项目/物资”核心模型。下一步优先执行 `docs/HANDOFF-PROJECT-MODEL-REFACTOR-2026-09-12.md` 的重构，不得继续把旧 P2/P3 模型视为最终业务基线；P7 正式环境验收在该重构完成后再继续。
+- 当前基线：P0、P1、P1.1、P1.2、P2、P3、P4、P5、P6 曾按旧业务模型完成本地/合成数据验收，但用户在 2026-09-12 明确纠正了需求、项目储备、项目出库、执行任务、物资供应、实施和结算的核心模型。下一步以 `docs/HANDOFF-FINAL-BUSINESS-BASELINE-2026-09-12.md` 为最高优先级业务基线完成结构性重构；旧 `docs/HANDOFF-PROJECT-MODEL-REFACTOR-2026-09-12.md` 仅保留纠偏过程。P7 正式环境验收在该重构完成后再继续。
 - 开始前运行 `git status --short --branch`，阅读 `docs/AI_HANDOFF.md`、`docs/IMPLEMENTATION_PLAN.md`、`docs/DESIGN.md`、`docs/DATA_MODEL.md` 和 `docs/TESTING.md`。
 - **测试先于生产代码。** 新阶段或缺陷修复先写/更新能约束目标行为的测试，再修改生产实现；完成后必须跑完整 `npm run check`。发现 bug 必须先补回归用例，禁止只修表现。
 - 不覆盖他人的未提交修改。后续若用户明确要求多个 AI 协作，先划定文件/模块所有权。
