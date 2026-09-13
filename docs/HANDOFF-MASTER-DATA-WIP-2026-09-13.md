@@ -3,6 +3,7 @@
 项目：`Evolution404/transmission-project-manager`
 本地：`/Users/zhangyuxi/Desktop/项目管理`
 线上稳定主线：`main`
+继续开发分支：`wip/master-data-refactor-20260913`
 当前 main HEAD：`a9f1908ffdf64a07b520a4e89b1c50a79f8531a8`
 
 ## 用户最终决定

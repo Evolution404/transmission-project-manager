@@ -1,6 +1,6 @@
 # 下一位 AI
 
-继续 `/Users/zhangyuxi/Desktop/项目管理` 的基础台账对象化重构。
+继续 `/Users/zhangyuxi/Desktop/项目管理` 的基础台账对象化重构，分支 `wip/master-data-refactor-20260913`。
 
 先执行：
 
