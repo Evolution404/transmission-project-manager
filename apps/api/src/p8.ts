@@ -1002,12 +1002,16 @@ p8App.put('/reserve-projects/:id/demands', requireRoles('admin', 'project_manage
   if (project.version !== version) return c.json(apiError('VERSION_CONFLICT', '项目已被修改，请刷新后重试'), 409);
   const currentLinks = await loadProjectDemandLinks(c.env.DB, project.id);
   const nextSet = new Set(demandIds);
+  const usedDemandRows = await c.env.DB.prepare(
+    `SELECT DISTINCT tds.demand_id
+     FROM task_demand_scopes tds
+     INNER JOIN project_tasks pt ON pt.id=tds.task_id
+     WHERE pt.project_id=?`,
+  ).bind(project.id).all<{ demand_id: string }>();
+  const usedDemandIds = new Set((usedDemandRows.results ?? []).map((row) => row.demand_id));
   for (const link of currentLinks) {
-    if (!nextSet.has(link.demandId)) {
-      const used = await c.env.DB.prepare(
-        `SELECT 1 FROM task_demand_scopes tds INNER JOIN project_tasks pt ON pt.id=tds.task_id WHERE pt.project_id=? AND tds.demand_id=? LIMIT 1`,
-      ).bind(project.id, link.demandId).first();
-      if (used) return c.json(apiError('PROJECT_DEMAND_PROTECTED', '已被执行任务引用的需求不能从项目中移除', { demandId: link.demandId }), 422);
+    if (!nextSet.has(link.demandId) && usedDemandIds.has(link.demandId)) {
+      return c.json(apiError('PROJECT_DEMAND_PROTECTED', '已被执行任务引用的需求不能从项目中移除', { demandId: link.demandId }), 422);
     }
   }
   const request = { expectedVersion: version, demandIds }, hash = await requestHash(request), operation = `reserve-projects.demands:${project.id}`;

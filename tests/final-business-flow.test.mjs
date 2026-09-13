@@ -419,6 +419,22 @@ test('four-state feedback is projected back to the original demand from task fac
   assert.equal(complete.body.data.settlementComplete, true);
 });
 
+test('project demand links already used by tasks cannot be removed', async () => {
+  const projectId = globalThis.__finalProjectId;
+  const detail = await jsonRequest(`/api/reserve-projects/${projectId}`);
+  assert.equal(detail.response.status, 200);
+  const protectedDemandId = globalThis.__finalDemandId;
+  assert.ok(detail.body.data.demandLinks.some((item) => item.demandId === protectedDemandId));
+
+  const result = await jsonRequest(`/api/reserve-projects/${projectId}/demands`, mutation('PUT', 'remove-protected-demand', {
+    expectedVersion: detail.body.data.version,
+    demandIds: [],
+  }));
+  assert.equal(result.response.status, 422);
+  assert.equal(result.body.error.code, 'PROJECT_DEMAND_PROTECTED');
+  assert.equal(result.body.error.details.demandId, protectedDemandId);
+});
+
 test('project material cannot be shrunk below task assignments after execution facts exist', async () => {
   const projectId = globalThis.__finalProjectId;
   const detail = await jsonRequest(`/api/reserve-projects/${projectId}`);
