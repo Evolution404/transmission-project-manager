@@ -127,7 +127,7 @@ onMounted(loadStatus);
       <n-spin :show="loading || initialized === null">
         <n-alert v-if="error" type="error" class="login-alert">{{ error }}</n-alert>
 
-        <n-form v-if="initialized !== null" label-placement="top">
+        <n-form v-if="initialized !== null" label-placement="top" @submit.prevent="initialized === false ? bootstrap() : login()">
           <n-form-item v-if="initialized === false" label="管理员姓名">
             <n-input v-model:value="bootstrapDisplayName" autocomplete="name" />
           </n-form-item>
@@ -136,6 +136,13 @@ onMounted(loadStatus);
               v-model:value="username"
               data-test="login-username"
               autocomplete="username"
+              :input-props="{
+                id: 'username',
+                name: 'username',
+                autocomplete: 'username',
+                autocapitalize: 'none',
+                spellcheck: false,
+              }"
               :placeholder="initialized === false ? '请输入管理员账号' : '请输入账号'"
             />
           </n-form-item>
@@ -147,7 +154,11 @@ onMounted(loadStatus);
               show-password-on="mousedown"
               placeholder="请输入密码"
               :autocomplete="initialized === false ? 'new-password' : 'current-password'"
-              @keyup.enter="initialized === false ? bootstrap() : login()"
+              :input-props="{
+                id: 'password',
+                name: 'password',
+                autocomplete: initialized === false ? 'new-password' : 'current-password',
+              }"
             />
           </n-form-item>
 
@@ -171,12 +182,12 @@ onMounted(loadStatus);
               />
             </n-form-item>
             <p class="login-help">初始化令牌仅用于首次创建系统管理员，由部署方提供；创建成功后该初始化入口自动关闭。</p>
-            <n-button data-test="login-submit" type="primary" block :loading="loading" @click="bootstrap">
+            <n-button data-test="login-submit" type="primary" attr-type="submit" block :loading="loading">
               创建首个管理员
             </n-button>
           </template>
           <template v-else>
-            <n-button data-test="login-submit" type="primary" block :loading="loading" @click="login">
+            <n-button data-test="login-submit" type="primary" attr-type="submit" block :loading="loading">
               登录
             </n-button>
             <p class="login-help">忘记密码请联系管理员重置。</p>

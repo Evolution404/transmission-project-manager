@@ -18,11 +18,12 @@ vi.mock('naive-ui', async () => {
   const NInput = vue.defineComponent({
     name: 'NInput',
     inheritAttrs: false,
-    props: { value: { type: String, default: '' }, type: String, placeholder: String },
+    props: { value: { type: String, default: '' }, type: String, placeholder: String, inputProps: Object },
     emits: ['update:value'],
     setup(props, { emit, attrs }) {
       return () => vue.h('input', {
         ...attrs,
+        ...(props.inputProps as Record<string, unknown> | undefined),
         value: props.value,
         type: props.type ?? 'text',
         placeholder: props.placeholder,
@@ -31,9 +32,9 @@ vi.mock('naive-ui', async () => {
     },
   });
   const NButton = vue.defineComponent({
-    name: 'NButton', props: { disabled: Boolean, loading: Boolean }, emits: ['click'],
+    name: 'NButton', props: { disabled: Boolean, loading: Boolean, attrType: { type: String, default: 'button' } }, emits: ['click'],
     setup(props, { emit, slots, attrs }) {
-      return () => vue.h('button', { ...attrs, disabled: props.disabled || props.loading, onClick: () => emit('click') }, slots.default?.());
+      return () => vue.h('button', { ...attrs, type: props.attrType, disabled: props.disabled || props.loading, onClick: () => emit('click') }, slots.default?.());
     },
   });
   const wrap = (name: string) => vue.defineComponent({
@@ -47,7 +48,7 @@ vi.mock('naive-ui', async () => {
     name: 'NCard', setup(_, { slots }) { return () => vue.h('section', slots.default?.()); },
   });
   const NForm = vue.defineComponent({
-    name: 'NForm', setup(_, { slots }) { return () => vue.h('form', slots.default?.()); },
+    name: 'NForm', inheritAttrs: false, setup(_, { slots, attrs }) { return () => vue.h('form', attrs, slots.default?.()); },
   });
   const NFormItem = vue.defineComponent({
     name: 'NFormItem', props: { label: String }, setup(props, { slots }) {
@@ -126,9 +127,17 @@ describe('LoginView local account contract', () => {
     expect(wrapper.text()).toContain('密码');
     expect(wrapper.text()).toContain('忘记密码请联系管理员');
     expect(wrapper.text()).not.toContain('邮箱');
-    expect(wrapper.get('[data-test="login-username"]').attributes('autocomplete')).toBe('username');
-    expect(wrapper.get('[data-test="login-password"]').attributes('autocomplete')).toBe('current-password');
-    expect(wrapper.get('[data-test="login-password"]').attributes('type')).toBe('password');
+    const usernameInput = wrapper.get('[data-test="login-username"]');
+    const passwordInput = wrapper.get('[data-test="login-password"]');
+    expect(usernameInput.attributes('id')).toBe('username');
+    expect(usernameInput.attributes('name')).toBe('username');
+    expect(usernameInput.attributes('autocomplete')).toBe('username');
+    expect(usernameInput.attributes('autocapitalize')).toBe('none');
+    expect(usernameInput.attributes('spellcheck')).toBe('false');
+    expect(passwordInput.attributes('id')).toBe('password');
+    expect(passwordInput.attributes('name')).toBe('password');
+    expect(passwordInput.attributes('autocomplete')).toBe('current-password');
+    expect(passwordInput.attributes('type')).toBe('password');
   });
 
   it('derives the credential in the browser and submits no plaintext password', async () => {
@@ -149,7 +158,7 @@ describe('LoginView local account contract', () => {
     await flushPromises();
     await wrapper.get('[data-test="login-username"]').setValue(' ZhangSan ');
     await wrapper.get('[data-test="login-password"]').setValue('成员初始长口令-2026-安全');
-    await wrapper.get('[data-test="login-submit"]').trigger('click');
+    await wrapper.get('form').trigger('submit');
     await flushPromises();
 
     expect(authMocks.deriveCredential).toHaveBeenCalledWith('成员初始长口令-2026-安全', kdf.salt);
@@ -176,7 +185,7 @@ describe('LoginView local account contract', () => {
     await flushPromises();
     await wrapper.get('[data-test="login-username"]').setValue('unknown');
     await wrapper.get('[data-test="login-password"]').setValue('错误但长度足够的登录口令-2026');
-    await wrapper.get('[data-test="login-submit"]').trigger('click');
+    await wrapper.get('form').trigger('submit');
     await flushPromises();
     expect(wrapper.text()).toContain('账号或密码错误');
     expect(wrapper.text()).not.toContain('账号不存在');
