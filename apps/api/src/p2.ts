@@ -22,6 +22,7 @@ import type {
 import { requireRoles, type AppEnv } from './auth';
 import { SqlIdempotencyRepository } from './repositories/sql-idempotency-repository';
 import { SqlImportMappingRepository } from './repositories/sql-import-mapping-repository';
+import { SqlMaterialRepository } from './repositories/sql-material-repository';
 import { createCloudflarePersistence } from './runtime/cloudflare/persistence';
 
 const REQUIRED_MAPPING_KEYS = [
@@ -595,26 +596,21 @@ p2App.post('/materials', requireRoles('admin', 'project_manager'), async (c) => 
   const replay = await replayIdempotentResponse(c, key, operation, hash);
   if (replay) return replay;
   const actor = c.get('currentUser');
-  const id = crypto.randomUUID();
   const now = new Date().toISOString();
-  const data: MaterialSummary = { id, code, name, model, unit, enabled: true, version: 1 };
+  const data: MaterialSummary = { id: crypto.randomUUID(), code, name, model, unit, enabled: true, version: 1 };
   const response = { ok: true as const, data };
-  const responseJson = JSON.stringify(response);
+  const { database } = createCloudflarePersistence(c.env);
   try {
-    await c.env.DB.batch([
-      c.env.DB.prepare(
-        `INSERT INTO materials (id,code,name,model,unit,enabled,version,created_by,created_at,updated_at)
-         VALUES (?,?,?,?,?,1,1,?,?,?)`,
-      ).bind(id, code, name, model, unit, actor.id, now, now),
-      c.env.DB.prepare(
-        `INSERT INTO audit_events (id,actor_member_id,action,object_type,object_id,before_json,after_json,created_at)
-         VALUES (?,?, 'material.create','material',?,NULL,?,?)`,
-      ).bind(crypto.randomUUID(), actor.id, id, JSON.stringify(data), now),
-      c.env.DB.prepare(
-        `INSERT INTO idempotency_records (idempotency_key,actor_member_id,operation,request_hash,response_json,status_code,created_at)
-         VALUES (?,?,?,?,?,201,?)`,
-      ).bind(key, actor.id, operation, hash, responseJson, now),
-    ]);
+    await new SqlMaterialRepository(database).create({
+      material: data,
+      actorId: actor.id,
+      now,
+      auditId: crypto.randomUUID(),
+      idempotencyKey: key,
+      operation,
+      requestHash: hash,
+      responseJson: JSON.stringify(response),
+    });
   } catch {
     return c.json(apiError('MATERIAL_EXISTS', '相同物资编码或型号+单位已存在'), 409);
   }
@@ -625,16 +621,8 @@ p2App.get('/materials', async (c) => {
   const limit = Number(c.req.query('limit') ?? '50');
   if (!Number.isInteger(limit) || limit < 1 || limit > 100) return c.json(apiError('INVALID_PAGE_LIMIT', 'limit 必须在 1 到 100 之间'), 400);
   const query = c.req.query('query')?.trim() ?? '';
-  const pattern = `%${query}%`;
-  const result = query
-    ? await c.env.DB.prepare(
-      `SELECT id,code,name,model,unit,enabled,version FROM materials
-       WHERE name LIKE ? OR model LIKE ? OR code LIKE ? ORDER BY model COLLATE NOCASE, unit COLLATE NOCASE LIMIT ?`,
-    ).bind(pattern, pattern, pattern, limit).all<MaterialRow>()
-    : await c.env.DB.prepare(
-      `SELECT id,code,name,model,unit,enabled,version FROM materials ORDER BY model COLLATE NOCASE, unit COLLATE NOCASE LIMIT ?`,
-    ).bind(limit).all<MaterialRow>();
-  return c.json({ ok: true as const, data: { items: (result.results ?? []).map(materialSummary) } });
+  const { database } = createCloudflarePersistence(c.env);
+  return c.json({ ok: true as const, data: { items: await new SqlMaterialRepository(database).list({ query, limit }) } });
 });
 
 
