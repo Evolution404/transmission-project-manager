@@ -1,6 +1,7 @@
 export type { AttachmentIdempotencyRecord, AttachmentObjectType, AttachmentRecord, AttachmentRepository, CreateAttachmentRecord } from './attachment-repository';
 export type { ClockPort } from './clock';
 export type { CredentialMutationInput, CredentialRepository, MemberCredentialRecord, ResetCredentialInput } from './credential-repository';
+export type { BootstrapAdminRecord, MemberAdminRepository } from './member-admin-repository';
 export type { MemberRepository } from './member-repository';
 export type { DatabasePort, DatabaseRunResult, DatabaseStatement, DatabaseValue, TransactionPort } from './database';
 export type { JobMessage, JobPayload, JobQueuePort } from './job-queue';

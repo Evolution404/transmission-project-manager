@@ -47,6 +47,7 @@ import { p4App } from './p4';
 import { p5App } from './p5';
 import { p6App } from './p6';
 import { SqlCredentialRepository } from './repositories/sql-credential-repository';
+import { SqlMemberAdminRepository } from './repositories/sql-member-admin-repository';
 import { SqlMemberRepository } from './repositories/sql-member-repository';
 import { createCloudflarePersistence } from './runtime/cloudflare/persistence';
 import { schemaReadiness } from './schema';
@@ -162,6 +163,7 @@ function authRepositories(c: Context<AppEnv>) {
   const { database } = createCloudflarePersistence(c.env);
   return {
     credentials: new SqlCredentialRepository(database),
+    memberAdmin: new SqlMemberAdminRepository(database),
     members: new SqlMemberRepository(database),
   };
 }
@@ -218,7 +220,7 @@ app.post('/api/auth/bootstrap', async (c) => {
   if (!username) return c.json(apiError('INVALID_USERNAME', '账号需为 3-64 位字母、数字、点、横线或下划线'), 422);
   if (!displayName || displayName.length > 80) return c.json(apiError('INVALID_DISPLAY_NAME', '管理员名称不能为空且最多 80 个字符'), 422);
   if (!validateDerivedCredential(body)) return c.json(apiError('INVALID_CREDENTIAL', '认证凭据格式无效'), 422);
-  const { members } = authRepositories(c);
+  const { memberAdmin, members } = authRepositories(c);
   if (await members.count() > 0) return c.json(apiError('BOOTSTRAP_CLOSED', '系统已有账号，首管理员初始化已关闭'), 409);
 
   const verifier = await credentialVerifier(body.credential, pepper);
@@ -240,33 +242,19 @@ app.post('/api/auth/bootstrap', async (c) => {
   };
 
   try {
-    const results = await c.env.DB.batch([
-      c.env.DB.prepare(
-        `INSERT INTO members
-         (id,username,display_name,role,enabled,version,
-          credential_salt,credential_verifier,credential_algorithm,credential_params_json,
-          must_change_password,session_version,failed_login_count,locked_until,last_failed_login_at,
-          credential_changed_at,invited_at,first_login_at,last_login_at,created_at,updated_at)
-         SELECT ?,?,?,'admin',1,1,?,?,'argon2id-v1',?,0,1,0,NULL,NULL,?,?,?,?,?,?
-         WHERE NOT EXISTS (SELECT 1 FROM members)`,
-      ).bind(
-        memberId, username, displayName, body.salt, verifier, credentialParamsJson,
-        now, now, now, now, now, now,
-      ),
-      c.env.DB.prepare(
-        `INSERT INTO member_scopes (id,member_id,scope_type,scope_id,created_at)
-         SELECT ?,?,'all',NULL,? WHERE EXISTS (SELECT 1 FROM members WHERE id=?)`,
-      ).bind(crypto.randomUUID(), memberId, now, memberId),
-      c.env.DB.prepare(
-        `INSERT INTO audit_events
-         (id,actor_member_id,action,object_type,object_id,before_json,after_json,created_at)
-         SELECT ?,NULL,'auth.bootstrap','member',?,NULL,?,?
-         WHERE EXISTS (SELECT 1 FROM members WHERE id=?)`,
-      ).bind(crypto.randomUUID(), memberId, JSON.stringify(data), now, memberId),
-    ]);
-    if (Number(results[0]?.meta.changes ?? 0) !== 1) {
-      return c.json(apiError('BOOTSTRAP_CLOSED', '首管理员已被其他请求初始化'), 409);
-    }
+    const created = await memberAdmin.bootstrapAdmin({
+      memberId,
+      username,
+      displayName,
+      salt: body.salt,
+      verifier,
+      credentialParamsJson,
+      nowIso: now,
+      scopeId: crypto.randomUUID(),
+      auditEventId: crypto.randomUUID(),
+      auditAfterJson: JSON.stringify(data),
+    });
+    if (!created) return c.json(apiError('BOOTSTRAP_CLOSED', '首管理员已被其他请求初始化'), 409);
   } catch {
     return c.json(apiError('BOOTSTRAP_CLOSED', '首管理员初始化失败或已经完成'), 409);
   }
