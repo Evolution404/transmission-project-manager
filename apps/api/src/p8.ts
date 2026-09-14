@@ -4,6 +4,7 @@ import { hasScope, requireRoles, type AppEnv } from './auth';
 import { SqlIdempotencyRepository } from './repositories/sql-idempotency-repository';
 import { SqlProjectReleaseRepository } from './repositories/sql-project-release-repository';
 import { SqlProjectTaskRepository } from './repositories/sql-project-task-repository';
+import { SqlTaskSupplyRepository } from './repositories/sql-task-supply-repository';
 import { createCloudflarePersistence } from './runtime/cloudflare/persistence';
 
 const MAX_ITEMS = 100;
@@ -1351,37 +1352,41 @@ p8App.get('/project-tasks', async (c) => {
 p8App.post('/task-material-supply-events', requireRoles('admin', 'project_manager', 'implementation'), async (c) => {
   const key = requireIdempotencyKey(c); if (key instanceof Response) return key;
   let body: Record<string, unknown>; try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
-  const taskMaterialId = cleanText(body.taskMaterialRequirementId), version = expectedVersion(body.expectedSupplyVersion), stage = cleanText(body.stage);
+  const taskMaterialId = cleanText(body.taskMaterialRequirementId), version = expectedVersion(body.expectedSupplyVersion), stage = cleanText(body.stage) as 'reported' | 'shipped' | 'arrived';
   const quantity = positiveInteger(body.quantityScaled), eventDate = validDate(body.eventDate), note = nullableText(body.note, 1000);
   if (!taskMaterialId || version === null || !['reported','shipped','arrived'].includes(stage) || quantity === null || !eventDate || note === undefined) return c.json(apiError('INVALID_SUPPLY_EVENT', '物资供应事件参数无效'), 422);
   const request = { taskMaterialRequirementId: taskMaterialId, expectedSupplyVersion: version, stage, quantityScaled: quantity, eventDate, note };
   const hash = await requestHash(request), operation = 'task-material-supply-events.create';
   const replay = await replayIdempotentResponse(c, key, operation, hash); if (replay) return replay;
-  const material = await c.env.DB.prepare(
-    `SELECT tmr.id,tmr.task_id,tmr.project_material_requirement_id,tmr.material_id,tmr.model,tmr.unit,tmr.required_quantity_scaled,tmr.supply_version,tmr.created_at,tmr.updated_at,pt.project_id
-     FROM task_material_requirements tmr INNER JOIN project_tasks pt ON pt.id=tmr.task_id WHERE tmr.id=? LIMIT 1`,
-  ).bind(taskMaterialId).first<TaskMaterialRow & { project_id: string }>();
+  const { database } = createCloudflarePersistence(c.env);
+  const repository = new SqlTaskSupplyRepository(database);
+  const material = await repository.findSupplyState(taskMaterialId);
   if (!material) return c.json(apiError('TASK_MATERIAL_NOT_FOUND', '任务物资不存在'), 404);
-  if (!await canProject(c, material.project_id)) return c.json(apiError('SCOPE_FORBIDDEN', '无权登记该任务物资供应'), 403);
-  if (material.supply_version !== version) return c.json(apiError('VERSION_CONFLICT', '任务物资供应状态已变化，请刷新后重试'), 409);
-  const totals = await supplyTotals(c.env.DB, taskMaterialId);
+  if (!hasProjectAccess(c, material.projectId, material.frameworkId)) return c.json(apiError('SCOPE_FORBIDDEN', '无权登记该任务物资供应'), 403);
+  if (material.supplyVersion !== version) return c.json(apiError('VERSION_CONFLICT', '任务物资供应状态已变化，请刷新后重试'), 409);
+  const totals = material.totals;
   const next = { ...totals };
   if (stage === 'reported') next.reportedQuantityScaled += quantity;
   if (stage === 'shipped') next.shippedQuantityScaled += quantity;
   if (stage === 'arrived') next.arrivedQuantityScaled += quantity;
-  if (next.reportedQuantityScaled > material.required_quantity_scaled || next.shippedQuantityScaled > next.reportedQuantityScaled || next.arrivedQuantityScaled > next.shippedQuantityScaled) {
-    return c.json(apiError('SUPPLY_STAGE_ORDER_VIOLATION', '物资供应累计数量必须满足：已到货 <= 已发货 <= 已上报 <= 任务需求量', { requiredQuantityScaled: material.required_quantity_scaled, totals: next }), 422);
+  if (next.reportedQuantityScaled > material.requiredQuantityScaled || next.shippedQuantityScaled > next.reportedQuantityScaled || next.arrivedQuantityScaled > next.shippedQuantityScaled) {
+    return c.json(apiError('SUPPLY_STAGE_ORDER_VIOLATION', '物资供应累计数量必须满足：已到货 <= 已发货 <= 已上报 <= 任务需求量', { requiredQuantityScaled: material.requiredQuantityScaled, totals: next }), 422);
   }
   const actor = c.get('currentUser'), now = new Date().toISOString(), id = crypto.randomUUID();
-  const data = { id, taskMaterialRequirementId: taskMaterialId, taskId: material.task_id, stage, quantityScaled: quantity, eventDate, note, supplyVersion: version + 1, totals: next, createdAt: now };
+  const data = { id, taskMaterialRequirementId: taskMaterialId, taskId: material.taskId, stage, quantityScaled: quantity, eventDate, note, supplyVersion: version + 1, totals: next, createdAt: now };
   const response = { ok: true as const, data };
   try {
-    await c.env.DB.batch([
-      supplyVersionGuard(c.env.DB, taskMaterialId, version, now),
-      c.env.DB.prepare(`INSERT INTO material_supply_events (id,task_material_requirement_id,stage,quantity_scaled,event_date,note,created_by,created_at) VALUES (?,?,?,?,?,?,?,?)`).bind(id, taskMaterialId, stage, quantity, eventDate, note, actor.id, now),
-      auditStatement(c.env.DB, actor.id, 'task_material.supply', 'task_material_requirement', taskMaterialId, totals, next, now),
-      idempotencyStatement(c.env.DB, key, actor.id, operation, hash, response, 201, now),
-    ]);
+    await repository.createSupplyEvent({
+      event: data,
+      beforeTotals: totals,
+      expectedSupplyVersion: version,
+      actorId: actor.id,
+      auditId: crypto.randomUUID(),
+      idempotencyKey: key,
+      operation,
+      requestHash: hash,
+      responseJson: JSON.stringify(response),
+    });
   } catch {
     const race = await replayIdempotentResponse(c, key, operation, hash); if (race) return race;
     return c.json(apiError('VERSION_CONFLICT', '任务物资供应状态已被并发修改，请刷新后重试'), 409);

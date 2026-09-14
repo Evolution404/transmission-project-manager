@@ -6,6 +6,7 @@ export type { LinePageCursor, MasterDataRepository, TowerPageCursor } from './ma
 export type { ProjectPage, ProjectPageCursor, ProjectQueryRepository, ProjectSuggestionGroup, ReserveCandidatePage } from './project-query-repository';
 export type { CreateProjectReleaseRecord, ExecutionProjectState, ProjectReleaseRepository, ProjectReleaseSnapshot } from './project-release-repository';
 export type { CreateProjectTaskRecord, CreatedProjectTaskSummary, ProjectTaskMaterialAvailability, ProjectTaskRepository } from './project-task-repository';
+export type { CreateSupplyEventRecord, CreatedSupplyEvent, SupplyTotals, TaskMaterialSupplyState, TaskSupplyRepository } from './task-supply-repository';
 export type { AllocationFailure, ConfirmProjectRecord, CreateProjectRecord, ProjectAllocationWrite, ProjectCategoryAllocationWrite, ProjectCostLineWrite, ProjectWriteRepository, ProjectWriteState, ProtectedProjectScopeItem, ReplaceProjectAllocationsRecord, ReplaceProjectCategoryAllocationsRecord, ReplaceProjectCostsRecord } from './project-write-repository';
 export type { CreateReserveCategoryRecord, ReserveCategoryWriteRepository, UpsertCategoryMappingRecord } from './reserve-category-write-repository';
 export type { BudgetAllocationWrite, ConfirmBudgetRecord, CreateBudgetRecord, FinanceBudgetRepository, UpdateBudgetRecord } from './finance-budget-repository';
