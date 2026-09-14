@@ -23,6 +23,7 @@ import type {
 } from '@tpm/shared';
 import { hasScope, requireRoles, type AppEnv } from './auth';
 import { SqlFinanceQueryRepository } from './repositories/sql-finance-query-repository';
+import { SqlFinanceWriteRepository } from './repositories/sql-finance-write-repository';
 import { SqlIdempotencyRepository } from './repositories/sql-idempotency-repository';
 import { createCloudflarePersistence } from './runtime/cloudflare/persistence';
 
@@ -124,13 +125,6 @@ function frameworkSummary(row: FrameworkRow): FrameworkSummary {
     version: row.version, createdAt: row.created_at, updatedAt: row.updated_at,
   };
 }
-function agreementSummary(row: AgreementRow): AgreementSummary {
-  return {
-    id: row.id, frameworkId: row.framework_id, code: row.code, name: row.name, amountFen: row.amount_fen,
-    validFrom: row.valid_from, validTo: row.valid_to, status: row.status, version: row.version,
-    createdAt: row.created_at, updatedAt: row.updated_at,
-  };
-}
 async function findFramework(db: D1Database, id: string) {
   return db.prepare(`SELECT id,code,name,total_amount_fen,annual_target_fen,start_date,end_date,version,created_at,updated_at FROM frameworks WHERE id=? LIMIT 1`)
     .bind(id).first<FrameworkRow>();
@@ -153,18 +147,6 @@ function canProject(c: Context<AppEnv>, projectId: string) {
 function hasGlobalScope(c: Context<AppEnv>) {
   const user = c.get('currentUser');
   return user.role === 'admin' || user.scopes.some((scope) => scope.type === 'all');
-}
-function frameworkGuard(db: D1Database, id: string, version: number, values: { name: string; total: number; annual: number | null; start: string; end: string; now: string }) {
-  return db.prepare(
-    `UPDATE frameworks SET name=?,total_amount_fen=?,annual_target_fen=?,start_date=?,end_date=?,version=version+1,
-       updated_at=CASE WHEN version=? THEN ? ELSE NULL END WHERE id=?`,
-  ).bind(values.name, values.total, values.annual, values.start, values.end, version, values.now, id);
-}
-function agreementGuard(db: D1Database, id: string, version: number, values: { name: string; amount: number; from: string; to: string; status: AgreementStatus; now: string }) {
-  return db.prepare(
-    `UPDATE agreements SET name=?,amount_fen=?,valid_from=?,valid_to=?,status=?,version=version+1,
-       updated_at=CASE WHEN version=? THEN ? ELSE NULL END WHERE id=?`,
-  ).bind(values.name, values.amount, values.from, values.to, values.status, version, values.now, id);
 }
 function projectFrameworkGuard(db: D1Database, id: string, version: number, frameworkId: string, now: string) {
   return db.prepare(
@@ -285,20 +267,27 @@ p4App.post('/frameworks', requireRoles('admin', 'project_manager'), async (c) =>
   const actor = c.get('currentUser'), id = crypto.randomUUID(), now = new Date().toISOString();
   const data: FrameworkSummary = { id, ...request, version: 1, createdAt: now, updatedAt: now };
   const response = { ok: true as const, data };
+  const { database } = createCloudflarePersistence(c.env);
   try {
-    await c.env.DB.batch([
-      c.env.DB.prepare(`INSERT INTO frameworks (id,code,name,total_amount_fen,annual_target_fen,start_date,end_date,version,created_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,1,?,?,?)`).bind(id, code, name, total, annual, start, end, actor.id, now, now),
-      c.env.DB.prepare(`INSERT INTO framework_versions (id,framework_id,version,code,name,total_amount_fen,annual_target_fen,start_date,end_date,reason,created_by,created_at) VALUES (?,?,1,?,?,?,?,?,?,NULL,?,?)`).bind(crypto.randomUUID(), id, code, name, total, annual, start, end, actor.id, now),
-      auditStatement(c.env.DB, actor.id, 'framework.create', 'framework', id, null, data, now),
-      idempotencyStatement(c.env.DB, key, actor.id, operation, hash, response, 201, now),
-    ]);
+    await new SqlFinanceWriteRepository(database).createFramework({
+      framework: data,
+      versionId: crypto.randomUUID(),
+      actorId: actor.id,
+      auditId: crypto.randomUUID(),
+      idempotencyKey: key,
+      operation,
+      requestHash: hash,
+      responseJson: JSON.stringify(response),
+    });
   } catch { return c.json(apiError('FRAMEWORK_CONFLICT', '框架编号已存在或数据冲突'), 409); }
   return c.json(response, 201);
 });
 
 p4App.put('/frameworks/:id', requireRoles('admin', 'project_manager'), async (c) => {
   const key = requireIdempotencyKey(c); if (key instanceof Response) return key;
-  const current = await findFramework(c.env.DB, c.req.param('id')); if (!current) return c.json(apiError('NOT_FOUND', '框架不存在'), 404);
+  const { database } = createCloudflarePersistence(c.env);
+  const queryRepository = new SqlFinanceQueryRepository(database);
+  const current = await queryRepository.findFramework(c.req.param('id')); if (!current) return c.json(apiError('NOT_FOUND', '框架不存在'), 404);
   if (!canFramework(c, current.id)) return c.json(apiError('SCOPE_FORBIDDEN', '无权修改该框架'), 403);
   let body: Record<string, unknown>; try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
   const version = expectedVersion(body.expectedVersion), name = cleanText(body.name), total = safeNonNegative(body.totalAmountFen);
@@ -310,17 +299,24 @@ p4App.put('/frameworks/:id', requireRoles('admin', 'project_manager'), async (c)
   const replay = await replayIdempotentResponse(c, key, operation, hash); if (replay) return replay;
   if (current.version !== version) return c.json(apiError('VERSION_CONFLICT', '框架已被修改，请刷新后重试'), 409);
   const actor = c.get('currentUser'), now = new Date().toISOString(), next = version + 1;
-  const data: FrameworkSummary = { id: current.id, code: current.code, name, totalAmountFen: total, annualTargetFen: annual, startDate: start, endDate: end, version: next, createdAt: current.created_at, updatedAt: now };
+  const data: FrameworkSummary = { id: current.id, code: current.code, name, totalAmountFen: total, annualTargetFen: annual, startDate: start, endDate: end, version: next, createdAt: current.createdAt, updatedAt: now };
   const response = { ok: true as const, data };
   try {
-    await c.env.DB.batch([
-      frameworkGuard(c.env.DB, current.id, version, { name, total, annual, start, end, now }),
-      c.env.DB.prepare(`INSERT INTO framework_versions (id,framework_id,version,code,name,total_amount_fen,annual_target_fen,start_date,end_date,reason,created_by,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).bind(crypto.randomUUID(), current.id, next, current.code, name, total, annual, start, end, reason, actor.id, now),
-      auditStatement(c.env.DB, actor.id, 'framework.update', 'framework', current.id, frameworkSummary(current), data, now),
-      idempotencyStatement(c.env.DB, key, actor.id, operation, hash, response, 200, now),
-    ]);
+    await new SqlFinanceWriteRepository(database).updateFramework({
+      before: current,
+      next: data,
+      expectedVersion: version,
+      reason,
+      versionId: crypto.randomUUID(),
+      actorId: actor.id,
+      auditId: crypto.randomUUID(),
+      idempotencyKey: key,
+      operation,
+      requestHash: hash,
+      responseJson: JSON.stringify(response),
+    });
   } catch {
-    const latest = await findFramework(c.env.DB, current.id);
+    const latest = await queryRepository.findFramework(current.id);
     if (latest && latest.version !== version) return c.json(apiError('VERSION_CONFLICT', '框架已被并发修改，请刷新后重试'), 409);
     return c.json(apiError('FRAMEWORK_CONFLICT', '框架更新失败'), 409);
   }
@@ -351,7 +347,9 @@ p4App.post('/agreements', requireRoles('admin', 'project_manager'), async (c) =>
   const frameworkId = cleanText(body.frameworkId), code = cleanText(body.code), name = cleanText(body.name), amount = safeNonNegative(body.amountFen);
   const from = dateValue(body.validFrom), to = dateValue(body.validTo), status = cleanText(body.status) as AgreementStatus;
   if (!frameworkId || !code || code.length > 80 || !name || name.length > 120 || amount === null || !from || !to || from > to || !['active','paused','expired'].includes(status)) return c.json(apiError('INVALID_AGREEMENT', '协议参数无效'), 422);
-  const framework = await findFramework(c.env.DB, frameworkId); if (!framework) return c.json(apiError('FRAMEWORK_NOT_FOUND', '框架不存在'), 422);
+  const { database } = createCloudflarePersistence(c.env);
+  const queryRepository = new SqlFinanceQueryRepository(database);
+  const framework = await queryRepository.findFramework(frameworkId); if (!framework) return c.json(apiError('FRAMEWORK_NOT_FOUND', '框架不存在'), 422);
   if (!canFramework(c, frameworkId)) return c.json(apiError('SCOPE_FORBIDDEN', '无权管理该框架协议'), 403);
   const request = { frameworkId, code, name, amountFen: amount, validFrom: from, validTo: to, status };
   const hash = await requestHash(request), operation = 'agreements.create'; const replay = await replayIdempotentResponse(c, key, operation, hash); if (replay) return replay;
@@ -359,20 +357,26 @@ p4App.post('/agreements', requireRoles('admin', 'project_manager'), async (c) =>
   const data: AgreementSummary = { id, ...request, version: 1, createdAt: now, updatedAt: now };
   const response = { ok: true as const, data };
   try {
-    await c.env.DB.batch([
-      c.env.DB.prepare(`INSERT INTO agreements (id,framework_id,code,name,amount_fen,valid_from,valid_to,status,version,created_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,1,?,?,?)`).bind(id, frameworkId, code, name, amount, from, to, status, actor.id, now, now),
-      c.env.DB.prepare(`INSERT INTO agreement_versions (id,agreement_id,version,framework_id,code,name,amount_fen,valid_from,valid_to,status,reason,created_by,created_at) VALUES (?,?,1,?,?,?,?,?,?,?,NULL,?,?)`).bind(crypto.randomUUID(), id, frameworkId, code, name, amount, from, to, status, actor.id, now),
-      auditStatement(c.env.DB, actor.id, 'agreement.create', 'agreement', id, null, data, now),
-      idempotencyStatement(c.env.DB, key, actor.id, operation, hash, response, 201, now),
-    ]);
+    await new SqlFinanceWriteRepository(database).createAgreement({
+      agreement: data,
+      versionId: crypto.randomUUID(),
+      actorId: actor.id,
+      auditId: crypto.randomUUID(),
+      idempotencyKey: key,
+      operation,
+      requestHash: hash,
+      responseJson: JSON.stringify(response),
+    });
   } catch { return c.json(apiError('AGREEMENT_CONFLICT', '协议编号已存在或数据冲突'), 409); }
   return c.json(response, 201);
 });
 
 p4App.put('/agreements/:id', requireRoles('admin', 'project_manager'), async (c) => {
   const key = requireIdempotencyKey(c); if (key instanceof Response) return key;
-  const current = await findAgreement(c.env.DB, c.req.param('id')); if (!current) return c.json(apiError('NOT_FOUND', '协议不存在'), 404);
-  if (!canFramework(c, current.framework_id)) return c.json(apiError('SCOPE_FORBIDDEN', '无权修改该协议'), 403);
+  const { database } = createCloudflarePersistence(c.env);
+  const queryRepository = new SqlFinanceQueryRepository(database);
+  const current = await queryRepository.findAgreement(c.req.param('id')); if (!current) return c.json(apiError('NOT_FOUND', '协议不存在'), 404);
+  if (!canFramework(c, current.frameworkId)) return c.json(apiError('SCOPE_FORBIDDEN', '无权修改该协议'), 403);
   let body: Record<string, unknown>; try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
   const version = expectedVersion(body.expectedVersion), name = cleanText(body.name), amount = safeNonNegative(body.amountFen);
   const from = dateValue(body.validFrom), to = dateValue(body.validTo), status = cleanText(body.status) as AgreementStatus, reason = nullableText(body.reason, 500);
@@ -381,17 +385,24 @@ p4App.put('/agreements/:id', requireRoles('admin', 'project_manager'), async (c)
   const hash = await requestHash(request), operation = `agreements.update:${current.id}`; const replay = await replayIdempotentResponse(c, key, operation, hash); if (replay) return replay;
   if (current.version !== version) return c.json(apiError('VERSION_CONFLICT', '协议已被修改，请刷新后重试'), 409);
   const actor = c.get('currentUser'), now = new Date().toISOString(), next = version + 1;
-  const data: AgreementSummary = { id: current.id, frameworkId: current.framework_id, code: current.code, name, amountFen: amount, validFrom: from, validTo: to, status, version: next, createdAt: current.created_at, updatedAt: now };
+  const data: AgreementSummary = { id: current.id, frameworkId: current.frameworkId, code: current.code, name, amountFen: amount, validFrom: from, validTo: to, status, version: next, createdAt: current.createdAt, updatedAt: now };
   const response = { ok: true as const, data };
   try {
-    await c.env.DB.batch([
-      agreementGuard(c.env.DB, current.id, version, { name, amount, from, to, status, now }),
-      c.env.DB.prepare(`INSERT INTO agreement_versions (id,agreement_id,version,framework_id,code,name,amount_fen,valid_from,valid_to,status,reason,created_by,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(crypto.randomUUID(), current.id, next, current.framework_id, current.code, name, amount, from, to, status, reason, actor.id, now),
-      auditStatement(c.env.DB, actor.id, 'agreement.update', 'agreement', current.id, agreementSummary(current), data, now),
-      idempotencyStatement(c.env.DB, key, actor.id, operation, hash, response, 200, now),
-    ]);
+    await new SqlFinanceWriteRepository(database).updateAgreement({
+      before: current,
+      next: data,
+      expectedVersion: version,
+      reason,
+      versionId: crypto.randomUUID(),
+      actorId: actor.id,
+      auditId: crypto.randomUUID(),
+      idempotencyKey: key,
+      operation,
+      requestHash: hash,
+      responseJson: JSON.stringify(response),
+    });
   } catch {
-    const latest = await findAgreement(c.env.DB, current.id);
+    const latest = await queryRepository.findAgreement(current.id);
     if (latest && latest.version !== version) return c.json(apiError('VERSION_CONFLICT', '协议已被并发修改，请刷新后重试'), 409);
     return c.json(apiError('AGREEMENT_CONFLICT', '协议更新失败'), 409);
   }
