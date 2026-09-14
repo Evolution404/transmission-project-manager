@@ -27,6 +27,10 @@ function createRepository() {
       idempotency_key TEXT PRIMARY KEY, actor_member_id TEXT NOT NULL, operation TEXT NOT NULL,
       request_hash TEXT NOT NULL, response_json TEXT NOT NULL, status_code INTEGER NOT NULL, created_at TEXT NOT NULL
     );
+    CREATE TABLE release_lines (project_id TEXT NOT NULL,demand_material_id TEXT NOT NULL,quantity_scaled INTEGER NOT NULL);
+    CREATE TABLE implementation_lines (project_id TEXT,demand_material_id TEXT,completed_quantity_scaled INTEGER NOT NULL);
+    CREATE TABLE settlements (id TEXT PRIMARY KEY,voided_at TEXT);
+    CREATE TABLE settlement_coverage (settlement_id TEXT NOT NULL,project_id TEXT NOT NULL,demand_material_id TEXT NOT NULL,quantity_scaled INTEGER NOT NULL);
     INSERT INTO demand_materials VALUES ('dm-1',100),('dm-2',50);
   `);
   return { sqlite, repository: new SqlProjectWriteRepository(new SqliteDatabaseAdapter(sqlite)) };
@@ -113,5 +117,24 @@ test('allocation replacement preserves old rows on stale version and replaces th
     ]);
     assert.equal(sqlite.prepare("SELECT version FROM projects WHERE id='p1'").get().version, 3);
     assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM audit_events WHERE id='replace-audit'").get().count, 1);
+  } finally { sqlite.close(); }
+});
+
+test('project write repository exposes project state and protected delivery scope portably', async () => {
+  const { sqlite, repository } = createRepository();
+  try {
+    sqlite.prepare("INSERT INTO projects VALUES ('p1','Reserve',2026,'Alice','confirmed',2,'fw-1',5,'admin-1','created','updated')").run();
+    sqlite.prepare("INSERT INTO release_lines VALUES ('p1','dm-1',30)").run();
+    sqlite.prepare("INSERT INTO implementation_lines VALUES ('p1','dm-1',40)").run();
+    sqlite.prepare("INSERT INTO settlements VALUES ('s1',NULL),('s2','voided')").run();
+    sqlite.prepare("INSERT INTO settlement_coverage VALUES ('s1','p1','dm-1',35),('s2','p1','dm-2',50)").run();
+    assert.deepEqual(await repository.findProject('p1'), {
+      id: 'p1', name: 'Reserve', year: 2026, owner: 'Alice', status: 'confirmed', reserveVersion: 2,
+      frameworkId: 'fw-1', version: 5, createdBy: 'admin-1', createdAt: 'created', updatedAt: 'updated',
+    });
+    assert.deepEqual(await repository.getProtectedScope('p1'), [
+      { demandMaterialId: 'dm-1', protectedQuantityScaled: 40 },
+    ]);
+    assert.equal(await repository.findProject('missing'), null);
   } finally { sqlite.close(); }
 });

@@ -1,5 +1,5 @@
 import type { DatabasePort, DatabaseStatement } from '../ports/database.ts';
-import type { AllocationFailure, CreateProjectRecord, ProjectAllocationWrite, ProjectWriteRepository, ReplaceProjectAllocationsRecord } from '../ports/project-write-repository.ts';
+import type { AllocationFailure, CreateProjectRecord, ProjectAllocationWrite, ProjectWriteRepository, ProjectWriteState, ProtectedProjectScopeItem, ReplaceProjectAllocationsRecord } from '../ports/project-write-repository.ts';
 
 export class SqlProjectWriteRepository implements ProjectWriteRepository {
   private readonly database: DatabasePort;
@@ -39,6 +39,51 @@ export class SqlProjectWriteRepository implements ProjectWriteRepository {
       params: [input.idempotencyKey, input.actorId, input.operation, input.requestHash, input.responseJson, project.createdAt],
     });
     await this.database.batch(statements);
+  }
+
+  async findProject(id: string): Promise<ProjectWriteState | null> {
+    const row = await this.database.first<{
+      id: string; name: string; business_year: number | null; owner: string | null; status: 'draft' | 'confirmed';
+      reserve_version: number; framework_id: string | null; version: number; created_by: string; created_at: string; updated_at: string;
+    }>({
+      sql: `SELECT id,name,business_year,owner,status,reserve_version,framework_id,version,created_by,created_at,updated_at
+            FROM projects WHERE id=? LIMIT 1`,
+      params: [id],
+    });
+    return row ? {
+      id: row.id,
+      name: row.name,
+      year: row.business_year,
+      owner: row.owner,
+      status: row.status,
+      reserveVersion: row.reserve_version,
+      frameworkId: row.framework_id,
+      version: row.version,
+      createdBy: row.created_by,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    } : null;
+  }
+
+  async getProtectedScope(projectId: string): Promise<readonly ProtectedProjectScopeItem[]> {
+    const rows = await this.database.all<{ demand_material_id: string; protected_quantity_scaled: number }>({
+      sql: `SELECT demand_material_id,MAX(total) AS protected_quantity_scaled
+            FROM (
+              SELECT demand_material_id,COALESCE(SUM(quantity_scaled),0) AS total
+              FROM release_lines WHERE project_id=? GROUP BY demand_material_id
+              UNION ALL
+              SELECT demand_material_id,COALESCE(SUM(completed_quantity_scaled),0) AS total
+              FROM implementation_lines WHERE project_id=? AND demand_material_id IS NOT NULL GROUP BY demand_material_id
+              UNION ALL
+              SELECT sc.demand_material_id,COALESCE(SUM(sc.quantity_scaled),0) AS total
+              FROM settlement_coverage sc INNER JOIN settlements s ON s.id=sc.settlement_id
+              WHERE sc.project_id=? AND s.voided_at IS NULL GROUP BY sc.demand_material_id
+            ) protected
+            GROUP BY demand_material_id
+            ORDER BY demand_material_id`,
+      params: [projectId, projectId, projectId],
+    });
+    return rows.map((row) => ({ demandMaterialId: row.demand_material_id, protectedQuantityScaled: Number(row.protected_quantity_scaled) }));
   }
 
   async replaceAllocations(input: ReplaceProjectAllocationsRecord): Promise<void> {

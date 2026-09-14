@@ -406,71 +406,6 @@ function validateAllocationInput(value: unknown): CreateProjectRequest['allocati
   return allocations;
 }
 
-function allocationInsertStatement(
-  db: D1Database,
-  projectId: string,
-  allocationId: string,
-  demandMaterialId: string,
-  quantityScaled: number,
-  now: string,
-) {
-  return db.prepare(
-    `INSERT INTO demand_allocations (id,project_id,demand_material_id,quantity_scaled,created_at)
-     VALUES (
-       ?,?,
-       (SELECT dm.id
-        FROM demand_materials dm
-        WHERE dm.id=?
-          AND dm.quantity_scaled >= COALESCE((
-            SELECT SUM(da.quantity_scaled) FROM demand_allocations da WHERE da.demand_material_id=dm.id
-          ),0) + ?),
-       ?,?
-     )`,
-  ).bind(allocationId, projectId, demandMaterialId, quantityScaled, quantityScaled, now);
-}
-
-async function allocationFailure(db: D1Database, allocations: CreateProjectRequest['allocations']) {
-  for (const allocation of allocations) {
-    const row = await db.prepare(
-      `SELECT dm.quantity_scaled AS original_quantity_scaled,
-              COALESCE(SUM(da.quantity_scaled),0) AS allocated_quantity_scaled
-       FROM demand_materials dm
-       LEFT JOIN demand_allocations da ON da.demand_material_id=dm.id
-       WHERE dm.id=? GROUP BY dm.id,dm.quantity_scaled`,
-    ).bind(allocation.demandMaterialId).first<{ original_quantity_scaled: number; allocated_quantity_scaled: number }>();
-    if (!row) return { status: 404 as const, code: 'DEMAND_MATERIAL_NOT_FOUND', message: '需求物资不存在' };
-    const remaining = row.original_quantity_scaled - Number(row.allocated_quantity_scaled ?? 0);
-    if (remaining < allocation.quantityScaled) {
-      return {
-        status: 422 as const,
-        code: 'ALLOCATION_EXCEEDS_REMAINING',
-        message: '分配数量超过需求物资剩余数量',
-        details: { demandMaterialId: allocation.demandMaterialId, remainingQuantityScaled: remaining },
-      };
-    }
-  }
-  return null;
-}
-
-async function protectedProjectScope(db: D1Database, projectId: string) {
-  const result = await db.prepare(
-    `SELECT demand_material_id,MAX(total) AS protected_quantity_scaled
-     FROM (
-       SELECT demand_material_id,COALESCE(SUM(quantity_scaled),0) AS total
-       FROM release_lines WHERE project_id=? GROUP BY demand_material_id
-       UNION ALL
-       SELECT demand_material_id,COALESCE(SUM(completed_quantity_scaled),0) AS total
-       FROM implementation_lines WHERE project_id=? AND demand_material_id IS NOT NULL GROUP BY demand_material_id
-       UNION ALL
-       SELECT sc.demand_material_id,COALESCE(SUM(sc.quantity_scaled),0) AS total
-       FROM settlement_coverage sc INNER JOIN settlements s ON s.id=sc.settlement_id
-       WHERE sc.project_id=? AND s.voided_at IS NULL GROUP BY sc.demand_material_id
-     ) protected
-     GROUP BY demand_material_id`,
-  ).bind(projectId, projectId, projectId).all<{ demand_material_id: string; protected_quantity_scaled: number }>();
-  return new Map((result.results ?? []).map((row) => [row.demand_material_id, Number(row.protected_quantity_scaled)]));
-}
-
 function calculateAmountFen(quantityScaled: number, unitPriceScaled: number): number | null {
   const product = BigInt(quantityScaled) * BigInt(unitPriceScaled);
   const rounded = (product + 500_000n) / 1_000_000n;
@@ -661,13 +596,15 @@ p3App.put('/projects/:id/allocations', requireRoles('admin', 'project_manager'),
   const hash = await requestHash(requestBody);
   const replay = await replayIdempotentResponse(c, key, operation, hash);
   if (replay) return replay;
-  const project = await findProject(c.env.DB, c.req.param('id'));
+  const { database } = createCloudflarePersistence(c.env);
+  const repository = new SqlProjectWriteRepository(database);
+  const project = await repository.findProject(c.req.param('id'));
   if (!project) return c.json(apiError('PROJECT_NOT_FOUND', '储备项目不存在'), 404);
   if (!canAccessProject(c, project.id)) return c.json(apiError('SCOPE_FORBIDDEN', '当前成员无权修改该项目'), 403);
   if (project.version !== expectedVersion) return c.json(apiError('VERSION_CONFLICT', '项目已被修改，请刷新后重试'), 409);
-  const protectedScope = await protectedProjectScope(c.env.DB, project.id);
+  const protectedScope = await repository.getProtectedScope(project.id);
   const requestedQuantities = new Map(allocations.map((item) => [item.demandMaterialId, item.quantityScaled]));
-  for (const [demandMaterialId, protectedQuantityScaled] of protectedScope) {
+  for (const { demandMaterialId, protectedQuantityScaled } of protectedScope) {
     const requestedQuantityScaled = requestedQuantities.get(demandMaterialId) ?? 0;
     if (requestedQuantityScaled < protectedQuantityScaled) {
       return c.json(apiError(
@@ -683,14 +620,21 @@ p3App.put('/projects/:id/allocations', requireRoles('admin', 'project_manager'),
   const nextVersion = expectedVersion + 1;
   const response = {
     ok: true as const,
-    data: projectSummary({ ...project, status: 'draft', version: nextVersion, updated_at: now }, {
+    data: {
+      id: project.id,
+      name: project.name,
+      year: project.year,
+      owner: project.owner,
+      status: 'draft' as const,
+      reserveVersion: project.reserveVersion,
+      version: nextVersion,
+      createdAt: project.createdAt,
+      updatedAt: now,
       knownAmountFen: 0,
       missingPriceCount: allocations.length,
       completenessBasisPoints: 0,
-    }),
+    } satisfies ProjectSummary,
   };
-  const { database } = createCloudflarePersistence(c.env);
-  const repository = new SqlProjectWriteRepository(database);
   try {
     await repository.replaceAllocations({
       projectId: project.id,
@@ -711,7 +655,7 @@ p3App.put('/projects/:id/allocations', requireRoles('admin', 'project_manager'),
   } catch {
     const replayAfterRace = await replayIdempotentResponse(c, key, operation, hash);
     if (replayAfterRace) return replayAfterRace;
-    const current = await findProject(c.env.DB, project.id);
+    const current = await repository.findProject(project.id);
     if (current && current.version !== expectedVersion) return c.json(apiError('VERSION_CONFLICT', '项目已被并发修改，请刷新后重试'), 409);
     const failure = await repository.findAllocationFailure(allocations);
     if (failure) return c.json(apiError(failure.code, failure.message, failure.details), failure.status);

@@ -37,8 +37,29 @@ export interface ReplaceProjectAllocationsRecord {
   responseJson: string;
 }
 
+export interface ProjectWriteState {
+  id: string;
+  name: string;
+  year: number | null;
+  owner: string | null;
+  status: 'draft' | 'confirmed';
+  reserveVersion: number;
+  frameworkId: string | null;
+  version: number;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProtectedProjectScopeItem {
+  demandMaterialId: string;
+  protectedQuantityScaled: number;
+}
+
 export interface ProjectWriteRepository {
   create(input: CreateProjectRecord): Promise<void>;
   replaceAllocations(input: ReplaceProjectAllocationsRecord): Promise<void>;
+  findProject(id: string): Promise<ProjectWriteState | null>;
+  getProtectedScope(projectId: string): Promise<readonly ProtectedProjectScopeItem[]>;
   findAllocationFailure(allocations: readonly Pick<ProjectAllocationWrite, 'demandMaterialId' | 'quantityScaled'>[]): Promise<AllocationFailure | null>;
 }

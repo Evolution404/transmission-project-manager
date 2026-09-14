@@ -4,7 +4,7 @@ export type { CredentialMutationInput, CredentialRepository, MemberCredentialRec
 export type { BootstrapAdminRecord, CreateManagedMemberRecord, ManagedMemberScopeRecord, MemberAdminRepository, UpdateManagedMemberRecord, UpdateManagedMemberResult } from './member-admin-repository';
 export type { LinePageCursor, MasterDataRepository, TowerPageCursor } from './master-data-repository';
 export type { ProjectPage, ProjectPageCursor, ProjectQueryRepository, ProjectSuggestionGroup, ReserveCandidatePage } from './project-query-repository';
-export type { AllocationFailure, CreateProjectRecord, ProjectAllocationWrite, ProjectWriteRepository } from './project-write-repository';
+export type { AllocationFailure, CreateProjectRecord, ProjectAllocationWrite, ProjectWriteRepository, ProjectWriteState, ProtectedProjectScopeItem, ReplaceProjectAllocationsRecord } from './project-write-repository';
 export type { CreateMaterialRecord, MaterialRepository } from './material-repository';
 export type { CommitSingleMasterDataInput, MasterDataWriteKind, MasterDataWriteRepository } from './master-data-write-repository';
 export type { MemberRepository } from './member-repository';
