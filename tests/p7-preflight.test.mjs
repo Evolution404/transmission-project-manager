@@ -14,21 +14,21 @@ function config() {
   c.d1_databases[0].database_id = '12345678-1234-4321-8321-123456789abc';
   c.r2_buckets[0].bucket_name = 'tpm-production-files';
   c.routes[0].pattern = 'projects.business.cn';
-  c.secrets = ['AUTH_CREDENTIAL_PEPPER', 'BOOTSTRAP_TOKEN'];
+  c.secrets = ['AUTH_CREDENTIAL_PEPPER'];
   return c;
 }
 test('production config rejects placeholders while valid non-secret config passes', () => {
   assert.ok(validateConfig(template()).length > 0);
   assert.deepEqual(validateConfig(config()), []);
 });
-test('production config rejects auth overrides, secret values, missing secret declarations, unsafe routes and wrong bindings', () => {
+test('production config rejects auth overrides, secret values, missing permanent secret declarations, unsafe routes and wrong bindings', () => {
   for (const mutate of [
     c => { c.vars.APP_ENV = 'development'; },
     c => { c.vars.AUTH_CREDENTIAL_PEPPER = 'sensitive-test-value'; },
     c => { c.vars.ACCESS_AUD = 'legacy'; },
     c => { c.secrets = []; },
-    c => { c.secrets = ['AUTH_CREDENTIAL_PEPPER']; },
-    c => { c.secrets = ['AUTH_CREDENTIAL_PEPPER', 'BOOTSTRAP_TOKEN', 'EXTRA_SECRET']; },
+    c => { c.secrets = ['BOOTSTRAP_TOKEN']; },
+    c => { c.secrets = ['AUTH_CREDENTIAL_PEPPER', 'BOOTSTRAP_TOKEN']; },
     c => { c.workers_dev = true; },
     c => { c.preview_urls = true; },
     c => { c.assets.run_worker_first = ['/api/*']; },
