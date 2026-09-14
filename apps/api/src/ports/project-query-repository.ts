@@ -1,4 +1,4 @@
-import type { ProjectDetail, ProjectSummary, ReserveCandidate } from '@tpm/shared';
+import type { CategoryMappingSummary, ProjectDetail, ProjectSummary, ProjectVersionSummary, ReserveCandidate, ReserveCategorySummary } from '@tpm/shared';
 
 export interface ReserveCandidatePage {
   items: readonly ReserveCandidate[];
@@ -28,4 +28,7 @@ export interface ProjectQueryRepository {
   listSuggestions(limit: number): Promise<readonly ProjectSuggestionGroup[]>;
   listProjects(input: { allowedProjectIds: readonly string[] | null; cursor: ProjectPageCursor | null; limit: number }): Promise<ProjectPage>;
   getProjectDetail(id: string): Promise<ProjectDetail | null>;
+  listReserveCategories(): Promise<readonly ReserveCategorySummary[]>;
+  listCategoryMappings(): Promise<readonly CategoryMappingSummary[]>;
+  getProjectHistory(projectId: string): Promise<readonly ProjectVersionSummary[] | null>;
 }

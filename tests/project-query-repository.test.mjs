@@ -35,6 +35,11 @@ function setup() {
     CREATE TABLE reserve_categories (id TEXT PRIMARY KEY,category_key TEXT,label TEXT,enabled INTEGER,version INTEGER);
     CREATE TABLE category_mappings (id TEXT PRIMARY KEY,demand_category_key TEXT,reserve_category_id TEXT,version INTEGER);
     CREATE TABLE category_cost_allocations (id TEXT PRIMARY KEY,project_id TEXT,cost_line_id TEXT,reserve_category_id TEXT,amount_fen INTEGER);
+    CREATE TABLE project_versions (
+      id TEXT PRIMARY KEY,project_id TEXT NOT NULL,reserve_version INTEGER NOT NULL,snapshot_json TEXT NOT NULL,
+      known_amount_fen INTEGER NOT NULL,missing_price_count INTEGER NOT NULL,completeness_basis_points INTEGER NOT NULL,
+      reason TEXT,confirmed_by TEXT,confirmed_at TEXT NOT NULL
+    );
     INSERT INTO projects VALUES
       ('p1','Project 1',2026,'Alice','draft',0,NULL,2,'admin','2026-09-14T02:00:00.000Z','2026-09-14T02:10:00.000Z'),
       ('p2','Project 2',2025,'Bob','confirmed',1,NULL,3,'admin','2026-09-14T01:00:00.000Z','2026-09-14T01:10:00.000Z');
@@ -58,6 +63,9 @@ function setup() {
     INSERT INTO reserve_categories VALUES ('rc1','material','材料费',1,1);
     INSERT INTO category_mappings VALUES ('map1','防断线','rc1',1);
     INSERT INTO category_cost_allocations VALUES ('cca1','p1','c1','rc1',10000);
+    INSERT INTO project_versions VALUES
+      ('pv2','p1',2,'{}',15000,0,10000,'second','admin','2026-09-14T03:00:00.000Z'),
+      ('pv1','p1',1,'{}',10000,1,5000,NULL,'admin','2026-09-14T02:30:00.000Z');
   `);
   return { db, repo: new SqlProjectQueryRepository(new SqliteDatabaseAdapter(db)) };
 }
@@ -121,5 +129,19 @@ test('project detail hydrates allocations, material summary, costs and category 
     assert.equal(detail?.classifiedAmountFen, 10000);
     assert.equal(detail?.unclassifiedAmountFen, 5000);
     assert.equal(await repo.getProjectDetail('missing'), null);
+  } finally { db.close(); }
+});
+
+test('project query repository reads reserve categories, mappings and immutable history', async () => {
+  const { db, repo } = setup();
+  try {
+    assert.deepEqual(await repo.listReserveCategories(), [
+      { id: 'rc1', key: 'material', label: '材料费', enabled: true, version: 1 },
+    ]);
+    assert.deepEqual(await repo.listCategoryMappings(), [
+      { id: 'map1', demandCategory: '防断线', reserveCategoryId: 'rc1', version: 1 },
+    ]);
+    assert.deepEqual((await repo.getProjectHistory('p1')).map((item) => item.reserveVersion), [2, 1]);
+    assert.equal(await repo.getProjectHistory('missing'), null);
   } finally { db.close(); }
 });

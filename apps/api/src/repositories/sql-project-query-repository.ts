@@ -1,4 +1,5 @@
 import type {
+  CategoryMappingSummary,
   MaterialSummary,
   ProjectAllocationDetail,
   ProjectCategorySummary,
@@ -7,7 +8,9 @@ import type {
   ProjectDetail,
   ProjectMaterialSummary,
   ProjectSummary,
+  ProjectVersionSummary,
   ReserveCandidate,
+  ReserveCategorySummary,
 } from '@tpm/shared';
 import type { DatabasePort, DatabaseValue } from '../ports/database.ts';
 import type { ProjectPage, ProjectPageCursor, ProjectQueryRepository, ProjectSuggestionGroup, ReserveCandidatePage } from '../ports/project-query-repository.ts';
@@ -403,5 +406,50 @@ export class SqlProjectQueryRepository implements ProjectQueryRepository {
       classifiedAmountFen,
       unclassifiedAmountFen: Math.max(0, summary.knownAmountFen - classifiedAmountFen),
     };
+  }
+
+  async listReserveCategories(): Promise<readonly ReserveCategorySummary[]> {
+    const rows = await this.database.all<{ id: string; category_key: string; label: string; enabled: number; version: number }>({
+      sql: `SELECT id,category_key,label,enabled,version
+            FROM reserve_categories ORDER BY label COLLATE NOCASE,id LIMIT 100`,
+    });
+    return rows.map((row) => ({ id: row.id, key: row.category_key, label: row.label, enabled: row.enabled === 1, version: row.version }));
+  }
+
+  async listCategoryMappings(): Promise<readonly CategoryMappingSummary[]> {
+    const rows = await this.database.all<{ id: string; demand_category_key: string; reserve_category_id: string; version: number }>({
+      sql: `SELECT id,demand_category_key,reserve_category_id,version
+            FROM category_mappings ORDER BY demand_category_key COLLATE NOCASE LIMIT 100`,
+    });
+    return rows.map((row) => ({ id: row.id, demandCategory: row.demand_category_key, reserveCategoryId: row.reserve_category_id, version: row.version }));
+  }
+
+  async getProjectHistory(projectId: string): Promise<readonly ProjectVersionSummary[] | null> {
+    const project = await this.database.first<{ id: string }>({ sql: 'SELECT id FROM projects WHERE id=? LIMIT 1', params: [projectId] });
+    if (!project) return null;
+    const rows = await this.database.all<{
+      id: string;
+      project_id: string;
+      reserve_version: number;
+      known_amount_fen: number;
+      missing_price_count: number;
+      completeness_basis_points: number;
+      reason: string | null;
+      confirmed_at: string;
+    }>({
+      sql: `SELECT id,project_id,reserve_version,known_amount_fen,missing_price_count,completeness_basis_points,reason,confirmed_at
+            FROM project_versions WHERE project_id=? ORDER BY reserve_version DESC`,
+      params: [projectId],
+    });
+    return rows.map((row) => ({
+      id: row.id,
+      projectId: row.project_id,
+      reserveVersion: row.reserve_version,
+      knownAmountFen: row.known_amount_fen,
+      missingPriceCount: row.missing_price_count,
+      completenessBasisPoints: row.completeness_basis_points,
+      reason: row.reason,
+      confirmedAt: row.confirmed_at,
+    }));
   }
 }

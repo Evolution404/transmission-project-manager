@@ -14,7 +14,6 @@ import type {
   ProjectDetail,
   ProjectMaterialSummary,
   ProjectSummary,
-  ProjectVersionSummary,
   ReplaceCategoryAllocationsRequest,
   ReplaceProjectAllocationsRequest,
   ReplaceProjectCostsRequest,
@@ -96,17 +95,6 @@ interface MappingRow {
   demand_category_key: string;
   reserve_category_id: string;
   version: number;
-}
-
-interface ProjectVersionRow {
-  id: string;
-  project_id: string;
-  reserve_version: number;
-  known_amount_fen: number;
-  missing_price_count: number;
-  completeness_basis_points: number;
-  reason: string | null;
-  confirmed_at: string;
 }
 
 function apiError(code: string, message: string, details?: unknown): ApiError {
@@ -871,10 +859,8 @@ p3App.put('/projects/:id/costs', requireRoles('admin', 'project_manager'), async
 });
 
 p3App.get('/reserve-categories', async (c) => {
-  const result = await c.env.DB.prepare(
-    `SELECT id,category_key,label,enabled,version FROM reserve_categories ORDER BY label COLLATE NOCASE,id LIMIT 100`,
-  ).all<CategoryRow>();
-  return c.json({ ok: true as const, data: { items: (result.results ?? []).map(categorySummary) } });
+  const { database } = createCloudflarePersistence(c.env);
+  return c.json({ ok: true as const, data: { items: await new SqlProjectQueryRepository(database).listReserveCategories() } });
 });
 
 p3App.post('/reserve-categories', requireRoles('admin', 'project_manager'), async (c) => {
@@ -913,10 +899,8 @@ p3App.post('/reserve-categories', requireRoles('admin', 'project_manager'), asyn
 });
 
 p3App.get('/category-mappings', async (c) => {
-  const result = await c.env.DB.prepare(
-    `SELECT id,demand_category_key,reserve_category_id,version FROM category_mappings ORDER BY demand_category_key COLLATE NOCASE LIMIT 100`,
-  ).all<MappingRow>();
-  return c.json({ ok: true as const, data: { items: (result.results ?? []).map(mappingSummary) } });
+  const { database } = createCloudflarePersistence(c.env);
+  return c.json({ ok: true as const, data: { items: await new SqlProjectQueryRepository(database).listCategoryMappings() } });
 });
 
 p3App.put('/category-mappings/:demandCategory', requireRoles('admin', 'project_manager'), async (c) => {
@@ -1138,22 +1122,10 @@ p3App.post('/projects/:id/confirm', requireRoles('admin', 'project_manager'), as
 });
 
 p3App.get('/projects/:id/history', async (c) => {
-  const project = await findProject(c.env.DB, c.req.param('id'));
-  if (!project) return c.json(apiError('PROJECT_NOT_FOUND', '储备项目不存在'), 404);
-  if (!canAccessProject(c, project.id)) return c.json(apiError('SCOPE_FORBIDDEN', '当前成员无权访问该项目'), 403);
-  const result = await c.env.DB.prepare(
-    `SELECT id,project_id,reserve_version,known_amount_fen,missing_price_count,completeness_basis_points,reason,confirmed_at
-     FROM project_versions WHERE project_id=? ORDER BY reserve_version DESC`,
-  ).bind(project.id).all<ProjectVersionRow>();
-  const items: ProjectVersionSummary[] = (result.results ?? []).map((row) => ({
-    id: row.id,
-    projectId: row.project_id,
-    reserveVersion: row.reserve_version,
-    knownAmountFen: row.known_amount_fen,
-    missingPriceCount: row.missing_price_count,
-    completenessBasisPoints: row.completeness_basis_points,
-    reason: row.reason,
-    confirmedAt: row.confirmed_at,
-  }));
+  const projectId = c.req.param('id');
+  const { database } = createCloudflarePersistence(c.env);
+  const items = await new SqlProjectQueryRepository(database).getProjectHistory(projectId);
+  if (items === null) return c.json(apiError('PROJECT_NOT_FOUND', '储备项目不存在'), 404);
+  if (!canAccessProject(c, projectId)) return c.json(apiError('SCOPE_FORBIDDEN', '当前成员无权访问该项目'), 403);
   return c.json({ ok: true as const, data: { items } });
 });
