@@ -17,15 +17,10 @@ import {
 import { hasScope, requireAuthentication, requireRoles, type AppEnv } from './auth';
 import {
   countEnabledAdmins,
-  countMembers,
-  findCredentialByMemberId,
-  findCredentialByUsername,
-  findMemberById,
   getSettingHistory,
   listCurrentSettings,
   listDictionary,
   listMembers,
-  recordSuccessfulLogin,
 } from './db';
 import {
   constantTimeEqualText,
@@ -51,6 +46,9 @@ import { p3App } from './p3';
 import { p4App } from './p4';
 import { p5App } from './p5';
 import { p6App } from './p6';
+import { SqlCredentialRepository } from './repositories/sql-credential-repository';
+import { SqlMemberRepository } from './repositories/sql-member-repository';
+import { createCloudflarePersistence } from './runtime/cloudflare/persistence';
 import { schemaReadiness } from './schema';
 
 export const app = new Hono<AppEnv>();
@@ -160,6 +158,14 @@ function currentUserData<T extends { mustChangePassword: boolean }>(member: T) {
   return { ...member, authSource: 'session' as const };
 }
 
+function authRepositories(c: Context<AppEnv>) {
+  const { database } = createCloudflarePersistence(c.env);
+  return {
+    credentials: new SqlCredentialRepository(database),
+    members: new SqlMemberRepository(database),
+  };
+}
+
 app.get('/api/health', async (c) => {
   const body: HealthResponse = {
     ok: true,
@@ -175,7 +181,8 @@ app.get('/api/health', async (c) => {
 
 app.get('/api/auth/status', async (c) => {
   c.header('Cache-Control', 'no-store');
-  return c.json({ ok: true as const, data: { initialized: (await countMembers(c.env.DB)) > 0 } });
+  const { members } = authRepositories(c);
+  return c.json({ ok: true as const, data: { initialized: (await members.count()) > 0 } });
 });
 
 app.post('/api/auth/kdf', async (c) => {
@@ -186,7 +193,8 @@ app.post('/api/auth/kdf', async (c) => {
     return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400);
   }
   const username = normalizeUsername(body.username);
-  const credential = username ? await findCredentialByUsername(c.env.DB, username) : null;
+  const { credentials } = authRepositories(c);
+  const credential = username ? await credentials.findByUsername(username) : null;
   const salt = credential?.credentialSalt ?? await fakeSaltForUsername(username ?? 'invalid-user', pepper);
   c.header('Cache-Control', 'no-store');
   return c.json({ ok: true as const, data: credentialDescriptor(salt) });
@@ -210,7 +218,8 @@ app.post('/api/auth/bootstrap', async (c) => {
   if (!username) return c.json(apiError('INVALID_USERNAME', '账号需为 3-64 位字母、数字、点、横线或下划线'), 422);
   if (!displayName || displayName.length > 80) return c.json(apiError('INVALID_DISPLAY_NAME', '管理员名称不能为空且最多 80 个字符'), 422);
   if (!validateDerivedCredential(body)) return c.json(apiError('INVALID_CREDENTIAL', '认证凭据格式无效'), 422);
-  if (await countMembers(c.env.DB) > 0) return c.json(apiError('BOOTSTRAP_CLOSED', '系统已有账号，首管理员初始化已关闭'), 409);
+  const { members } = authRepositories(c);
+  if (await members.count() > 0) return c.json(apiError('BOOTSTRAP_CLOSED', '系统已有账号，首管理员初始化已关闭'), 409);
 
   const verifier = await credentialVerifier(body.credential, pepper);
   const memberId = crypto.randomUUID();
@@ -277,7 +286,8 @@ app.post('/api/auth/login', async (c) => {
   const generic = () => c.json(apiError('INVALID_CREDENTIALS', '账号或密码错误'), 401);
   if (!username || !validateCredentialValue(body.credential)) return generic();
 
-  const record = await findCredentialByUsername(c.env.DB, username);
+  const { credentials, members } = authRepositories(c);
+  const record = await credentials.findByUsername(username);
   const expected = record?.credentialVerifier ?? await fakeVerifierForUsername(username, pepper);
   const actual = await credentialVerifier(body.credential, pepper);
   const matches = constantTimeEqualText(actual, expected);
@@ -289,28 +299,23 @@ app.post('/api/auth/login', async (c) => {
   if (!matches) {
     const failures = record.failedLoginCount + 1;
     const lockedUntil = failures >= LOCK_AFTER_FAILURES ? new Date(now.getTime() + LOCK_DURATION_MS).toISOString() : null;
-    await c.env.DB.batch([
-      c.env.DB.prepare(
-        `UPDATE members
-         SET failed_login_count=?,locked_until=?,last_failed_login_at=?,updated_at=? WHERE id=?`,
-      ).bind(failures, lockedUntil, nowIso, nowIso, record.memberId),
-      c.env.DB.prepare(
-        `INSERT INTO audit_events
-         (id,actor_member_id,action,object_type,object_id,before_json,after_json,created_at)
-         VALUES (?,NULL,'auth.login_failed','member',?,NULL,?,?)`,
-      ).bind(crypto.randomUUID(), record.memberId, JSON.stringify({ failedLoginCount: failures, locked: Boolean(lockedUntil) }), nowIso),
-    ]);
+    await credentials.recordLoginFailure({
+      memberId: record.memberId,
+      failedLoginCount: failures,
+      lockedUntil,
+      nowIso,
+      auditEventId: crypto.randomUUID(),
+    });
     return generic();
   }
 
-  const member = await findMemberById(c.env.DB, record.memberId);
+  const member = await members.findById(record.memberId);
   if (!member) return generic();
   if (!member.enabled) return c.json(apiError('MEMBER_DISABLED', '当前账号已停用'), 403);
 
-  await c.env.DB.prepare(
-    `UPDATE members SET failed_login_count=0,locked_until=NULL,last_failed_login_at=NULL,updated_at=? WHERE id=?`,
-  ).bind(nowIso, member.id).run();
-  const activeMember = await recordSuccessfulLogin(c.env.DB, member);
+  await credentials.clearLoginFailures(member.id, nowIso);
+  const staleBefore = new Date(now.getTime() - 60 * 60 * 1000).toISOString();
+  const activeMember = await members.recordSuccessfulLogin(member, nowIso, staleBefore);
   await createSession(c, member.id, record.sessionVersion);
   return c.json({ ok: true as const, data: currentUserData(activeMember) });
 });
@@ -368,7 +373,8 @@ app.post('/api/auth/change-password', async (c) => {
   }
 
   const user = c.get('currentUser');
-  const record = await findCredentialByMemberId(c.env.DB, user.id);
+  const { credentials, members } = authRepositories(c);
+  const record = await credentials.findByMemberId(user.id);
   if (!record) return c.json(apiError('MEMBER_NOT_FOUND', '成员不存在'), 404);
   const currentVerifier = await credentialVerifier(body.currentCredential, pepper);
   if (!constantTimeEqualText(currentVerifier, record.credentialVerifier)) {
@@ -395,7 +401,7 @@ app.post('/api/auth/change-password', async (c) => {
     ).bind(crypto.randomUUID(), user.id, user.id, JSON.stringify({ sessionVersion: nextSessionVersion }), now),
   ]);
   await createSession(c, user.id, nextSessionVersion);
-  const refreshed = await findMemberById(c.env.DB, user.id);
+  const refreshed = await members.findById(user.id);
   if (!refreshed) return c.json(apiError('MEMBER_NOT_FOUND', '成员不存在'), 404);
   return c.json({ ok: true as const, data: currentUserData(refreshed) });
 });
@@ -498,8 +504,9 @@ app.post('/api/members/:id/reset-password', requireRoles('admin'), async (c) => 
   }
   if (!validateDerivedCredential(body)) return c.json(apiError('INVALID_CREDENTIAL', '认证凭据格式无效'), 422);
 
-  const before = await findMemberById(c.env.DB, c.req.param('id'));
-  const record = before ? await findCredentialByMemberId(c.env.DB, before.id) : null;
+  const { credentials, members } = authRepositories(c);
+  const before = await members.findById(c.req.param('id'));
+  const record = before ? await credentials.findByMemberId(before.id) : null;
   if (!before || !record) return c.json(apiError('MEMBER_NOT_FOUND', '成员不存在'), 404);
   const operation = `members.reset-password:${before.id}`;
   const hash = await requestHash(body);
@@ -555,7 +562,8 @@ app.patch('/api/members/:id', requireRoles('admin'), async (c) => {
   const replay = await replayIdempotentResponse(c, idempotency, operation, hash);
   if (replay) return replay;
 
-  const before = await findMemberById(c.env.DB, c.req.param('id'));
+  const { members } = authRepositories(c);
+  const before = await members.findById(c.req.param('id'));
   if (!before) return c.json(apiError('MEMBER_NOT_FOUND', '成员不存在'), 404);
   if (before.version !== body.expectedVersion) {
     return c.json(apiError('VERSION_CONFLICT', '成员已被其他人修改，请刷新后重试', { currentVersion: before.version }), 409);

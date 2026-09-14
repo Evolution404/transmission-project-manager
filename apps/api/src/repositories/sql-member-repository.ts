@@ -59,4 +59,26 @@ export class SqlMemberRepository implements MemberRepository {
       mustChangePassword: member.must_change_password === 1,
     };
   }
+
+  async count(): Promise<number> {
+    const row = await this.database.first<{ count: number }>({ sql: 'SELECT COUNT(*) AS count FROM members' });
+    return Number(row?.count ?? 0);
+  }
+
+  async recordSuccessfulLogin(member: MemberSummary, nowIso: string, staleBefore: string): Promise<MemberSummary> {
+    const needsWrite = !member.firstLoginAt || !member.lastLoginAt || member.lastLoginAt < staleBefore;
+    if (!needsWrite) return member;
+    await this.database.run({
+      sql: `UPDATE members
+            SET first_login_at=COALESCE(first_login_at,?),last_login_at=?
+            WHERE id=? AND (first_login_at IS NULL OR last_login_at IS NULL OR last_login_at<?)`,
+      params: [nowIso, nowIso, member.id, staleBefore],
+    });
+    return {
+      ...member,
+      firstLoginAt: member.firstLoginAt ?? nowIso,
+      lastLoginAt: nowIso,
+      lifecycleStatus: member.enabled ? 'active' : 'disabled',
+    };
+  }
 }
