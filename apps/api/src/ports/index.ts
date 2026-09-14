@@ -6,6 +6,7 @@ export type { LinePageCursor, MasterDataRepository, TowerPageCursor } from './ma
 export type { CommitSingleMasterDataInput, MasterDataWriteKind, MasterDataWriteRepository } from './master-data-write-repository';
 export type { MemberRepository } from './member-repository';
 export type { DatabasePort, DatabaseRunResult, DatabaseStatement, DatabaseValue, TransactionPort } from './database';
+export type { DemandRepository, ResolvedDemandLine, ResolvedDemandTower } from './demand-repository';
 export type { JobMessage, JobPayload, JobQueuePort } from './job-queue';
 export type { ObjectMetadata, ObjectStorePort, ObjectStorePutOptions, StoredObject } from './object-store';
 export type { ScheduledTaskInvocation, SchedulerPort } from './scheduler';

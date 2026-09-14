@@ -12,6 +12,7 @@ import type {
 import { requireRoles, type AppEnv } from './auth';
 import { gridLocationGuard } from './grid-location';
 import type { CommitSingleMasterDataInput, MasterDataWriteKind } from './ports/master-data-write-repository';
+import { SqlDemandRepository } from './repositories/sql-demand-repository';
 import { SqlMasterDataRepository } from './repositories/sql-master-data-repository';
 import { SqlMasterDataWriteRepository } from './repositories/sql-master-data-write-repository';
 import { createCloudflarePersistence } from './runtime/cloudflare/persistence';
@@ -66,6 +67,11 @@ function masterDataRepository(c: Context<AppEnv>) {
 function masterDataWriteRepository(c: Context<AppEnv>) {
   const { database } = createCloudflarePersistence(c.env);
   return new SqlMasterDataWriteRepository(database);
+}
+
+function demandRepository(c: Context<AppEnv>) {
+  const { database } = createCloudflarePersistence(c.env);
+  return new SqlDemandRepository(database);
 }
 
 p9App.get('/master/voltage-levels', async (c) => {
@@ -374,8 +380,9 @@ p9App.post('/demands', requireRoles('admin', 'project_manager'), async (c) => {
   const owner = body.owner === null || body.owner === undefined ? null : cleanText(body.owner, 120) || null;
   if (!sequenceNo || !voltageLevelId || !lineId || !type || materials === null || (body.year !== null && body.year !== undefined && year === null)) return c.json(apiError('INVALID_DEMAND', '需求基本信息或设备范围不完整'), 422);
 
-  const line = await c.env.DB.prepare(`SELECT l.id,l.line_name,l.enabled,l.voltage_level_id,v.display_name AS voltage_name,v.enabled AS voltage_enabled FROM transmission_lines l JOIN voltage_levels v ON v.id=l.voltage_level_id WHERE l.id=?`).bind(lineId).first<{ id: string; line_name: string; enabled: number; voltage_level_id: string; voltage_name: string; voltage_enabled: number }>();
-  if (!line || !line.enabled || !line.voltage_enabled || line.voltage_level_id !== voltageLevelId) return c.json(apiError('INVALID_LINE_RELATION', '线路不存在、已停用或不属于所选电压等级'), 422);
+  const repository = demandRepository(c);
+  const line = await repository.findLine(lineId);
+  if (!line || !line.enabled || !line.voltageEnabled || line.voltageLevelId !== voltageLevelId) return c.json(apiError('INVALID_LINE_RELATION', '线路不存在、已停用或不属于所选电压等级'), 422);
 
   const startTowerId = cleanText(body.startTowerId, 120) || null;
   const endTowerId = cleanText(body.endTowerId, 120) || null;
@@ -386,24 +393,19 @@ p9App.post('/demands', requireRoles('admin', 'project_manager'), async (c) => {
   if (type !== 'whole_line') {
     if (!startTowerId) return c.json(apiError('TOWER_REQUIRED', '请选择杆塔'), 422);
     const ids = type === 'tower_range' && endTowerId ? [startTowerId, endTowerId] : [startTowerId];
-    const placeholders = ids.map(() => '?').join(',');
-    const rows = await c.env.DB.prepare(`SELECT id,tower_no,sort_index,line_id,enabled FROM transmission_towers WHERE id IN (${placeholders})`).bind(...ids).all<{ id: string; tower_no: string; sort_index: number; line_id: string; enabled: number }>();
-    const map = new Map((rows.results ?? []).map((row) => [row.id, row]));
+    const rows = await repository.findTowers(ids);
+    const map = new Map(rows.map((row) => [row.id, row]));
     const start = map.get(startTowerId), end = type === 'tower_range' ? map.get(endTowerId ?? '') : start;
-    if (!start || !end || !start.enabled || !end.enabled || start.line_id !== lineId || end.line_id !== lineId) return c.json(apiError('INVALID_TOWER_RELATION', '杆塔不存在、已停用或不属于所选线路'), 422);
-    if (type === 'tower_range' && start.sort_index >= end.sort_index) return c.json(apiError('INVALID_TOWER_RANGE', '区段必须选择两个不同杆塔，起始顺序必须早于终止'), 422);
+    if (!start || !end || !start.enabled || !end.enabled || start.lineId !== lineId || end.lineId !== lineId) return c.json(apiError('INVALID_TOWER_RELATION', '杆塔不存在、已停用或不属于所选线路'), 422);
+    if (type === 'tower_range' && start.sortIndex >= end.sortIndex) return c.json(apiError('INVALID_TOWER_RANGE', '区段必须选择两个不同杆塔，起始顺序必须早于终止'), 422);
     normalizedStart = start.id;
     normalizedEnd = end.id;
-    sectionText = type === 'tower' ? start.tower_no : `${start.tower_no}—${end.tower_no}`;
+    sectionText = type === 'tower' ? start.towerNo : `${start.towerNo}—${end.towerNo}`;
   }
 
-  type MaterialRow = { id: string; code: string | null; name: string; model: string; unit: string; enabled: number; version: number };
   const referencedMaterialIds = [...new Set(materials.flatMap((material) => material.materialId ? [material.materialId] : []))];
-  const materialRows = referencedMaterialIds.length
-    ? await c.env.DB.prepare(`SELECT id,code,name,model,unit,enabled,version FROM materials WHERE enabled=1 AND id IN (SELECT value FROM json_each(?))`)
-      .bind(JSON.stringify(referencedMaterialIds)).all<MaterialRow>()
-    : { results: [] as MaterialRow[] };
-  const materialsById = new Map((materialRows.results ?? []).map((row) => [row.id, row]));
+  const materialRows = await repository.findEnabledMaterials(referencedMaterialIds);
+  const materialsById = new Map(materialRows.map((row) => [row.id, row]));
   if (referencedMaterialIds.some((materialId) => !materialsById.has(materialId))) return c.json(apiError('MATERIAL_NOT_FOUND', '标准物资不存在或已停用'), 422);
 
   const request = { sequenceNo, year, voltageLevelId, lineId, locationType: type, startTowerId: normalizedStart, endTowerId: normalizedEnd, category, owner, materials };
@@ -411,7 +413,7 @@ p9App.post('/demands', requireRoles('admin', 'project_manager'), async (c) => {
   const businessSignature = await hashValue({ sequenceNo, year, voltageLevelId, lineId, locationType: type, startTowerId: normalizedStart, endTowerId: normalizedEnd, category });
   const statements: D1PreparedStatement[] = [c.env.DB.prepare(
     `INSERT INTO demands (id,source_type,source_key,source_batch_id,source_file_sha256,source_file_name,source_sheet,source_row_number,sequence_no,business_year,voltage_raw,voltage_verified,line_name,section_text,category_key,owner,business_signature,raw_json,extra_json,version,created_by,created_at,updated_at,voltage_level_id,line_id,location_type,start_tower_id,end_tower_id) VALUES (?,'manual',?,NULL,NULL,NULL,NULL,NULL,?,?,?,?,?,?,?,?,?,?,'{}',1,?,?,?,?,?,?,?,?)`,
-  ).bind(id, sourceKey, sequenceNo, year, line.voltage_name, line.voltage_name, line.line_name, sectionText, category, owner, businessSignature, JSON.stringify(request), actor.id, now, now, voltageLevelId, lineId, type, normalizedStart, normalizedEnd)];
+  ).bind(id, sourceKey, sequenceNo, year, line.voltageName, line.voltageName, line.lineName, sectionText, category, owner, businessSignature, JSON.stringify(request), actor.id, now, now, voltageLevelId, lineId, type, normalizedStart, normalizedEnd)];
   const materialData: DemandDetail['materials'] = [];
   const materialInsertRows = materials.map((material) => {
     const match = material.materialId ? materialsById.get(material.materialId) ?? null : null;
@@ -432,10 +434,10 @@ p9App.post('/demands', requireRoles('admin', 'project_manager'), async (c) => {
     FROM json_each(?)`).bind(id, now, actor.id, JSON.stringify(materialInsertRows)));
   const detail: DemandDetail = {
     id, sequenceNo, year, voltageLevelId, lineId, locationType: type, startTowerId: normalizedStart, endTowerId: normalizedEnd,
-    voltageRaw: line.voltage_name, voltageVerified: line.voltage_name, lineName: line.line_name, section: sectionText, category, owner, version: 1, createdAt: now,
+    voltageRaw: line.voltageName, voltageVerified: line.voltageName, lineName: line.lineName, section: sectionText, category, owner, version: 1, createdAt: now,
     source: { type: 'manual', raw: request }, materials: materialData,
   };
   // Recheck the exact selected active parents/endpoints inside the write transaction.
-  const gridGuard = gridLocationGuard(c.env.DB, voltageLevelId, lineId, normalizedStart, normalizedEnd, line.voltage_name, line.line_name, sectionText);
+  const gridGuard = gridLocationGuard(c.env.DB, voltageLevelId, lineId, normalizedStart, normalizedEnd, line.voltageName, line.lineName, sectionText);
   return commitMutation(c, mutation, [gridGuard, ...statements], detail, 201, [{ action: 'demand.create.structured', type: 'demand', id, before: null, after: detail }], []);
 });
