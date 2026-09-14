@@ -47,6 +47,15 @@ function createRepository() {
       after_json TEXT,
       created_at TEXT NOT NULL
     );
+    CREATE TABLE idempotency_records (
+      idempotency_key TEXT PRIMARY KEY,
+      actor_member_id TEXT NOT NULL,
+      operation TEXT NOT NULL,
+      request_hash TEXT NOT NULL,
+      response_json TEXT NOT NULL,
+      status_code INTEGER NOT NULL,
+      created_at TEXT NOT NULL
+    );
   `);
   const database = new SqliteDatabaseAdapter(sqlite);
   return { sqlite, database, repository: new SqlMemberAdminRepository(database) };
@@ -67,6 +76,53 @@ function bootstrapInput(id = 'admin-1') {
     auditAfterJson: JSON.stringify({ id, role: 'admin' }),
   };
 }
+
+test('member admin repository creates a member, scopes, audit and idempotency atomically', async () => {
+  const { sqlite, database, repository } = createRepository();
+  try {
+    assert.equal(await repository.bootstrapAdmin(bootstrapInput()), true);
+    await repository.createMember({
+      memberId: 'member-2',
+      username: 'zhangsan',
+      displayName: '张三',
+      role: 'project_manager',
+      enabled: true,
+      salt: 'salt-2',
+      verifier: 'verifier-2',
+      credentialParamsJson: '{"m":19456}',
+      nowIso: '2026-09-14T00:01:00.000Z',
+      actorId: 'admin-1',
+      scopes: [
+        { id: 'scope-2a', type: 'project', scopeId: 'project-1' },
+        { id: 'scope-2b', type: 'framework', scopeId: 'framework-1' },
+      ],
+      auditEventId: 'audit-create-2',
+      auditAfterJson: JSON.stringify({ id: 'member-2', username: 'zhangsan' }),
+      idempotency: {
+        key: 'idem-create-2', operation: 'members.create:zhangsan', requestHash: 'request-hash', responseJson: '{"ok":true}', statusCode: 201,
+      },
+    });
+
+    assert.equal(await repository.usernameExists('ZHANGSAN'), true);
+    assert.deepEqual(await database.all({ sql: "SELECT scope_type,scope_id FROM member_scopes WHERE member_id='member-2' ORDER BY scope_type" }), [
+      { scope_type: 'framework', scope_id: 'framework-1' },
+      { scope_type: 'project', scope_id: 'project-1' },
+    ]);
+    assert.equal((await database.first({ sql: "SELECT action FROM audit_events WHERE id='audit-create-2'" }))?.action, 'member.create');
+    assert.equal((await database.first({ sql: "SELECT status_code FROM idempotency_records WHERE idempotency_key='idem-create-2'" }))?.status_code, 201);
+
+    await assert.rejects(repository.createMember({
+      memberId: 'member-3', username: 'zhangsan', displayName: '重复', role: 'readonly', enabled: true,
+      salt: 'salt-3', verifier: 'verifier-3', credentialParamsJson: '{}', nowIso: '2026-09-14T00:02:00.000Z', actorId: 'admin-1',
+      scopes: [{ id: 'scope-3', type: 'all', scopeId: null }], auditEventId: 'audit-create-3', auditAfterJson: '{}',
+      idempotency: { key: 'idem-create-3', operation: 'members.create:zhangsan', requestHash: 'other', responseJson: '{}', statusCode: 201 },
+    }));
+    assert.equal(await database.first({ sql: "SELECT id FROM member_scopes WHERE id='scope-3'" }), null);
+    assert.equal(await database.first({ sql: "SELECT id FROM audit_events WHERE id='audit-create-3'" }), null);
+  } finally {
+    sqlite.close();
+  }
+});
 
 test('member admin repository bootstraps exactly one administrator on an empty database', async () => {
   const { sqlite, database, repository } = createRepository();

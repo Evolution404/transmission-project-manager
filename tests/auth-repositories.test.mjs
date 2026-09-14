@@ -104,6 +104,10 @@ test('portable auth repositories resolve session version, member summary and sco
     assert.equal(member?.lifecycleStatus, 'active');
     assert.deepEqual(member?.scopes, [{ type: 'project', id: 'project-1' }]);
     assert.equal(await members.count(), 1);
+    const listed = await members.list();
+    assert.equal(listed.length, 1);
+    assert.equal(listed[0].username, 'alice');
+    assert.deepEqual(listed[0].scopes, [{ type: 'project', id: 'project-1' }]);
     const refreshed = await members.recordSuccessfulLogin(member, '2026-09-14T00:00:00.000Z', '2026-09-13T23:00:00.000Z');
     assert.equal(refreshed.lastLoginAt, '2026-09-14T00:00:00.000Z');
   } finally {

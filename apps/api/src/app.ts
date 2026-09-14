@@ -20,7 +20,6 @@ import {
   getSettingHistory,
   listCurrentSettings,
   listDictionary,
-  listMembers,
 } from './db';
 import {
   constantTimeEqualText,
@@ -389,7 +388,8 @@ app.post('/api/auth/change-password', async (c) => {
 
 app.get('/api/members', requireRoles('admin'), async (c) => {
   c.header('Cache-Control', 'no-store');
-  return c.json({ ok: true as const, data: { items: await listMembers(c.env.DB) } });
+  const { members } = authRepositories(c);
+  return c.json({ ok: true as const, data: { items: await members.list() } });
 });
 
 app.post('/api/members', requireRoles('admin'), async (c) => {
@@ -439,36 +439,32 @@ app.post('/api/members', requireRoles('admin'), async (c) => {
   const response = { ok: true as const, data };
   const responseJson = JSON.stringify(response);
 
+  const { memberAdmin } = authRepositories(c);
   try {
-    await c.env.DB.batch([
-      c.env.DB.prepare(
-        `INSERT INTO members
-         (id,username,display_name,role,enabled,version,
-          credential_salt,credential_verifier,credential_algorithm,credential_params_json,
-          must_change_password,session_version,failed_login_count,locked_until,last_failed_login_at,
-          credential_changed_at,invited_at,first_login_at,last_login_at,created_at,updated_at)
-         VALUES (?,?,?,?,?,1,?,?,'argon2id-v1',?,1,1,0,NULL,NULL,?,?,NULL,NULL,?,?)`,
-      ).bind(
-        memberId, username, displayName, body.role, enabled,
-        body.salt, verifier, credentialParamsJson,
-        now, now, now, now,
-      ),
-      ...scopeStatements(c, memberId, scopes),
-      c.env.DB.prepare(
-        `INSERT INTO audit_events
-         (id,actor_member_id,action,object_type,object_id,before_json,after_json,created_at)
-         VALUES (?,?,'member.create','member',?,NULL,?,?)`,
-      ).bind(crypto.randomUUID(), actor.id, memberId, JSON.stringify(data), now),
-      c.env.DB.prepare(
-        `INSERT INTO idempotency_records
-         (idempotency_key,actor_member_id,operation,request_hash,response_json,status_code,created_at)
-         VALUES (?,?,?,?,?,201,?)`,
-      ).bind(idempotency, actor.id, operation, hash, responseJson, now),
-    ]);
+    await memberAdmin.createMember({
+      memberId,
+      username,
+      displayName,
+      role: body.role,
+      enabled: enabled === 1,
+      salt: body.salt,
+      verifier,
+      credentialParamsJson,
+      nowIso: now,
+      actorId: actor.id,
+      scopes: scopes.map((scope) => ({ id: crypto.randomUUID(), type: scope.type, scopeId: scope.id })),
+      auditEventId: crypto.randomUUID(),
+      auditAfterJson: JSON.stringify(data),
+      idempotency: {
+        key: idempotency,
+        operation,
+        requestHash: hash,
+        responseJson,
+        statusCode: 201,
+      },
+    });
   } catch {
-    const existing = await c.env.DB.prepare('SELECT id FROM members WHERE username=? COLLATE NOCASE LIMIT 1')
-      .bind(username).first<{ id: string }>();
-    if (existing) return c.json(apiError('USERNAME_EXISTS', '该账号已存在'), 409);
+    if (await memberAdmin.usernameExists(username)) return c.json(apiError('USERNAME_EXISTS', '该账号已存在'), 409);
     return c.json(apiError('MEMBER_CREATE_FAILED', '账号创建失败，请刷新后重试'), 409);
   }
   return c.json(response, 201);
