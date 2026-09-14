@@ -8,7 +8,7 @@ P7 不新增另一套核心业务模型，目标是用真实业务资料、真�
 
 截至 2026-09-14，后端可移植化和云端生产 workflow 均已合入 `main@bc4774767c159068d59e16d6726444c5c1525dd6`，合并后 [CI #37](https://github.com/Evolution404/transmission-project-manager/actions/runs/34811093528) 完整门禁 PASS。此代码基线不构成生产验收通过。
 
-GitHub `production` Environment 已创建且只允许 `main` 部署，发布/迁移开关均为 `false`；审核者、main 分支保护、真实生产配置和 CI Secret 尚未完成。Cloudflare Dashboard 在本次云端浏览器中持续安全验证，正式 Worker、D1、R2、Secret、migration 和生产健康尚未核实。P7-01～13 保持待真实证据确认。云端接续状态见 `AI_HANDOFF.md`。
+GitHub `production` Environment 已创建且只允许 `main` 部署，发布/迁移开关均为 `false`。Cloudflare Account/Zone/Worker/域名和 CI Token 已实测；当前 Worker 仍绑定 acceptance D1 且 schema 仅到 0008。当前正式对象存储方案改为 Notion，R2 未启用不是当前阻塞；Notion `TPM Object Store` Database/Data Source 已初始化且真实 `put/get/delete` smoke PASS。独立 production D1、正式 Worker Secrets、migration/release 仍待完成。P7-01～13 保持待真实证据确认，最新状态见 `AI_HANDOFF.md`。
 
 ## 2. 验收矩阵
 
@@ -19,12 +19,12 @@ GitHub `production` Environment 已创建且只允许 `main` 部署，发布/迁
 | P7-03 | 储备类别 | 按真实分类规则维护需求类别→储备大类映射，核对当前项目物资分类、缺价和金额守恒 | 映射对照 + 分类金额对账 |
 | P7-04 | 项目与资金 | 使用真实框架、协议、预算、预算发生、实际费用、任务结算核对归属、版本、阈值和逐笔对账 | 框架/协议/项目/流水对账表 |
 | P7-05 | 项目储备与任务执行 | 使用真实项目核对需求来源与项目物资分离、项目级一次出库、多任务、供应/实施/结算三线和四状态 | 项目逐项抽检 + 项目物资修订记录 + 任务状态/数量对照 |
-| P7-06 | Cloudflare 资源与 schema | 读取并确认正式 Worker、D1、R2、Static Assets、Cron、自定义域名；确认正式 D1 当前 migration 与代码要求一致 | 资源清单 + 非敏感配置 + `/api/health` + migration 记录 |
+| P7-06 | Cloudflare 资源、对象存储与 schema | 读取并确认正式 Worker、独立 D1、Static Assets、Cron、自定义域名与当前对象存储 provider；Notion 模式确认专用 Data Source/Integration 权限，R2 模式才核对 bucket；确认正式 D1 migration 与代码要求一致 | 资源清单 + 非敏感配置 + `/api/health` + migration 记录 |
 | P7-07 | Secret / bootstrap / 会话 | 核对 `AUTH_CREDENTIAL_PEPPER`、bootstrap 状态、Secure Cookie、账号停用/改密失效 | 只记录 Secret 名称/状态，不记录值；登录与会话验收记录 |
-| P7-08 | 真实 CPU / 配额 / 性能 | 在正式部署上测 Worker CPU、D1 read/write、R2 用量、错误率和常用页面耗时 | Cloudflare 指标 + 测试记录；不得用本地 wall time 冒充 Worker CPU |
+| P7-08 | 真实 CPU / 配额 / 性能 | 在正式部署上测 Worker CPU、D1 read/write、对象存储调用/用量、错误率和常用页面耗时；Notion 模式观察 429/5xx | Cloudflare/对象存储指标 + 测试记录；不得用本地 wall time 冒充 Worker CPU |
 | P7-09 | 正式通知 | 配置真实通知 provider/域名/收件方式，验证 sent/failed/unknown/retry | 测试消息、outbox 和 provider 对账 |
 | P7-10 | 目标地区网络 | 在真实用户网络验证登录、首页、基础台账、需求列表、附件和通知 | 时间/网络/设备/操作/耗时/错误记录 |
-| P7-11 | 正式备份恢复 | 可靠停写后备份正式 D1/R2，在隔离环境恢复并对账 | manifest + 对账表 + 恢复记录；不恢复 auth_sessions |
+| P7-11 | 正式备份恢复 | 可靠停写后备份正式 D1 + 当前对象存储，在隔离环境恢复并对账 | manifest + 对账表 + 恢复记录；不恢复 auth_sessions |
 | P7-12 | 发布与回退 | 使用受保护发布环境/服务身份执行 migration、部署和代码/配置回退演练 | 发布记录 + migration 记录 + 回退记录 |
 | P7-13 | 运维移交与 CI/CD | 受托维护人使用自己的 Cloudflare/GitHub 身份，CI 使用专用服务身份；轮换 Token、撤销旧维护人后仍可运维 | 移交检查表 + 发布/迁移/回退演练记录 |
 
@@ -54,7 +54,7 @@ GitHub `production` Environment 已创建且只允许 `main` 部署，发布/迁
 
 - Worker/Static Assets 与自定义域名；
 - D1 database ID、当前 migration、备份策略；
-- R2 bucket、附件和备份 key；
+- 当前对象存储 provider、非敏感资源 ID、附件和备份 key；
 - Cron triggers；
 - `APP_ENV=production`；
 - Secret 是否存在且位置正确；
@@ -71,7 +71,7 @@ Secret 值、Global API Key、长期个人 Token 不得写入验收文档。
 - 登录/Argon2id 在低性能手机上的实际体验；
 - Worker CPU time 与异常率；
 - D1 read/write rows 与查询次数；
-- R2 存储/操作量；
+- 对象存储用量/错误率；Notion 模式含 429/5xx，R2 模式含存储/A-B 类操作；
 - 导入分片重试和中断恢复；
 - 基础台账父级分页、需求列表、分析页面是否存在全量加载或 N+1。
 
@@ -79,10 +79,10 @@ Secret 值、Global API Key、长期个人 Token 不得写入验收文档。
 
 ## 6. 备份恢复边界
 
-当前 D1→R2 备份是按表、按 rowid 分片的逻辑导出，不是数据库级跨表一致快照。正式恢复验收必须：
+当前 D1→`ObjectStorePort` 备份是按表、按 rowid 分片的逻辑导出，不是数据库级跨表一致快照。正式恢复验收必须：
 
 1. 建立可靠停写窗口；
-2. 完成业务 D1 备份和 R2 附件清单/本体核对；
+2. 完成业务 D1 备份和当前对象存储附件清单/本体核对；
 3. 恢复到隔离 D1；
 4. 对账基础台账、需求位置、项目/任务、数量、金额、状态、规则和版本；
 5. 确认 `auth_sessions` 未恢复；

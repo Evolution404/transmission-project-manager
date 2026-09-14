@@ -54,10 +54,10 @@ PR #2 合入后使用以下 Actions：
 - Cloudflare Account / Zone；
 - Worker 名称；
 - D1 database 名称与 UUID；
-- R2 bucket 名称且保持私有；
+- 对象存储 provider 及其资源；当前为 Notion 专用 Database/Data Source；
+- R2 只有在 provider=`r2` 时才要求 bucket 与 subscription；
 - 自定义域名和 HTTPS；
 - Cron；
-- 计费计划 / R2 开通状态；
 - Worker Secret。
 
 生产 config 必须保持：
@@ -66,15 +66,20 @@ PR #2 合入后使用以下 Actions：
 - `workers_dev=false`；
 - `preview_urls=false`；
 - 唯一 `DB` D1 binding；
-- 唯一 `FILES` R2 binding；
+- 显式 `OBJECT_STORAGE_PROVIDER`；当前 production=`notion`；
+- Notion 模式配置 `NOTION_API_VERSION=2026-03-11` 与 `NOTION_STORAGE_DATA_SOURCE_ID`，不配置 `FILES`；
+- R2 模式才配置唯一 `FILES` binding，且不得混入 Notion 配置；
 - `/api` 和 `/api/*` `run_worker_first`；
 - 自定义域名；
-- `secrets.required = ["AUTH_CREDENTIAL_PEPPER"]`。
+- 当前 Notion production 的 `secrets.required = ["AUTH_CREDENTIAL_PEPPER", "NOTION_API_TOKEN"]`。
 
 ### Secret 生命周期
 
 `AUTH_CREDENTIAL_PEPPER`
 : 永久 Worker Secret。Wrangler production config 将其列为 required；缺失时正式 deploy 必须 fail-closed。丢失会导致现有 HMAC verifier 无法正常验证，不能当普通无损轮换 Secret。
+
+`NOTION_API_TOKEN`
+: 当前 production 对象存储的永久 Worker Secret，只授予专用 Notion 存储页面所需能力；不得出现在 vars、Git、日志或前端。若以后切换 R2，可从 required secrets 中移除。
 
 `BOOTSTRAP_TOKEN`
 : 一次性 Worker Secret。仅首次创建管理员期间配置；创建成功并验证再次 bootstrap 已关闭后删除。禁止长期写进 `secrets.required`。
@@ -218,7 +223,7 @@ preflight 通过只证明配置结构和构建，不证明真实资源/Secret �
 - 结算；
 - 已实已结 / 已实未结 / 未实已结 / 未实未结四状态；
 - 框架 / 协议 / 预算 / 预算发生 / 实际费用；
-- 附件上传、下载、鉴权和私有 R2；
+- 附件上传、下载、鉴权和当前对象存储；Notion 模式验证逻辑删除后应用层不可读取，并记录底层 FileUpload 无物理删除 API 的治理边界；
 - 月报 / 分析 / 预警；
 - Cron / notification outbox / backup；
 - 手机和桌面自定义域名访问。
@@ -232,7 +237,7 @@ P7-01～13 的具体证据矩阵以 `P7_ACCEPTANCE.md` 为准。
 - Workers Logs：异常堆栈、5xx、鉴权失败模式；
 - Workers Analytics：请求量、错误率、CPU time；
 - D1：read/write rows、容量、错误；
-- R2：存储量、Class A/B 操作、失败；
+- 对象存储：Notion 模式观察 429/5xx、上传/下载失败和容量；R2 模式观察存储量、Class A/B 操作与失败；
 - Cron：执行成功率和耗时；
 - backup run/chunk 状态；
 - 目标地区实际网络体验。
@@ -245,7 +250,7 @@ P6 v1 manifest verifier 能证明 chunk SHA-256、表名/行数、chunk index �
 
 它不能单独证明跨表一致快照、未被同时删掉的对象完整性、附件内容 hash、附件枚举完整性或数据已经成功恢复并可被应用读取。
 
-因此正式恢复必须进入隔离 D1/R2，对关键行数、金额、数量、状态、外键、附件和应用行为复核；`auth_sessions` 不恢复。
+因此正式恢复必须进入隔离 D1 + 隔离对象存储环境，对关键行数、金额、数量、状态、外键、附件和应用行为复核；`auth_sessions` 不恢复。Notion 模式需用测试专用存储区域演练，不能把正式对象索引当恢复沙箱。
 
 ## 10. 回退
 
@@ -258,7 +263,7 @@ P6 v1 manifest verifier 能证明 chunk SHA-256、表名/行数、chunk index �
 5. 重复 health、认证、核心业务和附件 smoke；
 6. 再恢复后台任务和业务写入。
 
-Worker 回退不会自动回退 D1、R2、Secrets、Cron 或路由。
+Worker 回退不会自动回退 D1、对象存储、Secrets、Cron 或路由。
 
 ### 数据回退
 
@@ -276,6 +281,6 @@ P7 完成前，至少由非资产所有者个人登录态的 CI/CD 服务身份�
 
 ## 12. 证据记录
 
-每次正式变更至少记录：GitHub PR、`main` SHA、Actions run URL/run id、release/migration evidence reference、Worker version/deployment ID、D1 UUID/migration 状态、R2 bucket、自定义域名、health/smoke 结果、Logs/Analytics/CPU 摘要、备份/恢复证据、操作者/reviewer/observedAt。
+每次正式变更至少记录：GitHub PR、`main` SHA、Actions run URL/run id、release/migration evidence reference、Worker version/deployment ID、D1 UUID/migration 状态、对象存储 provider 与非敏感资源 ID、自定义域名、health/smoke 结果、Logs/Analytics/CPU 摘要、备份/恢复证据、操作者/reviewer/observedAt。
 
 真实敏感值、密码、Token、Cookie、业务原始数据不得写入公开 Actions artifact、PR 或仓库。

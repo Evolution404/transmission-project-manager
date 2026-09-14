@@ -4,7 +4,8 @@
 
 仓库：`Evolution404/transmission-project-manager`
 默认分支：`main`
-当前云端配置记录分支：`ops/production-environment-handoff-20260914`
+当前施工分支：`feat/notion-object-storage`
+当前 `origin/main`：`fa9076e16d2a550478db9825829e1b2153b956b3`
 
 后端可移植化已经通过 GitHub PR #1 合入 `main`：
 
@@ -18,20 +19,14 @@
 
 生产 workflow 已通过 PR #2 合入 `main@bc4774767c159068d59e16d6726444c5c1525dd6`；[合并后的 CI #37](https://github.com/Evolution404/transmission-project-manager/actions/runs/34811093528) 的 `check` job 和 `npm run check` 均 PASS。此处仅说明代码流水线合入，并不代表生产资源/Secrets/发布已完成。
 
-## 最高优先级约束：只做云上开发
+## 当前执行约束
 
-用户已经明确要求：**禁止连接 Mac，禁止依赖任何本地电脑、本地 shell、本地 Wrangler、本地 SQLite 或本地测试环境。**
+用户在 2026-09-14 最新指令中明确要求**直接连接 Mac 本地调试**，因此此前“禁止连接 Mac”的阶段性约束已被当前指令覆盖。本地开发/排障可以使用 `/Users/zhangyuxi/Desktop/项目管理`，但生产运行不能依赖个人电脑；所有代码仍必须进入施工分支/PR，并由 GitHub CI 复现完整门禁后才能考虑合入 `main`。
 
-从现在起：
-
-- 代码阅读、修改、分支、PR、合并、CI、发布记录只以 GitHub 远端为准。
-- 自动测试和质量门禁只认 GitHub Actions。
-- Cloudflare 发布只走 GitHub Actions / Cloudflare Git 集成或其他受保护的云端发布流程。
-- 不得因为缺少本地环境要求用户恢复 Mac。
-- 不得把 Secret 写入仓库、PR、Actions 日志或前端代码。
-- 后续开发固定采用：`远端分支 → PR → GitHub CI → 合并 main → Cloudflare 云端验证`。
-
-Mac 仅是历史施工环境，不再是开发、测试、发布或故障处理依赖。
+- 不得把 Cloudflare/Notion API Token、认证 Secret、Cookie 或密码写入 Git、PR、Actions 日志或前端代码。
+- 本地 `.env` / `.env.notion` 已由 `.gitignore` 排除；只允许保存本机 Secret，不得提交。
+- 生产 migration/release 仍使用受保护的 GitHub Actions/Cloudflare 流程。
+- 当前发现合并 `main` 后 Cloudflare 侧会出现新的 Worker deployment，自动部署来源尚未彻底关闭/解释，因此本分支**不得直接合并 main**，先保持 PR 全绿并核对部署链路。
 
 ## PR #2：云端发布流程
 
@@ -39,7 +34,7 @@ Mac 仅是历史施工环境，不再是开发、测试、发布或故障处理�
 
 ### `.github/workflows/production-deploy.yml`
 
-用途：发布 Worker 代码、静态资源和已经审核的 D1/R2/自定义域名绑定。
+用途：发布 Worker 代码、静态资源和已经审核的 D1/对象存储/自定义域名配置。当前对象存储正式方案为 Notion；R2 保留为备用 provider。
 
 门禁：
 
@@ -72,34 +67,34 @@ Mac 仅是历史施工环境，不再是开发、测试、发布或故障处理�
 
 ## Wrangler Secret 约束
 
-生产配置使用 Cloudflare Wrangler 当前官方 `secrets.required` 机制，只长期声明：
+生产配置使用 Cloudflare Wrangler `secrets.required` fail-closed。当前 Notion production 长期声明：
 
 ```json
-"secrets": { "required": ["AUTH_CREDENTIAL_PEPPER"] }
+"secrets": { "required": ["AUTH_CREDENTIAL_PEPPER", "NOTION_API_TOKEN"] }
 ```
 
-这样 `wrangler deploy` 会在永久认证 pepper 缺失时 fail-closed。
+若以后切换 `OBJECT_STORAGE_PROVIDER=r2`，则长期 Secret 恢复为仅 `AUTH_CREDENTIAL_PEPPER`；R2 bucket 使用 binding，不需要 Notion Secret。
 
 `BOOTSTRAP_TOKEN` 是**一次性 Secret**：只在首次建立管理员时临时配置，首管理员创建并确认 bootstrap 已关闭后删除。禁止把它放入永久 `secrets.required`，否则首次初始化后删除 Token 会导致以后正常发布永久失败。
 
-## 2026-09-14 云端配置实测
+## 2026-09-14 最新生产实测
 
-- GitHub production Environment 已在仓库 Settings → Environments 创建（Environment ID `21869294751`）。
-- Deployment branches/tags 限制为仅 `main`（1 branch、0 tags）。
-- Environment Variables `PRODUCTION_DEPLOY_ENABLED=false`、`PRODUCTION_MIGRATION_ENABLED=false` 已在 GitHub UI 确认；两个开关保持关闭。
-- 尚无 `PRODUCTION_CONFIG_JSON`，Environment Secret 列表仍为空，`CLOUDFLARE_API_TOKEN` 未配置。
-- 仓库目前 0 collaborators，只有所有者可贡献。Required reviewers / Prevent self-review 未设成；页面仍显示管理员绕过选项已勾选，不能声称审核保护完成。
-- main 的 Branch protection 页面显示尚无 classic rule；新规则表单未保存，因此 main 保护尚未建立。Actions 默认 `GITHUB_TOKEN` 为只读，且 Actions 创建或批准 PR 未启用。
-- Cloudflare Dashboard `dash.cloudflare.com` 在本次云端浏览器中持续显示安全验证，刷新后仍无法进入；尚未核实正式 Worker/D1/R2/Zone/Secrets/migrations。公开自定义域名健康接口也未得到可验证响应。不得从历史 acceptance 文件推断生产资源。
-- 本轮未创建/修改 Cloudflare 资源，未配置任何 Token/pepper，未运行 preflight、migration 或 production release，也未声称生产验收通过。
+- GitHub `production` Environment 已存在并仅允许 `main`；`PRODUCTION_DEPLOY_ENABLED=false`、`PRODUCTION_MIGRATION_ENABLED=false` 保持关闭。
+- `CLOUDFLARE_API_TOKEN` 已配置并实测有效；account-owned token verify、Workers Scripts、D1、Worker Domains、Zones API 均可访问。
+- Cloudflare Account：`642d30520d6c494dd418b1f4b3853aa6`；Zone `980923.xyz` 为 active；`project.980923.xyz` 已绑定 Worker `transmission-project-manager`。
+- 当前 Worker 实际仍绑定 acceptance D1 `transmission-project-manager-acceptance`（UUID `c1dbd68e-8626-4cb1-a7a8-f9fe07df705b`），不能冒充新的正式 production D1。
+- 当前公网 `https://project.980923.xyz/api/health` 返回 HTTP 200，但 `schema.ready=false`：current=`0008_final_business_flow.sql`，required=`0012_master_data_write_guards.sql`；acceptance D1 尚缺 `0009`–`0012`。
+- Cloudflare R2 API 返回 `403 / 10042 Please enable R2 through the Cloudflare Dashboard`。用户决定当前生产不启用 R2，改用已有付费 Notion Workspace；R2 保留为未来可替换后端，因此 R2 未开通不再是当前发布硬阻塞。
+- Notion Internal Integration 已创建并授权给唯一根页面 `Transmission Project Manager Storage`，根 Page ID `3db9afbc-cb69-80c4-ab94-fbb4a8f6b1b5`；Token 仅保存在本机 `.env.notion`，不得提交或打印。
+- 本分支已新增 `NotionObjectStoreAdapter`、Notion/R2/Filesystem provider 选择、P7 双 provider 校验、`npm run notion:init` 与 `npm run notion:smoke`。真实 Notion `TPM Object Store` 已初始化：Database ID `71dc9aae-5e92-458d-91b0-e1118b76df69`，Data Source ID `33a70b5a-c477-409f-ba61-78679279ce7e`；真实 `put → get → delete → get=null` smoke 已 PASS。Token 仍只保存在被 Git 忽略的本机 `.env.notion`。
 
-## 后续云端接续
+## 下一步
 
-1. 恢复 Cloudflare Dashboard 的受信访问，核对正式生产 Worker/D1/R2/Zone、数据和 migration；与 acceptance 环境严格区分。
-2. 明确独立的生产审核者或可执行的审核安排，完成 Environment 审核保护和 main 分支保护；保持两个生产开关 `false`。
-3. 根据真实资源填写 `PRODUCTION_CONFIG_JSON`，配置专用最小权限 Cloudflare CI Secret 和不变的生产认证 pepper；不得在仓库或日志暴露值。
-4. 依现有 `production-preflight.yml` 做无变更预检，再根据正式 D1 备份/数据状态决定是否运行独立 migration；schema ready 后才运行 release。
-5. 发布后做真实健康、登录、核心业务/R2/Cron、域名与 Cloudflare 指标验收，并将非敏感证据回填。
+1. 本分支本地完整 `npm run check` 已 PASS（Node 260/260、Web 64/64）；继续拆小提交并 push，建立 PR，由 GitHub CI 复现后再考虑合并。
+2. 用已初始化的 `NOTION_STORAGE_DATA_SOURCE_ID` 生成真实 `PRODUCTION_CONFIG_JSON`，并把 `NOTION_API_TOKEN` 安全配置为 Worker Secret；当前 production config 不包含 `r2_buckets`。
+3. 建立独立正式 production D1，不复用 acceptance D1；空库按 `0001`–`0012` 初始化并核对 schema ready。
+4. 查清/关闭意外的 main→Cloudflare 自动部署链路后，再按受控 migration/release workflow 合并和发布。
+5. 发布后真实验收 health、登录、核心业务、Notion 附件/备份、Cron、域名和 Cloudflare/Notion 错误指标。
 
 ## 生产资源现状：不要猜
 
@@ -111,23 +106,24 @@ Mac 仅是历史施工环境，不再是开发、测试、发布或故障处理�
 - acceptance D1：`transmission-project-manager-acceptance`
 - acceptance D1 id：`c1dbd68e-8626-4cb1-a7a8-f9fe07df705b`
 
-但该文件明确属于 acceptance 配置，且没有 R2 绑定，不能直接当成新的正式生产配置。生产 Worker、D1、R2、域名、Secrets、migration 状态必须通过真实云端配置和发布证据确认。
+该文件明确属于 acceptance 配置，不能直接当成新的正式 production config。当前 production 对象存储已经改为 Notion；正式 Worker、独立 D1、Notion Data Source、域名、Secrets 与 migration 状态必须通过真实配置和发布证据确认。
 
 ## 已完成的后端可移植化
 
 - `DatabasePort` / `TransactionPort`
 - `ObjectStorePort`
 - `JobQueuePort` / `SchedulerPort` / `ClockPort`
-- Cloudflare D1 / R2 adapters
+- Cloudflare D1 adapter
+- Notion / Cloudflare R2 `ObjectStorePort` adapters
 - Node SQLite / Filesystem adapters
 - `RuntimeBindings.PERSISTENCE` 作为 Hono 应用唯一持久化注入边界
 - Cloudflare adapter 只在 `src/index.ts` Worker 基础设施入口组装
 - Auth / Session / Credential / Member admin portable
-- P2/P3/P4/P5/P6/P8/P9 业务层 0 直接 D1/R2
+- P2/P3/P4/P5/P6/P8/P9 业务层 0 直接 D1/R2/Notion
 - repository/static guards 防止业务层重新绑定 Cloudflare persistence
 - Node + SQLite + Filesystem 应用级 E2E 和 P7-era → 0012 migration rehearsal
 
-最近已经被 GitHub Actions 在 PR #1 和合并后 `main` 两次复现的完整门禁包括 Cloudflare/Node TypeScript、Web build、Worker dry-run、Node/Web tests、Node 第二运行时 E2E 和 migration rehearsal。
+本分支最近一次本地完整 `npm run check` 已通过：Node **260/260 PASS**、Web/Vitest **64/64 PASS**，同时包含 Cloudflare/Node TypeScript、Web build、Worker dry-run、Node 第二运行时 E2E 和 migration rehearsal。合入前仍必须由 GitHub Actions 在本 PR 复现。
 
 ## 继续保持的业务与技术约束
 
@@ -136,6 +132,6 @@ Mac 仅是历史施工环境，不再是开发、测试、发布或故障处理�
 - 普通同步 API D1 query 目标 `<=5`、硬目标 `<=10`；禁止 N+1。
 - 单 SQL 按 D1 100 个绑定参数上限设计。
 - Cloudflare Free 的 CPU/配额只能用真实云端指标判断。
-- Cloudflare 与 Node infrastructure adapter 必须留在外层，业务/API 不得重新绑定 D1/R2。
+- Cloudflare、Notion 与 Node infrastructure adapter 必须留在外层，业务/API 不得重新绑定 D1/R2/Notion。
 - migration `0009`–`0012` 已冻结，不得修改，只能追加。
 - 业务事实仍以 `BUSINESS_BASELINE.md`、`DESIGN.md`、`DATA_MODEL.md` 为准；生产操作与验收见 `DEPLOYMENT.md`、`P7_RUNBOOK.md`、`P7_ACCEPTANCE.md`。

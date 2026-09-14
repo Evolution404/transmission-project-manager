@@ -19,7 +19,7 @@
 - Cloudflare 调用全部为 HTTP GET；
 - 不执行 Worker deploy；
 - 不执行 D1 migration / D1 SQL；
-- 不创建、修改或删除 Worker、D1、R2、Zone、域名；
+- 不创建、修改或删除 Worker、D1、R2、Zone、域名；当前 production 使用 Notion，因此 R2 盘点仅作为可选能力；
 - 不读取或输出 Secret 值；
 - 不读取业务表行内容；
 - 临时 API 响应只保存在 GitHub runner 的临时目录，结束时删除；
@@ -52,7 +52,7 @@ Token 的权限范围应限制在本项目所在的 Cloudflare Account 和 `9809
 
 - Workers：名称、创建/修改时间；
 - D1：名称、UUID、表数量、文件大小、创建时间；
-- R2：bucket 名称、位置、存储类别、创建时间；
+- R2：若已启用则列出 bucket 名称、位置、存储类别、创建时间；若 Cloudflare 返回 `10042`，记录为“R2 not enabled”并继续盘点，不视为 Notion production 的失败；
 - Worker Custom Domains：hostname、绑定 Worker、Zone；
 - Zones：域名、状态、类型、Zone ID。
 
@@ -64,7 +64,7 @@ D1 `file_size` / `num_tables` 可用于初步判断数据库是否只是空资�
 2. 在 GitHub `production` Environment 中配置唯一的 `CLOUDFLARE_API_TOKEN`；
 3. 从 `main` 手工运行 `Production Cloudflare inventory (read-only)`；
 4. 根据输出区分 production / acceptance / 其他历史资源；
-5. 明确正式 Worker、D1、R2、自定义域名后再生成 `PRODUCTION_CONFIG_JSON`；
+5. 明确正式 Worker、独立 D1、自定义域名和对象存储 provider 后再生成 `PRODUCTION_CONFIG_JSON`；当前 provider 为 Notion，需使用非敏感 Data Source ID，R2 未启用不阻塞；
 6. 运行现有 `Production preflight (no deployment)`；
 7. 只有完成数据保护并确认 schema 需要升级时才开启独立 D1 migration；
 8. schema ready 后才进入 `Production release`。

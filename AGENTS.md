@@ -26,8 +26,8 @@
 
 ## 工程约束
 
-- 保持 npm workspaces、Vue 3 + TypeScript、Hono 架构。Cloudflare Workers + D1 + R2 是当前部署基线，但业务核心必须经 Port/Repository 访问基础设施，并保持 Node + SQLite + Filesystem 第二运行时；UI 使用 Naive UI，图表使用 ECharts，按实际阶段引入依赖。
-- 密钥放 Worker Secrets / 本地 `.dev.vars`。`AUTH_CREDENTIAL_PEPPER`、生产 `BOOTSTRAP_TOKEN`、会话原始 token、用户明文密码都不得进入 Git 或日志；数据库不得保存明文密码、浏览器派生凭据或原始会话 token。浏览器慢 KDF 使用 Argon2id，服务端只做 HMAC verifier，不得把 PBKDF2/Argon2 挪回 Worker。
+- 保持 npm workspaces、Vue 3 + TypeScript、Hono 架构。Cloudflare Workers + D1 是当前计算/数据库部署基线；对象存储必须统一经 `ObjectStorePort`，正式生产当前选择 Notion，保留 Cloudflare R2 与 Node Filesystem 可替换后端。业务核心不得绑定任一对象存储实现，并保持 Node + SQLite + Filesystem 第二运行时；UI 使用 Naive UI，图表使用 ECharts，按实际阶段引入依赖。
+- 密钥放 Worker Secrets / 本地 `.dev.vars`。`AUTH_CREDENTIAL_PEPPER`、`NOTION_API_TOKEN`、生产 `BOOTSTRAP_TOKEN`、会话原始 token、用户明文密码都不得进入 Git 或日志；数据库不得保存明文密码、浏览器派生凭据或原始会话 token。浏览器慢 KDF 使用 Argon2id，服务端只做 HMAC verifier，不得把 PBKDF2/Argon2 挪回 Worker。
 - 所有业务接口在服务端做权限和数据校验；前端验证不能替代后端校验。
 - 变更使用幂等键和版本检查；金额与关联流水使用原子事务。D1 `batch()` 才是可用的事务入口之一，不要假定多次独立 `run()` 会整体回滚。
 - 默认按 Workers Free 的 CPU 10ms、D1 参数/查询数量限制设计；避免在 Worker 内解析大 Excel 或全量扫描。保持分片、索引、汇总快照和重试能力。

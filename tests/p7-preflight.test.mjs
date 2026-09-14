@@ -12,9 +12,16 @@ function config() {
   c.name = 'tpm-production'; c.account_id = 'a'.repeat(32);
   c.d1_databases[0].database_name = 'tpm-production';
   c.d1_databases[0].database_id = '12345678-1234-4321-8321-123456789abc';
-  c.r2_buckets[0].bucket_name = 'tpm-production-files';
+  c.vars.NOTION_STORAGE_DATA_SOURCE_ID = '87654321-4321-4321-8321-cba987654321';
   c.routes[0].pattern = 'projects.business.cn';
+  c.secrets = { required: ['AUTH_CREDENTIAL_PEPPER', 'NOTION_API_TOKEN'] };
+  return c;
+}
+function r2Config() {
+  const c = config();
+  c.vars = { APP_ENV: 'production', OBJECT_STORAGE_PROVIDER: 'r2' };
   c.secrets = { required: ['AUTH_CREDENTIAL_PEPPER'] };
+  c.r2_buckets = [{ binding: 'FILES', bucket_name: 'tpm-production-files' }];
   return c;
 }
 test('production config rejects placeholders while valid non-secret config passes', () => {
@@ -24,7 +31,7 @@ test('production config rejects placeholders while valid non-secret config passe
 test('production config rejects auth overrides, secret values, missing permanent secret declarations, unsafe routes and wrong bindings', () => {
   for (const mutate of [
     c => { c.vars.APP_ENV = 'development'; },
-    c => { c.vars.AUTH_CREDENTIAL_PEPPER = 'sensitive-test-value'; },
+    c => { c.vars.NOTION_API_TOKEN = 'sensitive-test-value'; },
     c => { c.vars.ACCESS_AUD = 'legacy'; },
     c => { c.secrets = { required: [] }; },
     c => { c.secrets = { required: ['BOOTSTRAP_TOKEN'] }; },
@@ -34,7 +41,9 @@ test('production config rejects auth overrides, secret values, missing permanent
     c => { c.preview_urls = true; },
     c => { c.assets.run_worker_first = ['/api/*']; },
     c => { c.d1_databases[0].binding = 'OTHER'; },
-    c => { c.r2_buckets[0].bucket_name = 'test-local'; },
+    c => { c.vars.NOTION_API_VERSION = '2025-09-03'; },
+    c => { c.vars.NOTION_STORAGE_DATA_SOURCE_ID = 'test-local'; },
+    c => { c.r2_buckets = [{ binding: 'FILES', bucket_name: 'unexpected-r2' }]; },
     c => { c.routes[0].pattern = 'https://example.com/path'; },
     c => { c.triggers.crons = []; },
     c => { c.env = { preview: {} }; },
@@ -43,6 +52,14 @@ test('production config rejects auth overrides, secret values, missing permanent
     assert.ok(errors.length > 0);
     assert.ok(!JSON.stringify(errors).includes('sensitive-test-value'));
   }
+});
+test('production config accepts either Notion or R2 storage but rejects mixed provider settings', () => {
+  assert.deepEqual(validateConfig(config()), []);
+  assert.deepEqual(validateConfig(r2Config()), []);
+  const mixed = r2Config();
+  mixed.vars.NOTION_API_VERSION = '2026-03-11';
+  mixed.vars.NOTION_STORAGE_DATA_SOURCE_ID = '87654321-4321-4321-8321-cba987654321';
+  assert.ok(validateConfig(mixed).length > 0);
 });
 test('acceptance requires all 13 unique items and actual evidence; pending is not complete', () => {
   const record = JSON.parse(readFileSync(new URL('../docs/templates/p7-evidence.example.json', import.meta.url)));
@@ -140,6 +157,8 @@ test('production Cloudflare inventory is manual, environment-bound and read-only
   assert.match(source, /\/workers\/scripts/);
   assert.match(source, /\/d1\/database/);
   assert.match(source, /\/r2\/buckets/);
+  assert.match(source, /10042/);
+  assert.match(source, /R2 not enabled/);
   assert.match(source, /\/workers\/domains/);
   assert.match(source, /\/zones/);
   assert.doesNotMatch(source, /\n  (push|pull_request|schedule|workflow_run):/);

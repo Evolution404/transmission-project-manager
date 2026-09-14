@@ -21,8 +21,18 @@ export function validateConfig(c) {
   need(c.main === 'src/index.ts', 'main');
   need(c.compatibility_date === '2026-09-12', 'tested compatibility_date');
   need(c.workers_dev === false && c.preview_urls === false, 'public preview routes');
-  need(same(c.vars, { APP_ENV: 'production' }), 'vars (Secrets belong in Worker Secrets)');
-  need(object(c.secrets) && same(c.secrets, { required: ['AUTH_CREDENTIAL_PEPPER'] }), 'required permanent Worker Secret names');
+  need(object(c.vars), 'vars');
+  if (object(c.vars)) {
+    keys(c.vars, ['APP_ENV', 'OBJECT_STORAGE_PROVIDER', 'NOTION_API_VERSION', 'NOTION_STORAGE_DATA_SOURCE_ID'], 'vars keys');
+    need(c.vars.APP_ENV === 'production', 'APP_ENV');
+    need(['notion', 'r2'].includes(c.vars.OBJECT_STORAGE_PROVIDER), 'OBJECT_STORAGE_PROVIDER');
+    need(!Object.keys(c.vars).some(key => /TOKEN|SECRET|PEPPER/i.test(key)), 'vars must not contain secret material');
+  }
+  const requiredSecrets = object(c.secrets) && Array.isArray(c.secrets.required) ? [...c.secrets.required].sort() : [];
+  const expectedSecrets = c.vars?.OBJECT_STORAGE_PROVIDER === 'notion'
+    ? ['AUTH_CREDENTIAL_PEPPER', 'NOTION_API_TOKEN']
+    : ['AUTH_CREDENTIAL_PEPPER'];
+  need(object(c.secrets) && same(requiredSecrets, [...expectedSecrets].sort()), 'required permanent Worker Secret names');
   keys(c.assets, ['directory', 'binding', 'not_found_handling', 'run_worker_first'], 'assets keys');
   need(c.assets?.directory === '../web/dist' && c.assets?.binding === 'ASSETS' && c.assets?.not_found_handling === 'single-page-application' && same(c.assets?.run_worker_first, ['/api', '/api/*']), 'assets routing');
   need(same(c.triggers, { crons: ['*/5 * * * *'] }), 'cron');
@@ -38,10 +48,18 @@ export function validateConfig(c) {
     need(!placeholder(db?.database_name) && /^[a-z0-9-]{1,63}$/.test(db?.database_name), 'D1 name');
     need(!placeholder(db?.database_id) && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(db?.database_id), 'D1 ID');
   }
-  need(Array.isArray(c.r2_buckets) && c.r2_buckets.length === 1, 'R2 count');
-  for (const bucket of Array.isArray(c.r2_buckets) ? c.r2_buckets : []) {
-    keys(bucket, ['binding', 'bucket_name'], 'R2 keys');
-    need(bucket?.binding === 'FILES' && !placeholder(bucket?.bucket_name) && /^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/.test(bucket?.bucket_name), 'private R2 binding');
+  if (c.vars?.OBJECT_STORAGE_PROVIDER === 'notion') {
+    need(c.vars.NOTION_API_VERSION === '2026-03-11', 'Notion API version');
+    need(!placeholder(c.vars.NOTION_STORAGE_DATA_SOURCE_ID) && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(c.vars.NOTION_STORAGE_DATA_SOURCE_ID ?? ''), 'Notion data source ID');
+    need(c.r2_buckets === undefined || (Array.isArray(c.r2_buckets) && c.r2_buckets.length === 0), 'Notion production must not require an R2 binding');
+  }
+  if (c.vars?.OBJECT_STORAGE_PROVIDER === 'r2') {
+    need(c.vars.NOTION_API_VERSION === undefined && c.vars.NOTION_STORAGE_DATA_SOURCE_ID === undefined, 'R2 production must not include Notion settings');
+    need(Array.isArray(c.r2_buckets) && c.r2_buckets.length === 1, 'R2 count');
+    for (const bucket of Array.isArray(c.r2_buckets) ? c.r2_buckets : []) {
+      keys(bucket, ['binding', 'bucket_name'], 'R2 keys');
+      need(bucket?.binding === 'FILES' && !placeholder(bucket?.bucket_name) && /^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/.test(bucket?.bucket_name), 'private R2 binding');
+    }
   }
   return errors;
 }

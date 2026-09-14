@@ -102,7 +102,7 @@
 35. P6 预警 crossing、持续 daily summary、recovery 与 recross 是不同生命周期事件；通知 outbox 使用唯一幂等键、领取租约、失败退避和 `unknown` 状态，结果不确定时不得无限重发。
 36. P6 年度事项保留 `month/day/unknown` 日期精度；只有月份时不得补造具体日期。完成事项停止提醒。
 37. P6 储备类别分析以“尚未发生项目级出库的项目当前物资”为口径，直接汇总当前有效 `project_material_requirements.amount_fen`；已项目级出库项目整体退出储备金额分析，不再按旧 `release_lines` 数量比例折算。施工/其他费用不进入项目物资储备类别。
-38. P6 D1→R2 备份按表和小分片可续跑，每个 chunk 保存 SHA-256，完成后生成 manifest；实际恢复需从 manifest/chunk 回灌独立 D1 并对账，`auth_sessions` 不恢复。分片读取不具备跨表快照隔离；正式迁移前须停写并对账，manifest 只含附件 key，需另校验附件本体。
+38. P6 D1→`ObjectStorePort` 备份按表和小分片可续跑，每个 chunk 保存 SHA-256，完成后生成 manifest；实际恢复需从 manifest/chunk 回灌独立 D1 并对账，`auth_sessions` 不恢复。分片读取不具备跨表快照隔离；正式迁移前须停写并对账，manifest 只含附件 key，需另校验附件本体。当前 production provider 为 Notion，R2/Filesystem 为可替换实现。
 
 建议索引至少覆盖：来源幂等键；需求年度/类别/线路；需求物资分配；框架和协议归属；项目及财务条目的业务月；到期且待处理的通知；附件所属对象。按实际查询计划验收读行数。
 
@@ -225,7 +225,7 @@ POST /api/backups/:id/verify
 
 `/api/health` 当前仍返回 `stage: "p6"`，表示 P6 分析/提醒/备份能力层级，不代表继续采用旧 P5 数据模型。业务接口先验证系统自身会话 Cookie，再根据 D1 成员启用状态、角色和范围授权；不解析 Cloudflare Access JWT，也不信任任何请求头 username/email/role。最终业务链中，需求/储备/项目级出库由 `admin/project_manager` 管理；执行任务与实施/供应由 `admin/project_manager/implementation` 操作；任务结算由 `admin/project_manager/finance` 操作。P4 框架/协议/预算/资金流水权限维持原边界。附件及所有业务读取仍按 `all/framework/project` scope 服务端过滤。未知 `/api` 路径返回 JSON 404，不回退到前端 HTML。旧 `/api/projects` allocation、`/api/release-batches`、旧 implementation/settlement 接口仍为历史兼容面，不作为新 UI 或最终业务主路径。
 
-P7 不新增另一套核心接口族；需求数据主路径使用系统生成的标准模板填报并回导，真实业务值用于抽样核对，不要求通过任意历史 Excel 反推字段结构。其余重点是用真实 Cloudflare/D1/R2/邮件资源和目标地区网络对上述合同做端到端验收，必要改动仍需保持现有不变量与版本/幂等约束。
+P7 不新增另一套核心接口族；需求数据主路径使用系统生成的标准模板填报并回导，真实业务值用于抽样核对，不要求通过任意历史 Excel 反推字段结构。其余重点是用真实 Cloudflare/D1/当前对象存储/邮件资源和目标地区网络对上述合同做端到端验收，必要改动仍需保持现有不变量与版本/幂等约束。
 
 通用响应沿用 `packages/shared` 的 `ApiResponse<T>`。列表默认50项、最大100项，返回 `items` 和不透明 `nextCursor`；P3 待分配候选池和 P4 资金流水都按该约束分页，归并建议与资金汇总在数据库内做集合聚合，不能通过逐对象 N+1 查询或单请求无限制返回全库。大导出同样使用分页。
 

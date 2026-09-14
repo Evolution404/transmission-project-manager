@@ -8,7 +8,7 @@
 
 `7a49b44275038dddd3803cb17de9b7e4fe06ba33`
 
-PR #1 合并前 CI 与合并后的 `main` CI #31 均通过。Cloudflare Workers + D1 + R2 仍是当前生产部署基线；Node + SQLite + Filesystem 仅作为第二运行时和未来普通服务器迁移能力。
+PR #1 合并前 CI 与合并后的 `main` CI #31 均通过。Cloudflare Workers + D1 仍是当前计算/数据库部署基线；对象存储统一经 `ObjectStorePort`。当前正式方案选择 Notion，保留 Cloudflare R2 与 Node Filesystem 可替换后端；Node + SQLite + Filesystem 仍作为普通服务器第二运行时。
 
 生产 workflow 已通过 PR #2 合入 `main@bc4774767c159068d59e16d6726444c5c1525dd6`，合并后的 CI #37 PASS。仓库现有四类 Actions：
 
@@ -21,10 +21,10 @@ PR #1 合并前 CI 与合并后的 `main` CI #31 均通过。Cloudflare Workers 
 
 ## 2. 云上开发与发布原则
 
-后续 GitHub + Cloudflare 是唯一必需环境：
+正式发布与持续门禁仍以 GitHub + Cloudflare 为准；本地 Mac 可按用户当次明确授权用于开发和排障，但不能成为生产运行依赖：
 
-- 禁止把用户 Mac、本地 shell、本地 Wrangler、本地 SQLite 或其他个人电脑作为开发、测试或发布前置条件；
-- 代码通过远端分支 → PR → GitHub Actions → 合并 `main`；
+- 本地修改必须进入分支并由 GitHub CI 复现，不能以本地通过替代远端门禁；
+- 代码通过施工分支 → PR → GitHub Actions → 合并 `main`；
 - 生产变更只通过受保护的 GitHub Actions / Cloudflare 云端流程；
 - Cloudflare API Token、认证 Secret、bootstrap Secret 不进入 Git、PR、前端或 Actions 日志；
 - 普通 push/PR 不允许自动执行 D1 migration 或正式 Worker deploy；
@@ -39,7 +39,9 @@ PR #1 合并前 CI 与合并后的 `main` CI #31 均通过。Cloudflare Workers 
   → Workers Static Assets（Vue）
   → /api/*（Hono）
       → D1：业务数据、会话、任务、快照
-      → 私有 R2：附件、逻辑备份分片
+      → ObjectStorePort：附件、逻辑备份分片
+          → 当前 production：Notion
+          → 可替换：Cloudflare R2 / 普通服务器 Filesystem
   → Cron：预警、通知 outbox、备份任务
 ```
 
@@ -61,7 +63,7 @@ YAML 中写 `environment: production` 不能替代真实 Environment protection 
 ### Environment Variables
 
 `PRODUCTION_CONFIG_JSON`
-: 真实、非敏感、经过 `npm run p7 -- config` 验证的严格 JSON。包含 Worker 名称、Account ID、自定义域名、D1 名称/ID、R2 bucket、静态资源和 Cron 配置；不包含任何 Secret 值。
+: 真实、非敏感、经过 `npm run p7 -- config` 验证的严格 JSON。包含 Worker 名称、Account ID、自定义域名、D1 名称/ID、对象存储 provider 的非敏感配置、静态资源和 Cron；不包含任何 Secret 值。当前 Notion 模式只保存 `NOTION_API_VERSION` 与 `NOTION_STORAGE_DATA_SOURCE_ID`，不得保存 `NOTION_API_TOKEN`。
 
 `PRODUCTION_DEPLOY_ENABLED`
 : 平时建议 `false`。只有批准准确 commit 的发布窗口才改为 `true`。
@@ -72,7 +74,7 @@ YAML 中写 `environment: production` 不能替代真实 Environment protection 
 ### Environment Secret
 
 `CLOUDFLARE_API_TOKEN`
-: 使用 Cloudflare account-owned API token，按 Worker/D1/R2/路由实际操作配置最小权限。禁止使用 Global API Key、个人浏览器登录态或个人长期 Token 作为 CI/CD 依赖。
+: 使用 Cloudflare account-owned API token，按 Worker/D1/路由以及实际启用的 R2 能力配置最小权限。当前 Notion 模式不要求 R2 已开通。禁止使用 Global API Key、个人浏览器登录态或个人长期 Token 作为 CI/CD 依赖。
 
 ## 5. Wrangler production config
 
@@ -85,7 +87,9 @@ YAML 中写 `environment: production` 不能替代真实 Environment protection 
 - `preview_urls=false`；
 - 一个自定义域名；
 - 唯一 `DB` D1 binding；
-- 唯一 `FILES` R2 binding；
+- 显式 `OBJECT_STORAGE_PROVIDER`；当前为 `notion`；
+- Notion 模式不配置 `FILES` R2 binding，改为非敏感 `NOTION_API_VERSION=2026-03-11`、`NOTION_STORAGE_DATA_SOURCE_ID`；
+- R2 模式才配置唯一 `FILES` binding，且不得混入 Notion 配置；
 - `ASSETS` 静态资源 binding；
 - `/api`、`/api/*` 使用 `run_worker_first`；
 - Cron `*/5 * * * *`；
@@ -95,11 +99,11 @@ YAML 中写 `environment: production` 不能替代真实 Environment protection 
 
 ```json
 "secrets": {
-  "required": ["AUTH_CREDENTIAL_PEPPER"]
+  "required": ["AUTH_CREDENTIAL_PEPPER", "NOTION_API_TOKEN"]
 }
 ```
 
-Wrangler 会在正式 deploy 时检查永久认证 pepper 是否已经配置；缺失时发布必须失败。
+当前 Notion production 会在正式 deploy 时同时要求永久认证 pepper 与 `NOTION_API_TOKEN`；任一缺失都必须 fail-closed。若以后切换 R2，则 required secrets 恢复为仅 `AUTH_CREDENTIAL_PEPPER`。
 
 `BOOTSTRAP_TOKEN` 是一次性 Worker Secret，不放进长期 `secrets.required`。首次管理员创建成功、再次 bootstrap 已确认关闭后删除该 Secret，否则会把一次性初始化凭据变成长久发布依赖。
 
@@ -120,10 +124,10 @@ Wrangler 会在正式 deploy 时检查永久认证 pepper 是否已经配置；�
 - Account / Zone 归属；
 - Worker 名称；
 - D1 database 名称和 UUID；
-- R2 bucket 名称且保持私有；
+- 对象存储 provider；当前为 Notion，并核对专用根页面、Database/Data Source ID 与 Integration 授权；
+- R2 仅在 provider=`r2` 时核对 bucket 与开通状态；
 - 自定义域名；
-- 计费方案与 R2 开通状态；
-- `AUTH_CREDENTIAL_PEPPER` 是否已安全配置；
+- `AUTH_CREDENTIAL_PEPPER` 与当前 provider 所需 Secret 是否已安全配置；
 - 首次初始化阶段是否需要临时 `BOOTSTRAP_TOKEN`。
 
 仓库里的 `wrangler.acceptance.jsonc` 只代表历史 acceptance 配置，不能直接当成新的正式 production config。
@@ -195,7 +199,7 @@ migration/schema ready 后手工触发 `Production release`：
 - 物资供应 / 实施 / 结算；
 - 四状态回投；
 - 框架 / 协议 / 预算 / 发生 / 实际费用；
-- 附件上传、下载、权限与 R2 私有性；
+- 附件上传、下载、权限与当前对象存储隔离；Notion 模式验证 Integration 只能访问专用存储页面，删除后应用层不得再读到对象；
 - Cron / 预警 / 通知 outbox / 备份；
 - 自定义域名、HTTPS、静态资源和移动端访问。
 
@@ -208,21 +212,21 @@ migration/schema ready 后手工触发 `Production release`：
 - Workers Logs / 错误日志；
 - Workers Analytics：请求量、错误率、CPU time；
 - D1 读取/写入行和容量；
-- R2 存储量、A/B 类操作；
+- 对象存储指标；Notion 模式观察 API 429/5xx、上传/下载失败和使用量，R2 模式观察存储量与 A/B 类操作；
 - Cron 执行成功率；
 - 备份周期耗时和失败状态；
 - 目标地区实际网络体验。
 
 不要用本地 wall-clock、workerd 或合成数据替代 Cloudflare Free CPU/额度结论。
 
-当前文档核对的免费基线仍为：Workers 10 万请求/天、普通请求和 Cron 10ms CPU；D1 500 万读取行/天、10 万写入行/天；R2 免费层包含 10GB-month、100 万 A 类和 1000 万 B 类操作。正式使用前必须再次以 Cloudflare 官方页面为准。
+Workers/D1 配额与价格必须在正式上线前再次按 Cloudflare 官方页面核对。当前生产对象存储是用户已有付费 Notion Workspace，不依赖 R2 subscription；若以后切换 R2，再单独核对 R2 免费额度、计费和开通状态。
 
 ## 10. 回退与恢复
 
 - 代码回退不等于数据回退；
 - 回退 Worker 前先确认旧代码兼容当前 schema；
 - D1 数据恢复只先恢复到隔离库并对账，不能直接覆盖有新写入的正式库；
-- R2/附件需要独立核对，不以 D1 manifest checksum 代替附件本体完整性；
+- 对象存储中的附件需要独立核对，不以 D1 manifest checksum 代替附件本体完整性；Notion 的应用删除是逻辑删除，底层 FileUpload 当前无法通过 API 物理撤销，敏感数据治理必须单独考虑这一边界；
 - `auth_sessions` 不恢复；
 - 首次正式/共享环境使用后 migration 历史冻结，只追加；
 - 保留前一 Worker version/deployment ID、准确 schema 状态、备份引用和回退证据。
@@ -238,8 +242,10 @@ migration/schema ready 后手工触发 `Production release`：
 - D1 migrations：https://developers.cloudflare.com/d1/reference/migrations/
 - D1 价格：https://developers.cloudflare.com/d1/platform/pricing/
 - D1 限制：https://developers.cloudflare.com/d1/platform/limits/
-- R2 文档：https://developers.cloudflare.com/r2/
-- R2 价格：https://developers.cloudflare.com/r2/pricing/
+- Notion API：https://developers.notion.com/
+- Notion File Upload：https://developers.notion.com/guides/data-apis/working-with-files-and-media
+- R2 文档（备用 provider）：https://developers.cloudflare.com/r2/
+- R2 价格（备用 provider）：https://developers.cloudflare.com/r2/pricing/
 - Cloudflare Account Members：https://developers.cloudflare.com/fundamentals/manage-members/
 - Account-owned API Tokens：https://developers.cloudflare.com/fundamentals/api/get-started/account-owned-tokens/
 

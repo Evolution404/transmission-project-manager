@@ -8,7 +8,7 @@
 |---|---|---|
 | 资产所有者 / 兜底负责人 | 保留账户所有权、重大授权、紧急恢复 | 日常业务和发布不得要求其登录 |
 | 应用管理员 | 在系统内新增/停用成员、角色、框架/项目范围、规则配置 | 不需要 Cloudflare 账号 |
-| 技术运维负责人 | 域名、Workers、D1/R2、Secrets、WAF、迁移、故障 | 不共享资产所有者密码或 Global API Key |
+| 技术运维负责人 | 域名、Workers、D1、对象存储、Secrets、WAF、迁移、故障 | 不共享资产所有者密码或 Global API Key |
 | CI/CD 服务身份 | 自动测试、受控发布、迁移 | 使用 account-owned API token，不绑定个人长期 Token |
 
 ## 2. 应用内交接
@@ -23,7 +23,7 @@
 
 - [ ] 资产所有者或现有 Super Administrator 邀请受托技术运维负责人使用其自己的 Cloudflare 身份。
 - [ ] 按职责授予最小权限；只有明确需要独立管理 Account Members / account-owned token 时才授予相应高权限。
-- [ ] 记录正式 Worker、D1、R2、域名、WAF 和生产环境名称，不记录密码、`AUTH_CREDENTIAL_PEPPER`、`BOOTSTRAP_TOKEN` 或 API Token 明文。
+- [ ] 记录正式 Worker、D1、对象存储 provider/非敏感资源 ID、域名、WAF 和生产环境名称，不记录密码、`AUTH_CREDENTIAL_PEPPER`、`NOTION_API_TOKEN`、`BOOTSTRAP_TOKEN` 或其他 API Token 明文。
 - [ ] 验证受托运维负责人无需资产所有者登录即可查看运行状态、轮换 Secrets 并执行授权范围内的维护。
 
 ## 4. GitHub 与 CI/CD（P7）

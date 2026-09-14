@@ -57,11 +57,34 @@ jobs:
             fi
           }
 
+          cf_get_optional_r2() {
+            local path="$1"
+            local output="$2"
+            local http_status
+            http_status=$(curl --silent --show-error \
+              -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+              -H 'Accept: application/json' \
+              -w '%{http_code}' \
+              "https://api.cloudflare.com/client/v4${path}" \
+              -o "$output")
+            if [[ "$http_status" == "403" ]] && jq -e '.errors[]? | select(.code == 10042)' "$output" >/dev/null; then
+              printf '{"success":true,"result":{"buckets":[]},"r2_enabled":false}\n' > "$output"
+              return 0
+            fi
+            if [[ "$http_status" != 2* ]] || ! jq -e '.success == true' "$output" >/dev/null; then
+              printf 'Cloudflare API request failed: path=%s http=%s\n' "$path" "$http_status" >&2
+              jq -c '{success, errors}' "$output" >&2 || true
+              return 1
+            fi
+            jq '. + {r2_enabled: true}' "$output" > "$output.tmp"
+            mv "$output.tmp" "$output"
+          }
+
           cf_get "/accounts/${ACCOUNT_ID}/tokens/verify" "$INVENTORY_DIR/token-verify.json"
           jq -e '.result.status == "active"' "$INVENTORY_DIR/token-verify.json" >/dev/null
           cf_get "/accounts/${ACCOUNT_ID}/workers/scripts" "$INVENTORY_DIR/workers.json"
           cf_get "/accounts/${ACCOUNT_ID}/d1/database?per_page=100" "$INVENTORY_DIR/d1-list.json"
-          cf_get "/accounts/${ACCOUNT_ID}/r2/buckets?per_page=100" "$INVENTORY_DIR/r2.json"
+          cf_get_optional_r2 "/accounts/${ACCOUNT_ID}/r2/buckets?per_page=100" "$INVENTORY_DIR/r2.json"
           cf_get "/accounts/${ACCOUNT_ID}/workers/domains" "$INVENTORY_DIR/domains.json"
           cf_get "/zones?account.id=${ACCOUNT_ID}&per_page=50" "$INVENTORY_DIR/zones.json"
 
@@ -89,7 +112,9 @@ jobs:
             fi
             echo
             echo '#### R2 buckets'
-            if jq -e '(.result.buckets // .result // []) | length > 0' "$INVENTORY_DIR/r2.json" >/dev/null; then
+            if jq -e '.r2_enabled == false' "$INVENTORY_DIR/r2.json" >/dev/null; then
+              echo '- R2 not enabled for this account (optional for the current Notion production storage plan)'
+            elif jq -e '(.result.buckets // .result // []) | length > 0' "$INVENTORY_DIR/r2.json" >/dev/null; then
               jq -r '(.result.buckets // .result // [])[] | "- `\(.name)` — location `\(.location // "unknown")`, storage class `\(.storage_class // "unknown")`, created `\(.creation_date // "unknown")`"' "$INVENTORY_DIR/r2.json"
             else
               echo '- none'
