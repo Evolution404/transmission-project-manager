@@ -34,6 +34,7 @@ export type { CommitImportValidationInput, ImportValidationRepository, ImportVal
 export type { CommitImportPublishInput, ImportPublishRepository, PublishImportRow } from './import-publish-repository';
 export type { JobMessage, JobPayload, JobQueuePort } from './job-queue';
 export type { ObjectMetadata, ObjectStorePort, ObjectStorePutOptions, StoredObject } from './object-store';
+export type { OperationJournalRecord, OperationJournalRepository } from './operation-journal-repository';
 export type { ScheduledTaskInvocation, SchedulerPort } from './scheduler';
 export type { AuthSessionRecord, CreateSessionRecord, SessionRepository } from './session-repository';
 export type { PersistencePorts } from './runtime';
