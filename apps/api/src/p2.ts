@@ -21,6 +21,8 @@ import { SqlDemandQueryRepository } from './repositories/sql-demand-query-reposi
 import { SqlIdempotencyRepository } from './repositories/sql-idempotency-repository';
 import { SqlImportMappingRepository } from './repositories/sql-import-mapping-repository';
 import { SqlImportRepository } from './repositories/sql-import-repository';
+import { SqlImportValidationRepository } from './repositories/sql-import-validation-repository';
+import type { ImportValidationRepository, ImportValidationRow } from './ports/import-validation-repository';
 import { SqlMaterialRepository } from './repositories/sql-material-repository';
 import { createCloudflarePersistence } from './runtime/cloudflare/persistence';
 
@@ -260,27 +262,23 @@ function splitSectionRange(section: string): { start: string; end: string } | nu
   return start && end ? { start, end } : null;
 }
 
-async function resolveGridLocation(db: D1Database, normalized: NormalizedImportRow, errors: ImportIssue[]) {
-  const voltage = await db.prepare(
-    `SELECT id,display_name FROM voltage_levels WHERE enabled=1 AND display_name=? COLLATE NOCASE LIMIT 1`,
-  ).bind(normalized.voltageRaw).first<{ id: string; display_name: string }>();
+async function resolveGridLocation(repository: ImportValidationRepository, normalized: NormalizedImportRow, errors: ImportIssue[]) {
+  const voltage = await repository.findVoltageByName(normalized.voltageRaw);
   if (!voltage) {
     errors.push({ code: 'VOLTAGE_LEVEL_UNKNOWN', field: 'voltage', message: '电压等级不存在或已停用，请先维护基础台账' });
     return;
   }
   normalized.voltageLevelId = voltage.id;
-  normalized.voltageVerified = voltage.display_name;
-  normalized.voltageRaw = voltage.display_name;
+  normalized.voltageVerified = voltage.displayName;
+  normalized.voltageRaw = voltage.displayName;
 
-  const line = await db.prepare(
-    `SELECT id,line_name FROM transmission_lines WHERE enabled=1 AND voltage_level_id=? AND line_name=? COLLATE NOCASE LIMIT 1`,
-  ).bind(voltage.id, normalized.lineName).first<{ id: string; line_name: string }>();
+  const line = await repository.findLineByName(voltage.id, normalized.lineName);
   if (!line) {
     errors.push({ code: 'LINE_UNKNOWN', field: 'lineName', message: '线路不存在或已停用，请先维护所选电压等级下的线路台账' });
     return;
   }
   normalized.lineId = line.id;
-  normalized.lineName = line.line_name;
+  normalized.lineName = line.lineName;
 
   const rawSection = normalized.section.trim();
   if (rawSection === '全线' || rawSection === '整线') {
@@ -289,28 +287,25 @@ async function resolveGridLocation(db: D1Database, normalized: NormalizedImportR
     normalized.endTowerId = null;
     normalized.section = '全线';
   } else {
-    const exact = await db.prepare('SELECT id FROM transmission_towers WHERE line_id=? AND tower_no=? COLLATE NOCASE AND enabled=1').bind(line.id, rawSection).first();
-    const range = exact ? null : splitSectionRange(rawSection);
+    const exactRows = await repository.findTowersByNumbers(line.id, [rawSection]);
+    const range = exactRows.length ? null : splitSectionRange(rawSection);
     const towerNos = range ? [range.start, range.end] : [rawSection];
-    const placeholders = towerNos.map(() => '?').join(',');
-    const towerRows = await db.prepare(
-      `SELECT id,tower_no,sort_index FROM transmission_towers WHERE enabled=1 AND line_id=? AND tower_no COLLATE NOCASE IN (${placeholders})`,
-    ).bind(line.id, ...towerNos).all<{ id: string; tower_no: string; sort_index: number }>();
-    const byNo = new Map((towerRows.results ?? []).map((row) => [row.tower_no.toLowerCase(), row]));
+    const towerRows = range ? await repository.findTowersByNumbers(line.id, towerNos) : exactRows;
+    const byNo = new Map(towerRows.map((row) => [row.towerNo.toLowerCase(), row]));
     const start = byNo.get(towerNos[0]!.toLowerCase());
     const end = byNo.get(towerNos[towerNos.length - 1]!.toLowerCase());
     if (!start || !end) {
       errors.push({ code: 'TOWER_UNKNOWN', field: 'section', message: '杆塔不存在或已停用，请先维护当前线路下的杆塔台账' });
       return;
     }
-    if (range && start.sort_index >= end.sort_index) {
+    if (range && start.sortIndex >= end.sortIndex) {
       errors.push({ code: 'TOWER_RANGE_REVERSED', field: 'section', message: '区段起止必须为不同杆塔，且起始顺序早于终止' });
       return;
     }
     normalized.locationType = range ? 'tower_range' : 'tower';
     normalized.startTowerId = start.id;
     normalized.endTowerId = end.id;
-    normalized.section = range ? `${start.tower_no}—${end.tower_no}` : start.tower_no;
+    normalized.section = range ? `${start.towerNo}—${end.towerNo}` : start.towerNo;
   }
 
   normalized.businessSignature = await hashText(JSON.stringify([
@@ -326,12 +321,12 @@ async function resolveGridLocation(db: D1Database, normalized: NormalizedImportR
 }
 
 async function normalizeRows(
-  db: D1Database,
-  rows: ImportRowDb[],
+  repository: ImportValidationRepository,
+  rows: readonly ImportValidationRow[],
   mapping: ImportFieldMapping,
-): Promise<Array<{ row: ImportRowDb; normalized: NormalizedImportRow; errors: ImportIssue[]; warnings: ImportIssue[] }>> {
+): Promise<Array<{ row: ImportValidationRow; normalized: NormalizedImportRow; errors: ImportIssue[]; warnings: ImportIssue[] }>> {
   const preliminary = await Promise.all(rows.map(async (row) => {
-    const raw = parseJson<Record<string, unknown>>(row.raw_json, {});
+    const raw = parseJson<Record<string, unknown>>(row.rawJson, {});
     const sequenceNo = cleanText(mappedValue(raw, mapping, 'sequenceNo'));
     const voltageRaw = cleanText(mappedValue(raw, mapping, 'voltage'));
     const lineName = cleanText(mappedValue(raw, mapping, 'lineName'));
@@ -386,7 +381,7 @@ async function normalizeRows(
 
   for (const item of preliminary) {
     if (!item.normalized.voltageRaw || !item.normalized.lineName || !item.normalized.section) continue;
-    await resolveGridLocation(db, item.normalized, item.errors);
+    await resolveGridLocation(repository, item.normalized, item.errors);
   }
 
   const materialPairs = new Map<string, { model: string; unit: string }>();
@@ -399,23 +394,12 @@ async function normalizeRows(
   }
   const materialMap = new Map<string, string>();
   if (materialPairs.size) {
-    const clauses: string[] = [];
-    const params: string[] = [];
-    for (const pair of materialPairs.values()) {
-      clauses.push('(model = ? COLLATE NOCASE AND unit = ? COLLATE NOCASE AND enabled = 1)');
-      params.push(pair.model, pair.unit);
-    }
-    const result = await db.prepare(`SELECT id, model, unit FROM materials WHERE ${clauses.join(' OR ')}`).bind(...params).all<{ id: string; model: string; unit: string }>();
-    for (const material of result.results ?? []) materialMap.set(materialKey(material.model, material.unit), material.id);
+    const result = await repository.findMaterials([...materialPairs.values()]);
+    for (const material of result) materialMap.set(materialKey(material.model, material.unit), material.id);
   }
 
   const signatures = preliminary.map((item) => item.normalized.businessSignature).filter((value): value is string => Boolean(value));
-  const duplicates = new Set<string>();
-  if (signatures.length) {
-    const placeholders = signatures.map(() => '?').join(',');
-    const result = await db.prepare(`SELECT DISTINCT business_signature FROM demands WHERE business_signature IN (${placeholders})`).bind(...signatures).all<{ business_signature: string }>();
-    for (const existing of result.results ?? []) duplicates.add(existing.business_signature);
-  }
+  const duplicates = new Set(await repository.findExistingBusinessSignatures(signatures));
 
   for (const item of preliminary) {
     if (item.normalized.materialModel) {
@@ -670,74 +654,65 @@ p2App.post('/imports/:id/validate', requireRoles('admin', 'project_manager'), as
   const hash = await requestHash(requestBody);
   const replay = await replayIdempotentResponse(c, key, operation, hash);
   if (replay) return replay;
-  const batch = await findBatch(c.env.DB, c.req.param('id'));
+  const { database } = createCloudflarePersistence(c.env);
+  const importRepository = new SqlImportRepository(database);
+  const validationRepository = new SqlImportValidationRepository(database);
+  const batch = await importRepository.findById(c.req.param('id'));
   if (!batch) return c.json(apiError('IMPORT_NOT_FOUND', '导入批次不存在'), 404);
   if (batch.version !== expectedVersion) return c.json(apiError('VERSION_CONFLICT', '导入批次版本已变化，请刷新后重试'), 409);
   if (!['draft', 'validating'].includes(batch.status)) return c.json(apiError('IMPORT_VALIDATION_CLOSED', '该批次不能再次校验'), 409);
-  if (batch.uploaded_rows === 0) return c.json(apiError('IMPORT_EMPTY', '导入批次没有源数据'), 422);
+  if (batch.uploadedRows === 0) return c.json(apiError('IMPORT_EMPTY', '导入批次没有源数据'), 422);
 
-  const rowResult = await c.env.DB.prepare(
-    `SELECT id,batch_id,chunk_index,sheet_name,source_row_number,source_key,raw_json,normalized_json,errors_json,warnings_json,row_status,published_demand_id
-     FROM import_rows WHERE batch_id=? AND row_status='uploaded' ORDER BY source_row_number,id LIMIT ?`,
-  ).bind(batch.id, MAX_VALIDATION_ROWS).all<ImportRowDb>();
-  const rows = rowResult.results ?? [];
-  const mapping = parseJson<ImportFieldMapping>(batch.mapping_json, {} as ImportFieldMapping);
-  const normalizedRows = await normalizeRows(c.env.DB, rows, mapping);
+  const rows = await validationRepository.listUploadedRows(batch.id, MAX_VALIDATION_ROWS);
+  const normalizedRows = await normalizeRows(validationRepository, rows, batch.mapping);
   const validIncrement = normalizedRows.filter((item) => item.errors.length === 0).length;
   const errorIncrement = normalizedRows.length - validIncrement;
   const warningIncrement = normalizedRows.filter((item) => item.warnings.length > 0).length;
-  const nextValidRows = batch.valid_rows + validIncrement;
-  const nextErrorRows = batch.error_rows + errorIncrement;
-  const nextWarningRows = batch.warning_rows + warningIncrement;
+  const nextValidRows = batch.validRows + validIncrement;
+  const nextErrorRows = batch.errorRows + errorIncrement;
+  const nextWarningRows = batch.warningRows + warningIncrement;
   const processedRows = nextValidRows + nextErrorRows;
-  const remaining = Math.max(0, batch.uploaded_rows - processedRows);
+  const remaining = Math.max(0, batch.uploadedRows - processedRows);
   const nextStatus: ImportBatchSummary['status'] = remaining > 0 ? 'validating' : nextErrorRows > 0 ? 'review' : 'ready';
-  const nextVersion = expectedVersion + 1;
   const now = new Date().toISOString();
   const actor = c.get('currentUser');
   const data = {
-    ...batchSummary({
-      ...batch,
-      status: nextStatus,
-      valid_rows: nextValidRows,
-      error_rows: nextErrorRows,
-      warning_rows: nextWarningRows,
-      version: nextVersion,
-      updated_at: now,
-    }),
+    ...batch,
+    status: nextStatus,
+    validRows: nextValidRows,
+    errorRows: nextErrorRows,
+    warningRows: nextWarningRows,
+    version: expectedVersion + 1,
+    updatedAt: now,
     done: remaining === 0,
   };
   const response = { ok: true as const, data };
-  const statements: D1PreparedStatement[] = [guardedIdempotencyInsert(c.env.DB, {
-    key,
-    actorId: actor.id,
-    operation,
-    requestHash: hash,
-    responseJson: JSON.stringify(response),
-    statusCode: 200,
-    now,
-    batchId: batch.id,
-    expectedVersion,
-    allowedStatuses: ['draft', 'validating'],
-  })];
-  for (const item of normalizedRows) {
-    const status = item.errors.length ? 'error' : 'valid';
-    statements.push(c.env.DB.prepare(
-      `UPDATE import_rows SET normalized_json=?,errors_json=?,warnings_json=?,row_status=?,updated_at=? WHERE id=? AND batch_id=?`,
-    ).bind(JSON.stringify(item.normalized), JSON.stringify(item.errors), JSON.stringify(item.warnings), status, now, item.row.id, batch.id));
-  }
-  statements.push(c.env.DB.prepare(
-    `UPDATE import_batches
-     SET status=?,valid_rows=?,error_rows=?,warning_rows=?,version=version+1,updated_at=?
-     WHERE id=? AND version=? AND status IN ('draft','validating')`,
-  ).bind(nextStatus, nextValidRows, nextErrorRows, nextWarningRows, now, batch.id, expectedVersion));
   try {
-    const result = await c.env.DB.batch(statements);
-    if (Number(result.at(-1)?.meta.changes ?? 0) !== 1) return c.json(apiError('VERSION_CONFLICT', '导入批次已变化，请刷新后重试'), 409);
+    await validationRepository.commitValidation({
+      batchId: batch.id,
+      expectedVersion,
+      actorId: actor.id,
+      now,
+      idempotencyKey: key,
+      operation,
+      requestHash: hash,
+      responseJson: JSON.stringify(response),
+      nextStatus,
+      validRows: nextValidRows,
+      errorRows: nextErrorRows,
+      warningRows: nextWarningRows,
+      rows: normalizedRows.map((item) => ({
+        id: item.row.id,
+        normalizedJson: JSON.stringify(item.normalized),
+        errorsJson: JSON.stringify(item.errors),
+        warningsJson: JSON.stringify(item.warnings),
+        status: item.errors.length ? 'error' : 'valid',
+      })),
+    });
   } catch {
     const replayAfterRace = await replayIdempotentResponse(c, key, operation, hash);
     if (replayAfterRace) return replayAfterRace;
-    const current = await findBatch(c.env.DB, batch.id);
+    const current = await importRepository.findById(batch.id);
     if (current && current.version !== expectedVersion) return c.json(apiError('VERSION_CONFLICT', '导入批次版本已变化，请刷新后重试'), 409);
     return c.json(apiError('IMPORT_VALIDATION_CONFLICT', '导入校验发生并发冲突，请刷新后继续'), 409);
   }
@@ -769,6 +744,8 @@ p2App.post('/imports/:id/publish', requireRoles('admin', 'project_manager'), asy
   const hash = await requestHash(requestBody);
   const replay = await replayIdempotentResponse(c, key, operation, hash);
   if (replay) return replay;
+  const { database: validationDatabase } = createCloudflarePersistence(c.env);
+  const publishValidationRepository = new SqlImportValidationRepository(validationDatabase);
   const batch = await findBatch(c.env.DB, c.req.param('id'));
   if (!batch) return c.json(apiError('IMPORT_NOT_FOUND', '导入批次不存在'), 404);
   if (batch.version !== expectedVersion) return c.json(apiError('VERSION_CONFLICT', '导入批次版本已变化，请刷新后重试'), 409);
@@ -788,7 +765,7 @@ p2App.post('/imports/:id/publish', requireRoles('admin', 'project_manager'), asy
     if (!normalized) errors.push({ code: 'LOCATION_MISSING', message: '缺少位置校验结果，请重新校验' });
     else {
       const checked = { ...normalized };
-      await resolveGridLocation(c.env.DB, checked, errors);
+      await resolveGridLocation(publishValidationRepository, checked, errors);
       if (!errors.length && (checked.voltageLevelId !== normalized.voltageLevelId || checked.lineId !== normalized.lineId || checked.startTowerId !== normalized.startTowerId || checked.endTowerId !== normalized.endTowerId)) errors.push({ code: 'LOCATION_CHANGED', message: '台账对象已变化，请重新校验' });
     }
     if (errors.length) gridErrors.push({ sheetName: row.sheet_name, rowNumber: row.source_row_number, errors });

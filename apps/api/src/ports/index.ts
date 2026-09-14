@@ -12,6 +12,7 @@ export type { DemandPage, DemandPageCursor, DemandQueryRepository } from './dema
 export type { IdempotencyReplayRecord, IdempotencyRepository } from './idempotency-repository';
 export type { CreateImportMappingRecord, ImportMappingRepository } from './import-mapping-repository';
 export type { CreateImportBatchRecord, ImportChunkWriteRow, ImportRepository, RecordImportReuseInput, UploadImportChunkInput } from './import-repository';
+export type { CommitImportValidationInput, ImportValidationRepository, ImportValidationRow } from './import-validation-repository';
 export type { JobMessage, JobPayload, JobQueuePort } from './job-queue';
 export type { ObjectMetadata, ObjectStorePort, ObjectStorePutOptions, StoredObject } from './object-store';
 export type { ScheduledTaskInvocation, SchedulerPort } from './scheduler';
