@@ -9,6 +9,7 @@ export type { CreateReserveCategoryRecord, ReserveCategoryWriteRepository, Upser
 export type { BudgetAllocationWrite, ConfirmBudgetRecord, CreateBudgetRecord, FinanceBudgetRepository, UpdateBudgetRecord } from './finance-budget-repository';
 export type { CreateFinancialEntryRecord, FinanceEntryRepository, FinancialEntryAllocationWrite, FinancialEntryCursor, FinancialEntryListInput, ReverseFinancialEntryRecord } from './finance-entry-repository';
 export type { AgreementAllocationValidation, FinanceQueryRepository } from './finance-query-repository';
+export type { FinanceSummaryAgreementFacts, FinanceSummaryFacts, FinanceSummaryRepository } from './finance-summary-repository';
 export type { BindProjectFrameworkRecord, CreateAgreementRecord, CreateFrameworkRecord, FinanceWriteRepository, UpdateAgreementRecord, UpdateFrameworkRecord } from './finance-write-repository';
 export type { CreateMaterialRecord, MaterialRepository } from './material-repository';
 export type { CommitSingleMasterDataInput, MasterDataWriteKind, MasterDataWriteRepository } from './master-data-write-repository';

@@ -24,26 +24,12 @@ import { hasScope, requireRoles, type AppEnv } from './auth';
 import { SqlFinanceBudgetRepository } from './repositories/sql-finance-budget-repository';
 import { SqlFinanceEntryRepository } from './repositories/sql-finance-entry-repository';
 import { SqlFinanceQueryRepository } from './repositories/sql-finance-query-repository';
+import { SqlFinanceSummaryRepository } from './repositories/sql-finance-summary-repository';
 import { SqlFinanceWriteRepository } from './repositories/sql-finance-write-repository';
 import { SqlIdempotencyRepository } from './repositories/sql-idempotency-repository';
 import { createCloudflarePersistence } from './runtime/cloudflare/persistence';
 
 const MAX_PAGE_SIZE = 100;
-
-type FrameworkRow = {
-  id: string; code: string; name: string; total_amount_fen: number; annual_target_fen: number | null;
-  start_date: string; end_date: string; version: number; created_at: string; updated_at: string;
-};
-type AgreementRow = {
-  id: string; framework_id: string; code: string; name: string; amount_fen: number; valid_from: string; valid_to: string;
-  status: AgreementStatus; version: number; created_at: string; updated_at: string;
-};
-type ProjectRow = { id: string; name: string; framework_id: string | null; version: number };
-type AllocationRow = { agreement_id: string; amount_fen: number; code: string; name: string };
-type FinancialEntryRow = {
-  id: string; framework_id: string; project_id: string; project_name: string; entry_type: FinancialEntryType;
-  business_date: string; amount_fen: number; note: string | null; reverses_entry_id: string | null; created_at: string;
-};
 
 function apiError(code: string, message: string, details?: unknown): ApiError {
   return { ok: false, error: { code, message, ...(details === undefined ? {} : { details }) } };
@@ -102,37 +88,6 @@ async function replayIdempotentResponse(c: Context<AppEnv>, key: string, operati
   }
   return new Response(row.responseJson, { status: row.statusCode, headers: { 'Content-Type': 'application/json; charset=UTF-8', 'Cache-Control': 'no-store' } });
 }
-function idempotencyStatement(db: D1Database, key: string, actorId: string, operation: string, hash: string, response: unknown, statusCode: number, now: string) {
-  return db.prepare(
-    `INSERT INTO idempotency_records (idempotency_key,actor_member_id,operation,request_hash,response_json,status_code,created_at)
-     VALUES (?,?,?,?,?,?,?)`,
-  ).bind(key, actorId, operation, hash, JSON.stringify(response), statusCode, now);
-}
-function auditStatement(db: D1Database, actorId: string, action: string, objectType: string, objectId: string, before: unknown, after: unknown, now: string) {
-  return db.prepare(
-    `INSERT INTO audit_events (id,actor_member_id,action,object_type,object_id,before_json,after_json,created_at)
-     VALUES (?,?,?,?,?,?,?,?)`,
-  ).bind(crypto.randomUUID(), actorId, action, objectType, objectId,
-    before === null ? null : JSON.stringify(before), after === null ? null : JSON.stringify(after), now);
-}
-function frameworkSummary(row: FrameworkRow): FrameworkSummary {
-  return {
-    id: row.id, code: row.code, name: row.name, totalAmountFen: row.total_amount_fen,
-    annualTargetFen: row.annual_target_fen, startDate: row.start_date, endDate: row.end_date,
-    version: row.version, createdAt: row.created_at, updatedAt: row.updated_at,
-  };
-}
-async function findFramework(db: D1Database, id: string) {
-  return db.prepare(`SELECT id,code,name,total_amount_fen,annual_target_fen,start_date,end_date,version,created_at,updated_at FROM frameworks WHERE id=? LIMIT 1`)
-    .bind(id).first<FrameworkRow>();
-}
-async function findAgreement(db: D1Database, id: string) {
-  return db.prepare(`SELECT id,framework_id,code,name,amount_fen,valid_from,valid_to,status,version,created_at,updated_at FROM agreements WHERE id=? LIMIT 1`)
-    .bind(id).first<AgreementRow>();
-}
-async function findProject(db: D1Database, id: string) {
-  return db.prepare(`SELECT id,name,framework_id,version FROM projects WHERE id=? LIMIT 1`).bind(id).first<ProjectRow>();
-}
 function canFramework(c: Context<AppEnv>, frameworkId: string) {
   const user = c.get('currentUser');
   return user.role === 'admin' || hasScope(user.scopes, 'framework', frameworkId);
@@ -165,19 +120,6 @@ function normalizeEntryAllocations(value: unknown): FinancialEntryAllocationInpu
   if (!base) return null;
   return base.map((item) => ({ agreementId: item.agreementId, amountFen: item.amountFen }));
 }
-async function validateAgreementAllocations(db: D1Database, frameworkId: string, allocations: BudgetAllocationInput[], effectiveDate: string | null, requireActive: boolean) {
-  const summaries: BudgetAllocationSummary[] = [];
-  for (const item of allocations) {
-    const agreement = await findAgreement(db, item.agreementId);
-    if (!agreement) return { error: apiError('AGREEMENT_NOT_FOUND', '协议不存在') };
-    if (agreement.framework_id !== frameworkId) return { error: apiError('AGREEMENT_FRAMEWORK_MISMATCH', '协议与项目不属于同一框架') };
-    if (requireActive && (agreement.status !== 'active' || (effectiveDate !== null && (effectiveDate < agreement.valid_from || effectiveDate > agreement.valid_to)))) {
-      return { error: apiError('AGREEMENT_NOT_EFFECTIVE', '协议在业务日期不是有效状态') };
-    }
-    summaries.push({ agreementId: agreement.id, amountFen: item.amountFen, agreementCode: agreement.code, agreementName: agreement.name });
-  }
-  return { summaries };
-}
 function basisPoints(numerator: number, denominator: number): number | null {
   if (denominator <= 0) return null;
   const value = (BigInt(numerator) * 10000n + BigInt(Math.floor(denominator / 2))) / BigInt(denominator);
@@ -185,12 +127,6 @@ function basisPoints(numerator: number, denominator: number): number | null {
 }
 function ratioAtLeast(numerator: number, denominator: number, thresholdBasisPoints: number) {
   return denominator > 0 && BigInt(numerator) * 10000n >= BigInt(denominator) * BigInt(thresholdBasisPoints);
-}
-function parseSqlSafeInteger(value: unknown): number | null {
-  if (typeof value === 'number') return Number.isSafeInteger(value) ? value : null;
-  if (typeof value !== 'string' || !/^-?\d+$/.test(value)) return null;
-  const integer = BigInt(value);
-  return integer <= BigInt(Number.MAX_SAFE_INTEGER) && integer >= BigInt(Number.MIN_SAFE_INTEGER) ? Number(integer) : null;
 }
 function makeEntryCursor(businessDate: string, createdAt: string, id: string) {
   return btoa(JSON.stringify({ businessDate, createdAt, id })).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
@@ -679,77 +615,56 @@ p4App.post('/financial-entries/:id/reverse', requireRoles('admin', 'finance'), a
 p4App.get('/finance/summary', async (c) => {
   const frameworkId = cleanText(c.req.query('frameworkId')), asOf = dateValue(c.req.query('asOf'));
   if (!frameworkId || !asOf) return c.json(apiError('INVALID_SUMMARY_QUERY', 'frameworkId 和 asOf 必须有效'), 400);
-  const framework = await findFramework(c.env.DB, frameworkId); if (!framework) return c.json(apiError('NOT_FOUND', '框架不存在'), 404);
+  const { database } = createCloudflarePersistence(c.env);
+  const framework = await new SqlFinanceQueryRepository(database).findFramework(frameworkId); if (!framework) return c.json(apiError('NOT_FOUND', '框架不存在'), 404);
   if (!canFramework(c, frameworkId)) return c.json(apiError('SCOPE_FORBIDDEN', '无权查看该框架资金数据'), 403);
 
-  const [budget, entries, agreementsResult, committedResult, usedResult] = await Promise.all([
-    c.env.DB.prepare(
-      `SELECT COALESCE(SUM(bv.total_amount_fen),0) AS total
-       FROM project_budgets pb INNER JOIN budget_versions bv ON bv.budget_id=pb.id AND bv.budget_version=pb.budget_version
-       WHERE bv.framework_id=?`,
-    ).bind(frameworkId).first<{ total: number | string }>(),
-    c.env.DB.prepare(
-      `SELECT
-         COALESCE(SUM(CASE WHEN entry_type='budget_occurrence' THEN amount_fen ELSE 0 END),0) AS budget_occurrence,
-         COALESCE(SUM(CASE WHEN entry_type='actual_cost' THEN amount_fen ELSE 0 END),0) AS actual_cost
-       FROM financial_entries WHERE framework_id=? AND business_date<=?`,
-    ).bind(frameworkId, asOf).first<{ budget_occurrence: number | string; actual_cost: number | string }>(),
-    c.env.DB.prepare(`SELECT id,framework_id,code,name,amount_fen,valid_from,valid_to,status,version,created_at,updated_at FROM agreements WHERE framework_id=? ORDER BY code COLLATE NOCASE,id`).bind(frameworkId).all<AgreementRow>(),
-    c.env.DB.prepare(
-      `SELECT bva.agreement_id,COALESCE(SUM(bva.amount_fen),0) AS total
-       FROM budget_version_allocations bva
-       INNER JOIN budget_versions bv ON bv.id=bva.budget_version_id
-       INNER JOIN project_budgets pb ON pb.id=bv.budget_id AND pb.budget_version=bv.budget_version
-       WHERE bv.framework_id=?
-       GROUP BY bva.agreement_id`,
-    ).bind(frameworkId).all<{ agreement_id: string; total: number | string }>(),
-    c.env.DB.prepare(
-      `SELECT fea.agreement_id,
-              COALESCE(SUM(CASE WHEN fe.entry_type='budget_occurrence' THEN fea.amount_fen ELSE 0 END),0) AS occurrence,
-              COALESCE(SUM(CASE WHEN fe.entry_type='actual_cost' THEN fea.amount_fen ELSE 0 END),0) AS actual
-       FROM financial_entry_allocations fea INNER JOIN financial_entries fe ON fe.id=fea.financial_entry_id
-       WHERE fe.framework_id=? AND fe.business_date<=?
-       GROUP BY fea.agreement_id`,
-    ).bind(frameworkId, asOf).all<{ agreement_id: string; occurrence: number | string; actual: number | string }>(),
-  ]);
-  const confirmedBudgetFen = parseSqlSafeInteger(budget?.total ?? 0);
-  const budgetOccurrenceFen = parseSqlSafeInteger(entries?.budget_occurrence ?? 0);
-  const actualCostFen = parseSqlSafeInteger(entries?.actual_cost ?? 0);
-  if (confirmedBudgetFen === null || budgetOccurrenceFen === null || actualCostFen === null) {
-    return c.json(apiError('AMOUNT_OVERFLOW', '资金汇总金额超出安全整数范围'), 422);
-  }
-  const committedByAgreement = new Map<string, number>();
-  for (const row of committedResult.results ?? []) {
-    const amount = parseSqlSafeInteger(row.total);
-    if (amount === null) return c.json(apiError('AMOUNT_OVERFLOW', '协议预算汇总金额超出安全整数范围'), 422);
-    committedByAgreement.set(row.agreement_id, amount);
-  }
-  const usedByAgreement = new Map<string, { occurrence: number; actual: number }>();
-  for (const row of usedResult.results ?? []) {
-    const occurrence = parseSqlSafeInteger(row.occurrence), actual = parseSqlSafeInteger(row.actual);
-    if (occurrence === null || actual === null) return c.json(apiError('AMOUNT_OVERFLOW', '协议发生汇总金额超出安全整数范围'), 422);
-    usedByAgreement.set(row.agreement_id, { occurrence, actual });
+  let facts;
+  try {
+    facts = await new SqlFinanceSummaryRepository(database).getFacts(frameworkId, asOf);
+  } catch (error) {
+    if (error instanceof RangeError) return c.json(apiError('AMOUNT_OVERFLOW', '资金汇总金额超出安全整数范围'), 422);
+    throw error;
   }
   const metrics: FinanceAgreementMetric[] = [];
   const effectiveAgreementAmounts: number[] = [];
-  for (const agreement of agreementsResult.results ?? []) {
-    const committed = committedByAgreement.get(agreement.id) ?? 0;
-    const used = usedByAgreement.get(agreement.id) ?? { occurrence: 0, actual: 0 };
-    const bp = basisPoints(used.occurrence, agreement.amount_fen);
-    const effective = agreement.status === 'active' && asOf >= agreement.valid_from && asOf <= agreement.valid_to;
-    if (effective) effectiveAgreementAmounts.push(agreement.amount_fen);
-    metrics.push({ id: agreement.id, code: agreement.code, name: agreement.name, amountFen: agreement.amount_fen, budgetCommittedFen: committed, budgetOccurrenceFen: used.occurrence, actualCostFen: used.actual, usageBasisPoints: bp, usageConfigured: bp !== null, usageWarning: ratioAtLeast(used.occurrence, agreement.amount_fen, 9000) });
+  for (const item of facts.agreements) {
+    const agreement = item.agreement;
+    const bp = basisPoints(item.budgetOccurrenceFen, agreement.amountFen);
+    const effective = agreement.status === 'active' && asOf >= agreement.validFrom && asOf <= agreement.validTo;
+    if (effective) effectiveAgreementAmounts.push(agreement.amountFen);
+    metrics.push({
+      id: agreement.id,
+      code: agreement.code,
+      name: agreement.name,
+      amountFen: agreement.amountFen,
+      budgetCommittedFen: item.budgetCommittedFen,
+      budgetOccurrenceFen: item.budgetOccurrenceFen,
+      actualCostFen: item.actualCostFen,
+      usageBasisPoints: bp,
+      usageConfigured: bp !== null,
+      usageWarning: ratioAtLeast(item.budgetOccurrenceFen, agreement.amountFen, 9000),
+    });
   }
   const agreementReservedFen = safeSum(effectiveAgreementAmounts);
   if (agreementReservedFen === null) return c.json(apiError('AMOUNT_OVERFLOW', '有效协议额度合计超出安全整数范围'), 422);
-  const frameworkUsage = basisPoints(budgetOccurrenceFen, framework.total_amount_fen);
-  const annualDenominator = framework.annual_target_fen ?? framework.total_amount_fen;
-  const annualProgress = basisPoints(budgetOccurrenceFen, annualDenominator);
+  const frameworkUsage = basisPoints(facts.budgetOccurrenceFen, framework.totalAmountFen);
+  const annualDenominator = framework.annualTargetFen ?? framework.totalAmountFen;
+  const annualProgress = basisPoints(facts.budgetOccurrenceFen, annualDenominator);
   const data: FrameworkFinanceSummary = {
-    framework: frameworkSummary(framework), asOf, confirmedBudgetFen, budgetOccurrenceFen, actualCostFen, agreementReservedFen,
-    frameworkUsageBasisPoints: frameworkUsage, frameworkUsageConfigured: frameworkUsage !== null, frameworkUsageWarning: ratioAtLeast(budgetOccurrenceFen, framework.total_amount_fen, 8000),
-    annualProgressBasisPoints: annualProgress, annualProgressConfigured: annualProgress !== null,
-    budgetOverFrameworkWarning: confirmedBudgetFen > framework.total_amount_fen, agreements: metrics,
+    framework,
+    asOf,
+    confirmedBudgetFen: facts.confirmedBudgetFen,
+    budgetOccurrenceFen: facts.budgetOccurrenceFen,
+    actualCostFen: facts.actualCostFen,
+    agreementReservedFen,
+    frameworkUsageBasisPoints: frameworkUsage,
+    frameworkUsageConfigured: frameworkUsage !== null,
+    frameworkUsageWarning: ratioAtLeast(facts.budgetOccurrenceFen, framework.totalAmountFen, 8000),
+    annualProgressBasisPoints: annualProgress,
+    annualProgressConfigured: annualProgress !== null,
+    budgetOverFrameworkWarning: facts.confirmedBudgetFen > framework.totalAmountFen,
+    agreements: metrics,
   };
   return c.json({ ok: true as const, data });
 });
