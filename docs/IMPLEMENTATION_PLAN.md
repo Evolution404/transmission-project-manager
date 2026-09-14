@@ -1,6 +1,6 @@
 # 实施计划与验收清单
 
-版本：2026-09-13。长期业务事实见 `BUSINESS_BASELINE.md`，本文件只维护当前阶段状态、已完成能力和下一步，不再保存每个历史阶段的完整施工日志。
+版本：2026-09-14。长期业务事实见 `BUSINESS_BASELINE.md`，本文件只维护当前阶段状态、已完成能力和下一步，不再保存每个历史阶段的完整施工日志。业务阶段与后端可移植化施工状态分开记录，避免把“业务 P4 已完成”误解为“P4 portability 已完成”。
 
 ## 1. 阶段总览
 
@@ -16,6 +16,23 @@
 | P6 | 月报、分析、预警、年度事项、通知 outbox、D1→R2 逻辑备份 | 已完成 |
 | 基础台账重构 | 电压等级 → 线路 → 杆塔 → 需求位置对象化 | 已完成并通过本地/合成门禁 |
 | P7 | 真实业务数据、真实 Cloudflare/D1/R2/通知/网络、恢复和运维移交 | 未完成，需真实环境验收 |
+
+### 后端可移植化施工线
+
+当前施工分支：`refactor/backend-runtime-portability-20260913`。
+
+| 模块 | 状态 |
+|---|---|
+| Portable ports + D1/R2 + SQLite/Filesystem adapters | 已完成 |
+| Auth / Session / Credential / Member admin | 已完成 |
+| P5 附件内容与元数据 | 已完成 |
+| P9 基础台账与结构化需求 | 已完成 |
+| P2 导入/需求 | 已完成；`p2.ts` 0 直接 D1 |
+| P3 项目储备 | 已完成；`p3.ts` 0 直接 D1，已有静态防回退门禁 |
+| P4 财务 | 进行中；查询与幂等 replay 已迁移，framework/agreement 写仓储当前 WIP |
+| P5/P8 执行业务 | 待迁移 |
+| P6 backup / notification 后台任务 | 待迁移 |
+| Node + SQLite + Filesystem 应用级 E2E / 迁移演练 | 待完成 |
 
 ## 2. 当前业务主路径
 
@@ -86,30 +103,21 @@
 
 所有新功能和缺陷修复继续执行 test-first，详见 `TESTING.md`。
 
-基础台账重构完成后的最新等价完整门禁：
+P3 可移植化收口提交 `e34bde3` 后最近一次完整 `npm run check`：
 
 - TypeScript：PASS。
 - Web production build：PASS。
 - Worker `wrangler deploy --dry-run`：PASS。
-- Vue/Vitest：16 个文件，64/64 PASS。
-- Node/workerd+D1：17 个文件，139/139 PASS。
-- 合计自动测试：203/203 PASS。
+- Vue/Vitest：64/64 PASS。
+- Node：210/210 PASS。
 
-由于执行工具单次 300 秒限制，Node 测试按文件组覆盖全部 `tests/*.test.mjs`；没有跳过测试。单次 `npm run check` 仍是 CI/人工环境的统一命令。
+这只证明本地/合成门禁，不等于生产验收。之后的 P4 查询迁移和幂等 replay 已通过 `p4-finance` 11/11、`finance-query-repository` 2/2、repository guards 和双 runtime typecheck；P4 后续 WIP 完成后需再次跑完整 `npm run check`。
 
-## 5. 功能验收分支
+## 5. 当前施工与发布边界
 
-基础台账功能验收分支：`wip/master-data-refactor-20260913`。
-已推送验收提交：`484cbaf`。
+当前施工分支：`refactor/backend-runtime-portability-20260913`。`main` 尚未合并本轮可移植化重构；未升级远端 D1、未正式部署，也未用真实业务文件替代合成测试。
 
-本轮没有：
-
-- 合并 `main`；
-- 升级远端 D1；
-- 部署基础台账重构；
-- 使用真实业务文件替代合成测试。
-
-用户验收发现问题时，先补自动回归测试，再改功能分支并重跑完整门禁。
+当前详细施工状态、未提交工作区和下一步只维护在 `AI_HANDOFF.md`。历史功能分支和阶段性 WIP 以 Git 历史追溯，不再在长期文档中保留。
 
 ## 6. P7 剩余工作
 

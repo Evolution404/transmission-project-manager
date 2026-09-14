@@ -2,13 +2,13 @@
 
 面向 20 人以内团队的项目管理应用，计划采用 Cloudflare Workers、D1、R2，免费额度内运行，支持电脑和手机访问。
 
-**当前状态：P0–P6、最终业务模型重构和“电压等级 → 线路 → 杆塔 → 需求定位”基础台账对象化重构均已完成本地/合成门禁；P7 的真实业务数据与正式环境验收仍待完成。基础台账功能分支尚未执行远端 D1 升级、`main` 合并或正式发布。**
+**当前状态：P0–P6、最终业务模型和“电压等级 → 线路 → 杆塔 → 需求定位”基础台账对象化均已完成；当前正在 `refactor/backend-runtime-portability-20260913` 上进行后端可移植化重构，Cloudflare Free 仍是部署基线，同时逐步建立 Node + SQLite + Filesystem 第二运行时。P7 真实业务数据与正式环境验收仍待完成；本轮未升级远端 D1、未合并 `main`、未正式发布。**
 当前业务认证完全由系统自身维护：用户使用 `username + 密码` 登录，浏览器 Web Worker 负责 Argon2id 派生，服务端只保存带运行时 pepper 的 HMAC verifier，并签发 7 天 HttpOnly 会话。邮箱不参与账号体系。需求、储备、资金、实施结算、提醒与分片备份均已有本地实现。
 
 ## 交给其他 AI 的入口
 
 1. 先看 [文档导航](docs/README.md)，不要从历史 dated handoff 猜当前基线。
-2. 对外快速交接使用 [NEXT_AI.md](docs/NEXT_AI.md)，完整当前状态见 [AI 交接说明](docs/AI_HANDOFF.md)。
+2. 当前代码交接只使用 [AI 交接说明](docs/AI_HANDOFF.md)，避免维护多份容易漂移的 handoff。
 3. 业务事实以 [当前业务基线](docs/BUSINESS_BASELINE.md)、[设计方案](docs/DESIGN.md)、[数据模型](docs/DATA_MODEL.md) 为准。
 4. 开发前阅读 [测试策略](docs/TESTING.md)：所有新阶段和缺陷修复必须先写验收/回归测试，再改生产代码。
 5. 正式环境按 [P7 验收矩阵](docs/P7_ACCEPTANCE.md) 和 [预检/发布/恢复手册](docs/P7_RUNBOOK.md) 执行；不可用合成数据代替真实验收。

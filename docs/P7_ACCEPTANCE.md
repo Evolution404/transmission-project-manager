@@ -1,20 +1,22 @@
 # P7 真实数据与正式环境验收
 
-版本：2026-09-13。
+版本：2026-09-14。
 
 P7 不新增另一套核心业务模型，目标是用真实业务资料、真实 Cloudflare 资源/配置、真实通知链路、真实恢复和目标地区网络证明当前系统可以正式使用、恢复和移交。
 
 ## 1. P7 入口基线
 
-当前功能验收基线：
+当前 P7 入口不再绑定历史功能分支。正式验收前应从当前施工分支选择一个**完整门禁全绿且工作区干净的明确 commit**作为验收基线，并记录 commit SHA。
 
-- 基础台账功能分支：`wip/master-data-refactor-20260913`；
-- 已推送验收提交：`484cbaf`；
+当前最近一次完整门禁基线是后端可移植化分支 `refactor/backend-runtime-portability-20260913` 上的 `e34bde3`：
+
 - 业务模型：基础台账 → 抽象需求 → 项目储备 → 一次项目级出库 → 多执行任务 → 供应/实施/结算三线并行 → 四状态回投需求；
 - 认证：系统自维护 username/password；浏览器 Argon2id；服务端 HMAC verifier + 7 天 HttpOnly session；
-- 最新本地/合成门禁：Node/workerd+D1 139/139、Vue/Vitest 64/64，共 203/203 PASS；TypeScript、Web production build、Worker dry-run PASS；
+- 本地/合成门禁：Node 210/210、Vue/Vitest 64/64 PASS；TypeScript、Web production build、Worker dry-run PASS；
 - D1→R2 逻辑备份已在测试中恢复至独立 D1 并对账；`auth_sessions` 不恢复；
-- 本轮基础台账重构没有执行远端 D1 migration、`main` 合并或正式发布。
+- Cloudflare Free 仍是部署基线，同时正在建立 Node + SQLite + Filesystem 第二运行时；
+- 当前 portability 后续提交尚在继续，因此进入 P7 前必须再次跑完整 `npm run check` 并以当时最新全绿 commit 替换这里的临时基线；
+- 本轮没有执行远端 D1 migration、`main` 合并或正式发布。
 
 这些结果只证明代码和本地/合成环境，不代表生产验收完成。生产实际版本、资源和配置必须在 P7 中重新读取/核对，不能根据旧文档状态猜测。
 

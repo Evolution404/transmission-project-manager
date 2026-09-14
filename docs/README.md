@@ -10,9 +10,7 @@
 4. `DATA_MODEL.md`：数据对象、关系、不变量和 API 约定。
 5. `TESTING.md`：自动测试与完整门禁。
 6. `IMPLEMENTATION_PLAN.md`：阶段状态、完成项和下一步。
-7. `AI_HANDOFF.md`：当前代码状态、分支/迁移注意事项和未验证项。
-
-快速提示词见 `NEXT_AI.md`。
+7. `AI_HANDOFF.md`：唯一的当前代码交接真源，记录施工分支、未提交工作区、最近门禁和下一步。
 
 ## 运行与上线
 
@@ -24,7 +22,7 @@
 ## 文档维护规则
 
 - 业务事实只在 `BUSINESS_BASELINE.md`、`DESIGN.md`、`DATA_MODEL.md` 三处维护；不得再新建按日期命名的“最终业务交接”。
-- 当前开发状态只写入 `IMPLEMENTATION_PLAN.md` 和 `AI_HANDOFF.md`；`NEXT_AI.md` 只保留短入口，不复制长背景。
+- 当前开发状态只写入 `IMPLEMENTATION_PLAN.md` 和 `AI_HANDOFF.md`；不再维护额外“下一位 AI”短文档，避免双份交接漂移。
 - 测试结果写入 `TESTING.md` 和阶段完成记录，不复制完整测试日志。
 - 一次性 WIP、恢复记录、临时排障说明在任务完成后应删除或合并到长期文档；需要追溯时使用 Git 历史。
 - 文档不得把已完成 WIP 描述成待执行任务，也不得把本地/合成测试写成生产验收。

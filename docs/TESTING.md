@@ -1,6 +1,6 @@
 # 测试策略与开发门禁
 
-版本：2026-09-13。适用于所有业务功能、基础台账、认证、数据迁移、缺陷修复和正式环境准备。
+版本：2026-09-14。适用于所有业务功能、基础台账、认证、后端可移植化、数据迁移、缺陷修复和正式环境准备。
 
 ## 1. 核心规则：测试先于生产代码
 
@@ -32,16 +32,15 @@ npm run check
 - 全部 `tests/*.test.mjs` Node/workerd+D1 测试；
 - 全部 `apps/web/tests/*.test.ts` Vue/Vitest 行为测试。
 
-基础台账重构完成后的最新结果：
+P3 后端可移植化收口提交 `e34bde3` 后最近一次完整结果：
 
 - TypeScript：PASS；
 - Web production build：PASS；
-- Worker dry-run：PASS；
-- Vue/Vitest：16 个文件，64/64 PASS；
-- Node/workerd+D1：17 个文件，139/139 PASS；
-- 自动测试合计：203/203 PASS。
+- Worker `wrangler deploy --dry-run`：PASS；
+- Vue/Vitest：64/64 PASS；
+- Node：210/210 PASS。
 
-Node 全量因执行工具单次 300 秒限制按文件组运行，覆盖全部 17 个文件，无跳过。
+此结果是本地/合成门禁，不代表 Cloudflare 正式环境 CPU、D1/R2 配额、网络或通知链路已经验收。之后的 P4 查询迁移和幂等 replay 只跑了定向回归与双 runtime typecheck；P4 当前 WIP 完成后必须重新运行完整 `npm run check`。
 
 ## 3. 迁移与仓库守卫
 
