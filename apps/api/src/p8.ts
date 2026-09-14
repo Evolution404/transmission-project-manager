@@ -2,6 +2,7 @@ import { Hono, type Context } from 'hono';
 import type { ApiError, LifecycleState } from '@tpm/shared';
 import { hasScope, requireRoles, type AppEnv } from './auth';
 import { SqlIdempotencyRepository } from './repositories/sql-idempotency-repository';
+import { SqlProjectReleaseRepository } from './repositories/sql-project-release-repository';
 import { createCloudflarePersistence } from './runtime/cloudflare/persistence';
 
 const MAX_ITEMS = 100;
@@ -229,6 +230,14 @@ async function findProject(db: D1Database, id: string) {
     `SELECT id,name,business_year,owner,status,reserve_version,framework_id,version,created_at,updated_at
      FROM projects WHERE id=? LIMIT 1`,
   ).bind(id).first<ProjectRow>();
+}
+
+function hasProjectAccess(c: Context<AppEnv>, projectId: string, frameworkId: string | null) {
+  const user = c.get('currentUser');
+  return user.role === 'admin'
+    || hasScope(user.scopes, 'project', projectId)
+    || user.scopes.some((scope) => scope.type === 'all')
+    || Boolean(frameworkId && hasScope(user.scopes, 'framework', frameworkId));
 }
 
 async function canProject(c: Context<AppEnv>, projectId: string) {
@@ -1196,30 +1205,35 @@ p8App.post('/project-releases', requireRoles('admin', 'project_manager'), async 
   let body: Record<string, unknown>; try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
   const projectId = cleanText(body.projectId), version = expectedVersion(body.expectedProjectVersion), releaseDate = validDate(body.releaseDate), note = nullableText(body.note, 1000);
   if (!projectId || version === null || !releaseDate || note === undefined) return c.json(apiError('INVALID_PROJECT_RELEASE', '项目出库参数无效'), 422);
-  const project = await findProject(c.env.DB, projectId);
-  if (!project) return c.json(apiError('PROJECT_NOT_FOUND', '项目不存在'), 404);
-  if (!await canProject(c, projectId)) return c.json(apiError('SCOPE_FORBIDDEN', '无权对该项目出库'), 403);
-  if (project.version !== version) return c.json(apiError('VERSION_CONFLICT', '项目已被修改，请刷新后重试'), 409);
-  if (project.status !== 'confirmed' || project.reserve_version < 1) return c.json(apiError('PROJECT_NOT_CONFIRMED', '项目必须先确认储备版本才能出库'), 422);
-  const existing = await c.env.DB.prepare(`SELECT id FROM project_releases WHERE project_id=? LIMIT 1`).bind(projectId).first<{ id: string }>();
-  if (existing) return c.json(apiError('PROJECT_ALREADY_RELEASED', '该项目已经完成项目级出库'), 409);
-  const detail = await fetchReserveProject(c.env.DB, projectId);
-  const snapshot = { demandLinks: detail!.demandLinks, materialRequirements: detail!.materialRequirements, projectVersion: version, reserveVersion: project.reserve_version };
   const request = { projectId, expectedProjectVersion: version, releaseDate, note }, hash = await requestHash(request), operation = 'project-releases.create';
+  const { database } = createCloudflarePersistence(c.env);
+  const repository = new SqlProjectReleaseRepository(database);
+  const project = await repository.findProject(projectId);
+  if (!project) return c.json(apiError('PROJECT_NOT_FOUND', '项目不存在'), 404);
+  if (!hasProjectAccess(c, projectId, project.frameworkId)) return c.json(apiError('SCOPE_FORBIDDEN', '无权对该项目出库'), 403);
   const replay = await replayIdempotentResponse(c, key, operation, hash); if (replay) return replay;
+  if (project.version !== version) return c.json(apiError('VERSION_CONFLICT', '项目已被修改，请刷新后重试'), 409);
+  if (project.status !== 'confirmed' || project.reserveVersion < 1) return c.json(apiError('PROJECT_NOT_CONFIRMED', '项目必须先确认储备版本才能出库'), 422);
+  const existing = await repository.findProjectReleaseId(projectId);
+  if (existing) return c.json(apiError('PROJECT_ALREADY_RELEASED', '该项目已经完成项目级出库'), 409);
+  const snapshot = await repository.loadSnapshot(projectId, version, project.reserveVersion);
   const actor = c.get('currentUser'), now = new Date().toISOString(), id = crypto.randomUUID(), nextVersion = version + 1;
-  const data = { id, projectId, releaseDate, note, projectVersionSnapshot: version, reserveVersionSnapshot: project.reserve_version, projectVersion: nextVersion, snapshot, createdAt: now };
+  const data = { id, projectId, releaseDate, note, projectVersionSnapshot: version, reserveVersionSnapshot: project.reserveVersion, projectVersion: nextVersion, snapshot, createdAt: now };
   const response = { ok: true as const, data };
   try {
-    await c.env.DB.batch([
-      projectVersionGuard(c.env.DB, projectId, version, now),
-      c.env.DB.prepare(`INSERT INTO project_releases (id,project_id,release_date,note,project_version_snapshot,reserve_version_snapshot,snapshot_json,created_by,created_at) VALUES (?,?,?,?,?,?,?,?,?)`).bind(id, projectId, releaseDate, note, version, project.reserve_version, JSON.stringify(snapshot), actor.id, now),
-      auditStatement(c.env.DB, actor.id, 'project.release', 'project_release', id, null, data, now),
-      idempotencyStatement(c.env.DB, key, actor.id, operation, hash, response, 201, now),
-    ]);
+    await repository.createRelease({
+      release: data,
+      expectedProjectVersion: version,
+      actorId: actor.id,
+      auditId: crypto.randomUUID(),
+      idempotencyKey: key,
+      operation,
+      requestHash: hash,
+      responseJson: JSON.stringify(response),
+    });
   } catch {
     const race = await replayIdempotentResponse(c, key, operation, hash); if (race) return race;
-    const latest = await findProject(c.env.DB, projectId);
+    const latest = await repository.findProject(projectId);
     if (latest && latest.version !== version) return c.json(apiError('VERSION_CONFLICT', '项目已被并发修改，请刷新后重试'), 409);
     return c.json(apiError('PROJECT_RELEASE_CONFLICT', '项目出库发生冲突'), 409);
   }
@@ -1229,11 +1243,11 @@ p8App.post('/project-releases', requireRoles('admin', 'project_manager'), async 
 p8App.get('/project-releases', async (c) => {
   const projectId = cleanText(c.req.query('projectId'));
   if (!projectId) return c.json(apiError('PROJECT_REQUIRED', 'projectId 不能为空'), 400);
-  if (!await canProject(c, projectId)) return c.json(apiError('SCOPE_FORBIDDEN', '无权查看该项目出库'), 403);
-  const result = await c.env.DB.prepare(`SELECT id,project_id,release_date,note,project_version_snapshot,reserve_version_snapshot,snapshot_json,created_at FROM project_releases WHERE project_id=? ORDER BY created_at DESC`).bind(projectId).all<{
-    id: string; project_id: string; release_date: string; note: string | null; project_version_snapshot: number; reserve_version_snapshot: number; snapshot_json: string; created_at: string;
-  }>();
-  return c.json({ ok: true as const, data: { items: (result.results ?? []).map((row) => ({ id: row.id, projectId: row.project_id, releaseDate: row.release_date, note: row.note, projectVersionSnapshot: row.project_version_snapshot, reserveVersionSnapshot: row.reserve_version_snapshot, snapshot: JSON.parse(row.snapshot_json), createdAt: row.created_at })) } });
+  const { database } = createCloudflarePersistence(c.env);
+  const repository = new SqlProjectReleaseRepository(database);
+  const project = await repository.findProject(projectId);
+  if (!hasProjectAccess(c, projectId, project?.frameworkId ?? null)) return c.json(apiError('SCOPE_FORBIDDEN', '无权查看该项目出库'), 403);
+  return c.json({ ok: true as const, data: { items: await repository.listReleases(projectId) } });
 });
 
 p8App.post('/project-tasks', requireRoles('admin', 'project_manager', 'implementation'), async (c) => {

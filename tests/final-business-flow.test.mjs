@@ -172,18 +172,32 @@ test('reserve project keeps demand links separate from mutable project material 
 test('project release is one project-level immutable snapshot and enables multiple execution tasks', async () => {
   const projectId = globalThis.__finalProjectId;
   const demandId = globalThis.__finalDemandId;
-  const released = await jsonRequest('/api/project-releases', mutation('POST', 'project-release', {
+  const releaseKey = idem('project-release');
+  const releaseBody = {
     projectId,
     expectedProjectVersion: globalThis.__finalProjectVersion,
     releaseDate: '2026-09-13',
     note: '正式进入执行阶段',
-  }));
+  };
+  const released = await jsonRequest('/api/project-releases', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Idempotency-Key': releaseKey },
+    body: JSON.stringify(releaseBody),
+  });
   assert.equal(released.response.status, 201);
   assert.equal(released.body.data.projectId, projectId);
   assert.equal(released.body.data.snapshot.materialRequirements.length, 2);
   assert.equal(released.body.data.snapshot.demandLinks.length, 1);
   assert.equal('lines' in released.body.data, false);
   assert.equal(dbRows(`SELECT COUNT(*) AS count FROM release_lines WHERE project_id='${projectId}'`)[0].count, 0);
+  const replay = await jsonRequest('/api/project-releases', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Idempotency-Key': releaseKey },
+    body: JSON.stringify(releaseBody),
+  });
+  assert.equal(replay.response.status, 201);
+  assert.equal(replay.body.data.id, released.body.data.id);
+  assert.equal(dbRows(`SELECT COUNT(*) AS count FROM project_releases WHERE project_id='${projectId}'`)[0].count, 1);
   globalThis.__projectReleaseId = released.body.data.id;
   globalThis.__finalProjectVersion = released.body.data.projectVersion;
 
