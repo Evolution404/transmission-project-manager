@@ -163,6 +163,38 @@ preflight 通过只证明配置结构和构建，不证明真实资源/Secret �
 
 任何 migration 失败都立即停止；不得盲目重跑。当前仍处开发阶段，只允许单一 `0001_initial_schema.sql` 基线；除非用户明确要求兼容已有数据/保留升级路径，否则不得新增补丁 migration。
 
+### 5.3A 开发阶段单基线已在生产执行后的 schema reconciliation
+
+开发阶段允许直接改写唯一 `0001_initial_schema.sql`，但一旦某个生产 D1 已经记录过同名 `0001`，Wrangler migration 状态不会因为文件内容变化而自动重新执行该文件。此时禁止仅根据 `d1_migrations` 文件名判断 schema ready，也禁止在旧 schema 上直接发布依赖新列/新表的 Worker。
+
+2026-09-14 的基础台账重构属于这种情况：生产 D1 已执行旧版 `0001`，而当前基线把 `sort_index` 改为 `sort_rank`，增加线路/杆塔更名历史表及 `tower_order_version`，并移除线路名/杆塔号唯一约束。仓库中的一次性对齐脚本为：
+
+`ops/production/master-data-schema-reconcile.sql`
+
+该脚本**不是 `0002` migration**，不会解除“开发阶段只有一个 `0001` 基线”的门禁，只用于把已经提前创建的开发期生产数据库对齐到当前单基线。
+
+执行前必须全部满足：
+
+1. PR 已合入 `main`，合并后的 main CI 与 `Production preflight (no deployment)` 均全绿；
+2. 记录准确 40 位 `main` SHA 与生产 D1 UUID；
+3. 只读确认旧结构存在：`transmission_towers.sort_index` 存在，`sort_rank` 与两张历史表尚不存在；
+4. 记录当前 `members / transmission_lines / transmission_towers / demands` 行数；
+5. **`demands` 必须为 0**。如果已经有任何正式需求，立即停止，另行设计显式兼容迁移，不允许继续执行本脚本；
+6. 用 D1 Time Travel 取得并记录当前 bookmark，作为 schema 变更前的直接回退点；
+7. `tests/schema-reconcile.test.mjs` 和完整 `npm run check` 必须通过。
+
+执行后必须核对：
+
+- `transmission_lines` 存在 `name_valid_from`、`tower_order_version`；
+- `transmission_towers` 存在 `number_valid_from`、`sort_rank`，不存在 `sort_index`；
+- `transmission_line_name_history`、`transmission_tower_no_history` 已建立；
+- `members / transmission_lines / transmission_towers / demands` 行数与执行前一致；
+- `PRAGMA foreign_key_check` 无结果；
+- 不残留 `*_reconcile_20260914` 临时表；
+- 线上 `/api/health`、`/api/auth/status` 正常后，才允许继续 `Production release`。
+
+若执行后任一核对失败，停止发布，使用执行前记录的 D1 Time Travel bookmark 回退数据库，不继续尝试补写 SQL。
+
 ### 5.4 Production release
 
 确认 schema ready 后：
