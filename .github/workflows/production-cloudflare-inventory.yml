@@ -2,11 +2,6 @@ name: Production Cloudflare inventory (read-only)
 
 on:
   workflow_dispatch:
-    inputs:
-      account_id:
-        description: Cloudflare account ID to inspect (32 hexadecimal characters)
-        required: true
-        type: string
 
 permissions:
   contents: read
@@ -22,18 +17,20 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Validate protected read-only inputs
+      - uses: actions/checkout@v7
+
+      - name: Validate tracked production account and read-only credential
         env:
-          ACCOUNT_ID: ${{ inputs.account_id }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
           set -euo pipefail
+          ACCOUNT_ID="$(jq -r '.account_id' apps/api/wrangler.production.jsonc)"
           [[ "$ACCOUNT_ID" =~ ^[0-9a-fA-F]{32}$ ]]
           test -n "$CLOUDFLARE_API_TOKEN"
+          echo "ACCOUNT_ID=$ACCOUNT_ID" >> "$GITHUB_ENV"
 
       - name: Read Cloudflare production inventory
         env:
-          ACCOUNT_ID: ${{ inputs.account_id }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
           set -euo pipefail

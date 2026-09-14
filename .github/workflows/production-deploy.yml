@@ -30,20 +30,20 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Bind approval to exact main revision and protected inputs
+      - name: Bind approval to exact main revision and required secrets
         env:
           RELEASE_SHA: ${{ inputs.release_sha }}
           RELEASE_RECORD: ${{ inputs.release_record }}
-          ENABLED: ${{ vars.PRODUCTION_DEPLOY_ENABLED }}
-          PRODUCTION_CONFIG_JSON: ${{ vars.PRODUCTION_CONFIG_JSON }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          AUTH_CREDENTIAL_PEPPER: ${{ secrets.AUTH_CREDENTIAL_PEPPER }}
+          NOTION_API_TOKEN: ${{ secrets.NOTION_API_TOKEN }}
         run: |
           set -euo pipefail
-          test "$ENABLED" = "true"
           test -n "$RELEASE_RECORD"
           [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]
-          test -n "$PRODUCTION_CONFIG_JSON"
           test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$AUTH_CREDENTIAL_PEPPER"
+          test -n "$NOTION_API_TOKEN"
           test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
           git fetch origin main
           test "$(git rev-parse origin/main)" = "$RELEASE_SHA"
@@ -55,17 +55,21 @@ jobs:
 
       - run: npm ci
       - run: npm run check
+      - run: npm run p7 -- config apps/api/wrangler.production.jsonc
 
-      - name: Materialize and validate non-secret production config
+      - name: Materialize ephemeral Worker secrets
         env:
-          PRODUCTION_CONFIG_JSON: ${{ vars.PRODUCTION_CONFIG_JSON }}
+          AUTH_CREDENTIAL_PEPPER: ${{ secrets.AUTH_CREDENTIAL_PEPPER }}
+          NOTION_API_TOKEN: ${{ secrets.NOTION_API_TOKEN }}
         run: |
-          node --input-type=module -e 'import {writeFileSync} from "node:fs"; writeFileSync("apps/api/wrangler.production.jsonc", process.env.PRODUCTION_CONFIG_JSON || "{}", {mode: 0o600});'
-          npm run p7 -- config apps/api/wrangler.production.jsonc
+          set -euo pipefail
+          SECRETS_FILE="$RUNNER_TEMP/worker-secrets.json"
+          SECRETS_FILE="$SECRETS_FILE" node --input-type=module -e 'import {chmodSync,writeFileSync} from "node:fs"; const values={AUTH_CREDENTIAL_PEPPER:process.env.AUTH_CREDENTIAL_PEPPER,NOTION_API_TOKEN:process.env.NOTION_API_TOKEN}; if(Object.values(values).some(v=>!v)) process.exit(1); writeFileSync(process.env.SECRETS_FILE,JSON.stringify(values),{mode:0o600}); chmodSync(process.env.SECRETS_FILE,0o600);'
+          echo "WORKER_SECRETS_FILE=$SECRETS_FILE" >> "$GITHUB_ENV"
 
       - name: Package exact approved revision
         working-directory: apps/api
-        run: npm exec -- wrangler deploy --dry-run --config wrangler.production.jsonc --outdir dist-production-release
+        run: npm exec -- wrangler deploy --dry-run --config wrangler.production.jsonc --secrets-file "$WORKER_SECRETS_FILE" --outdir dist-production-release
 
       - name: Recheck approved main revision before publication
         env:
@@ -76,11 +80,11 @@ jobs:
           test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
           test "$(git rev-parse origin/main)" = "$RELEASE_SHA"
 
-      - name: Publish Worker and reviewed bindings
+      - name: Publish Worker, bindings and Worker secrets as one version
         working-directory: apps/api
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-        run: npm exec -- wrangler deploy --config wrangler.production.jsonc
+        run: npm exec -- wrangler deploy --config wrangler.production.jsonc --secrets-file "$WORKER_SECRETS_FILE"
 
       - name: Verify custom domain and health
         run: |
@@ -92,6 +96,6 @@ jobs:
           HEALTH_FILE="$HEALTH_FILE" node --input-type=module -e 'import {readFileSync} from "node:fs"; const body=JSON.parse(readFileSync(process.env.HEALTH_FILE,"utf8")); if (body?.ok !== true || body?.data?.service !== "transmission-project-manager" || body?.data?.schema?.ready !== true) process.exit(1);'
           printf '### Production release\n- Commit: `%s`\n- Domain: `%s`\n- `/api/health`: PASS\n' "${{ inputs.release_sha }}" "$DOMAIN" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Remove generated production config
+      - name: Remove ephemeral Worker secret file
         if: always()
-        run: rm -f apps/api/wrangler.production.jsonc
+        run: rm -f "$RUNNER_TEMP/worker-secrets.json"

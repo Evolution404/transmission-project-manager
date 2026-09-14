@@ -21,6 +21,7 @@
     "check": "npm run typecheck && npm run build && npm test",
     "p7": "node scripts/p7/cli.mjs",
     "p7:preflight": "node --test tests/repository-guards.test.mjs tests/p7-preflight.test.mjs",
+    "config:local-env:migrate": "node scripts/config/local-env.mjs",
     "notion:init": "node scripts/notion/init.mjs",
     "notion:smoke": "node scripts/notion/smoke.mjs"
   },

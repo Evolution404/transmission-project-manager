@@ -3,13 +3,15 @@ import { resolve } from 'node:path';
 import { NotionObjectStoreAdapter } from '../../apps/api/src/adapters/notion/notion-object-store.ts';
 import { parseEnv } from './init.mjs';
 
-const envPath = resolve(process.cwd(), '.env.notion');
-const env = { ...process.env, ...parseEnv(await readFile(envPath, 'utf8')) };
+const root = resolve(import.meta.dirname, '../..');
+const env = { ...process.env, ...parseEnv(await readFile(resolve(root, '.env'), 'utf8')) };
+const config = JSON.parse(await readFile(resolve(root, 'apps/api/wrangler.production.jsonc'), 'utf8'));
 const token = env.NOTION_API_TOKEN?.trim();
-const dataSourceId = env.NOTION_STORAGE_DATA_SOURCE_ID?.trim();
-const apiVersion = env.NOTION_API_VERSION?.trim() || '2026-03-11';
+const dataSourceId = config.vars?.NOTION_STORAGE_DATA_SOURCE_ID?.trim();
+const apiVersion = config.vars?.NOTION_API_VERSION?.trim() || '2026-03-11';
 
 if (!token) throw new Error('NOTION_API_TOKEN_REQUIRED');
+if (config.vars?.OBJECT_STORAGE_PROVIDER !== 'notion') throw new Error('NOTION_STORAGE_PROVIDER_NOT_ACTIVE');
 if (!dataSourceId) throw new Error('NOTION_STORAGE_DATA_SOURCE_ID_REQUIRED');
 
 const store = new NotionObjectStoreAdapter({ token, dataSourceId, apiVersion });

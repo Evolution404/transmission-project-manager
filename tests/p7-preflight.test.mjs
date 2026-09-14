@@ -1,14 +1,14 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { readFileSync, mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { validateConfig, validateAcceptance, verifyBackup, inspectInputs } from '../scripts/p7/lib.mjs';
 
-const template = () => JSON.parse(readFileSync(new URL('../apps/api/wrangler.production.example.json', import.meta.url)));
+const productionConfig = () => JSON.parse(readFileSync(new URL('../apps/api/wrangler.production.jsonc', import.meta.url)));
 function config() {
-  const c = template();
+  const c = productionConfig();
   c.name = 'tpm-production'; c.account_id = 'a'.repeat(32);
   c.d1_databases[0].database_name = 'tpm-production';
   c.d1_databases[0].database_id = '12345678-1234-4321-8321-123456789abc';
@@ -24,9 +24,22 @@ function r2Config() {
   c.r2_buckets = [{ binding: 'FILES', bucket_name: 'tpm-production-files' }];
   return c;
 }
-test('production config rejects placeholders while valid non-secret config passes', () => {
-  assert.ok(validateConfig(template()).length > 0);
-  assert.deepEqual(validateConfig(config()), []);
+
+test('local configuration has one dotenv entry point and no legacy Notion/dev-vars files', () => {
+  assert.equal(existsSync(new URL('../.env.example', import.meta.url)), true);
+  assert.equal(existsSync(new URL('../apps/api/.dev.vars.example', import.meta.url)), false);
+  for (const file of ['../scripts/notion/init.mjs', '../scripts/notion/smoke.mjs']) {
+    const source = readFileSync(new URL(file, import.meta.url), 'utf8');
+    assert.match(source, /\.env/);
+    assert.doesNotMatch(source, /\.env\.notion|\.dev\.vars/);
+  }
+});
+test('tracked production config is valid and placeholder resource IDs are rejected', () => {
+  assert.deepEqual(validateConfig(productionConfig()), []);
+  const placeholder = productionConfig();
+  placeholder.account_id = '00000000000000000000000000000000';
+  placeholder.d1_databases[0].database_id = '00000000-0000-0000-0000-000000000000';
+  assert.ok(validateConfig(placeholder).length > 0);
 });
 test('production config rejects auth overrides, secret values, missing permanent secret declarations, unsafe routes and wrong bindings', () => {
   for (const mutate of [
@@ -118,28 +131,31 @@ test('push CI and manual production preflight contain no cloud mutation or crede
   assert.match(source, /environment: production/);
 });
 
-test('production deploy is manual, environment-bound, version-bound and never auto-migrates data', () => {
+test('production deploy is manual, environment-bound, version-bound and publishes secrets with the same deployment', () => {
   const source = readFileSync(new URL('../.github/workflows/production-deploy.yml', import.meta.url), 'utf8');
   assert.match(source, /workflow_dispatch:/);
   assert.match(source, /environment: production/);
-  assert.match(source, /PRODUCTION_DEPLOY_ENABLED/);
   assert.match(source, /release_sha/);
-  assert.match(source, /CLOUDFLARE_API_TOKEN/);
+  assert.match(source, /secrets\.CLOUDFLARE_API_TOKEN/);
+  assert.match(source, /secrets\.AUTH_CREDENTIAL_PEPPER/);
+  assert.match(source, /secrets\.NOTION_API_TOKEN/);
+  assert.match(source, /--secrets-file/);
   assert.match(source, /npm run check/);
   assert.match(source, /wrangler deploy --config wrangler\.production\.jsonc/);
+  assert.doesNotMatch(source, /PRODUCTION_DEPLOY_ENABLED|PRODUCTION_CONFIG_JSON|vars\./);
   assert.doesNotMatch(source, /\n  (push|pull_request|schedule|workflow_run):|d1 migrations apply|d1 execute/);
 });
 
-test('production migration is a separate manual workflow bound to exact main revision', () => {
+test('production migration is a separate manual workflow bound to exact main revision and tracked config', () => {
   const source = readFileSync(new URL('../.github/workflows/production-migrate.yml', import.meta.url), 'utf8');
   assert.match(source, /workflow_dispatch:/);
   assert.match(source, /environment: production/);
-  assert.match(source, /PRODUCTION_MIGRATION_ENABLED/);
   assert.match(source, /release_sha/);
   assert.match(source, /database_id/);
   assert.match(source, /CLOUDFLARE_API_TOKEN/);
   assert.match(source, /d1 migrations list DB --remote/);
   assert.match(source, /d1 migrations apply DB --remote/);
+  assert.doesNotMatch(source, /PRODUCTION_MIGRATION_ENABLED|PRODUCTION_CONFIG_JSON|vars\./);
   assert.doesNotMatch(source, /\n  (push|pull_request|schedule|workflow_run):|wrangler deploy --config/);
 });
 
@@ -147,7 +163,8 @@ test('production Cloudflare inventory is manual, environment-bound and read-only
   const source = readFileSync(new URL('../.github/workflows/production-cloudflare-inventory.yml', import.meta.url), 'utf8');
   assert.match(source, /workflow_dispatch:/);
   assert.match(source, /environment: production/);
-  assert.match(source, /account_id/);
+  assert.match(source, /wrangler\.production\.jsonc/);
+  assert.doesNotMatch(source, /inputs\.account_id/);
   assert.match(source, /CLOUDFLARE_API_TOKEN/);
   assert.match(source, /secrets\.CLOUDFLARE_API_TOKEN/);
   assert.doesNotMatch(source, /CLOUDFLARE_READ_API_TOKEN/);
