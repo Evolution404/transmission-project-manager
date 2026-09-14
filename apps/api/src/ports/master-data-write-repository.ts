@@ -68,6 +68,26 @@ export interface CommitTowerBatchInput {
   audit: { before: unknown; after: unknown };
 }
 
+export interface CommitLineRenameInput {
+  id: string;
+  expectedVersion: number;
+  lineName: string;
+  historyId: string;
+  reason: string | null;
+  mutation: MasterMutationRecord;
+  audit: MasterAuditRecord;
+}
+
+export interface CommitTowerRenameInput {
+  id: string;
+  expectedVersion: number;
+  towerNo: string;
+  historyId: string;
+  reason: string | null;
+  mutation: MasterMutationRecord;
+  audit: MasterAuditRecord;
+}
+
 export interface MasterDataWriteRepository {
   findRecord(kind: MasterDataWriteKind, id: string): Promise<Record<string, string | number | null> | null>;
   findTowerRecords(ids: readonly string[]): Promise<readonly Record<string, string | number | null>[]>;
@@ -76,4 +96,6 @@ export interface MasterDataWriteRepository {
   countLineTowers(lineId: string): Promise<number>;
   commitSingle(input: CommitSingleMasterDataInput): Promise<void>;
   commitTowerBatch(input: CommitTowerBatchInput): Promise<void>;
+  commitLineRename(input: CommitLineRenameInput): Promise<void>;
+  commitTowerRename(input: CommitTowerRenameInput): Promise<void>;
 }

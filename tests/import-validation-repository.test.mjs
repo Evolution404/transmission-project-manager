@@ -30,7 +30,7 @@ test('validation lookups work through DatabasePort', async () => {
   const { db, repo } = setup();
   try {
     assert.deepEqual(await repo.findVoltageByName('110kV'), { id: 'v', displayName: '110kV' });
-    assert.deepEqual(await repo.findLineByName('v', 'Line A'), { id: 'l', lineName: 'Line A' });
+    assert.deepEqual(await repo.findLinesByName('v', 'Line A'), [{ id: 'l', lineName: 'Line A' }]);
     assert.equal((await repo.findTowersByNumbers('l', ['#001','#002'])).length, 2);
     assert.deepEqual(await repo.findMaterials([{ model: 'Model', unit: 'piece' }]), [{ id: 'm', model: 'Model', unit: 'piece' }]);
     assert.deepEqual(await repo.findExistingBusinessSignatures(['sig','other']), ['sig']);

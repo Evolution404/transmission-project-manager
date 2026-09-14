@@ -47,7 +47,7 @@ export interface CommitImportValidationInput {
 export interface ImportValidationRepository {
   listUploadedRows(batchId: string, limit: number): Promise<readonly ImportValidationRow[]>;
   findVoltageByName(displayName: string): Promise<ImportVoltageLookup | null>;
-  findLineByName(voltageLevelId: string, lineName: string): Promise<ImportLineLookup | null>;
+  findLinesByName(voltageLevelId: string, lineName: string): Promise<readonly ImportLineLookup[]>;
   findTowersByNumbers(lineId: string, towerNos: readonly string[]): Promise<readonly ImportTowerLookup[]>;
   findMaterials(pairs: readonly { model: string; unit: string }[]): Promise<readonly ImportMaterialLookup[]>;
   findExistingBusinessSignatures(signatures: readonly string[]): Promise<readonly string[]>;

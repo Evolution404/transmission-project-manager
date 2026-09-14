@@ -66,13 +66,13 @@ export class SqlImportValidationRepository implements ImportValidationRepository
     return row ? { id: row.id, displayName: row.display_name } : null;
   }
 
-  async findLineByName(voltageLevelId: string, lineName: string): Promise<ImportLineLookup | null> {
-    const row = await this.database.first<{ id: string; line_name: string }>({
+  async findLinesByName(voltageLevelId: string, lineName: string): Promise<readonly ImportLineLookup[]> {
+    const rows = await this.database.all<{ id: string; line_name: string }>({
       sql: `SELECT id,line_name FROM transmission_lines
-            WHERE enabled=1 AND voltage_level_id=? AND line_name=? COLLATE NOCASE LIMIT 1`,
+            WHERE enabled=1 AND voltage_level_id=? AND line_name=? COLLATE NOCASE ORDER BY id`,
       params: [voltageLevelId, lineName],
     });
-    return row ? { id: row.id, lineName: row.line_name } : null;
+    return rows.map((row) => ({ id: row.id, lineName: row.line_name }));
   }
 
   async findTowersByNumbers(lineId: string, towerNos: readonly string[]): Promise<readonly ImportTowerLookup[]> {

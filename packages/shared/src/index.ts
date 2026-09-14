@@ -320,6 +320,7 @@ export interface TransmissionLineSummary {
   version: number;
   towerOrderVersion: number;
   towerCount?: number;
+  matchedHistoricalName?: string | null;
 }
 
 export interface TransmissionTowerSummary {
@@ -331,6 +332,28 @@ export interface TransmissionTowerSummary {
   towerType: string | null;
   enabled: boolean;
   version: number;
+  matchedHistoricalNo?: string | null;
+}
+
+export interface TransmissionLineNameHistoryEntry {
+  id: string;
+  lineId: string;
+  lineName: string;
+  validFrom: string;
+  validTo: string;
+  changedBy: string;
+  reason: string | null;
+}
+
+export interface TransmissionTowerNoHistoryEntry {
+  id: string;
+  towerId: string;
+  lineId: string;
+  towerNo: string;
+  validFrom: string;
+  validTo: string;
+  changedBy: string;
+  reason: string | null;
 }
 
 export interface StructuredDemandLocationInput {

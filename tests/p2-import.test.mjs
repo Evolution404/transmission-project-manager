@@ -577,6 +577,23 @@ test('unknown grid objects block publication and are never created by import', a
   assert.ok(!(await jsonRequest('/api/master/lines')).body.data.items.some((l) => l.lineName === '未维护线路'));
 });
 
+test('duplicate line names are valid master data but block import from guessing an identity', async () => {
+  for (const code of ['AMBIG-A', 'AMBIG-B']) {
+    const line = await jsonRequest('/api/master/lines', mutation('POST', idem(`ambiguous-line-${code}`), {
+      voltageLevelId: 'vl-ac-220', lineName: '同名导入线路', lineCode: code, enabled: true,
+    }));
+    assert.equal(line.response.status, 201);
+  }
+  const batch = await createBatch({ fileSha256: crypto.randomUUID().replaceAll('-', '').repeat(2) });
+  await uploadChunk(batch, [{ sheetName: '需求', rowNumber: 2, cells: {
+    序号: 'AMBIGUOUS-LINE', 电压等级: '220kV', 线路名称: '同名导入线路', 杆段: '#1',
+  } }]);
+  await validateBatch(batch);
+  const detail = await jsonRequest(`/api/imports/${batch.body.data.id}`);
+  assert.ok(detail.body.data.rows[0].errors.some((e) => e.code === 'LINE_AMBIGUOUS'));
+  assert.equal((await publishBatch(batch)).response.status, 422);
+});
+
 test('publication revalidates an already validated location after master data is disabled', async () => {
   const batch = await createBatch({ fileSha256: crypto.randomUUID().replaceAll('-', '').repeat(2) });
   await uploadChunk(batch, [{ sheetName: '需求', rowNumber: 2, cells: { 序号: 'STALE-GRID', 电压等级: '220kV', 线路名称: '手工需求线', 杆段: '#1-#2' } }]);

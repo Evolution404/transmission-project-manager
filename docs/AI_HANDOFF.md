@@ -148,7 +148,10 @@ main CI run `34844921647` PASS。
 - M1 已完成：共享 `normalizeTowerNo()` 已落地；数据库当前杆塔编号只接受规范形式；`sort_index` 已重构为 `sort_rank`；线路已有独立 `tower_order_version`；线路名/杆塔号唯一约束已删除；线路/杆塔更名历史表及当前有效期起点已进入唯一 `0001` 基线。
 - 导入侧已经同步规范化杆塔号：`#1`、`1` 等都按 `#001` 查询；无法识别格式返回 `TOWER_NUMBER_INVALID`；同编号多对象返回 `TOWER_AMBIGUOUS`，不自动猜测。
 - M1 定向门禁：Web 36/36 PASS；基础台账/迁移/Repository 31/31 PASS；P2 import 15/15 PASS；shared/api/web typecheck PASS；生产代码无 `sort_index/sortIndex` 残留。
-- 下一施工点为 M2：专用线路/杆塔更名 API、原子历史写入、普通 PATCH 禁止绕过更名、当前/历史名称搜索及重名多结果语义。
+- M2 已完成：`POST /api/master/lines/:id/rename` 与 `POST /api/master/towers/:id/rename` 为唯一正式更名通道；普通 PATCH 和批量维护不能绕过历史链。历史查询分别为 `/name-history`、`/number-history`；列表 `query` 同时命中当前值和历史值，并返回历史匹配提示。
+- 同名/同编号仍是合法主数据；P2 导入已从“按名称 LIMIT 1”改为多候选判断，出现重复线路名返回 `LINE_AMBIGUOUS`，重复杆塔编号返回 `TOWER_AMBIGUOUS`。
+- M2 回归：master-data + P2 + import-validation 33/33 PASS；Web 定向 36/36 PASS；shared/api/web 全部 typecheck PASS。
+- 下一施工点为 M3：专用杆塔移动 API、稀疏 `sort_rank`、`tower_order_version` 并发门禁、默认末尾新增，以及普通 PATCH/批量维护禁止直接修改技术排序值。
 
 ## 下一步
 

@@ -404,3 +404,97 @@ test('unreferenced towers can exchange order atomically in a batch', async () =>
   assert.equal(result.response.status, 201);
   assert.deepEqual((await jsonRequest(`/api/master/towers?lineId=${line.id}`)).body.data.items.map((t) => t.towerNo), ['#002', '#001']);
 });
+
+test('line rename is a dedicated atomic action with searchable history and duplicate names remain valid', async () => {
+  const created = await jsonRequest('/api/master/lines', mutation('POST', idem('rename-line-create'), {
+    voltageLevelId: 'vl-ac-110', lineName: '更名前线路', lineCode: 'RENAME-LINE', enabled: true,
+  }));
+  assert.equal(created.response.status, 201);
+
+  const bypass = await jsonRequest(`/api/master/lines/${created.body.data.id}`, mutation('PATCH', idem('rename-line-bypass'), {
+    ...created.body.data, lineName: '绕过更名', expectedVersion: created.body.data.version,
+  }));
+  assert.equal(bypass.response.status, 422);
+  assert.equal(bypass.body.error.code, 'RENAME_REQUIRED');
+
+  const key = idem('rename-line');
+  const renamed = await jsonRequest(`/api/master/lines/${created.body.data.id}/rename`, mutation('POST', key, {
+    expectedVersion: created.body.data.version, lineName: '更名后线路', reason: '运行名称调整',
+  }));
+  assert.equal(renamed.response.status, 200);
+  assert.equal(renamed.body.data.id, created.body.data.id);
+  assert.equal(renamed.body.data.lineName, '更名后线路');
+  assert.equal(renamed.body.data.version, created.body.data.version + 1);
+  assert.deepEqual((await jsonRequest(`/api/master/lines/${created.body.data.id}/rename`, mutation('POST', key, {
+    expectedVersion: created.body.data.version, lineName: '更名后线路', reason: '运行名称调整',
+  }))).body, renamed.body);
+
+  const duplicate = await jsonRequest('/api/master/lines', mutation('POST', idem('rename-line-duplicate'), {
+    voltageLevelId: 'vl-ac-110', lineName: '更名后线路', lineCode: 'RENAME-LINE-2', enabled: true,
+  }));
+  assert.equal(duplicate.response.status, 201);
+  assert.notEqual(duplicate.body.data.id, created.body.data.id);
+
+  const history = await jsonRequest(`/api/master/lines/${created.body.data.id}/name-history`);
+  assert.equal(history.response.status, 200);
+  assert.equal(history.body.data.items.length, 1);
+  assert.equal(history.body.data.items[0].lineName, '更名前线路');
+  assert.equal(history.body.data.items[0].reason, '运行名称调整');
+
+  const oldNameSearch = await jsonRequest(`/api/master/lines?query=${encodeURIComponent('更名前线路')}`);
+  assert.ok(oldNameSearch.body.data.items.some((item) => item.id === created.body.data.id && item.matchedHistoricalName === '更名前线路'));
+  const currentNameSearch = await jsonRequest(`/api/master/lines?query=${encodeURIComponent('更名后线路')}`);
+  assert.ok(currentNameSearch.body.data.items.filter((item) => item.lineName === '更名后线路').length >= 2);
+
+  const stale = await jsonRequest(`/api/master/lines/${created.body.data.id}/rename`, mutation('POST', idem('rename-line-stale'), {
+    expectedVersion: created.body.data.version, lineName: '过期更名',
+  }));
+  assert.equal(stale.response.status, 409);
+  assert.equal(stale.body.error.code, 'VERSION_CONFLICT');
+});
+
+test('tower rename canonicalizes the new number, preserves history and never treats a duplicate number as identity', async () => {
+  const line = (await jsonRequest('/api/master/lines', mutation('POST', idem('rename-tower-line'), {
+    voltageLevelId: 'vl-ac-110', lineName: '杆塔更名线', enabled: true,
+  }))).body.data;
+  const created = await jsonRequest('/api/master/towers', mutation('POST', idem('rename-tower-create'), {
+    lineId: line.id, towerNo: '30', sortRank: 1000, towerType: '角钢塔', enabled: true,
+  }));
+  assert.equal(created.response.status, 201);
+  assert.equal(created.body.data.towerNo, '#030');
+
+  const bypass = await jsonRequest(`/api/master/towers/${created.body.data.id}`, mutation('PATCH', idem('rename-tower-bypass'), {
+    ...created.body.data, towerNo: '31', expectedVersion: created.body.data.version,
+  }));
+  assert.equal(bypass.response.status, 422);
+  assert.equal(bypass.body.error.code, 'RENAME_REQUIRED');
+
+  const renamed = await jsonRequest(`/api/master/towers/${created.body.data.id}/rename`, mutation('POST', idem('rename-tower'), {
+    expectedVersion: created.body.data.version, towerNo: '30-01', reason: '杆号调整',
+  }));
+  assert.equal(renamed.response.status, 200);
+  assert.equal(renamed.body.data.id, created.body.data.id);
+  assert.equal(renamed.body.data.towerNo, '#030-1');
+
+  const duplicate = await jsonRequest('/api/master/towers', mutation('POST', idem('rename-tower-duplicate'), {
+    lineId: line.id, towerNo: '#030-1', sortRank: 2000, towerType: null, enabled: true,
+  }));
+  assert.equal(duplicate.response.status, 201);
+  assert.notEqual(duplicate.body.data.id, created.body.data.id);
+
+  const history = await jsonRequest(`/api/master/towers/${created.body.data.id}/number-history`);
+  assert.equal(history.response.status, 200);
+  assert.equal(history.body.data.items.length, 1);
+  assert.equal(history.body.data.items[0].towerNo, '#030');
+  assert.equal(history.body.data.items[0].reason, '杆号调整');
+
+  const oldNumberSearch = await jsonRequest(`/api/master/towers?lineId=${line.id}&query=30`);
+  assert.ok(oldNumberSearch.body.data.items.some((item) => item.id === created.body.data.id && item.matchedHistoricalNo === '#030'));
+  const duplicateSearch = await jsonRequest(`/api/master/towers?lineId=${line.id}&query=30-1`);
+  assert.ok(duplicateSearch.body.data.items.filter((item) => item.towerNo === '#030-1').length >= 2);
+
+  const forbidden = await jsonRequest(`/api/master/towers/${created.body.data.id}/rename`, mutation('POST', idem('rename-tower-forbidden'), {
+    expectedVersion: renamed.body.data.version, towerNo: '32',
+  }), managerCookie);
+  assert.equal(forbidden.response.status, 403);
+});

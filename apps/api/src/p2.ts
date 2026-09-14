@@ -166,11 +166,16 @@ async function resolveGridLocation(repository: ImportValidationRepository, norma
   normalized.voltageVerified = voltage.displayName;
   normalized.voltageRaw = voltage.displayName;
 
-  const line = await repository.findLineByName(voltage.id, normalized.lineName);
-  if (!line) {
+  const lines = await repository.findLinesByName(voltage.id, normalized.lineName);
+  if (!lines.length) {
     errors.push({ code: 'LINE_UNKNOWN', field: 'lineName', message: '线路不存在或已停用，请先维护所选电压等级下的线路台账' });
     return;
   }
+  if (lines.length > 1) {
+    errors.push({ code: 'LINE_AMBIGUOUS', field: 'lineName', message: '线路名称匹配到多个对象，请在基础台账中核对后再导入' });
+    return;
+  }
+  const line = lines[0]!;
   normalized.lineId = line.id;
   normalized.lineName = line.lineName;
 

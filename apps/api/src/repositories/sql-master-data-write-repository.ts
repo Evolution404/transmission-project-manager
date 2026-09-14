@@ -1,7 +1,9 @@
 import type { DatabasePort, DatabaseStatement, DatabaseValue } from '../ports/database.ts';
 import type {
+  CommitLineRenameInput,
   CommitSingleMasterDataInput,
   CommitTowerBatchInput,
+  CommitTowerRenameInput,
   MasterDataWriteKind,
   MasterDataWriteRepository,
   TransmissionLineWriteValues,
@@ -251,6 +253,116 @@ export class SqlMasterDataWriteRepository implements MasterDataWriteRepository {
         input.mutation.now,
       ],
     });
+    await this.database.batch(statements);
+  }
+
+  async commitLineRename(input: CommitLineRenameInput): Promise<void> {
+    const statements: DatabaseStatement[] = [{
+      sql: `INSERT INTO idempotency_records
+            (idempotency_key,actor_member_id,operation,request_hash,response_json,status_code,created_at)
+            VALUES (?,?,?,CASE WHEN EXISTS(
+              SELECT 1 FROM transmission_lines WHERE id=? AND version=?
+            ) THEN ? ELSE NULL END,?,?,?)`,
+      params: [
+        input.mutation.key,
+        input.mutation.actorId,
+        input.mutation.operation,
+        input.id,
+        input.expectedVersion,
+        input.mutation.hash,
+        input.mutation.responseJson,
+        input.mutation.statusCode,
+        input.mutation.now,
+      ],
+    }, {
+      sql: `INSERT INTO transmission_line_name_history
+            (id,line_id,line_name,valid_from,valid_to,changed_by,change_reason,created_at)
+            SELECT ?,id,line_name,name_valid_from,?,?,?,?
+            FROM transmission_lines WHERE id=? AND version=?`,
+      params: [
+        input.historyId,
+        input.mutation.now,
+        input.mutation.actorId,
+        input.reason,
+        input.mutation.now,
+        input.id,
+        input.expectedVersion,
+      ],
+    }, {
+      sql: `UPDATE transmission_lines
+            SET line_name=?,name_valid_from=?,version=version+1,updated_at=?
+            WHERE id=? AND version=?`,
+      params: [input.lineName, input.mutation.now, input.mutation.now, input.id, input.expectedVersion],
+    }, {
+      sql: `INSERT INTO audit_events
+            (id,actor_member_id,action,object_type,object_id,before_json,after_json,created_at)
+            VALUES (?,?,?,?,?,?,?,?)`,
+      params: [
+        input.mutation.auditId,
+        input.mutation.actorId,
+        input.audit.action,
+        input.audit.objectType,
+        input.id,
+        json(input.audit.before),
+        json(input.audit.after),
+        input.mutation.now,
+      ],
+    }];
+    await this.database.batch(statements);
+  }
+
+  async commitTowerRename(input: CommitTowerRenameInput): Promise<void> {
+    const statements: DatabaseStatement[] = [{
+      sql: `INSERT INTO idempotency_records
+            (idempotency_key,actor_member_id,operation,request_hash,response_json,status_code,created_at)
+            VALUES (?,?,?,CASE WHEN EXISTS(
+              SELECT 1 FROM transmission_towers WHERE id=? AND version=?
+            ) THEN ? ELSE NULL END,?,?,?)`,
+      params: [
+        input.mutation.key,
+        input.mutation.actorId,
+        input.mutation.operation,
+        input.id,
+        input.expectedVersion,
+        input.mutation.hash,
+        input.mutation.responseJson,
+        input.mutation.statusCode,
+        input.mutation.now,
+      ],
+    }, {
+      sql: `INSERT INTO transmission_tower_no_history
+            (id,tower_id,line_id,tower_no,valid_from,valid_to,changed_by,change_reason,created_at)
+            SELECT ?,id,line_id,tower_no,number_valid_from,?,?,?,?
+            FROM transmission_towers WHERE id=? AND version=?`,
+      params: [
+        input.historyId,
+        input.mutation.now,
+        input.mutation.actorId,
+        input.reason,
+        input.mutation.now,
+        input.id,
+        input.expectedVersion,
+      ],
+    }, {
+      sql: `UPDATE transmission_towers
+            SET tower_no=?,number_valid_from=?,version=version+1,updated_at=?
+            WHERE id=? AND version=?`,
+      params: [input.towerNo, input.mutation.now, input.mutation.now, input.id, input.expectedVersion],
+    }, {
+      sql: `INSERT INTO audit_events
+            (id,actor_member_id,action,object_type,object_id,before_json,after_json,created_at)
+            VALUES (?,?,?,?,?,?,?,?)`,
+      params: [
+        input.mutation.auditId,
+        input.mutation.actorId,
+        input.audit.action,
+        input.audit.objectType,
+        input.id,
+        json(input.audit.before),
+        json(input.audit.after),
+        input.mutation.now,
+      ],
+    }];
     await this.database.batch(statements);
   }
 
