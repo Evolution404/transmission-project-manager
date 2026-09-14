@@ -153,14 +153,15 @@ main CI run `34844921647` PASS。
 - M2 回归：master-data + P2 + import-validation 33/33 PASS；Web 定向 36/36 PASS；shared/api/web 全部 typecheck PASS。
 - M3 核心能力已完成：专用杆塔移动 API、稀疏 `sort_rank`、`tower_order_version` 并发门禁、普通 PATCH 禁止直接改顺序；单杆新增已改为按规范化编号自然顺序自动插入，而不是默认末尾。间隙耗尽时通过两阶段物化重排恢复稀疏 rank。旧界面单杆新增已移除排序输入。
 - M3 收口后的完整 `npm run check` PASS：Node **260/260**、Web/Vitest **92/92**，并包含 Cloudflare/Node TypeScript、Web production build、Worker dry-run、单一 `0001_initial_schema.sql` 和 Node+SQLite+Filesystem 第二运行时门禁。
+- M4 已完成：杆塔导入支持 `.xlsx` / `.csv` / 粘贴全量预检，用户侧不限行；非法编号/状态、文件内重复、当前编号歧义都会阻断。前端自动拆内部安全分片并保留幂等键/断点；完整清单模式必须唯一覆盖当前全部稳定 `tower_id`，随后用 `/towers/reorder` 集合式原子按文件顺序重排。
+- M5 已完成：旧三栏 `MasterDataView` 已彻底替换为线路中心首页和全宽线路详情；电压等级降为筛选/标签/台账设置。普通属性编辑与线路/杆塔专用更名分开，历史可查看；杆塔新增、导入、拖拽和“移动到目标前/后”调序入口均集中在线路详情。M5 定向 Web 测试 **41/41 PASS**；最终完整 `npm run check` 也已 PASS：Node **264/264**、Web **102/102**，并覆盖 TypeScript、Web production build、Worker dry-run、单一 `0001` 及 Node+SQLite+Filesystem 第二运行时。
 
 ## 下一步
 
-1. 按 `MASTER_DATA_REDESIGN_PLAN.md` 执行 M1：先写杆塔编号规范化、schema、更名历史/排序基础测试，再改生产实现。
-2. M1–M4 已完成；继续 M5 线路中心 UI：彻底移除三栏，首页以线路列表为主，电压等级降为筛选/标签/设置，进入线路详情后全宽维护杆塔，并显式提供更名、导入、调整顺序入口。
-3. 本轮 schema 变化只允许修改唯一 `0001_initial_schema.sql`，同步 `tests/migrations.lock.json`；禁止新增 migration。
-4. 本轮代码全部完成并 `npm run check` 全绿后再开 PR；未获用户明确授权前不合并 `main`、不触发 production release。
-5. P7 首管理员已创建，但一次性 `BOOTSTRAP_TOKEN` 的远端删除和其余完整 P7-01～13 仍需单独收尾，不得因本轮功能施工误标为全部完成。
+1. M1–M5 本地功能和完整门禁均已完成；提交/push M5 并检查 GitHub CI。
+2. 继续保持唯一 `0001_initial_schema.sql` 开发策略，禁止新增 migration。
+3. CI 全绿后才能考虑 PR/合并。未获用户明确授权前不合并 `main`、不触发 production release。
+4. P7 首管理员已创建，但一次性 `BOOTSTRAP_TOKEN` 的远端删除和其余完整 P7-01～13 仍需单独收尾，不得因本轮功能施工误标为全部完成。
 
 ## 生产资源现状：不要猜
 

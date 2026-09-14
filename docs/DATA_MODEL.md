@@ -21,8 +21,10 @@
 | auth_sessions | 随机会话 token 的 SHA-256 哈希、member_id、session_version、创建/最近访问/到期/撤销时间 | 原始 token 只存在浏览器 HttpOnly Cookie；默认 7 天绝对有效期；停用/改密/重置立即失效 |
 | settings_versions | 口径、阈值、目标、提醒参数、生效时间 | 每个报表/预警引用规则版本 |
 | voltage_levels | 电压等级编码、显示名、交流/直流制式、标称 kV、排序、启停、版本 | 统一电压对象；名称/编码唯一；被业务引用后制式/标称电压受保护 |
-| transmission_lines | 所属电压等级、线路名称/编码、启停、版本 | `VoltageLevel 1:N TransmissionLine`；同等级线路名称唯一；被需求引用后不能换所属电压等级 |
-| transmission_towers | 所属线路、字符串杆塔号、独立 `sort_index`、类型、启停、版本 | `TransmissionLine 1:N TransmissionTower`；同线路杆塔号和顺序分别唯一；引用线路上的身份/顺序/删除受保护 |
+| transmission_lines | 所属电压等级、当前线路名称/编码、名称有效期起点、启停、版本、`tower_order_version` | `VoltageLevel 1:N TransmissionLine`；稳定 `line_id` 才是身份；名称允许重名/复用/更名；被需求引用后不能换所属电压等级 |
+| transmission_line_name_history | 线路ID、历史名称、有效起止、修改人、原因 | 更名历史可多条、可与其他线路重名；用于旧名搜索和时间轴追溯 |
+| transmission_towers | 所属线路、规范化当前杆塔编号、编号有效期起点、独立 `sort_rank`、类型、启停、版本 | `TransmissionLine 1:N TransmissionTower`；稳定 `tower_id` 才是身份；编号允许重名/复用/更名；同线路当前 `sort_rank` 唯一 |
+| transmission_tower_no_history | 杆塔ID、当时所属线路、历史编号、有效起止、修改人、原因 | 旧编号可搜索、多对象可命中；更名不改变 `tower_id` 或既有业务引用 |
 | import_batches / import_rows | 文件哈希、工作表、映射版本、源行、原始JSON、错误、发布状态 | 批次分片幂等；未发布行不得计入正式报表 |
 | demand_categories / field_definitions | 需求类别、模板/扩展字段定义、字段类型、版本 | 当前需求成立必填核心为序号和结构化位置；物资是 0..N 子明细，不能因旧字段定义把物资重新变成需求成立前提 |
 | demands | 抽象业务事项：`source_type=import/manual`、业务年份、类别、负责人，以及 `voltage_level_id`、`line_id`、`location_type`、起止杆塔对象；同时保留对象生成的显示快照 | 需求无需物资即可成立；正式位置只能来自基础台账；同一业务事项可由多个 Excel 来源行共同形成 |
@@ -57,9 +59,9 @@
 
 - `transmission_lines.voltage_level_id` 必须指向存在的电压等级；启用新线路时父电压必须启用。
 - `transmission_towers.line_id` 必须指向存在的线路；启用新杆塔时线路和父电压都必须启用。
-- 正式需求的 `line_id` 必须属于 `voltage_level_id`；`whole_line` 起止为空，`tower` 起止相同，`tower_range` 起止不同且 `start.sort_index < end.sort_index`。
+- 正式需求的 `line_id` 必须属于 `voltage_level_id`；`whole_line` 起止为空，`tower` 起止相同，`tower_range` 起止不同且在创建/发布时满足 `start.sort_rank < end.sort_rank`。正式需求保存稳定 `line_id/start_tower_id/end_tower_id`，后续名称/编号/排序变化不能替换对象身份。
 - 手工创建和 Excel 发布都必须在同一写事务中重新校验父子关系、启用状态和显示快照，避免“校验后停用/改名”的竞态。
-- 线路已有需求引用后不能更换电压等级；该线路所有杆塔的 `line_id/tower_no/sort_index` 和删除采用保守冻结，防止区段内部杆塔变化重写历史语义。
+- 线路已有需求引用后不能更换电压等级；杆塔不允许通过普通编辑切换所属线路。线路/杆塔更名必须走专用历史化动作，杆塔排序通过独立 `tower_order_version` 控制并允许调整；删除仍按业务引用保护。历史需求依赖稳定 ID 和来源/显示快照追溯，而不是冻结当前名称或顺序。
 - 停用不破坏历史读取；新需求和导入发布不得选择停用对象。
 - 当前开发阶段数据库只有 `0001_initial_schema.sql` 一个可重建基线；除非用户明确要求兼容已有数据/保留升级路径，否则 schema 变化直接修改 `0001` 并重建开发/测试数据库，禁止新增 `0002+` migration。
 
@@ -140,11 +142,18 @@ GET /api/master/lines?voltageLevelId=...
 POST /api/master/lines
 PATCH /api/master/lines/:id
 DELETE /api/master/lines/:id
+POST /api/master/lines/:id/rename
+GET /api/master/lines/:id/name-history
 GET /api/master/towers?lineId=...
 POST /api/master/towers
 PATCH /api/master/towers/:id
 DELETE /api/master/towers/:id
-POST /api/master/lines/:id/towers/batch
+POST /api/master/towers/:id/rename
+GET /api/master/towers/:id/number-history
+POST /api/master/lines/:lineId/towers/:towerId/move
+POST /api/master/lines/:id/towers/import-chunk
+POST /api/master/lines/:id/towers/reorder
+POST /api/master/lines/:id/towers/batch   # 兼容/内部低层批量合同；产品 UI 不直接暴露技术排序字段
 POST /api/imports
 POST /api/imports/:id/chunks
 POST /api/imports/:id/validate

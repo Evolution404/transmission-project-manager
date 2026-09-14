@@ -38,28 +38,38 @@ beforeEach(() => {
     importOrderVersion += 1;
     return data({ changed: true, towerOrderVersion: importOrderVersion, towerIds: JSON.parse(String(init.body)).towerIds });
   }
+  if (init?.method && url.endsWith('/lines/l1/rename')) {
+    const body = JSON.parse(String(init.body));
+    return data({ ...line, lineName: body.lineName, version: line.version + 1 });
+  }
+  if (init?.method && url.endsWith('/towers/t1/rename')) {
+    const body = JSON.parse(String(init.body));
+    return data({ ...tower, towerNo: body.towerNo, version: tower.version + 1 });
+  }
   if (init?.method) return ok([]);
   if (url === '/api/master/voltage-levels') return ok(voltages);
-  if (url.startsWith('/api/master/lines?voltageLevelId=v1')) return ok([line]);
-  if (url.startsWith('/api/master/lines?voltageLevelId=v2')) return ok([]);
+  if (url === '/api/master/lines/l1/name-history') return ok([]);
+  if (url === '/api/master/towers/t1/number-history') return ok([]);
+  if (url.startsWith('/api/master/lines?')) return url.includes('voltageLevelId=v2') ? ok([]) : ok([line]);
   if (url.startsWith('/api/master/towers?lineId=l1')) return ok([tower, tower2]);
   throw new Error(`unexpected ${url}`);
   }));
 });
 afterEach(() => vi.unstubAllGlobals());
 
-it('drills into parents, loads only selected children and clears stale tower selection', async () => {
+it('starts with a line-centric list and opens a full-width line detail without a three-column hierarchy', async () => {
   const w = mount(MasterDataView, { props: { currentUser: admin } }); await flushPromises();
   expect(vi.mocked(fetch).mock.calls.some(([u]) => String(u).startsWith('/api/master/towers'))).toBe(false);
-  await w.get('[data-test="select-voltage-v1"]').trigger('click'); await flushPromises();
-  expect(w.get('[data-test="master-columns"]').attributes('data-step')).toBe('lines');
+  expect(w.findAll('[data-test="line-home"]')).toHaveLength(1);
+  expect(w.text()).toContain('线路台账');
+  expect(w.text()).not.toContain('01');
   await w.get('[data-test="select-line-l1"]').trigger('click'); await flushPromises();
   expect(w.text()).toContain('#020-1');
-  expect(w.get('[data-test="master-columns"]').attributes('data-step')).toBe('towers');
-  await w.get('[data-test="select-voltage-v2"]').trigger('click'); await flushPromises();
+  expect(w.findAll('[data-test="line-detail"]')).toHaveLength(1);
+  expect(w.text()).toContain('110kV');
+  await w.get('[data-test="back-lines"]').trigger('click');
+  expect(w.findAll('[data-test="line-home"]')).toHaveLength(1);
   expect(w.text()).not.toContain('#020-1');
-  await w.get('[data-test="back-voltage"]').trigger('click');
-  expect(w.get('[data-test="master-columns"]').attributes('data-step')).toBe('voltage');
 });
 
 it('previews a large paste once and automatically sends hidden safe import chunks without sort ranks', async () => {
@@ -95,7 +105,7 @@ it('resumes from the failed chunk and reuses its idempotency key without resendi
     }
     if (init?.method) return ok([]);
     if (url === '/api/master/voltage-levels') return ok(voltages);
-    if (url.startsWith('/api/master/lines?voltageLevelId=v1')) return ok([line]);
+    if (url.startsWith('/api/master/lines?')) return ok([line]);
     if (url.startsWith('/api/master/towers?lineId=l1')) return ok([tower]);
     throw new Error(`unexpected ${url}`);
   }));
@@ -146,9 +156,37 @@ it('single tower creation sends no manual order and explains automatic numeric p
   expect(body).not.toHaveProperty('sortRank');
 });
 
-it('readonly users navigate the same hierarchy without mutation controls', async () => {
+it('uses dedicated line and tower rename actions instead of ordinary edit fields', async () => {
+  const w = mount(MasterDataView, { props: { currentUser: admin } }); await flushPromises();
+  await w.get('[data-test="select-line-l1"]').trigger('click'); await flushPromises();
+  await w.get('[data-test="open-line-rename"]').trigger('click');
+  await w.get('[data-test="line-rename-input"]').setValue('甲线新名');
+  await w.get('[data-test="save-line-rename"]').trigger('click'); await flushPromises();
+  const lineRename = vi.mocked(fetch).mock.calls.find(([u, init]) => String(u).endsWith('/lines/l1/rename') && init?.method === 'POST');
+  expect(JSON.parse(String(lineRename![1]!.body)).lineName).toBe('甲线新名');
+
+  await w.get('[data-test="open-tower-rename-t1"]').trigger('click');
+  await w.get('[data-test="tower-rename-input"]').setValue('21-1');
+  await w.get('[data-test="save-tower-rename"]').trigger('click'); await flushPromises();
+  const towerRename = vi.mocked(fetch).mock.calls.find(([u, init]) => String(u).endsWith('/towers/t1/rename') && init?.method === 'POST');
+  expect(JSON.parse(String(towerRename![1]!.body)).towerNo).toBe('#021-1');
+});
+
+it('manual order editor moves by business position and saves one complete stable-id order', async () => {
+  const w = mount(MasterDataView, { props: { currentUser: admin } }); await flushPromises();
+  await w.get('[data-test="select-line-l1"]').trigger('click'); await flushPromises();
+  await w.get('[data-test="open-order-editor"]').trigger('click'); await flushPromises();
+  await w.get('[data-test="order-moving"]').setValue('t2');
+  await w.get('[data-test="order-target"]').setValue('t1');
+  await w.get('[data-test="apply-order-move"]').trigger('click');
+  await w.get('[data-test="save-order"]').trigger('click'); await flushPromises();
+  const reorder = vi.mocked(fetch).mock.calls.filter(([u, init]) => String(u).endsWith('/towers/reorder') && init?.method === 'POST').at(-1);
+  expect(JSON.parse(String(reorder![1]!.body)).towerIds).toEqual(['t2', 't1']);
+});
+
+it('readonly users can inspect line detail without mutation controls', async () => {
   const w = mount(MasterDataView, { props: { currentUser: { ...admin, role: 'readonly' } } }); await flushPromises();
   await w.get('[data-test="select-line-l1"]').trigger('click'); await flushPromises();
   expect(w.text()).toContain('#020-1');
-  for (const label of ['新增电压等级', '新增线路', '新增杆塔', '编辑', '删除', '导入杆塔']) expect(w.text()).not.toContain(label);
+  for (const label of ['新增线路', '新增杆塔', '编辑属性', '线路更名', '杆塔更名', '删除', '导入杆塔', '调整顺序', '台账设置']) expect(w.text()).not.toContain(label);
 });
