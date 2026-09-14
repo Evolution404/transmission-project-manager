@@ -22,6 +22,7 @@ import type {
 } from '@tpm/shared';
 import { hasScope, requireRoles, type AppEnv } from './auth';
 import { SqlFinanceBudgetRepository } from './repositories/sql-finance-budget-repository';
+import { SqlFinanceEntryRepository } from './repositories/sql-finance-entry-repository';
 import { SqlFinanceQueryRepository } from './repositories/sql-finance-query-repository';
 import { SqlFinanceWriteRepository } from './repositories/sql-finance-write-repository';
 import { SqlIdempotencyRepository } from './repositories/sql-idempotency-repository';
@@ -575,36 +576,6 @@ p4App.get('/budgets/:id/history', async (c) => {
   return c.json({ ok: true as const, data: { items: items ?? [] } });
 });
 
-async function entrySummaries(db: D1Database, rows: FinancialEntryRow[]): Promise<FinancialEntrySummary[]> {
-  if (!rows.length) return [];
-  const placeholders = rows.map(() => '?').join(',');
-  const allocationResult = await db.prepare(
-    `SELECT fea.financial_entry_id,fea.agreement_id,fea.amount_fen,a.code,a.name
-     FROM financial_entry_allocations fea INNER JOIN agreements a ON a.id=fea.agreement_id
-     WHERE fea.financial_entry_id IN (${placeholders})
-     ORDER BY fea.financial_entry_id,a.code COLLATE NOCASE,a.id`,
-  ).bind(...rows.map((row) => row.id)).all<AllocationRow & { financial_entry_id: string }>();
-  const allocations = new Map<string, BudgetAllocationSummary[]>();
-  for (const item of allocationResult.results ?? []) {
-    const list = allocations.get(item.financial_entry_id) ?? [];
-    list.push({ agreementId: item.agreement_id, amountFen: item.amount_fen, agreementCode: item.code, agreementName: item.name });
-    allocations.set(item.financial_entry_id, list);
-  }
-  return rows.map((row) => ({
-    id: row.id,
-    frameworkId: row.framework_id,
-    projectId: row.project_id,
-    projectName: row.project_name,
-    type: row.entry_type,
-    businessDate: row.business_date,
-    amountFen: row.amount_fen,
-    note: row.note,
-    reversesEntryId: row.reverses_entry_id,
-    allocations: allocations.get(row.id) ?? [],
-    createdAt: row.created_at,
-  }));
-}
-
 p4App.get('/financial-entries', async (c) => {
   const frameworkId = cleanText(c.req.query('frameworkId')), projectId = cleanText(c.req.query('projectId'));
   const limit = Number(c.req.query('limit') ?? '50');
@@ -614,28 +585,19 @@ p4App.get('/financial-entries', async (c) => {
   if (cursorParam && !cursor) return c.json(apiError('INVALID_CURSOR', '资金流水分页游标无效'), 400);
   if (frameworkId && !canFramework(c, frameworkId)) return c.json(apiError('SCOPE_FORBIDDEN', '无权查看该框架流水'), 403);
   if (projectId && !canProject(c, projectId)) return c.json(apiError('SCOPE_FORBIDDEN', '无权查看该项目流水'), 403);
-  const result = await c.env.DB.prepare(
-    `SELECT fe.id,fe.framework_id,fe.project_id,p.name AS project_name,fe.entry_type,fe.business_date,fe.amount_fen,fe.note,fe.reverses_entry_id,fe.created_at
-     FROM financial_entries fe INNER JOIN projects p ON p.id=fe.project_id
-     WHERE (?='' OR fe.framework_id=?)
-       AND (?='' OR fe.project_id=?)
-       AND (? IS NULL OR fe.business_date < ?
-         OR (fe.business_date = ? AND fe.created_at < ?)
-         OR (fe.business_date = ? AND fe.created_at = ? AND fe.id < ?))
-     ORDER BY fe.business_date DESC,fe.created_at DESC,fe.id DESC LIMIT ?`,
-  ).bind(
-    frameworkId, frameworkId, projectId, projectId,
-    cursor?.businessDate ?? null,
-    cursor?.businessDate ?? '', cursor?.businessDate ?? '', cursor?.createdAt ?? '',
-    cursor?.businessDate ?? '', cursor?.createdAt ?? '', cursor?.id ?? '',
-    limit + 1,
-  ).all<FinancialEntryRow>();
-  const visible = (result.results ?? []).filter((row) => canProject(c, row.project_id) || canFramework(c, row.framework_id));
-  const pageRows = visible.slice(0, limit);
-  const last = pageRows.at(-1);
+  const { database } = createCloudflarePersistence(c.env);
+  const rows = await new SqlFinanceEntryRepository(database).listEntries({
+    frameworkId: frameworkId || null,
+    projectId: projectId || null,
+    cursor,
+    limit: limit + 1,
+  });
+  const visible = rows.filter((row) => canProject(c, row.projectId) || canFramework(c, row.frameworkId));
+  const items = visible.slice(0, limit);
+  const last = items.at(-1);
   const data: FinancialEntryPage = {
-    items: await entrySummaries(c.env.DB, pageRows),
-    nextCursor: visible.length > limit && last ? makeEntryCursor(last.business_date, last.created_at, last.id) : null,
+    items,
+    nextCursor: visible.length > limit && last ? makeEntryCursor(last.businessDate, last.createdAt, last.id) : null,
   };
   return c.json({ ok: true as const, data });
 });
@@ -645,55 +607,70 @@ p4App.post('/financial-entries', requireRoles('admin', 'project_manager', 'finan
   let body: Partial<CreateFinancialEntryRequest>; try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
   const type = cleanText(body.type) as FinancialEntryType, projectId = cleanText(body.projectId), amount = safePositive(body.amountFen), businessDate = dateValue(body.businessDate), allocations = normalizeEntryAllocations(body.allocations), note = nullableText(body.note, 1000);
   if (!['budget_occurrence','actual_cost'].includes(type) || !projectId || amount === null || !businessDate || !allocations || note === undefined) return c.json(apiError('INVALID_FINANCIAL_ENTRY', '资金流水参数无效'), 422);
-  const project = await findProject(c.env.DB, projectId); if (!project?.framework_id) return c.json(apiError('PROJECT_FRAMEWORK_REQUIRED', '登记资金流水前项目必须归属框架'), 422);
-  if (!canProject(c, projectId) && !canFramework(c, project.framework_id)) return c.json(apiError('SCOPE_FORBIDDEN', '无权登记该项目资金流水'), 403);
+  const { database } = createCloudflarePersistence(c.env);
+  const queryRepository = new SqlFinanceQueryRepository(database);
+  const entryRepository = new SqlFinanceEntryRepository(database);
+  const project = await queryRepository.findProject(projectId); if (!project?.frameworkId) return c.json(apiError('PROJECT_FRAMEWORK_REQUIRED', '登记资金流水前项目必须归属框架'), 422);
+  if (!canProject(c, projectId) && !canFramework(c, project.frameworkId)) return c.json(apiError('SCOPE_FORBIDDEN', '无权登记该项目资金流水'), 403);
   const sum = safeSum(allocations.map((item) => item.amountFen));
   if (!allocations.length || sum === null || sum !== amount) return c.json(apiError('ENTRY_ALLOCATION_MISMATCH', '协议分配合计必须精确等于流水金额'), 422);
-  const checked = await validateAgreementAllocations(c.env.DB, project.framework_id, allocations, businessDate, true); if (checked.error) return c.json(checked.error, 422);
+  const checked = await queryRepository.validateAgreementAllocations(project.frameworkId, allocations, businessDate, true);
+  if (!checked.ok) {
+    if (checked.reason === 'not_found') return c.json(apiError('AGREEMENT_NOT_FOUND', '协议不存在'), 422);
+    if (checked.reason === 'framework_mismatch') return c.json(apiError('AGREEMENT_FRAMEWORK_MISMATCH', '协议与项目不属于同一框架'), 422);
+    return c.json(apiError('AGREEMENT_NOT_EFFECTIVE', '协议在业务日期不是有效状态'), 422);
+  }
   const request: CreateFinancialEntryRequest = { type, projectId, amountFen: amount, businessDate, allocations, note };
   const hash = await requestHash(request), operation = 'financial-entries.create'; const replay = await replayIdempotentResponse(c, key, operation, hash); if (replay) return replay;
   const actor = c.get('currentUser'), id = crypto.randomUUID(), now = new Date().toISOString();
-  const data: FinancialEntrySummary = { id, frameworkId: project.framework_id, projectId, projectName: project.name, type, businessDate, amountFen: amount, note, reversesEntryId: null, allocations: checked.summaries ?? [], createdAt: now };
+  const data: FinancialEntrySummary = { id, frameworkId: project.frameworkId, projectId, projectName: project.name, type, businessDate, amountFen: amount, note, reversesEntryId: null, allocations: checked.summaries, createdAt: now };
   const response = { ok: true as const, data };
-  const statements: D1PreparedStatement[] = [
-    c.env.DB.prepare(`INSERT INTO financial_entries (id,framework_id,project_id,entry_type,business_date,amount_fen,note,reverses_entry_id,created_by,created_at) VALUES (?,?,?,?,?,?,?,NULL,?,?)`).bind(id, project.framework_id, projectId, type, businessDate, amount, note, actor.id, now),
-    ...allocations.map((item) => c.env.DB.prepare(`INSERT INTO financial_entry_allocations (id,financial_entry_id,agreement_id,amount_fen,created_at) VALUES (?,?,?,?,?)`).bind(crypto.randomUUID(), id, item.agreementId, item.amountFen, now)),
-    auditStatement(c.env.DB, actor.id, 'financial-entry.create', 'financial_entry', id, null, data, now),
-    idempotencyStatement(c.env.DB, key, actor.id, operation, hash, response, 201, now),
-  ];
-  try { await c.env.DB.batch(statements); } catch { return c.json(apiError('ENTRY_CONFLICT', '资金流水写入失败'), 409); }
+  try {
+    await entryRepository.createEntry({
+      entry: data,
+      allocations: allocations.map((item) => ({ id: crypto.randomUUID(), agreementId: item.agreementId, amountFen: item.amountFen })),
+      actorId: actor.id,
+      auditId: crypto.randomUUID(),
+      idempotencyKey: key,
+      operation,
+      requestHash: hash,
+      responseJson: JSON.stringify(response),
+    });
+  } catch { return c.json(apiError('ENTRY_CONFLICT', '资金流水写入失败'), 409); }
   return c.json(response, 201);
 });
 
 p4App.post('/financial-entries/:id/reverse', requireRoles('admin', 'finance'), async (c) => {
   const key = requireIdempotencyKey(c); if (key instanceof Response) return key;
-  const original = await c.env.DB.prepare(
-    `SELECT fe.id,fe.framework_id,fe.project_id,p.name AS project_name,fe.entry_type,fe.business_date,fe.amount_fen,fe.note,fe.reverses_entry_id,fe.created_at
-     FROM financial_entries fe INNER JOIN projects p ON p.id=fe.project_id WHERE fe.id=? LIMIT 1`,
-  ).bind(c.req.param('id')).first<FinancialEntryRow>();
+  const { database } = createCloudflarePersistence(c.env);
+  const entryRepository = new SqlFinanceEntryRepository(database);
+  const original = await entryRepository.findEntry(c.req.param('id'));
   if (!original) return c.json(apiError('NOT_FOUND', '资金流水不存在'), 404);
-  if (original.reverses_entry_id || original.amount_fen < 0) return c.json(apiError('ENTRY_NOT_REVERSIBLE', '冲销记录不能再次冲销'), 422);
-  if (!canProject(c, original.project_id) && !canFramework(c, original.framework_id)) return c.json(apiError('SCOPE_FORBIDDEN', '无权冲销该流水'), 403);
+  if (original.reversesEntryId || original.amountFen < 0) return c.json(apiError('ENTRY_NOT_REVERSIBLE', '冲销记录不能再次冲销'), 422);
+  if (!canProject(c, original.projectId) && !canFramework(c, original.frameworkId)) return c.json(apiError('SCOPE_FORBIDDEN', '无权冲销该流水'), 403);
   let body: Record<string, unknown>; try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
   const businessDate = dateValue(body.businessDate), reason = nullableText(body.reason, 1000);
   if (!businessDate || !reason) return c.json(apiError('INVALID_REVERSAL', '冲销日期和原因不能为空'), 422);
   const request = { businessDate, reason }; const hash = await requestHash(request), operation = `financial-entries.reverse:${original.id}`; const replay = await replayIdempotentResponse(c, key, operation, hash); if (replay) return replay;
-  const existing = await c.env.DB.prepare(`SELECT id FROM financial_entries WHERE reverses_entry_id=? LIMIT 1`).bind(original.id).first<{ id: string }>();
-  if (existing) return c.json(apiError('ENTRY_ALREADY_REVERSED', '该流水已被冲销'), 409);
-  const originalAllocations = await c.env.DB.prepare(`SELECT fea.agreement_id,fea.amount_fen,a.code,a.name FROM financial_entry_allocations fea INNER JOIN agreements a ON a.id=fea.agreement_id WHERE fea.financial_entry_id=? ORDER BY a.code`).bind(original.id).all<AllocationRow>();
+  if (await entryRepository.hasReversal(original.id)) return c.json(apiError('ENTRY_ALREADY_REVERSED', '该流水已被冲销'), 409);
   const actor = c.get('currentUser'), id = crypto.randomUUID(), now = new Date().toISOString();
-  const allocations = (originalAllocations.results ?? []).map((item) => ({ agreementId: item.agreement_id, amountFen: -item.amount_fen, agreementCode: item.code, agreementName: item.name }));
-  const data: FinancialEntrySummary = { id, frameworkId: original.framework_id, projectId: original.project_id, projectName: original.project_name, type: original.entry_type, businessDate, amountFen: -original.amount_fen, note: reason, reversesEntryId: original.id, allocations, createdAt: now };
+  const allocations = original.allocations.map((item) => ({ ...item, amountFen: -item.amountFen }));
+  const data: FinancialEntrySummary = { id, frameworkId: original.frameworkId, projectId: original.projectId, projectName: original.projectName, type: original.type, businessDate, amountFen: -original.amountFen, note: reason, reversesEntryId: original.id, allocations, createdAt: now };
   const response = { ok: true as const, data };
-  const statements: D1PreparedStatement[] = [
-    c.env.DB.prepare(`INSERT INTO financial_entries (id,framework_id,project_id,entry_type,business_date,amount_fen,note,reverses_entry_id,created_by,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)`).bind(id, original.framework_id, original.project_id, original.entry_type, businessDate, -original.amount_fen, reason, original.id, actor.id, now),
-    ...(originalAllocations.results ?? []).map((item) => c.env.DB.prepare(`INSERT INTO financial_entry_allocations (id,financial_entry_id,agreement_id,amount_fen,created_at) VALUES (?,?,?,?,?)`).bind(crypto.randomUUID(), id, item.agreement_id, -item.amount_fen, now)),
-    auditStatement(c.env.DB, actor.id, 'financial-entry.reverse', 'financial_entry', original.id, { amountFen: original.amount_fen }, data, now),
-    idempotencyStatement(c.env.DB, key, actor.id, operation, hash, response, 201, now),
-  ];
-  try { await c.env.DB.batch(statements); } catch {
-    const later = await c.env.DB.prepare(`SELECT id FROM financial_entries WHERE reverses_entry_id=? LIMIT 1`).bind(original.id).first<{ id: string }>();
-    if (later) return c.json(apiError('ENTRY_ALREADY_REVERSED', '该流水已被其他请求冲销'), 409);
+  try {
+    await entryRepository.reverseEntry({
+      original,
+      reversal: data,
+      allocations: allocations.map((item) => ({ id: crypto.randomUUID(), agreementId: item.agreementId, amountFen: item.amountFen })),
+      actorId: actor.id,
+      auditId: crypto.randomUUID(),
+      idempotencyKey: key,
+      operation,
+      requestHash: hash,
+      responseJson: JSON.stringify(response),
+    });
+  } catch {
+    if (await entryRepository.hasReversal(original.id)) return c.json(apiError('ENTRY_ALREADY_REVERSED', '该流水已被其他请求冲销'), 409);
     return c.json(apiError('ENTRY_CONFLICT', '冲销失败'), 409);
   }
   return c.json(response, 201);

@@ -7,6 +7,7 @@ export type { ProjectPage, ProjectPageCursor, ProjectQueryRepository, ProjectSug
 export type { AllocationFailure, ConfirmProjectRecord, CreateProjectRecord, ProjectAllocationWrite, ProjectCategoryAllocationWrite, ProjectCostLineWrite, ProjectWriteRepository, ProjectWriteState, ProtectedProjectScopeItem, ReplaceProjectAllocationsRecord, ReplaceProjectCategoryAllocationsRecord, ReplaceProjectCostsRecord } from './project-write-repository';
 export type { CreateReserveCategoryRecord, ReserveCategoryWriteRepository, UpsertCategoryMappingRecord } from './reserve-category-write-repository';
 export type { BudgetAllocationWrite, ConfirmBudgetRecord, CreateBudgetRecord, FinanceBudgetRepository, UpdateBudgetRecord } from './finance-budget-repository';
+export type { CreateFinancialEntryRecord, FinanceEntryRepository, FinancialEntryAllocationWrite, FinancialEntryCursor, FinancialEntryListInput, ReverseFinancialEntryRecord } from './finance-entry-repository';
 export type { AgreementAllocationValidation, FinanceQueryRepository } from './finance-query-repository';
 export type { BindProjectFrameworkRecord, CreateAgreementRecord, CreateFrameworkRecord, FinanceWriteRepository, UpdateAgreementRecord, UpdateFrameworkRecord } from './finance-write-repository';
 export type { CreateMaterialRecord, MaterialRepository } from './material-repository';
