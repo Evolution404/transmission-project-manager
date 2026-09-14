@@ -1,0 +1,43 @@
+name: Cloudflare auth diagnostic once
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: read
+  issues: read
+
+jobs:
+  diagnose:
+    if: github.actor == github.repository_owner && github.event.issue.user.login == github.repository_owner && github.event.issue.title == 'Cloudflare auth diagnostic'
+    environment: production
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      ACCOUNT_ID: 642d30520d6c494dd418b1f4b3853aa6
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+      - name: Diagnose Cloudflare authentication
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
+          dir="$RUNNER_TEMP/cfdiag"
+          mkdir -p "$dir"
+          probe() {
+            label="$1"; path="$2"; out="$dir/$1.json"
+            status="$(curl --silent --show-error -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" -H 'Accept: application/json' -o "$out" -w '%{http_code}' "https://api.cloudflare.com/client/v4${path}")"
+            errors="$(jq -r '[.errors[]? | ((.code // "unknown")|tostring) + ": " + (.message // "unknown error")] | join("; ")' "$out" 2>/dev/null || true)"
+            printf '| `%s` | `%s` | `%s` |\n' "$label" "$status" "${errors:-none}" >> "$GITHUB_STEP_SUMMARY"
+          }
+          {
+            echo '### Cloudflare authentication diagnostic'
+            echo '| Probe | HTTP | Cloudflare error |'
+            echo '|---|---:|---|'
+          } >> "$GITHUB_STEP_SUMMARY"
+          probe user_token_verify '/user/tokens/verify'
+          probe account_token_verify "/accounts/${ACCOUNT_ID}/tokens/verify"
+          probe workers "/accounts/${ACCOUNT_ID}/workers/scripts"
+      - name: Cleanup
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/cfdiag"
