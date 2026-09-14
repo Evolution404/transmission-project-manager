@@ -2,9 +2,6 @@ import { gridLocationGuard } from './grid-location';
 import { Hono, type Context } from 'hono';
 import type {
   ApiError,
-  DemandDetail,
-  DemandMaterialSummary,
-  DemandSummary,
   ImportBatchSummary,
   ImportChunkRequest,
   ImportChunkResult,
@@ -20,6 +17,7 @@ import type {
   ParsedImportRow,
 } from '@tpm/shared';
 import { requireRoles, type AppEnv } from './auth';
+import { SqlDemandQueryRepository } from './repositories/sql-demand-query-repository';
 import { SqlIdempotencyRepository } from './repositories/sql-idempotency-repository';
 import { SqlImportMappingRepository } from './repositories/sql-import-mapping-repository';
 import { SqlMaterialRepository } from './repositories/sql-material-repository';
@@ -78,52 +76,6 @@ interface ImportRowDb {
   published_demand_id: string | null;
 }
 
-interface MappingTemplateRow {
-  id: string;
-  name: string;
-  mapping_json: string;
-  version: number;
-  created_at: string;
-  updated_at: string;
-}
-
-interface MaterialRow {
-  id: string;
-  code: string | null;
-  name: string;
-  model: string;
-  unit: string;
-  enabled: number;
-  version: number;
-}
-
-interface DemandRow {
-  voltage_level_id: string | null;
-  line_id: string | null;
-  location_type: NormalizedImportRow['locationType'];
-  start_tower_id: string | null;
-  end_tower_id: string | null;
-  id: string;
-  source_type: 'import' | 'manual';
-  source_key: string;
-  source_batch_id: string | null;
-  source_file_sha256: string | null;
-  source_file_name: string | null;
-  source_sheet: string | null;
-  source_row_number: number | null;
-  sequence_no: string;
-  business_year: number | null;
-  voltage_raw: string;
-  voltage_verified: string | null;
-  line_name: string;
-  section_text: string;
-  category_key: string | null;
-  owner: string | null;
-  raw_json: string;
-  version: number;
-  created_at: string;
-}
-
 function apiError(code: string, message: string, details?: unknown): ApiError {
   return { ok: false, error: { code, message, ...(details === undefined ? {} : { details }) } };
 }
@@ -131,29 +83,6 @@ function apiError(code: string, message: string, details?: unknown): ApiError {
 function parseJson<T>(value: string | null, fallback: T): T {
   if (value === null) return fallback;
   try { return JSON.parse(value) as T; } catch { return fallback; }
-}
-
-function mappingTemplateSummary(row: MappingTemplateRow): ImportMappingTemplate {
-  return {
-    id: row.id,
-    name: row.name,
-    mapping: parseJson<ImportFieldMapping>(row.mapping_json, {} as ImportFieldMapping),
-    version: row.version,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  };
-}
-
-function materialSummary(row: MaterialRow): MaterialSummary {
-  return {
-    id: row.id,
-    code: row.code,
-    name: row.name,
-    model: row.model,
-    unit: row.unit,
-    enabled: row.enabled === 1,
-    version: row.version,
-  };
 }
 
 function batchSummary(row: ImportBatchRow, reused = false): ImportBatchSummary {
@@ -186,23 +115,6 @@ function importRowSummary(row: ImportRowDb): ImportRowSummary {
     normalized: parseJson<NormalizedImportRow | null>(row.normalized_json, null),
     errors: parseJson<ImportIssue[]>(row.errors_json, []),
     warnings: parseJson<ImportIssue[]>(row.warnings_json, []),
-  };
-}
-
-function demandSummary(row: DemandRow): DemandSummary {
-  return {
-    id: row.id,
-    sequenceNo: row.sequence_no,
-    year: row.business_year,
-    voltageLevelId: row.voltage_level_id, lineId: row.line_id, locationType: row.location_type, startTowerId: row.start_tower_id, endTowerId: row.end_tower_id,
-    voltageRaw: row.voltage_raw,
-    voltageVerified: row.voltage_verified,
-    lineName: row.line_name,
-    section: row.section_text,
-    category: row.category_key,
-    owner: row.owner,
-    version: row.version,
-    createdAt: row.created_at,
   };
 }
 
@@ -1007,95 +919,20 @@ p2App.get('/demands', async (c) => {
   const cursorParam = c.req.query('cursor');
   const cursor = parseCursor(cursorParam);
   if (cursorParam && !cursor) return c.json(apiError('INVALID_CURSOR', '分页游标无效'), 400);
-  const where: string[] = [];
-  const params: unknown[] = [];
-  if (query) {
-    where.push('(line_name LIKE ? OR section_text LIKE ? OR sequence_no LIKE ?)');
-    const pattern = `%${query}%`;
-    params.push(pattern, pattern, pattern);
-  }
-  if (cursor) {
-    where.push('(created_at < ? OR (created_at = ? AND id < ?))');
-    params.push(cursor.createdAt, cursor.createdAt, cursor.id);
-  }
-  const sql = `SELECT id,source_type,source_key,source_batch_id,source_file_sha256,source_file_name,source_sheet,source_row_number,sequence_no,business_year,voltage_raw,voltage_verified,line_name,section_text,category_key,owner,raw_json,version,created_at,voltage_level_id,line_id,location_type,start_tower_id,end_tower_id
-               FROM demands ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
-               ORDER BY created_at DESC,id DESC LIMIT ?`;
-  params.push(limit + 1);
-  const result = await c.env.DB.prepare(sql).bind(...params).all<DemandRow>();
-  const rows = result.results ?? [];
-  const hasMore = rows.length > limit;
-  const pageRows = hasMore ? rows.slice(0, limit) : rows;
-  const last = pageRows.at(-1);
+  const { database } = createCloudflarePersistence(c.env);
+  const page = await new SqlDemandQueryRepository(database).list({ query, cursor, limit });
   return c.json({
     ok: true as const,
     data: {
-      items: pageRows.map(demandSummary),
-      nextCursor: hasMore && last ? makeCursor(last.created_at, last.id) : null,
+      items: page.items,
+      nextCursor: page.nextCursor ? makeCursor(page.nextCursor.createdAt, page.nextCursor.id) : null,
     },
   });
 });
 
 p2App.get('/demands/:id', async (c) => {
-  const row = await c.env.DB.prepare(
-    `SELECT id,source_type,source_key,source_batch_id,source_file_sha256,source_file_name,source_sheet,source_row_number,sequence_no,business_year,voltage_raw,voltage_verified,line_name,section_text,category_key,owner,raw_json,version,created_at,voltage_level_id,line_id,location_type,start_tower_id,end_tower_id
-     FROM demands WHERE id=? LIMIT 1`,
-  ).bind(c.req.param('id')).first<DemandRow>();
-  if (!row) return c.json(apiError('DEMAND_NOT_FOUND', '需求不存在'), 404);
-  const materialRows = await c.env.DB.prepare(
-    `SELECT dm.id,dm.raw_model,dm.quantity_scaled,dm.unit,
-            m.id AS material_id,m.code AS material_code,m.name AS material_name,m.model AS material_model,m.unit AS material_unit,m.enabled AS material_enabled,m.version AS material_version
-     FROM demand_materials dm LEFT JOIN materials m ON m.id=dm.material_id WHERE dm.demand_id=? ORDER BY dm.id`,
-  ).bind(row.id).all<{
-    id: string; raw_model: string; quantity_scaled: number; unit: string | null;
-    material_id: string | null; material_code: string | null; material_name: string | null; material_model: string | null;
-    material_unit: string | null; material_enabled: number | null; material_version: number | null;
-  }>();
-  const materials: DemandMaterialSummary[] = (materialRows.results ?? []).map((item) => ({
-    id: item.id,
-    rawModel: item.raw_model,
-    quantityScaled: item.quantity_scaled,
-    unit: item.unit,
-    material: item.material_id && item.material_name && item.material_model && item.material_unit && item.material_version !== null
-      ? {
-          id: item.material_id,
-          code: item.material_code,
-          name: item.material_name,
-          model: item.material_model,
-          unit: item.material_unit,
-          enabled: item.material_enabled === 1,
-          version: item.material_version,
-        }
-      : null,
-  }));
-  const raw = parseJson<Record<string, unknown>>(row.raw_json, {});
-  const sourceRows = row.source_type === 'import'
-    ? await c.env.DB.prepare(
-      `SELECT file_name,file_sha256,sheet_name,source_row_number,raw_json
-       FROM demand_source_rows WHERE demand_id=? ORDER BY source_row_number,id`,
-    ).bind(row.id).all<{ file_name: string; file_sha256: string; sheet_name: string; source_row_number: number; raw_json: string }>()
-    : null;
-  const data: DemandDetail = {
-    ...demandSummary(row),
-    source: row.source_type === 'manual'
-      ? { type: 'manual', raw }
-      : {
-          type: 'import',
-          batchId: row.source_batch_id!,
-          fileName: row.source_file_name!,
-          fileSha256: row.source_file_sha256!,
-          sheetName: row.source_sheet!,
-          rowNumber: row.source_row_number!,
-          raw,
-          rows: (sourceRows?.results ?? []).map((source) => ({
-            fileName: source.file_name,
-            fileSha256: source.file_sha256,
-            sheetName: source.sheet_name,
-            rowNumber: source.source_row_number,
-            raw: parseJson<Record<string, unknown>>(source.raw_json, {}),
-          })),
-        },
-    materials,
-  };
+  const { database } = createCloudflarePersistence(c.env);
+  const data = await new SqlDemandQueryRepository(database).getById(c.req.param('id'));
+  if (!data) return c.json(apiError('DEMAND_NOT_FOUND', '需求不存在'), 404);
   return c.json({ ok: true as const, data });
 });
