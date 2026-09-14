@@ -6,7 +6,6 @@ import type {
   BindProjectFrameworkRequest,
   BudgetAllocationInput,
   BudgetAllocationSummary,
-  BudgetVersionSummary,
   ConfirmBudgetRequest,
   CreateBudgetRequest,
   CreateFinancialEntryRequest,
@@ -22,6 +21,7 @@ import type {
   UpdateBudgetRequest,
 } from '@tpm/shared';
 import { hasScope, requireRoles, type AppEnv } from './auth';
+import { SqlFinanceBudgetRepository } from './repositories/sql-finance-budget-repository';
 import { SqlFinanceQueryRepository } from './repositories/sql-finance-query-repository';
 import { SqlFinanceWriteRepository } from './repositories/sql-finance-write-repository';
 import { SqlIdempotencyRepository } from './repositories/sql-idempotency-repository';
@@ -38,10 +38,6 @@ type AgreementRow = {
   status: AgreementStatus; version: number; created_at: string; updated_at: string;
 };
 type ProjectRow = { id: string; name: string; framework_id: string | null; version: number };
-type BudgetRow = {
-  id: string; project_id: string; total_amount_fen: number; note: string | null; status: 'draft' | 'confirmed';
-  budget_version: number; version: number; created_at: string; updated_at: string;
-};
 type AllocationRow = { agreement_id: string; amount_fen: number; code: string; name: string };
 type FinancialEntryRow = {
   id: string; framework_id: string; project_id: string; project_name: string; entry_type: FinancialEntryType;
@@ -148,12 +144,6 @@ function hasGlobalScope(c: Context<AppEnv>) {
   const user = c.get('currentUser');
   return user.role === 'admin' || user.scopes.some((scope) => scope.type === 'all');
 }
-function budgetGuard(db: D1Database, id: string, version: number, values: { total: number; note: string | null; status: 'draft' | 'confirmed'; incrementBudgetVersion: boolean; now: string }) {
-  return db.prepare(
-    `UPDATE project_budgets SET total_amount_fen=?,note=?,status=?,budget_version=budget_version+?,version=version+1,
-       updated_at=CASE WHEN version=? THEN ? ELSE NULL END WHERE id=?`,
-  ).bind(values.total, values.note, values.status, values.incrementBudgetVersion ? 1 : 0, version, values.now, id);
-}
 function normalizeAllocations(value: unknown): BudgetAllocationInput[] | null {
   if (!Array.isArray(value) || value.length > 100) return null;
   const seen = new Set<string>();
@@ -186,26 +176,6 @@ async function validateAgreementAllocations(db: D1Database, frameworkId: string,
     summaries.push({ agreementId: agreement.id, amountFen: item.amountFen, agreementCode: agreement.code, agreementName: agreement.name });
   }
   return { summaries };
-}
-async function loadBudgetAllocations(db: D1Database, budgetId: string): Promise<BudgetAllocationSummary[]> {
-  const result = await db.prepare(
-    `SELECT ba.agreement_id,ba.amount_fen,a.code,a.name FROM budget_allocations ba INNER JOIN agreements a ON a.id=ba.agreement_id
-     WHERE ba.budget_id=? ORDER BY a.code COLLATE NOCASE,a.id`,
-  ).bind(budgetId).all<AllocationRow>();
-  return (result.results ?? []).map((row) => ({ agreementId: row.agreement_id, amountFen: row.amount_fen, agreementCode: row.code, agreementName: row.name }));
-}
-async function loadBudget(db: D1Database, id: string): Promise<ProjectBudgetSummary | null> {
-  const row = await db.prepare(
-    `SELECT pb.id,pb.project_id,pb.total_amount_fen,pb.note,pb.status,pb.budget_version,pb.version,pb.created_at,pb.updated_at,
-            p.name AS project_name,p.framework_id
-     FROM project_budgets pb INNER JOIN projects p ON p.id=pb.project_id WHERE pb.id=? LIMIT 1`,
-  ).bind(id).first<BudgetRow & { project_name: string; framework_id: string | null }>();
-  if (!row) return null;
-  return {
-    id: row.id, projectId: row.project_id, projectName: row.project_name, frameworkId: row.framework_id,
-    totalAmountFen: row.total_amount_fen, note: row.note, status: row.status, budgetVersion: row.budget_version,
-    version: row.version, allocations: await loadBudgetAllocations(db, row.id), createdAt: row.created_at, updatedAt: row.updated_at,
-  };
 }
 function basisPoints(numerator: number, denominator: number): number | null {
   if (denominator <= 0) return null;
@@ -457,14 +427,9 @@ p4App.put('/projects/:id/framework', requireRoles('admin', 'project_manager'), a
 
 p4App.get('/budgets', async (c) => {
   const projectId = cleanText(c.req.query('projectId'));
-  const result = projectId
-    ? await c.env.DB.prepare(`SELECT id FROM project_budgets WHERE project_id=? LIMIT 100`).bind(projectId).all<{ id: string }>()
-    : await c.env.DB.prepare(`SELECT id FROM project_budgets ORDER BY updated_at DESC,id DESC LIMIT 100`).all<{ id: string }>();
-  const items: ProjectBudgetSummary[] = [];
-  for (const row of result.results ?? []) {
-    const budget = await loadBudget(c.env.DB, row.id); if (!budget) continue;
-    if (canProject(c, budget.projectId) || (budget.frameworkId && canFramework(c, budget.frameworkId))) items.push(budget);
-  }
+  const { database } = createCloudflarePersistence(c.env);
+  const items = (await new SqlFinanceBudgetRepository(database).listBudgets(projectId || null))
+    .filter((budget) => canProject(c, budget.projectId) || (budget.frameworkId !== null && canFramework(c, budget.frameworkId)));
   return c.json({ ok: true as const, data: { items } });
 });
 
@@ -473,32 +438,48 @@ p4App.post('/budgets', requireRoles('admin', 'project_manager', 'finance'), asyn
   let body: Partial<CreateBudgetRequest>; try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
   const projectId = cleanText(body.projectId), total = safeNonNegative(body.totalAmountFen), allocations = normalizeAllocations(body.allocations), note = nullableText(body.note, 1000);
   if (!projectId || total === null || !allocations || note === undefined) return c.json(apiError('INVALID_BUDGET', '预算参数无效'), 422);
-  const project = await findProject(c.env.DB, projectId); if (!project) return c.json(apiError('PROJECT_NOT_FOUND', '项目不存在'), 422);
-  if (!canProject(c, projectId) && !(project.framework_id && canFramework(c, project.framework_id))) return c.json(apiError('SCOPE_FORBIDDEN', '无权管理该项目预算'), 403);
-  if (allocations.length && !project.framework_id) return c.json(apiError('PROJECT_FRAMEWORK_REQUIRED', '项目未归属框架，不能分配协议'), 422);
+  const { database } = createCloudflarePersistence(c.env);
+  const queryRepository = new SqlFinanceQueryRepository(database);
+  const budgetRepository = new SqlFinanceBudgetRepository(database);
+  const project = await queryRepository.findProject(projectId); if (!project) return c.json(apiError('PROJECT_NOT_FOUND', '项目不存在'), 422);
+  if (!canProject(c, projectId) && !(project.frameworkId && canFramework(c, project.frameworkId))) return c.json(apiError('SCOPE_FORBIDDEN', '无权管理该项目预算'), 403);
+  if (allocations.length && !project.frameworkId) return c.json(apiError('PROJECT_FRAMEWORK_REQUIRED', '项目未归属框架，不能分配协议'), 422);
   let summaries: BudgetAllocationSummary[] = [];
-  if (project.framework_id) {
-    const checked = await validateAgreementAllocations(c.env.DB, project.framework_id, allocations, null, false);
-    if (checked.error) return c.json(checked.error, 422); summaries = checked.summaries ?? [];
+  if (project.frameworkId) {
+    const checked = await budgetRepository.validateAgreementAllocations(project.frameworkId, allocations, null, false);
+    if (!checked.ok) {
+      if (checked.reason === 'not_found') return c.json(apiError('AGREEMENT_NOT_FOUND', '协议不存在'), 422);
+      if (checked.reason === 'framework_mismatch') return c.json(apiError('AGREEMENT_FRAMEWORK_MISMATCH', '协议与项目不属于同一框架'), 422);
+      return c.json(apiError('AGREEMENT_NOT_EFFECTIVE', '协议在业务日期不是有效状态'), 422);
+    }
+    summaries = checked.summaries;
   }
   const request: CreateBudgetRequest = { projectId, totalAmountFen: total, allocations, note };
   const hash = await requestHash(request), operation = 'budgets.create'; const replay = await replayIdempotentResponse(c, key, operation, hash); if (replay) return replay;
   const actor = c.get('currentUser'), id = crypto.randomUUID(), now = new Date().toISOString();
-  const data: ProjectBudgetSummary = { id, projectId, projectName: project.name, frameworkId: project.framework_id, totalAmountFen: total, note, status: 'draft', budgetVersion: 0, version: 1, allocations: summaries, createdAt: now, updatedAt: now };
+  const data: ProjectBudgetSummary = { id, projectId, projectName: project.name, frameworkId: project.frameworkId, totalAmountFen: total, note, status: 'draft', budgetVersion: 0, version: 1, allocations: summaries, createdAt: now, updatedAt: now };
   const response = { ok: true as const, data };
-  const statements: D1PreparedStatement[] = [
-    c.env.DB.prepare(`INSERT INTO project_budgets (id,project_id,total_amount_fen,note,status,budget_version,version,created_by,created_at,updated_at) VALUES (?,?,?,?,'draft',0,1,?,?,?)`).bind(id, projectId, total, note, actor.id, now, now),
-    ...allocations.map((item) => c.env.DB.prepare(`INSERT INTO budget_allocations (id,budget_id,agreement_id,amount_fen,created_at) VALUES (?,?,?,?,?)`).bind(crypto.randomUUID(), id, item.agreementId, item.amountFen, now)),
-    auditStatement(c.env.DB, actor.id, 'budget.create', 'budget', id, null, data, now),
-    idempotencyStatement(c.env.DB, key, actor.id, operation, hash, response, 201, now),
-  ];
-  try { await c.env.DB.batch(statements); } catch { return c.json(apiError('BUDGET_CONFLICT', '项目预算已存在或数据冲突'), 409); }
+  try {
+    await budgetRepository.createBudget({
+      budget: data,
+      allocations: allocations.map((item) => ({ id: crypto.randomUUID(), agreementId: item.agreementId, amountFen: item.amountFen })),
+      actorId: actor.id,
+      auditId: crypto.randomUUID(),
+      idempotencyKey: key,
+      operation,
+      requestHash: hash,
+      responseJson: JSON.stringify(response),
+    });
+  } catch { return c.json(apiError('BUDGET_CONFLICT', '项目预算已存在或数据冲突'), 409); }
   return c.json(response, 201);
 });
 
 p4App.put('/budgets/:id', requireRoles('admin', 'project_manager', 'finance'), async (c) => {
   const key = requireIdempotencyKey(c); if (key instanceof Response) return key;
-  const current = await loadBudget(c.env.DB, c.req.param('id')); if (!current) return c.json(apiError('NOT_FOUND', '预算不存在'), 404);
+  const { database } = createCloudflarePersistence(c.env);
+  const queryRepository = new SqlFinanceQueryRepository(database);
+  const budgetRepository = new SqlFinanceBudgetRepository(database);
+  const current = await budgetRepository.findBudget(c.req.param('id')); if (!current) return c.json(apiError('NOT_FOUND', '预算不存在'), 404);
   if (!canProject(c, current.projectId) && !(current.frameworkId && canFramework(c, current.frameworkId))) return c.json(apiError('SCOPE_FORBIDDEN', '无权修改该预算'), 403);
   let body: Partial<UpdateBudgetRequest>; try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
   const version = expectedVersion(body.expectedVersion), total = safeNonNegative(body.totalAmountFen), allocations = normalizeAllocations(body.allocations), note = nullableText(body.note, 1000);
@@ -506,22 +487,36 @@ p4App.put('/budgets/:id', requireRoles('admin', 'project_manager', 'finance'), a
   const request: UpdateBudgetRequest = { expectedVersion: version, totalAmountFen: total, allocations, note };
   const hash = await requestHash(request), operation = `budgets.update:${current.id}`; const replay = await replayIdempotentResponse(c, key, operation, hash); if (replay) return replay;
   if (current.version !== version) return c.json(apiError('VERSION_CONFLICT', '预算已被修改，请刷新后重试'), 409);
-  const project = await findProject(c.env.DB, current.projectId); if (!project) return c.json(apiError('PROJECT_NOT_FOUND', '项目不存在'), 422);
-  if (allocations.length && !project.framework_id) return c.json(apiError('PROJECT_FRAMEWORK_REQUIRED', '项目未归属框架，不能分配协议'), 422);
+  const project = await queryRepository.findProject(current.projectId); if (!project) return c.json(apiError('PROJECT_NOT_FOUND', '项目不存在'), 422);
+  if (allocations.length && !project.frameworkId) return c.json(apiError('PROJECT_FRAMEWORK_REQUIRED', '项目未归属框架，不能分配协议'), 422);
   let summaries: BudgetAllocationSummary[] = [];
-  if (project.framework_id) { const checked = await validateAgreementAllocations(c.env.DB, project.framework_id, allocations, null, false); if (checked.error) return c.json(checked.error, 422); summaries = checked.summaries ?? []; }
+  if (project.frameworkId) {
+    const checked = await budgetRepository.validateAgreementAllocations(project.frameworkId, allocations, null, false);
+    if (!checked.ok) {
+      if (checked.reason === 'not_found') return c.json(apiError('AGREEMENT_NOT_FOUND', '协议不存在'), 422);
+      if (checked.reason === 'framework_mismatch') return c.json(apiError('AGREEMENT_FRAMEWORK_MISMATCH', '协议与项目不属于同一框架'), 422);
+      return c.json(apiError('AGREEMENT_NOT_EFFECTIVE', '协议在业务日期不是有效状态'), 422);
+    }
+    summaries = checked.summaries;
+  }
   const actor = c.get('currentUser'), now = new Date().toISOString();
-  const data: ProjectBudgetSummary = { ...current, frameworkId: project.framework_id, totalAmountFen: total, note, status: 'draft', version: version + 1, allocations: summaries, updatedAt: now };
+  const data: ProjectBudgetSummary = { ...current, frameworkId: project.frameworkId, totalAmountFen: total, note, status: 'draft', version: version + 1, allocations: summaries, updatedAt: now };
   const response = { ok: true as const, data };
-  const statements: D1PreparedStatement[] = [
-    budgetGuard(c.env.DB, current.id, version, { total, note, status: 'draft', incrementBudgetVersion: false, now }),
-    c.env.DB.prepare(`DELETE FROM budget_allocations WHERE budget_id=?`).bind(current.id),
-    ...allocations.map((item) => c.env.DB.prepare(`INSERT INTO budget_allocations (id,budget_id,agreement_id,amount_fen,created_at) VALUES (?,?,?,?,?)`).bind(crypto.randomUUID(), current.id, item.agreementId, item.amountFen, now)),
-    auditStatement(c.env.DB, actor.id, 'budget.update', 'budget', current.id, { version, totalAmountFen: current.totalAmountFen }, data, now),
-    idempotencyStatement(c.env.DB, key, actor.id, operation, hash, response, 200, now),
-  ];
-  try { await c.env.DB.batch(statements); } catch {
-    const latest = await loadBudget(c.env.DB, current.id); if (latest && latest.version !== version) return c.json(apiError('VERSION_CONFLICT', '预算已被并发修改，请刷新后重试'), 409);
+  try {
+    await budgetRepository.updateBudget({
+      before: current,
+      next: data,
+      expectedVersion: version,
+      allocations: allocations.map((item) => ({ id: crypto.randomUUID(), agreementId: item.agreementId, amountFen: item.amountFen })),
+      actorId: actor.id,
+      auditId: crypto.randomUUID(),
+      idempotencyKey: key,
+      operation,
+      requestHash: hash,
+      responseJson: JSON.stringify(response),
+    });
+  } catch {
+    const latest = await budgetRepository.findBudget(current.id); if (latest && latest.version !== version) return c.json(apiError('VERSION_CONFLICT', '预算已被并发修改，请刷新后重试'), 409);
     return c.json(apiError('BUDGET_CONFLICT', '预算更新失败'), 409);
   }
   return c.json(response);
@@ -529,43 +524,55 @@ p4App.put('/budgets/:id', requireRoles('admin', 'project_manager', 'finance'), a
 
 p4App.post('/budgets/:id/confirm', requireRoles('admin', 'project_manager', 'finance'), async (c) => {
   const key = requireIdempotencyKey(c); if (key instanceof Response) return key;
-  const current = await loadBudget(c.env.DB, c.req.param('id')); if (!current) return c.json(apiError('NOT_FOUND', '预算不存在'), 404);
+  const { database } = createCloudflarePersistence(c.env);
+  const queryRepository = new SqlFinanceQueryRepository(database);
+  const budgetRepository = new SqlFinanceBudgetRepository(database);
+  const current = await budgetRepository.findBudget(c.req.param('id')); if (!current) return c.json(apiError('NOT_FOUND', '预算不存在'), 404);
   if (!canProject(c, current.projectId) && !(current.frameworkId && canFramework(c, current.frameworkId))) return c.json(apiError('SCOPE_FORBIDDEN', '无权确认该预算'), 403);
   let body: Partial<ConfirmBudgetRequest>; try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
   const version = expectedVersion(body.expectedVersion); if (version === null) return c.json(apiError('INVALID_VERSION', 'expectedVersion 无效'), 422);
   const request = { expectedVersion: version }; const hash = await requestHash(request), operation = `budgets.confirm:${current.id}`; const replay = await replayIdempotentResponse(c, key, operation, hash); if (replay) return replay;
   if (current.version !== version) return c.json(apiError('VERSION_CONFLICT', '预算已被修改，请刷新后重试'), 409);
-  const project = await findProject(c.env.DB, current.projectId); if (!project?.framework_id) return c.json(apiError('PROJECT_FRAMEWORK_REQUIRED', '确认预算前项目必须归属框架'), 422);
+  const project = await queryRepository.findProject(current.projectId); if (!project?.frameworkId) return c.json(apiError('PROJECT_FRAMEWORK_REQUIRED', '确认预算前项目必须归属框架'), 422);
   const sum = safeSum(current.allocations.map((item) => item.amountFen));
   if (!current.allocations.length || sum === null || sum !== current.totalAmountFen) return c.json(apiError('BUDGET_ALLOCATION_MISMATCH', '确认预算时协议分配合计必须精确等于预算总额'), 422);
-  const checked = await validateAgreementAllocations(c.env.DB, project.framework_id, current.allocations, today(), true); if (checked.error) return c.json(checked.error, 422);
+  const checked = await budgetRepository.validateAgreementAllocations(project.frameworkId, current.allocations, today(), true);
+  if (!checked.ok) {
+    if (checked.reason === 'not_found') return c.json(apiError('AGREEMENT_NOT_FOUND', '协议不存在'), 422);
+    if (checked.reason === 'framework_mismatch') return c.json(apiError('AGREEMENT_FRAMEWORK_MISMATCH', '协议与项目不属于同一框架'), 422);
+    return c.json(apiError('AGREEMENT_NOT_EFFECTIVE', '协议在业务日期不是有效状态'), 422);
+  }
   const actor = c.get('currentUser'), now = new Date().toISOString(), budgetVersion = current.budgetVersion + 1, versionId = crypto.randomUUID();
-  const data: ProjectBudgetSummary = { ...current, frameworkId: project.framework_id, status: 'confirmed', budgetVersion, version: version + 1, updatedAt: now };
+  const data: ProjectBudgetSummary = { ...current, frameworkId: project.frameworkId, status: 'confirmed', budgetVersion, version: version + 1, updatedAt: now };
   const response = { ok: true as const, data };
-  const statements: D1PreparedStatement[] = [
-    budgetGuard(c.env.DB, current.id, version, { total: current.totalAmountFen, note: current.note, status: 'confirmed', incrementBudgetVersion: true, now }),
-    c.env.DB.prepare(`INSERT INTO budget_versions (id,budget_id,project_id,framework_id,budget_version,total_amount_fen,note,confirmed_by,confirmed_at) VALUES (?,?,?,?,?,?,?,?,?)`).bind(versionId, current.id, current.projectId, project.framework_id, budgetVersion, current.totalAmountFen, current.note, actor.id, now),
-    ...current.allocations.map((item) => c.env.DB.prepare(`INSERT INTO budget_version_allocations (id,budget_version_id,agreement_id,amount_fen,created_at) VALUES (?,?,?,?,?)`).bind(crypto.randomUUID(), versionId, item.agreementId, item.amountFen, now)),
-    auditStatement(c.env.DB, actor.id, 'budget.confirm', 'budget', current.id, { version, budgetVersion: current.budgetVersion }, { version: version + 1, budgetVersion }, now),
-    idempotencyStatement(c.env.DB, key, actor.id, operation, hash, response, 200, now),
-  ];
-  try { await c.env.DB.batch(statements); } catch {
-    const latest = await loadBudget(c.env.DB, current.id); if (latest && latest.version !== version) return c.json(apiError('VERSION_CONFLICT', '预算已被并发修改，请刷新后重试'), 409);
+  try {
+    await budgetRepository.confirmBudget({
+      before: current,
+      next: data,
+      expectedVersion: version,
+      budgetVersionId: versionId,
+      allocations: current.allocations.map((item) => ({ id: crypto.randomUUID(), agreementId: item.agreementId, amountFen: item.amountFen })),
+      actorId: actor.id,
+      auditId: crypto.randomUUID(),
+      idempotencyKey: key,
+      operation,
+      requestHash: hash,
+      responseJson: JSON.stringify(response),
+    });
+  } catch {
+    const latest = await budgetRepository.findBudget(current.id); if (latest && latest.version !== version) return c.json(apiError('VERSION_CONFLICT', '预算已被并发修改，请刷新后重试'), 409);
     return c.json(apiError('BUDGET_CONFIRM_CONFLICT', '预算确认失败'), 409);
   }
   return c.json(response);
 });
 
 p4App.get('/budgets/:id/history', async (c) => {
-  const budget = await loadBudget(c.env.DB, c.req.param('id')); if (!budget) return c.json(apiError('NOT_FOUND', '预算不存在'), 404);
+  const { database } = createCloudflarePersistence(c.env);
+  const budgetRepository = new SqlFinanceBudgetRepository(database);
+  const budget = await budgetRepository.findBudget(c.req.param('id')); if (!budget) return c.json(apiError('NOT_FOUND', '预算不存在'), 404);
   if (!canProject(c, budget.projectId) && !(budget.frameworkId && canFramework(c, budget.frameworkId))) return c.json(apiError('SCOPE_FORBIDDEN', '无权查看该预算'), 403);
-  const rows = await c.env.DB.prepare(`SELECT id,budget_id,project_id,framework_id,budget_version,total_amount_fen,note,confirmed_at FROM budget_versions WHERE budget_id=? ORDER BY budget_version DESC`).bind(budget.id).all<any>();
-  const items: BudgetVersionSummary[] = [];
-  for (const row of rows.results ?? []) {
-    const allocations = await c.env.DB.prepare(`SELECT bva.agreement_id,bva.amount_fen,a.code,a.name FROM budget_version_allocations bva INNER JOIN agreements a ON a.id=bva.agreement_id WHERE bva.budget_version_id=? ORDER BY a.code`).bind(row.id).all<AllocationRow>();
-    items.push({ id: row.id, budgetId: row.budget_id, projectId: row.project_id, frameworkId: row.framework_id, budgetVersion: row.budget_version, totalAmountFen: row.total_amount_fen, note: row.note, confirmedAt: row.confirmed_at, allocations: (allocations.results ?? []).map((item) => ({ agreementId: item.agreement_id, amountFen: item.amount_fen, agreementCode: item.code, agreementName: item.name })) });
-  }
-  return c.json({ ok: true as const, data: { items } });
+  const items = await budgetRepository.getBudgetHistory(budget.id);
+  return c.json({ ok: true as const, data: { items: items ?? [] } });
 });
 
 async function entrySummaries(db: D1Database, rows: FinancialEntryRow[]): Promise<FinancialEntrySummary[]> {
