@@ -23,6 +23,7 @@ import { hasScope, requireRoles, type AppEnv } from './auth';
 import { SqlIdempotencyRepository } from './repositories/sql-idempotency-repository';
 import { SqlProjectQueryRepository } from './repositories/sql-project-query-repository';
 import { SqlProjectWriteRepository } from './repositories/sql-project-write-repository';
+import { SqlReserveCategoryWriteRepository } from './repositories/sql-reserve-category-write-repository';
 import { createCloudflarePersistence } from './runtime/cloudflare/persistence';
 
 const MAX_PROJECT_ALLOCATIONS = 100;
@@ -89,13 +90,6 @@ interface CategoryRow {
   category_key: string;
   label: string;
   enabled: number;
-  version: number;
-}
-
-interface MappingRow {
-  id: string;
-  demand_category_key: string;
-  reserve_category_id: string;
   version: number;
 }
 
@@ -459,14 +453,6 @@ function auditStatement(
     after === null ? null : JSON.stringify(after),
     now,
   );
-}
-
-function categorySummary(row: CategoryRow): ReserveCategorySummary {
-  return { id: row.id, key: row.category_key, label: row.label, enabled: row.enabled === 1, version: row.version };
-}
-
-function mappingSummary(row: MappingRow): CategoryMappingSummary {
-  return { id: row.id, demandCategory: row.demand_category_key, reserveCategoryId: row.reserve_category_id, version: row.version };
 }
 
 export const p3App = new Hono<AppEnv>();
@@ -836,15 +822,19 @@ p3App.post('/reserve-categories', requireRoles('admin', 'project_manager'), asyn
   const now = new Date().toISOString();
   const data: ReserveCategorySummary = { id, key: categoryKey, label, enabled: true, version: 1 };
   const response = { ok: true as const, data };
+  const { database } = createCloudflarePersistence(c.env);
+  const repository = new SqlReserveCategoryWriteRepository(database);
   try {
-    await c.env.DB.batch([
-      c.env.DB.prepare(
-        `INSERT INTO reserve_categories (id,category_key,label,enabled,version,created_by,created_at,updated_at)
-         VALUES (?,?,?,1,1,?,?,?)`,
-      ).bind(id, categoryKey, label, actor.id, now, now),
-      auditStatement(c.env.DB, actor.id, 'reserve_category.create', 'reserve_category', id, null, data, now),
-      idempotencyStatement(c.env.DB, key, actor.id, operation, hash, response, 201, now),
-    ]);
+    await repository.createCategory({
+      category: data,
+      actorId: actor.id,
+      now,
+      auditId: crypto.randomUUID(),
+      idempotencyKey: key,
+      operation,
+      requestHash: hash,
+      responseJson: JSON.stringify(response),
+    });
   } catch {
     const replayAfterRace = await replayIdempotentResponse(c, key, operation, hash);
     if (replayAfterRace) return replayAfterRace;
@@ -874,11 +864,11 @@ p3App.put('/category-mappings/:demandCategory', requireRoles('admin', 'project_m
   const operation = `category-mappings:${demandCategory.toLowerCase()}`;
   const replay = await replayIdempotentResponse(c, key, operation, hash);
   if (replay) return replay;
-  const category = await c.env.DB.prepare('SELECT id FROM reserve_categories WHERE id=? AND enabled=1 LIMIT 1').bind(reserveCategoryId).first<{ id: string }>();
-  if (!category) return c.json(apiError('RESERVE_CATEGORY_NOT_FOUND', '储备大类不存在或已停用'), 404);
-  const current = await c.env.DB.prepare(
-    `SELECT id,demand_category_key,reserve_category_id,version FROM category_mappings WHERE demand_category_key=? COLLATE NOCASE LIMIT 1`,
-  ).bind(demandCategory).first<MappingRow>();
+  const { database } = createCloudflarePersistence(c.env);
+  const repository = new SqlReserveCategoryWriteRepository(database);
+  const category = await repository.findCategory(reserveCategoryId);
+  if (!category?.enabled) return c.json(apiError('RESERVE_CATEGORY_NOT_FOUND', '储备大类不存在或已停用'), 404);
+  const current = await repository.findMapping(demandCategory);
   if (!current && expectedVersion !== null) return c.json(apiError('VERSION_CONFLICT', '类别映射不存在，expectedVersion 应为空'), 409);
   if (current && expectedVersion !== current.version) return c.json(apiError('VERSION_CONFLICT', '类别映射已被修改，请刷新后重试'), 409);
 
@@ -888,25 +878,19 @@ p3App.put('/category-mappings/:demandCategory', requireRoles('admin', 'project_m
   const nextVersion = current ? current.version + 1 : 1;
   const data: CategoryMappingSummary = { id, demandCategory, reserveCategoryId, version: nextVersion };
   const response = { ok: true as const, data };
-  const statements: D1PreparedStatement[] = [];
-  if (current) {
-    statements.push(c.env.DB.prepare(
-      `UPDATE category_mappings
-       SET reserve_category_id=?,version=version+1,updated_at=CASE WHEN version=? THEN ? ELSE NULL END
-       WHERE id=?`,
-    ).bind(reserveCategoryId, expectedVersion, now, current.id));
-  } else {
-    statements.push(c.env.DB.prepare(
-      `INSERT INTO category_mappings (id,demand_category_key,reserve_category_id,version,created_by,created_at,updated_at)
-       VALUES (?,?,?,1,?,?,?)`,
-    ).bind(id, demandCategory, reserveCategoryId, actor.id, now, now));
-  }
-  statements.push(
-    auditStatement(c.env.DB, actor.id, 'category_mapping.upsert', 'category_mapping', id, current ? mappingSummary(current) : null, data, now),
-    idempotencyStatement(c.env.DB, key, actor.id, operation, hash, response, 200, now),
-  );
   try {
-    await c.env.DB.batch(statements);
+    await repository.upsertMapping({
+      mapping: data,
+      expectedVersion,
+      actorId: actor.id,
+      now,
+      auditId: crypto.randomUUID(),
+      idempotencyKey: key,
+      operation,
+      requestHash: hash,
+      responseJson: JSON.stringify(response),
+      before: current,
+    });
   } catch {
     const replayAfterRace = await replayIdempotentResponse(c, key, operation, hash);
     if (replayAfterRace) return replayAfterRace;

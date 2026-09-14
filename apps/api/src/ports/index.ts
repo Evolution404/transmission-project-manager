@@ -5,6 +5,7 @@ export type { BootstrapAdminRecord, CreateManagedMemberRecord, ManagedMemberScop
 export type { LinePageCursor, MasterDataRepository, TowerPageCursor } from './master-data-repository';
 export type { ProjectPage, ProjectPageCursor, ProjectQueryRepository, ProjectSuggestionGroup, ReserveCandidatePage } from './project-query-repository';
 export type { AllocationFailure, CreateProjectRecord, ProjectAllocationWrite, ProjectCostLineWrite, ProjectWriteRepository, ProjectWriteState, ProtectedProjectScopeItem, ReplaceProjectAllocationsRecord, ReplaceProjectCostsRecord } from './project-write-repository';
+export type { CreateReserveCategoryRecord, ReserveCategoryWriteRepository, UpsertCategoryMappingRecord } from './reserve-category-write-repository';
 export type { CreateMaterialRecord, MaterialRepository } from './material-repository';
 export type { CommitSingleMasterDataInput, MasterDataWriteKind, MasterDataWriteRepository } from './master-data-write-repository';
 export type { MemberRepository } from './member-repository';
