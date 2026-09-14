@@ -5,6 +5,7 @@ export type { BootstrapAdminRecord, CreateManagedMemberRecord, ManagedMemberScop
 export type { LinePageCursor, MasterDataRepository, TowerPageCursor } from './master-data-repository';
 export type { ProjectPage, ProjectPageCursor, ProjectQueryRepository, ProjectSuggestionGroup, ReserveCandidatePage } from './project-query-repository';
 export type { ProjectMaterialInputCandidate, ProjectMaterialRevisionSummary, ReserveProjectQueryRepository, ReserveProjectState, ResolvedProjectMaterialInput } from './reserve-project-query-repository';
+export type { ConfirmReserveProjectRecord, CreateReserveProjectRecord, ReplaceReserveProjectDemandsRecord, ReplaceReserveProjectMaterialsRecord, ReserveProjectWriteRepository } from './reserve-project-write-repository';
 export type { CreateProjectReleaseRecord, ExecutionProjectState, ProjectReleaseRepository, ProjectReleaseSnapshot } from './project-release-repository';
 export type { CreateProjectTaskRecord, CreatedProjectTaskSummary, ProjectTaskMaterialAvailability, ProjectTaskRepository } from './project-task-repository';
 export type { CreateSupplyEventRecord, CreatedSupplyEvent, SupplyTotals, TaskMaterialSupplyState, TaskSupplyRepository } from './task-supply-repository';

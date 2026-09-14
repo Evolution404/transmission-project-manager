@@ -13,6 +13,7 @@ import { SqlDemandRepository } from './repositories/sql-demand-repository';
 import { SqlDemandQueryRepository } from './repositories/sql-demand-query-repository';
 import { SqlDemandMaterialWriteRepository } from './repositories/sql-demand-material-write-repository';
 import { SqlReserveProjectQueryRepository } from './repositories/sql-reserve-project-query-repository';
+import { SqlReserveProjectWriteRepository } from './repositories/sql-reserve-project-write-repository';
 import { createCloudflarePersistence } from './runtime/cloudflare/persistence';
 
 const MAX_ITEMS = 100;
@@ -505,7 +506,7 @@ function normalizeDemandMaterials(body: Record<string, unknown>): Array<{ rawMod
   return items;
 }
 
-async function normalizeProjectMaterials(db: D1Database, value: unknown, allowIds: boolean) {
+function parseProjectMaterials(value: unknown, allowIds: boolean) {
   if (!Array.isArray(value) || value.length > MAX_ITEMS) return null;
   const parsed: Array<{
     id: string | null;
@@ -517,8 +518,6 @@ async function normalizeProjectMaterials(db: D1Database, value: unknown, allowId
     reserveCategoryId: string | null;
   }> = [];
   const ids = new Set<string>();
-  const materialIds = new Set<string>();
-  const categoryIds = new Set<string>();
   for (const raw of value) {
     if (!raw || typeof raw !== 'object') return null;
     const item = raw as Record<string, unknown>;
@@ -532,53 +531,12 @@ async function normalizeProjectMaterials(db: D1Database, value: unknown, allowId
     if ((!allowIds && id !== null) || (id !== null && (!id || ids.has(id))) || quantity === null || (unitPrice === null && item.unitPriceScaled !== null && item.unitPriceScaled !== undefined)) return null;
     if ((materialId !== null && !materialId) || (categoryId !== null && !categoryId)) return null;
     if (id) ids.add(id);
-    if (materialId) materialIds.add(materialId);
-    if (categoryId) categoryIds.add(categoryId);
     parsed.push({ id, materialId, model, unit, requiredQuantityScaled: quantity, unitPriceScaled: unitPrice, reserveCategoryId: categoryId });
   }
-
-  const materialMap = new Map<string, { id: string; model: string; unit: string; enabled: number }>();
-  if (materialIds.size) {
-    const values = [...materialIds];
-    const result = await db.prepare(`SELECT id,model,unit,enabled FROM materials WHERE id IN (${values.map(() => '?').join(',')})`).bind(...values).all<{ id: string; model: string; unit: string; enabled: number }>();
-    for (const row of result.results ?? []) materialMap.set(row.id, row);
-  }
-  const validCategoryIds = new Set<string>();
-  if (categoryIds.size) {
-    const values = [...categoryIds];
-    const result = await db.prepare(`SELECT id FROM reserve_categories WHERE enabled=1 AND id IN (${values.map(() => '?').join(',')})`).bind(...values).all<{ id: string }>();
-    for (const row of result.results ?? []) validCategoryIds.add(row.id);
-  }
-
-  const out: Array<{
-    id: string | null;
-    materialId: string | null;
-    model: string;
-    unit: string;
-    requiredQuantityScaled: number;
-    unitPriceScaled: number | null;
-    amountFen: number | null;
-    reserveCategoryId: string | null;
-  }> = [];
-  for (const item of parsed) {
-    let model = item.model;
-    let unit = item.unit;
-    if (item.materialId) {
-      const material = materialMap.get(item.materialId);
-      if (!material || material.enabled !== 1) return null;
-      if (!model) model = material.model;
-      if (!unit) unit = material.unit;
-    }
-    if (!model || model.length > 160 || !unit || unit.length > 40) return null;
-    if (item.reserveCategoryId && !validCategoryIds.has(item.reserveCategoryId)) return null;
-    const amountFen = calculateAmountFen(item.requiredQuantityScaled, item.unitPriceScaled);
-    if (item.unitPriceScaled !== null && amountFen === null) return null;
-    out.push({ ...item, model, unit, amountFen });
-  }
-  return out;
+  return parsed;
 }
 
-async function normalizeDemandIds(db: D1Database, value: unknown) {
+function parseDemandIds(value: unknown) {
   if (!Array.isArray(value) || value.length > MAX_ITEMS) return null;
   const ids: string[] = [];
   const seen = new Set<string>();
@@ -588,10 +546,7 @@ async function normalizeDemandIds(db: D1Database, value: unknown) {
     seen.add(id);
     ids.push(id);
   }
-  if (!ids.length) return ids;
-  const result = await db.prepare(`SELECT id FROM demands WHERE id IN (${ids.map(() => '?').join(',')})`).bind(...ids).all<{ id: string }>();
-  const existing = new Set((result.results ?? []).map((row) => row.id));
-  return ids.every((id) => existing.has(id)) ? ids : null;
+  return ids;
 }
 
 async function findTask(db: D1Database, id: string) {
@@ -972,55 +927,46 @@ p8App.post('/reserve-projects', requireRoles('admin', 'project_manager'), async 
   const key = requireIdempotencyKey(c); if (key instanceof Response) return key;
   let body: Record<string, unknown>; try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
   const name = cleanText(body.name), year = validYear(body.year), owner = nullableText(body.owner, 80);
-  const demandIds = await normalizeDemandIds(c.env.DB, body.demandIds ?? []), materials = await normalizeProjectMaterials(c.env.DB, body.materials ?? [], false);
-  if (!name || name.length > 160 || year === undefined || owner === undefined || !demandIds || !materials) return c.json(apiError('INVALID_PROJECT', '项目名称、年度、需求关联或项目物资无效'), 422);
+  const parsedDemandIds = parseDemandIds(body.demandIds ?? []), parsedMaterials = parseProjectMaterials(body.materials ?? [], false);
+  if (!name || name.length > 160 || year === undefined || owner === undefined || !parsedDemandIds || !parsedMaterials) return c.json(apiError('INVALID_PROJECT', '项目名称、年度、需求关联或项目物资无效'), 422);
   const actor = c.get('currentUser');
   if (actor.role !== 'admin' && !actor.scopes.some((scope) => scope.type === 'all')) return c.json(apiError('SCOPE_FORBIDDEN', '当前成员没有创建新项目的全局范围'), 403);
+  const { database } = createCloudflarePersistence(c.env);
+  const queryRepository = new SqlReserveProjectQueryRepository(database);
+  const writeRepository = new SqlReserveProjectWriteRepository(database);
+  if (!await queryRepository.validateDemandIds(parsedDemandIds)) return c.json(apiError('INVALID_PROJECT', '项目名称、年度、需求关联或项目物资无效'), 422);
+  const materials = await queryRepository.resolveMaterials(parsedMaterials);
+  if (!materials) return c.json(apiError('INVALID_PROJECT', '项目名称、年度、需求关联或项目物资无效'), 422);
+  const demandIds = [...parsedDemandIds];
   const request = { name, year, owner, demandIds, materials }, hash = await requestHash(request), operation = 'reserve-projects.create';
   const replay = await replayIdempotentResponse(c, key, operation, hash); if (replay) return replay;
   const id = crypto.randomUUID(), now = new Date().toISOString();
+  const demandLinks = demandIds.map((demandId) => ({ id: crypto.randomUUID(), demandId }));
   const materialRows = materials.map((item) => ({ id: crypto.randomUUID(), item }));
   const response = { ok: true as const, data: {
     id, name, year, owner, status: 'draft' as const, reserveVersion: 0, frameworkId: null, version: 1,
-    demandLinks: demandIds.map((demandId) => ({ id: '', demandId })),
+    demandLinks: demandLinks.map((link) => ({ id: link.id, demandId: link.demandId })),
     materialRequirements: materialRows.map(({ id: materialId, item }) => ({
-      id: materialId,
-      projectId: id,
-      materialId: item.materialId,
-      model: item.model,
-      unit: item.unit,
-      requiredQuantityScaled: item.requiredQuantityScaled,
-      unitPriceScaled: item.unitPriceScaled,
-      amountFen: item.amountFen,
-      reserveCategoryId: item.reserveCategoryId,
-      reserveCategory: null,
-      version: 1,
-      createdAt: now,
-      updatedAt: now,
+      id: materialId, projectId: id, materialId: item.materialId, model: item.model, unit: item.unit,
+      requiredQuantityScaled: item.requiredQuantityScaled, unitPriceScaled: item.unitPriceScaled, amountFen: item.amountFen,
+      reserveCategoryId: item.reserveCategoryId, reserveCategory: null, version: 1, createdAt: now, updatedAt: now,
     })),
-
     knownMaterialAmountFen: materialRows.reduce((sum, row) => sum + (row.item.amountFen ?? 0), 0),
     missingPriceCount: materialRows.filter((row) => row.item.amountFen === null).length,
     materialPriceCompletenessBasisPoints: materialRows.length === 0 ? 10000 : Math.floor((materialRows.filter((row) => row.item.amountFen !== null).length * 10000) / materialRows.length),
     createdAt: now, updatedAt: now,
   } };
   try {
-    await c.env.DB.batch([
-      c.env.DB.prepare(`INSERT INTO projects (id,name,business_year,owner,status,reserve_version,framework_id,version,created_by,created_at,updated_at) VALUES (?,?,?,?,'draft',0,NULL,1,?,?,?)`).bind(id, name, year, owner, actor.id, now, now),
-      ...demandIds.map((demandId) => c.env.DB.prepare(`INSERT INTO project_demand_links (id,project_id,demand_id,created_by,created_at) VALUES (?,?,?,?,?)`).bind(crypto.randomUUID(), id, demandId, actor.id, now)),
-      ...materialRows.map(({ id: materialId, item }) => c.env.DB.prepare(
-        `INSERT INTO project_material_requirements
-         (id,project_id,material_id,model,unit,required_quantity_scaled,unit_price_scaled,amount_fen,reserve_category_id,active,version,created_by,created_at,updated_at)
-         VALUES (?,?,?,?,?,?,?,?,?,1,1,?,?,?)`,
-      ).bind(materialId, id, item.materialId, item.model, item.unit, item.requiredQuantityScaled, item.unitPriceScaled, item.amountFen, item.reserveCategoryId, actor.id, now, now)),
-      auditStatement(c.env.DB, actor.id, 'reserve_project.create', 'project', id, null, request, now),
-      idempotencyStatement(c.env.DB, key, actor.id, operation, hash, response, 201, now),
-    ]);
+    await writeRepository.create({
+      project: { id, name, year, owner }, demandLinks, materials: materialRows,
+      actorId: actor.id, auditId: crypto.randomUUID(), idempotencyKey: key, operation, requestHash: hash,
+      responseJson: JSON.stringify(response), now, auditAfter: request,
+    });
   } catch {
     const race = await replayIdempotentResponse(c, key, operation, hash); if (race) return race;
     return c.json(apiError('PROJECT_CREATE_CONFLICT', '储备项目创建发生冲突'), 409);
   }
-  const actual = await fetchReserveProject(c.env.DB, id);
+  const actual = await queryRepository.find(id);
   return c.json({ ok: true as const, data: actual! }, 201);
 });
 
@@ -1048,38 +994,36 @@ p8App.get('/reserve-projects/:id', async (c) => {
 p8App.put('/reserve-projects/:id/demands', requireRoles('admin', 'project_manager'), async (c) => {
   const key = requireIdempotencyKey(c); if (key instanceof Response) return key;
   let body: Record<string, unknown>; try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
-  const version = expectedVersion(body.expectedVersion), demandIds = await normalizeDemandIds(c.env.DB, body.demandIds);
-  if (version === null || !demandIds) return c.json(apiError('INVALID_PROJECT_DEMANDS', 'expectedVersion 或需求关联无效'), 422);
-  const project = await findProject(c.env.DB, c.req.param('id'));
+  const version = expectedVersion(body.expectedVersion), parsedDemandIds = parseDemandIds(body.demandIds);
+  if (version === null || !parsedDemandIds) return c.json(apiError('INVALID_PROJECT_DEMANDS', 'expectedVersion 或需求关联无效'), 422);
+  const { database } = createCloudflarePersistence(c.env);
+  const queryRepository = new SqlReserveProjectQueryRepository(database);
+  const writeRepository = new SqlReserveProjectWriteRepository(database);
+  if (!await queryRepository.validateDemandIds(parsedDemandIds)) return c.json(apiError('INVALID_PROJECT_DEMANDS', 'expectedVersion 或需求关联无效'), 422);
+  const demandIds = [...parsedDemandIds];
+  const project = await queryRepository.findState(c.req.param('id'));
   if (!project) return c.json(apiError('PROJECT_NOT_FOUND', '储备项目不存在'), 404);
-  if (!await canProject(c, project.id)) return c.json(apiError('SCOPE_FORBIDDEN', '无权修改该项目'), 403);
+  if (!hasProjectAccess(c, project.id, project.frameworkId)) return c.json(apiError('SCOPE_FORBIDDEN', '无权修改该项目'), 403);
+  const request = { expectedVersion: version, demandIds }, hash = await requestHash(request), operation = `reserve-projects.demands:${project.id}`;
+  const replay = await replayIdempotentResponse(c, key, operation, hash); if (replay) return replay;
   if (project.version !== version) return c.json(apiError('VERSION_CONFLICT', '项目已被修改，请刷新后重试'), 409);
-  const currentLinks = await loadProjectDemandLinks(c.env.DB, project.id);
-  const nextSet = new Set(demandIds);
-  const usedDemandRows = await c.env.DB.prepare(
-    `SELECT DISTINCT tds.demand_id
-     FROM task_demand_scopes tds
-     INNER JOIN project_tasks pt ON pt.id=tds.task_id
-     WHERE pt.project_id=?`,
-  ).bind(project.id).all<{ demand_id: string }>();
-  const usedDemandIds = new Set((usedDemandRows.results ?? []).map((row) => row.demand_id));
+  const detail = await queryRepository.find(project.id);
+  const currentLinks = detail?.demandLinks ?? [];
+  const nextSet = new Set(demandIds), usedDemandIds = new Set(await queryRepository.listUsedDemandIds(project.id));
   for (const link of currentLinks) {
     if (!nextSet.has(link.demandId) && usedDemandIds.has(link.demandId)) {
       return c.json(apiError('PROJECT_DEMAND_PROTECTED', '已被执行任务引用的需求不能从项目中移除', { demandId: link.demandId }), 422);
     }
   }
-  const request = { expectedVersion: version, demandIds }, hash = await requestHash(request), operation = `reserve-projects.demands:${project.id}`;
-  const replay = await replayIdempotentResponse(c, key, operation, hash); if (replay) return replay;
   const actor = c.get('currentUser'), now = new Date().toISOString();
   const response = { ok: true as const, data: { projectId: project.id, version: version + 1, demandIds } };
   try {
-    await c.env.DB.batch([
-      projectVersionGuard(c.env.DB, project.id, version, now, 'draft'),
-      c.env.DB.prepare(`DELETE FROM project_demand_links WHERE project_id=?`).bind(project.id),
-      ...demandIds.map((demandId) => c.env.DB.prepare(`INSERT INTO project_demand_links (id,project_id,demand_id,created_by,created_at) VALUES (?,?,?,?,?)`).bind(crypto.randomUUID(), project.id, demandId, actor.id, now)),
-      auditStatement(c.env.DB, actor.id, 'reserve_project.demands.replace', 'project', project.id, { demandIds: currentLinks.map((item) => item.demandId) }, { demandIds }, now),
-      idempotencyStatement(c.env.DB, key, actor.id, operation, hash, response, 200, now),
-    ]);
+    await writeRepository.replaceDemands({
+      projectId: project.id, expectedVersion: version, beforeDemandIds: currentLinks.map((item) => item.demandId),
+      demandLinks: demandIds.map((demandId) => ({ id: crypto.randomUUID(), demandId })),
+      actorId: actor.id, auditId: crypto.randomUUID(), idempotencyKey: key, operation, requestHash: hash,
+      responseJson: JSON.stringify(response), now,
+    });
   } catch {
     const race = await replayIdempotentResponse(c, key, operation, hash); if (race) return race;
     return c.json(apiError('VERSION_CONFLICT', '项目已被并发修改，请刷新后重试'), 409);
@@ -1090,83 +1034,54 @@ p8App.put('/reserve-projects/:id/demands', requireRoles('admin', 'project_manage
 p8App.put('/reserve-projects/:id/materials', requireRoles('admin', 'project_manager'), async (c) => {
   const key = requireIdempotencyKey(c); if (key instanceof Response) return key;
   let body: Record<string, unknown>; try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
-  const version = expectedVersion(body.expectedVersion), reason = cleanText(body.reason), materials = await normalizeProjectMaterials(c.env.DB, body.materials, true);
-  if (version === null || !reason || reason.length > 500 || !materials) return c.json(apiError('INVALID_PROJECT_MATERIALS', 'expectedVersion、调整原因或项目物资无效'), 422);
-  const project = await findProject(c.env.DB, c.req.param('id'));
+  const version = expectedVersion(body.expectedVersion), reason = cleanText(body.reason), parsedMaterials = parseProjectMaterials(body.materials, true);
+  if (version === null || !reason || reason.length > 500 || !parsedMaterials) return c.json(apiError('INVALID_PROJECT_MATERIALS', 'expectedVersion、调整原因或项目物资无效'), 422);
+  const { database } = createCloudflarePersistence(c.env);
+  const queryRepository = new SqlReserveProjectQueryRepository(database);
+  const writeRepository = new SqlReserveProjectWriteRepository(database);
+  const materials = await queryRepository.resolveMaterials(parsedMaterials);
+  if (!materials) return c.json(apiError('INVALID_PROJECT_MATERIALS', 'expectedVersion、调整原因或项目物资无效'), 422);
+  const project = await queryRepository.findState(c.req.param('id'));
   if (!project) return c.json(apiError('PROJECT_NOT_FOUND', '储备项目不存在'), 404);
-  if (!await canProject(c, project.id)) return c.json(apiError('SCOPE_FORBIDDEN', '无权修改该项目'), 403);
+  if (!hasProjectAccess(c, project.id, project.frameworkId)) return c.json(apiError('SCOPE_FORBIDDEN', '无权修改该项目'), 403);
+  const request = { expectedVersion: version, reason, materials }, hash = await requestHash(request), operation = `reserve-projects.materials:${project.id}`;
+  const replay = await replayIdempotentResponse(c, key, operation, hash); if (replay) return replay;
   if (project.version !== version) return c.json(apiError('VERSION_CONFLICT', '项目已被修改，请刷新后重试'), 409);
-  const beforeRows = await loadProjectMaterials(c.env.DB, project.id), before = beforeRows.map(projectMaterialSummary), beforeById = new Map(beforeRows.map((row) => [row.id, row]));
-  const assigned = await c.env.DB.prepare(
-    `SELECT tmr.project_material_requirement_id AS id,COALESCE(SUM(tmr.required_quantity_scaled),0) AS total
-     FROM task_material_requirements tmr INNER JOIN project_tasks pt ON pt.id=tmr.task_id
-     WHERE pt.project_id=? AND tmr.project_material_requirement_id IS NOT NULL
-     GROUP BY tmr.project_material_requirement_id`,
-  ).bind(project.id).all<{ id: string; total: number }>();
-  const assignedById = new Map((assigned.results ?? []).map((row) => [row.id, Number(row.total)]));
+  const before = await queryRepository.listCurrentMaterials(project.id), beforeById = new Map(before.map((row) => [row.id, row]));
+  const assignedById = await queryRepository.getAssignedMaterialQuantities(project.id);
   const incomingById = new Map(materials.filter((item) => item.id).map((item) => [item.id!, item]));
-  for (const old of beforeRows) {
+  for (const old of before) {
     const protectedQuantity = assignedById.get(old.id) ?? 0;
     const next = incomingById.get(old.id);
     if (protectedQuantity > 0 && (!next || next.requiredQuantityScaled < protectedQuantity || next.model !== old.model || next.unit !== old.unit)) {
       return c.json(apiError('PROJECT_MATERIAL_PROTECTED', '项目物资已分配到执行任务，不能删除、换型或缩减到任务分配量以下', {
-        projectMaterialRequirementId: old.id,
-        protectedQuantityScaled: protectedQuantity,
-        requestedQuantityScaled: next?.requiredQuantityScaled ?? 0,
+        projectMaterialRequirementId: old.id, protectedQuantityScaled: protectedQuantity, requestedQuantityScaled: next?.requiredQuantityScaled ?? 0,
       }), 422);
     }
   }
   for (const item of materials) if (item.id && !beforeById.has(item.id)) return c.json(apiError('PROJECT_MATERIAL_NOT_FOUND', '项目物资明细不属于当前项目'), 422);
-  const request = { expectedVersion: version, reason, materials }, hash = await requestHash(request), operation = `reserve-projects.materials:${project.id}`;
-  const replay = await replayIdempotentResponse(c, key, operation, hash); if (replay) return replay;
   const actor = c.get('currentUser'), now = new Date().toISOString();
   const normalizedRows = materials.map((item) => ({ id: item.id ?? crypto.randomUUID(), item }));
   const after = normalizedRows.map(({ id, item }) => ({
-    id,
-    projectId: project.id,
-    materialId: item.materialId,
-    model: item.model,
-    unit: item.unit,
-    requiredQuantityScaled: item.requiredQuantityScaled,
-    unitPriceScaled: item.unitPriceScaled,
-    amountFen: item.amountFen,
-    reserveCategoryId: item.reserveCategoryId,
-    version: (item.id ? beforeById.get(item.id)?.version ?? 0 : 0) + 1,
+    id, projectId: project.id, materialId: item.materialId, model: item.model, unit: item.unit,
+    requiredQuantityScaled: item.requiredQuantityScaled, unitPriceScaled: item.unitPriceScaled, amountFen: item.amountFen,
+    reserveCategoryId: item.reserveCategoryId, version: (item.id ? beforeById.get(item.id)?.version ?? 0 : 0) + 1,
   }));
   const response = { ok: true as const, data: { projectId: project.id, version: version + 1, materialRequirements: after } };
   try {
-    const statements: D1PreparedStatement[] = [
-      projectVersionGuard(c.env.DB, project.id, version, now, 'draft'),
-      c.env.DB.prepare(`UPDATE project_material_requirements SET active=0,updated_at=? WHERE project_id=? AND active=1`).bind(now, project.id),
-    ];
-    for (const row of normalizedRows) {
-      if (row.item.id) {
-        statements.push(c.env.DB.prepare(
-          `UPDATE project_material_requirements
-           SET material_id=?,model=?,unit=?,required_quantity_scaled=?,unit_price_scaled=?,amount_fen=?,reserve_category_id=?,active=1,version=version+1,updated_at=?
-           WHERE id=? AND project_id=?`,
-        ).bind(row.item.materialId, row.item.model, row.item.unit, row.item.requiredQuantityScaled, row.item.unitPriceScaled, row.item.amountFen, row.item.reserveCategoryId, now, row.id, project.id));
-      } else {
-        statements.push(c.env.DB.prepare(
-          `INSERT INTO project_material_requirements
-           (id,project_id,material_id,model,unit,required_quantity_scaled,unit_price_scaled,amount_fen,reserve_category_id,active,version,created_by,created_at,updated_at)
-           VALUES (?,?,?,?,?,?,?,?,?,1,1,?,?,?)`,
-        ).bind(row.id, project.id, row.item.materialId, row.item.model, row.item.unit, row.item.requiredQuantityScaled, row.item.unitPriceScaled, row.item.amountFen, row.item.reserveCategoryId, actor.id, now, now));
-      }
-    }
-    statements.push(
-      c.env.DB.prepare(`INSERT INTO project_material_revisions (id,project_id,project_version,reason,before_json,after_json,created_by,created_at) VALUES (?,?,?,?,?,?,?,?)`).bind(crypto.randomUUID(), project.id, version + 1, reason, JSON.stringify(before), JSON.stringify(after), actor.id, now),
-      auditStatement(c.env.DB, actor.id, 'reserve_project.materials.replace', 'project', project.id, before, after, now),
-      idempotencyStatement(c.env.DB, key, actor.id, operation, hash, response, 200, now),
-    );
-    await c.env.DB.batch(statements);
+    await writeRepository.replaceMaterials({
+      projectId: project.id, expectedVersion: version, reason, revisionId: crypto.randomUUID(), before, after,
+      materials: normalizedRows.map((row) => ({ id: row.id, existing: row.item.id !== null, item: row.item })),
+      actorId: actor.id, auditId: crypto.randomUUID(), idempotencyKey: key, operation, requestHash: hash,
+      responseJson: JSON.stringify(response), now,
+    });
   } catch {
     const race = await replayIdempotentResponse(c, key, operation, hash); if (race) return race;
-    const latest = await findProject(c.env.DB, project.id);
+    const latest = await queryRepository.findState(project.id);
     if (latest && latest.version !== version) return c.json(apiError('VERSION_CONFLICT', '项目已被并发修改，请刷新后重试'), 409);
     return c.json(apiError('PROJECT_MATERIAL_CONFLICT', '项目物资调整发生冲突'), 409);
   }
-  return c.json({ ok: true as const, data: (await fetchReserveProject(c.env.DB, project.id))! });
+  return c.json({ ok: true as const, data: (await queryRepository.find(project.id))! });
 });
 
 p8App.get('/reserve-projects/:id/material-revisions', async (c) => {
@@ -1183,25 +1098,26 @@ p8App.post('/reserve-projects/:id/confirm', requireRoles('admin', 'project_manag
   let body: Record<string, unknown>; try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
   const version = expectedVersion(body.expectedVersion), reason = nullableText(body.reason, 500);
   if (version === null || reason === undefined) return c.json(apiError('INVALID_CONFIRMATION', 'expectedVersion 或确认原因无效'), 422);
-  const project = await findProject(c.env.DB, c.req.param('id'));
+  const { database } = createCloudflarePersistence(c.env);
+  const queryRepository = new SqlReserveProjectQueryRepository(database);
+  const writeRepository = new SqlReserveProjectWriteRepository(database);
+  const project = await queryRepository.findState(c.req.param('id'));
   if (!project) return c.json(apiError('PROJECT_NOT_FOUND', '储备项目不存在'), 404);
-  if (!await canProject(c, project.id)) return c.json(apiError('SCOPE_FORBIDDEN', '无权确认该项目'), 403);
-  if (project.version !== version) return c.json(apiError('VERSION_CONFLICT', '项目已被修改，请刷新后重试'), 409);
-  const detail = await fetchReserveProject(c.env.DB, project.id);
+  if (!hasProjectAccess(c, project.id, project.frameworkId)) return c.json(apiError('SCOPE_FORBIDDEN', '无权确认该项目'), 403);
   const request = { expectedVersion: version, reason }, hash = await requestHash(request), operation = `reserve-projects.confirm:${project.id}`;
   const replay = await replayIdempotentResponse(c, key, operation, hash); if (replay) return replay;
-  const actor = c.get('currentUser'), now = new Date().toISOString(), reserveVersion = project.reserve_version + 1, nextVersion = version + 1;
+  if (project.version !== version) return c.json(apiError('VERSION_CONFLICT', '项目已被修改，请刷新后重试'), 409);
+  const detail = await queryRepository.find(project.id);
+  if (!detail) return c.json(apiError('PROJECT_NOT_FOUND', '储备项目不存在'), 404);
+  const actor = c.get('currentUser'), now = new Date().toISOString(), reserveVersion = project.reserveVersion + 1, nextVersion = version + 1;
   const response = { ok: true as const, data: { projectId: project.id, version: nextVersion, reserveVersion, status: 'confirmed' as const } };
   try {
-    await c.env.DB.batch([
-      projectVersionGuard(c.env.DB, project.id, version, now, 'confirmed', true),
-      c.env.DB.prepare(
-        `INSERT INTO project_versions (id,project_id,reserve_version,snapshot_json,known_amount_fen,missing_price_count,completeness_basis_points,reason,confirmed_by,confirmed_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?)`,
-      ).bind(crypto.randomUUID(), project.id, reserveVersion, JSON.stringify(detail), detail!.knownMaterialAmountFen, detail!.missingPriceCount, detail!.materialPriceCompletenessBasisPoints, reason, actor.id, now),
-      auditStatement(c.env.DB, actor.id, 'reserve_project.confirm', 'project', project.id, { version, reserveVersion: project.reserve_version }, response.data, now),
-      idempotencyStatement(c.env.DB, key, actor.id, operation, hash, response, 200, now),
-    ]);
+    await writeRepository.confirm({
+      projectId: project.id, expectedVersion: version, previousReserveVersion: project.reserveVersion, reserveVersion,
+      versionId: crypto.randomUUID(), snapshot: detail, reason,
+      actorId: actor.id, auditId: crypto.randomUUID(), idempotencyKey: key, operation, requestHash: hash,
+      responseJson: JSON.stringify(response), now, auditAfter: response.data,
+    });
   } catch {
     const race = await replayIdempotentResponse(c, key, operation, hash); if (race) return race;
     return c.json(apiError('VERSION_CONFLICT', '项目确认发生并发冲突，请刷新后重试'), 409);
