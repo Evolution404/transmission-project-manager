@@ -1,0 +1,109 @@
+name: Production Cloudflare inventory (read-only)
+
+on:
+  workflow_dispatch:
+    inputs:
+      account_id:
+        description: Cloudflare account ID to inspect (32 hexadecimal characters)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-cloudflare-inventory
+  cancel-in-progress: false
+
+jobs:
+  inventory:
+    if: github.ref == 'refs/heads/main'
+    environment: production
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Validate protected read-only inputs
+        env:
+          ACCOUNT_ID: ${{ inputs.account_id }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          [[ "$ACCOUNT_ID" =~ ^[0-9a-fA-F]{32}$ ]]
+          test -n "$CLOUDFLARE_API_TOKEN"
+
+      - name: Read Cloudflare production inventory
+        env:
+          ACCOUNT_ID: ${{ inputs.account_id }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          INVENTORY_DIR="$RUNNER_TEMP/cloudflare-production-inventory"
+          mkdir -p "$INVENTORY_DIR/d1"
+
+          cf_get() {
+            local path="$1"
+            local output="$2"
+            curl --fail --silent --show-error \
+              -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+              -H 'Accept: application/json' \
+              "https://api.cloudflare.com/client/v4${path}" \
+              -o "$output"
+            jq -e '.success == true' "$output" >/dev/null
+          }
+
+          cf_get "/accounts/${ACCOUNT_ID}/workers/scripts" "$INVENTORY_DIR/workers.json"
+          cf_get "/accounts/${ACCOUNT_ID}/d1/database?per_page=100" "$INVENTORY_DIR/d1-list.json"
+          cf_get "/accounts/${ACCOUNT_ID}/r2/buckets?per_page=100" "$INVENTORY_DIR/r2.json"
+          cf_get "/accounts/${ACCOUNT_ID}/workers/domains" "$INVENTORY_DIR/domains.json"
+          cf_get "/zones?account.id=${ACCOUNT_ID}&per_page=50" "$INVENTORY_DIR/zones.json"
+
+          while IFS= read -r database_id; do
+            [[ "$database_id" =~ ^[0-9a-fA-F-]{36}$ ]] || exit 1
+            cf_get "/accounts/${ACCOUNT_ID}/d1/database/${database_id}" "$INVENTORY_DIR/d1/${database_id}.json"
+          done < <(jq -r '.result[]?.uuid // empty' "$INVENTORY_DIR/d1-list.json")
+
+          {
+            echo '### Cloudflare production inventory (read-only)'
+            printf -- '- Account ID: `%s`\n' "$ACCOUNT_ID"
+            echo
+            echo '#### Workers'
+            if jq -e '.result | length > 0' "$INVENTORY_DIR/workers.json" >/dev/null; then
+              jq -r '.result[] | "- `\(.id)` — created `\(.created_on // "unknown")`, modified `\(.modified_on // "unknown")`"' "$INVENTORY_DIR/workers.json"
+            else
+              echo '- none'
+            fi
+            echo
+            echo '#### D1 databases'
+            if compgen -G "$INVENTORY_DIR/d1/*.json" >/dev/null; then
+              jq -sr '.[] | .result | "- `\(.name)` — UUID `\(.uuid)`, tables `\(.num_tables // "unknown")`, size `\(.file_size // "unknown")` bytes, created `\(.created_at // "unknown")`"' "$INVENTORY_DIR"/d1/*.json
+            else
+              echo '- none'
+            fi
+            echo
+            echo '#### R2 buckets'
+            if jq -e '(.result.buckets // .result // []) | length > 0' "$INVENTORY_DIR/r2.json" >/dev/null; then
+              jq -r '(.result.buckets // .result // [])[] | "- `\(.name)` — location `\(.location // "unknown")`, storage class `\(.storage_class // "unknown")`, created `\(.creation_date // "unknown")`"' "$INVENTORY_DIR/r2.json"
+            else
+              echo '- none'
+            fi
+            echo
+            echo '#### Worker custom domains'
+            if jq -e '.result | length > 0' "$INVENTORY_DIR/domains.json" >/dev/null; then
+              jq -r '.result[] | "- `\(.hostname)` → Worker `\(.service)`, zone `\(.zone_name)`, environment `\(.environment // "production")`"' "$INVENTORY_DIR/domains.json"
+            else
+              echo '- none'
+            fi
+            echo
+            echo '#### Zones'
+            if jq -e '.result | length > 0' "$INVENTORY_DIR/zones.json" >/dev/null; then
+              jq -r '.result[] | "- `\(.name)` — status `\(.status)`, type `\(.type)`, zone ID `\(.id)`"' "$INVENTORY_DIR/zones.json"
+            else
+              echo '- none'
+            fi
+            echo
+            echo '> This workflow performs Cloudflare GET requests only. It does not deploy, migrate, create, update, delete, enumerate secret values, or query business rows.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove temporary inventory responses
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/cloudflare-production-inventory"
