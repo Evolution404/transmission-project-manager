@@ -22,6 +22,7 @@ import type {
 import { hasScope, requireRoles, type AppEnv } from './auth';
 import { SqlIdempotencyRepository } from './repositories/sql-idempotency-repository';
 import { SqlProjectQueryRepository } from './repositories/sql-project-query-repository';
+import { SqlProjectWriteRepository } from './repositories/sql-project-write-repository';
 import { createCloudflarePersistence } from './runtime/cloudflare/persistence';
 
 const MAX_PROJECT_ALLOCATIONS = 100;
@@ -594,26 +595,28 @@ p3App.post('/projects', requireRoles('admin', 'project_manager'), async (c) => {
       completenessBasisPoints: 0,
     } satisfies ProjectSummary,
   };
-  const statements: D1PreparedStatement[] = [
-    c.env.DB.prepare(
-      `INSERT INTO projects (id,name,business_year,owner,status,reserve_version,framework_id,version,created_by,created_at,updated_at)
-       VALUES (?,?,?,?,'draft',0,NULL,1,?,?,?)`,
-    ).bind(id, name, year, owner, actor.id, now, now),
-  ];
-  for (const allocation of allocations) {
-    statements.push(allocationInsertStatement(c.env.DB, id, crypto.randomUUID(), allocation.demandMaterialId, allocation.quantityScaled, now));
-  }
-  statements.push(
-    auditStatement(c.env.DB, actor.id, 'project.create', 'project', id, null, response.data, now),
-    idempotencyStatement(c.env.DB, key, actor.id, operation, hash, response, 201, now),
-  );
+  const { database } = createCloudflarePersistence(c.env);
+  const repository = new SqlProjectWriteRepository(database);
   try {
-    await c.env.DB.batch(statements);
+    await repository.create({
+      project: response.data,
+      allocations: allocations.map((allocation) => ({
+        id: crypto.randomUUID(),
+        demandMaterialId: allocation.demandMaterialId,
+        quantityScaled: allocation.quantityScaled,
+      })),
+      actorId: actor.id,
+      auditId: crypto.randomUUID(),
+      idempotencyKey: key,
+      operation,
+      requestHash: hash,
+      responseJson: JSON.stringify(response),
+    });
   } catch {
     const replayAfterRace = await replayIdempotentResponse(c, key, operation, hash);
     if (replayAfterRace) return replayAfterRace;
-    const failure = await allocationFailure(c.env.DB, allocations);
-    if (failure) return c.json(apiError(failure.code, failure.message, 'details' in failure ? failure.details : undefined), failure.status);
+    const failure = await repository.findAllocationFailure(allocations);
+    if (failure) return c.json(apiError(failure.code, failure.message, failure.details), failure.status);
     return c.json(apiError('PROJECT_CREATE_CONFLICT', '项目创建发生并发冲突，请刷新后重试'), 409);
   }
   return c.json(response, 201);
