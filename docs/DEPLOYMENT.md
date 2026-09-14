@@ -10,14 +10,14 @@
 
 PR #1 合并前 CI 与合并后的 `main` CI #31 均通过。Cloudflare Workers + D1 + R2 仍是当前生产部署基线；Node + SQLite + Filesystem 仅作为第二运行时和未来普通服务器迁移能力。
 
-当前生产发布能力正在 PR #2 `ops: add protected Cloudflare production workflows` 中收口。PR #2 合入后，仓库将有四类 Actions：
+生产 workflow 已通过 PR #2 合入 `main@bc4774767c159068d59e16d6726444c5c1525dd6`，合并后的 CI #37 PASS。仓库现有四类 Actions：
 
 - `CI`：push `main` / PR / 手工，仅执行完整代码门禁；
 - `Production preflight (no deployment)`：手工，仅校验 production config + dry-run，不携带云凭据；
 - `Production D1 migration`：手工、`production` Environment 绑定，只执行正式 D1 migration；
 - `Production release`：手工、`production` Environment 绑定，只发布 Worker/Static Assets/已审核绑定，并在发布后验证真实 `/api/health`。
 
-**代码中存在 workflow 不等于生产已经配置或发布。** 当前 GitHub 连接没有 Administration / Environment / Secrets 管理接口，也没有 workflow dispatch 写能力；`main` 当前 branch endpoint 显示 `protected: false`。因此 production Environment、Variables、Secrets、Cloudflare 资源、正式 migration 和正式 release 都必须以真实云端证据为准，不能根据 YAML 推断完成。
+**代码中存在 workflow 不等于生产已经配置或发布。** 2026-09-14 已在 GitHub UI 创建 `production` Environment，限制仅 `main` 部署，并设置两个生产开关为 `false`；Environment 审核者和 main branch protection 尚未配置。`PRODUCTION_CONFIG_JSON`、Cloudflare CI Token、生产 Worker Secret 和正式资源均未核实/配置。Cloudflare Dashboard 在云端浏览器持续显示安全验证，正式 migration、release 和验收未执行。
 
 ## 2. 云上开发与发布原则
 
