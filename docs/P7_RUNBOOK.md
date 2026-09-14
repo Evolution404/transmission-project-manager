@@ -33,19 +33,17 @@ PR #2 合入后使用以下 Actions：
 
 ### Variables
 
-`PRODUCTION_CONFIG_JSON`
-: 非敏感严格 JSON。必须来自 `apps/api/wrangler.production.example.json` 的真实生产版本，并通过 P7 config validator。
+长期数量：**0**。生产非敏感配置直接受 Git 管理于 `apps/api/wrangler.production.jsonc`，不得再复制到 GitHub Environment Variables。
 
-`PRODUCTION_DEPLOY_ENABLED`
-: 平时 `false`；批准准确代码发布窗口时才设 `true`。
+### Secrets
 
-`PRODUCTION_MIGRATION_ENABLED`
-: 平时 `false`；完成数据库备份、停写和目标 ID 复核后，批准 migration 窗口才临时设 `true`。
+长期数量：**3**：
 
-### Secret
+- `CLOUDFLARE_API_TOKEN`：account-owned、最小权限，仅供 Wrangler/API 自动化认证；
+- `AUTH_CREDENTIAL_PEPPER`：认证 verifier 的长期 Worker Secret；
+- `NOTION_API_TOKEN`：当前 Notion 对象存储的长期 Worker Secret。
 
-`CLOUDFLARE_API_TOKEN`
-: account-owned、最小权限。禁止 Global API Key、个人浏览器登录态或个人长期 Token。
+禁止 Global API Key、个人浏览器登录态或个人长期 Token。`BOOTSTRAP_TOKEN` 只在首次初始化期间临时存在，用完删除。
 
 ## 3. Cloudflare 正式资源和 Worker Secrets
 
@@ -54,10 +52,10 @@ PR #2 合入后使用以下 Actions：
 - Cloudflare Account / Zone；
 - Worker 名称；
 - D1 database 名称与 UUID；
-- R2 bucket 名称且保持私有；
+- 对象存储 provider 及其资源；当前为 Notion 专用 Database/Data Source；
+- R2 只有在 provider=`r2` 时才要求 bucket 与 subscription；
 - 自定义域名和 HTTPS；
 - Cron；
-- 计费计划 / R2 开通状态；
 - Worker Secret。
 
 生产 config 必须保持：
@@ -66,15 +64,20 @@ PR #2 合入后使用以下 Actions：
 - `workers_dev=false`；
 - `preview_urls=false`；
 - 唯一 `DB` D1 binding；
-- 唯一 `FILES` R2 binding；
+- 显式 `OBJECT_STORAGE_PROVIDER`；当前 production=`notion`；
+- Notion 模式配置 `NOTION_API_VERSION=2026-03-11` 与 `NOTION_STORAGE_DATA_SOURCE_ID`，不配置 `FILES`；
+- R2 模式才配置唯一 `FILES` binding，且不得混入 Notion 配置；
 - `/api` 和 `/api/*` `run_worker_first`；
 - 自定义域名；
-- `secrets.required = ["AUTH_CREDENTIAL_PEPPER"]`。
+- 当前 Notion production 的 `secrets.required = ["AUTH_CREDENTIAL_PEPPER", "NOTION_API_TOKEN"]`。
 
 ### Secret 生命周期
 
 `AUTH_CREDENTIAL_PEPPER`
 : 永久 Worker Secret。Wrangler production config 将其列为 required；缺失时正式 deploy 必须 fail-closed。丢失会导致现有 HMAC verifier 无法正常验证，不能当普通无损轮换 Secret。
+
+`NOTION_API_TOKEN`
+: 当前 production 对象存储的永久 Worker Secret，只授予专用 Notion 存储页面所需能力；不得出现在 vars、Git、日志或前端。若以后切换 R2，可从 required secrets 中移除。
 
 `BOOTSTRAP_TOKEN`
 : 一次性 Worker Secret。仅首次创建管理员期间配置；创建成功并验证再次 bootstrap 已关闭后删除。禁止长期写进 `secrets.required`。
@@ -136,7 +139,7 @@ P7-01～05 必须使用真实业务资料或明确的真实环境抽样：
 
 - `npm ci`；
 - `npm run check`；
-- materialize `PRODUCTION_CONFIG_JSON`；
+- 直接读取并校验受审的 `apps/api/wrangler.production.jsonc`；
 - `npm run p7 -- config`；
 - production Wrangler dry-run；
 - 不加载 `CLOUDFLARE_API_TOKEN`；
@@ -148,37 +151,35 @@ preflight 通过只证明配置结构和构建，不证明真实资源/Secret �
 
 仅在 schema 不满足当前代码要求时执行：
 
-1. `PRODUCTION_MIGRATION_ENABLED=true`；
-2. 手工触发 `Production D1 migration`；
-3. 输入准确 `release_sha`；
-4. 输入 migration/backup evidence reference；
-5. 人工再次输入目标 D1 UUID；
-6. workflow 校验输入 UUID 与 `PRODUCTION_CONFIG_JSON` 中 `database_id` 完全一致；
-7. 执行迁移前 `wrangler d1 migrations list DB --remote`；
-8. 执行 `wrangler d1 migrations apply DB --remote`；
-9. 再次 `list`；
-10. 核对关键表、金额、数量、状态和错误；
-11. 迁移窗口结束后立刻把 `PRODUCTION_MIGRATION_ENABLED` 恢复 `false`。
+1. 手工触发 `Production D1 migration`；
+2. 输入准确 `release_sha`；
+3. 输入 migration/backup evidence reference；
+4. 人工再次输入目标 D1 UUID；
+5. workflow 校验输入 UUID 与受审 `apps/api/wrangler.production.jsonc` 中 `database_id` 完全一致；
+6. 执行迁移前 `wrangler d1 migrations list DB --remote`；
+7. 执行 `wrangler d1 migrations apply DB --remote`；
+8. 再次 `list`；
+9. 核对关键表、金额、数量、状态和错误。
 
-任何 migration 失败都立即停止；不得盲目重跑，不得修改已冻结的 `0009`–`0012` 绕过问题。
+任何 migration 失败都立即停止；不得盲目重跑。当前仍处开发阶段，只允许单一 `0001_initial_schema.sql` 基线；除非用户明确要求兼容已有数据/保留升级路径，否则不得新增补丁 migration。
 
 ### 5.4 Production release
 
 确认 schema ready 后：
 
-1. `PRODUCTION_DEPLOY_ENABLED=true`；
-2. 手工触发 `Production release`；
-3. 输入准确当前 `main` SHA；
-4. 输入 release/backup/schema evidence reference；
-5. workflow 重新执行完整 `npm run check`；
-6. production config validator；
-7. Wrangler dry-run；
+1. 手工触发 `Production release`；
+2. 输入准确当前 `main` SHA；
+3. 输入 release/backup/schema evidence reference；
+4. workflow 重新执行完整 `npm run check`；
+5. production config validator；
+6. runner 从 GitHub Environment Secrets 生成 0600 的临时 `worker-secrets.json`；
+7. Wrangler dry-run 使用同一 `--secrets-file`；
 8. 再次 fetch `origin/main` 并要求仍等于批准 SHA；
-9. Wrangler 正式 deploy；
+9. `wrangler deploy --config wrangler.production.jsonc --secrets-file <runner-temp>`，代码、bindings 与 Worker Secrets 同一版本发布；
 10. 从 production config 提取真实自定义域名；
 11. GitHub runner 请求 `https://<domain>/api/health`；
 12. 只有 `ok=true`、service=`transmission-project-manager`、`schema.ready=true` 才通过基础发布验收；
-13. 发布窗口结束后把 `PRODUCTION_DEPLOY_ENABLED` 恢复 `false`。
+13. 无论成功失败都删除 runner 临时 secret 文件。
 
 代码发布不会自动执行 migration。
 
@@ -218,7 +219,7 @@ preflight 通过只证明配置结构和构建，不证明真实资源/Secret �
 - 结算；
 - 已实已结 / 已实未结 / 未实已结 / 未实未结四状态；
 - 框架 / 协议 / 预算 / 预算发生 / 实际费用；
-- 附件上传、下载、鉴权和私有 R2；
+- 附件上传、下载、鉴权和当前对象存储；Notion 模式验证逻辑删除后应用层不可读取，并记录底层 FileUpload 无物理删除 API 的治理边界；
 - 月报 / 分析 / 预警；
 - Cron / notification outbox / backup；
 - 手机和桌面自定义域名访问。
@@ -232,7 +233,7 @@ P7-01～13 的具体证据矩阵以 `P7_ACCEPTANCE.md` 为准。
 - Workers Logs：异常堆栈、5xx、鉴权失败模式；
 - Workers Analytics：请求量、错误率、CPU time；
 - D1：read/write rows、容量、错误；
-- R2：存储量、Class A/B 操作、失败；
+- 对象存储：Notion 模式观察 429/5xx、上传/下载失败和容量；R2 模式观察存储量、Class A/B 操作与失败；
 - Cron：执行成功率和耗时；
 - backup run/chunk 状态；
 - 目标地区实际网络体验。
@@ -245,7 +246,7 @@ P6 v1 manifest verifier 能证明 chunk SHA-256、表名/行数、chunk index �
 
 它不能单独证明跨表一致快照、未被同时删掉的对象完整性、附件内容 hash、附件枚举完整性或数据已经成功恢复并可被应用读取。
 
-因此正式恢复必须进入隔离 D1/R2，对关键行数、金额、数量、状态、外键、附件和应用行为复核；`auth_sessions` 不恢复。
+因此正式恢复必须进入隔离 D1 + 隔离对象存储环境，对关键行数、金额、数量、状态、外键、附件和应用行为复核；`auth_sessions` 不恢复。Notion 模式需用测试专用存储区域演练，不能把正式对象索引当恢复沙箱。
 
 ## 10. 回退
 
@@ -258,7 +259,7 @@ P6 v1 manifest verifier 能证明 chunk SHA-256、表名/行数、chunk index �
 5. 重复 health、认证、核心业务和附件 smoke；
 6. 再恢复后台任务和业务写入。
 
-Worker 回退不会自动回退 D1、R2、Secrets、Cron 或路由。
+Worker 回退不会自动回退 D1、对象存储、Secrets、Cron 或路由。
 
 ### 数据回退
 
@@ -276,6 +277,6 @@ P7 完成前，至少由非资产所有者个人登录态的 CI/CD 服务身份�
 
 ## 12. 证据记录
 
-每次正式变更至少记录：GitHub PR、`main` SHA、Actions run URL/run id、release/migration evidence reference、Worker version/deployment ID、D1 UUID/migration 状态、R2 bucket、自定义域名、health/smoke 结果、Logs/Analytics/CPU 摘要、备份/恢复证据、操作者/reviewer/observedAt。
+每次正式变更至少记录：GitHub PR、`main` SHA、Actions run URL/run id、release/migration evidence reference、Worker version/deployment ID、D1 UUID/migration 状态、对象存储 provider 与非敏感资源 ID、自定义域名、health/smoke 结果、Logs/Analytics/CPU 摘要、备份/恢复证据、操作者/reviewer/observedAt。
 
 真实敏感值、密码、Token、Cookie、业务原始数据不得写入公开 Actions artifact、PR 或仓库。

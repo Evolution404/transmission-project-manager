@@ -59,7 +59,7 @@ test('Node + SQLite + Filesystem serves the real HTTP app and survives restart',
     const health = await jsonRequest(runtime, '/api/health');
     assert.equal(health.response.status, 200);
     assert.equal(health.body.data.schema.ready, true);
-    assert.equal(health.body.data.schema.currentMigration, '0012_master_data_write_guards.sql');
+    assert.equal(health.body.data.schema.currentMigration, '0001_initial_schema.sql');
 
     const statusBefore = await jsonRequest(runtime, '/api/auth/status');
     assert.equal(statusBefore.body.data.initialized, false);

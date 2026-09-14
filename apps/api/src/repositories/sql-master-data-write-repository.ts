@@ -89,10 +89,11 @@ export class SqlMasterDataWriteRepository implements MasterDataWriteRepository {
       const values = input.values as TransmissionLineWriteValues | undefined;
       if (!values) throw new Error('MASTER_DATA_VALUES_REQUIRED');
       statements.push({
-        sql: `INSERT INTO master_data_guards (valid)
-              VALUES (CASE WHEN EXISTS (
+        sql: `INSERT INTO master_data_guards (id,voltage_parent)
+              VALUES (1,CASE WHEN EXISTS (
                 SELECT 1 FROM voltage_levels WHERE id=?${input.requireEnabledParent ? ' AND enabled=1' : ''}
-              ) THEN 1 ELSE 0 END)`,
+              ) THEN 1 ELSE 0 END)
+              ON CONFLICT(id) DO UPDATE SET voltage_parent=excluded.voltage_parent`,
         params: [values.voltageLevelId],
       });
     }
@@ -100,13 +101,69 @@ export class SqlMasterDataWriteRepository implements MasterDataWriteRepository {
       const values = input.values as TransmissionTowerWriteValues | undefined;
       if (!values) throw new Error('MASTER_DATA_VALUES_REQUIRED');
       statements.push({
-        sql: `INSERT INTO master_data_guards (valid)
-              VALUES (CASE WHEN EXISTS (
+        sql: `INSERT INTO master_data_guards (id,line_parent)
+              VALUES (1,CASE WHEN EXISTS (
                 SELECT 1 FROM transmission_lines l
                 JOIN voltage_levels v ON v.id=l.voltage_level_id
                 WHERE l.id=?${input.requireEnabledParent ? ' AND l.enabled=1 AND v.enabled=1' : ''}
-              ) THEN 1 ELSE 0 END)`,
+              ) THEN 1 ELSE 0 END)
+              ON CONFLICT(id) DO UPDATE SET line_parent=excluded.line_parent`,
         params: [values.lineId],
+      });
+    }
+
+    if (input.kind === 'voltage-level' && input.action === 'update') {
+      const values = input.values as VoltageLevelWriteValues | undefined;
+      if (!values) throw new Error('MASTER_DATA_VALUES_REQUIRED');
+      statements.push({
+        sql: `INSERT INTO master_data_guards (id,voltage_reference)
+              VALUES (1,CASE WHEN NOT EXISTS (
+                SELECT 1 FROM voltage_levels WHERE id=? AND (nominal_kv IS NOT ? OR system_type IS NOT ?)
+              ) OR NOT EXISTS (
+                SELECT 1 FROM demands WHERE voltage_level_id=?
+              ) THEN 1 ELSE 0 END)
+              ON CONFLICT(id) DO UPDATE SET voltage_reference=excluded.voltage_reference`,
+        params: [input.id, values.nominalKv, values.systemType, input.id],
+      });
+    }
+    if (input.kind === 'line' && input.action === 'update') {
+      const values = input.values as TransmissionLineWriteValues | undefined;
+      if (!values) throw new Error('MASTER_DATA_VALUES_REQUIRED');
+      statements.push({
+        sql: `INSERT INTO master_data_guards (id,line_reference)
+              VALUES (1,CASE WHEN NOT EXISTS (
+                SELECT 1 FROM transmission_lines WHERE id=? AND voltage_level_id IS NOT ?
+              ) OR NOT EXISTS (
+                SELECT 1 FROM demands WHERE line_id=?
+              ) THEN 1 ELSE 0 END)
+              ON CONFLICT(id) DO UPDATE SET line_reference=excluded.line_reference`,
+        params: [input.id, values.voltageLevelId, input.id],
+      });
+    }
+    if (input.kind === 'tower' && input.action === 'update') {
+      const values = input.values as TransmissionTowerWriteValues | undefined;
+      if (!values) throw new Error('MASTER_DATA_VALUES_REQUIRED');
+      statements.push({
+        sql: `INSERT INTO master_data_guards (id,tower_reference)
+              VALUES (1,CASE WHEN NOT EXISTS (
+                SELECT 1 FROM transmission_towers
+                WHERE id=? AND (line_id IS NOT ? OR sort_index IS NOT ? OR tower_no IS NOT ?)
+              ) OR NOT EXISTS (
+                SELECT 1 FROM demands
+                WHERE line_id IN ((SELECT line_id FROM transmission_towers WHERE id=?), ?)
+              ) THEN 1 ELSE 0 END)
+              ON CONFLICT(id) DO UPDATE SET tower_reference=excluded.tower_reference`,
+        params: [input.id, values.lineId, values.sortIndex, values.towerNo, input.id, values.lineId],
+      });
+    }
+    if (input.kind === 'tower' && input.action === 'delete') {
+      statements.push({
+        sql: `INSERT INTO master_data_guards (id,tower_reference)
+              VALUES (1,CASE WHEN NOT EXISTS (
+                SELECT 1 FROM demands WHERE line_id=(SELECT line_id FROM transmission_towers WHERE id=?)
+              ) THEN 1 ELSE 0 END)
+              ON CONFLICT(id) DO UPDATE SET tower_reference=excluded.tower_reference`,
+        params: [input.id],
       });
     }
 
@@ -150,13 +207,25 @@ export class SqlMasterDataWriteRepository implements MasterDataWriteRepository {
         input.mutation.now,
       ],
     }, {
-      sql: `INSERT INTO master_data_guards (valid)
-            VALUES (CASE WHEN EXISTS (
+      sql: `INSERT INTO master_data_guards (id,line_parent)
+            VALUES (1,CASE WHEN EXISTS (
               SELECT 1 FROM transmission_lines l JOIN voltage_levels v ON v.id=l.voltage_level_id
               WHERE l.id=? AND l.enabled=1 AND v.enabled=1
-            ) THEN 1 ELSE 0 END)`,
+            ) THEN 1 ELSE 0 END)
+            ON CONFLICT(id) DO UPDATE SET line_parent=excluded.line_parent`,
       params: [input.lineId],
     }];
+
+    if (input.items.some((item) => item.vacateUniqueKeys)) {
+      statements.push({
+        sql: `INSERT INTO master_data_guards (id,tower_reference)
+              VALUES (1,CASE WHEN NOT EXISTS (
+                SELECT 1 FROM demands WHERE line_id=?
+              ) THEN 1 ELSE 0 END)
+              ON CONFLICT(id) DO UPDATE SET tower_reference=excluded.tower_reference`,
+        params: [input.lineId],
+      });
+    }
 
     let temporaryIndex = 0;
     for (const item of input.items) {

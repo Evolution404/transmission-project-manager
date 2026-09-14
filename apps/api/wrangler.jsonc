@@ -12,7 +12,8 @@
     "run_worker_first": ["/api", "/api/*"]
   },
   "vars": {
-    "APP_ENV": "development"
+    "APP_ENV": "development",
+    "OBJECT_STORAGE_PROVIDER": "r2"
   },
   "triggers": {
     "crons": ["*/5 * * * *"]

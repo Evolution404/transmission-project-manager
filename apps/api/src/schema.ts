@@ -1,7 +1,7 @@
 import type { SchemaReadinessSummary } from '@tpm/shared';
 import type { DatabasePort } from './ports/database';
 
-export const REQUIRED_MIGRATION = '0012_master_data_write_guards.sql';
+export const REQUIRED_MIGRATION = '0001_initial_schema.sql';
 
 let readyCache: SchemaReadinessSummary | null = null;
 

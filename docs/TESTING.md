@@ -32,15 +32,15 @@ npm run check
 - 全部 `tests/*.test.mjs` Node/workerd+D1 测试；
 - 全部 `apps/web/tests/*.test.ts` Vue/Vitest 行为测试。
 
-P3 后端可移植化收口提交 `e34bde3` 后最近一次完整结果：
+`feat/notion-object-storage` 最近一次完整 `npm run check`（2026-09-14）：
 
-- TypeScript：PASS；
+- TypeScript（Cloudflare + Node）：PASS；
 - Web production build：PASS；
 - Worker `wrangler deploy --dry-run`：PASS；
 - Vue/Vitest：64/64 PASS；
-- Node：210/210 PASS。
+- Node：260/260 PASS。
 
-此结果是本地/合成门禁，不代表 Cloudflare 正式环境 CPU、D1/R2 配额、网络或通知链路已经验收。之后的 P4 查询迁移和幂等 replay 只跑了定向回归与双 runtime typecheck；P4 当前 WIP 完成后必须重新运行完整 `npm run check`。
+本轮新增门禁覆盖 Notion `ObjectStorePort` adapter、R2/Notion provider 切换、Node Filesystem 保持、Notion 初始化 env 处理、P7 production config 的 Notion/R2 互斥校验，以及 R2 `10042` 未启用时只读 inventory 的降级处理。除此之外，真实 Notion `TPM Object Store` 已执行 `put → get → delete → get=null` smoke 并 PASS。完整 `npm run check` 仍属于本地门禁，不代表正式 Cloudflare CPU/D1 配额、目标地区网络、正式 Worker Secret 或生产恢复已经验收；合入前仍要求 GitHub CI 复现。
 
 ## 3. 迁移与仓库守卫
 

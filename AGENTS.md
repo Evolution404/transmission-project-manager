@@ -26,18 +26,18 @@
 
 ## 工程约束
 
-- 保持 npm workspaces、Vue 3 + TypeScript、Hono 架构。Cloudflare Workers + D1 + R2 是当前部署基线，但业务核心必须经 Port/Repository 访问基础设施，并保持 Node + SQLite + Filesystem 第二运行时；UI 使用 Naive UI，图表使用 ECharts，按实际阶段引入依赖。
-- 密钥放 Worker Secrets / 本地 `.dev.vars`。`AUTH_CREDENTIAL_PEPPER`、生产 `BOOTSTRAP_TOKEN`、会话原始 token、用户明文密码都不得进入 Git 或日志；数据库不得保存明文密码、浏览器派生凭据或原始会话 token。浏览器慢 KDF 使用 Argon2id，服务端只做 HMAC verifier，不得把 PBKDF2/Argon2 挪回 Worker。
+- 保持 npm workspaces、Vue 3 + TypeScript、Hono 架构。Cloudflare Workers + D1 是当前计算/数据库部署基线；对象存储必须统一经 `ObjectStorePort`，正式生产当前选择 Notion，保留 Cloudflare R2 与 Node Filesystem 可替换后端。业务核心不得绑定任一对象存储实现，并保持 Node + SQLite + Filesystem 第二运行时；UI 使用 Naive UI，图表使用 ECharts，按实际阶段引入依赖。
+- 本地 Secret 只允许放根目录 `.env`；禁止新增 `.env.notion`、`apps/api/.dev.vars` 或其他第二套 dotenv。生产长期 Secret 只放 GitHub `production` Environment / Worker Secrets。`AUTH_CREDENTIAL_PEPPER`、`NOTION_API_TOKEN`、生产 `BOOTSTRAP_TOKEN`、会话原始 token、用户明文密码都不得进入 Git 或日志；数据库不得保存明文密码、浏览器派生凭据或原始会话 token。浏览器慢 KDF 使用 Argon2id，服务端只做 HMAC verifier，不得把 PBKDF2/Argon2 挪回 Worker。
 - 所有业务接口在服务端做权限和数据校验；前端验证不能替代后端校验。
 - 变更使用幂等键和版本检查；金额与关联流水使用原子事务。D1 `batch()` 才是可用的事务入口之一，不要假定多次独立 `run()` 会整体回滚。
 - 默认按 Workers Free 的 CPU 10ms、D1 参数/查询数量限制设计；避免在 Worker 内解析大 Excel 或全量扫描。保持分片、索引、汇总快照和重试能力。
-- 当前可移植化施工分支未执行远端 D1 升级、`main` 合并或正式发布。实际生产是否存在、运行哪个版本以及哪些 migration 已应用，必须通过部署记录和远端实测确认，不能根据仓库旧文档推断。任何 migration 一旦进入正式/共享数据环境即冻结，只能追加版本。使用合成测试数据，不提交真实 Excel、合同或备份。
+- **开发阶段数据库禁止推进 migration 版本。** 当前只允许 `apps/api/migrations/0001_initial_schema.sql` 一个基线文件；除非用户明确要求“兼容已有数据/保留升级路径”，否则任何 schema 变更都必须直接修改该 `0001` 并重建开发/测试数据库，严禁新增 `0002+`、兼容旧 schema、补丁 migration 或特殊升级 workaround。只有用户明确进入数据兼容阶段后，才允许冻结基线并追加 migration。使用合成测试数据，不提交真实 Excel、合同或备份。
 - 只实现已领取的阶段，不把未实现的按钮或硬编码样本标成已完成功能。公共接口与共享类型同步更新。
 
 ## 完成一个阶段
 
 - 针对金额、数量守恒、权限、幂等、并发、状态与时间边界编写有意义的测试，不为纯样式添加镜像测试。
-- `tests/migrations.lock.json` 锁定当前显式基线。开发期 schema 重整只有在用户明确要求且尚无正式数据时允许；正式/共享环境出现后禁止回改，并补上一阶段真实结构升级到新结构的数据保留测试。
+- `tests/migrations.lock.json` 只允许锁定 `0001_initial_schema.sql`。开发阶段更新 schema 时同步更新该唯一 checksum；CI 必须拒绝第二个 migration 文件。只有用户明确要求兼容已有数据/升级路径时，才允许解除“单基线”门禁并设计追加 migration 与数据保留测试。
 - 禁止提交 `.skip` / `.only` / `test.todo` 等绕过门禁的测试占位。
 - 运行 `npm run check`，同时执行该阶段的验收用例；本地测试不证明大陆访问或免费 CPU 配额已通过。
 - 更新 `docs/IMPLEMENTATION_PLAN.md` 状态与 `docs/AI_HANDOFF.md` 的完成项、下一步及未验证事项。
