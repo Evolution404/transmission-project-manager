@@ -201,7 +201,8 @@ test('project release is one project-level immutable snapshot and enables multip
   globalThis.__projectReleaseId = released.body.data.id;
   globalThis.__finalProjectVersion = released.body.data.projectVersion;
 
-  const t1 = await jsonRequest('/api/project-tasks', mutation('POST', 'task-t1', {
+  const t1Key = idem('task-t1');
+  const t1Body = {
     projectId,
     expectedProjectVersion: globalThis.__finalProjectVersion,
     name: 'T1 第一执行任务',
@@ -213,8 +214,21 @@ test('project release is one project-level immutable snapshot and enables multip
     unit: '项',
     demandScopes: [{ demandId, quantityScaled: 600000 }],
     materials: [{ projectMaterialRequirementId: globalThis.__materialAId, quantityScaled: 600000 }],
-  }));
+  };
+  const t1 = await jsonRequest('/api/project-tasks', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Idempotency-Key': t1Key },
+    body: JSON.stringify(t1Body),
+  });
   assert.equal(t1.response.status, 201);
+  const t1Replay = await jsonRequest('/api/project-tasks', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Idempotency-Key': t1Key },
+    body: JSON.stringify(t1Body),
+  });
+  assert.equal(t1Replay.response.status, 201);
+  assert.equal(t1Replay.body.data.id, t1.body.data.id);
+  assert.equal(dbRows(`SELECT COUNT(*) AS count FROM project_tasks WHERE id='${t1.body.data.id}'`)[0].count, 1);
   globalThis.__t1 = t1.body.data;
   globalThis.__finalProjectVersion = t1.body.data.projectVersion;
 

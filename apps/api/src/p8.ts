@@ -3,6 +3,7 @@ import type { ApiError, LifecycleState } from '@tpm/shared';
 import { hasScope, requireRoles, type AppEnv } from './auth';
 import { SqlIdempotencyRepository } from './repositories/sql-idempotency-repository';
 import { SqlProjectReleaseRepository } from './repositories/sql-project-release-repository';
+import { SqlProjectTaskRepository } from './repositories/sql-project-task-repository';
 import { createCloudflarePersistence } from './runtime/cloudflare/persistence';
 
 const MAX_ITEMS = 100;
@@ -1260,12 +1261,6 @@ p8App.post('/project-tasks', requireRoles('admin', 'project_manager', 'implement
     return c.json(apiError('INVALID_PROJECT_TASK', '执行任务参数无效'), 422);
   }
   if (!Array.isArray(body.demandScopes) || body.demandScopes.length > MAX_ITEMS || !Array.isArray(body.materials) || body.materials.length > MAX_ITEMS) return c.json(apiError('INVALID_PROJECT_TASK', '任务需求范围或任务物资格式无效'), 422);
-  const project = await findProject(c.env.DB, projectId);
-  if (!project) return c.json(apiError('PROJECT_NOT_FOUND', '项目不存在'), 404);
-  if (!await canProject(c, projectId)) return c.json(apiError('SCOPE_FORBIDDEN', '无权创建该项目执行任务'), 403);
-  if (project.version !== projectVersion) return c.json(apiError('VERSION_CONFLICT', '项目已被修改，请刷新后重试'), 409);
-  const release = await c.env.DB.prepare(`SELECT id FROM project_releases WHERE project_id=? LIMIT 1`).bind(projectId).first<{ id: string }>();
-  if (!release) return c.json(apiError('PROJECT_NOT_RELEASED', '项目级出库完成后才能创建正式执行任务'), 422);
 
   const demandScopes: Array<{ demandId: string; quantityScaled: number }> = [];
   const demandSeen = new Set<string>();
@@ -1274,61 +1269,71 @@ p8App.post('/project-tasks', requireRoles('admin', 'project_manager', 'implement
     if (!raw || typeof raw !== 'object') return c.json(apiError('INVALID_TASK_DEMAND_SCOPE', '任务需求范围无效'), 422);
     const item = raw as Record<string, unknown>, demandId = cleanText(item.demandId), quantity = positiveInteger(item.quantityScaled);
     if (!demandId || quantity === null || demandSeen.has(demandId)) return c.json(apiError('INVALID_TASK_DEMAND_SCOPE', '任务需求范围无效或重复'), 422);
-    const link = await c.env.DB.prepare(`SELECT 1 FROM project_demand_links WHERE project_id=? AND demand_id=? LIMIT 1`).bind(projectId, demandId).first();
-    if (!link) return c.json(apiError('DEMAND_NOT_LINKED_TO_PROJECT', '任务只能关联项目已关联的需求'), 422);
     demandSeen.add(demandId); demandScopes.push({ demandId, quantityScaled: quantity }); linkedPlanned += quantity;
     if (!Number.isSafeInteger(linkedPlanned)) return c.json(apiError('QUANTITY_OVERFLOW', '任务范围数量超出安全整数范围'), 422);
   }
   if (linkedPlanned > plannedQuantity) return c.json(apiError('TASK_DEMAND_SCOPE_EXCEEDS_PLAN', '任务需求范围数量不能超过任务计划数量'), 422);
 
-  const projectMaterialRows = await loadProjectMaterials(c.env.DB, projectId);
-  const projectMaterialMap = new Map(projectMaterialRows.map((row) => [row.id, row]));
+  const requestedMaterials: Array<{ projectMaterialRequirementId: string; quantityScaled: number }> = [];
   const materialSeen = new Set<string>();
-  const taskMaterials: Array<{ projectMaterialRequirementId: string; quantityScaled: number; source: ProjectMaterialRow }> = [];
   for (const raw of body.materials) {
     if (!raw || typeof raw !== 'object') return c.json(apiError('INVALID_TASK_MATERIAL', '任务物资无效'), 422);
     const item = raw as Record<string, unknown>, requirementId = cleanText(item.projectMaterialRequirementId), quantity = positiveInteger(item.quantityScaled);
-    const source = projectMaterialMap.get(requirementId);
-    if (!source || quantity === null || materialSeen.has(requirementId)) return c.json(apiError('INVALID_TASK_MATERIAL', '任务物资必须引用当前项目有效物资且不能重复'), 422);
-    materialSeen.add(requirementId); taskMaterials.push({ projectMaterialRequirementId: requirementId, quantityScaled: quantity, source });
+    if (!requirementId || quantity === null || materialSeen.has(requirementId)) return c.json(apiError('INVALID_TASK_MATERIAL', '任务物资必须引用当前项目有效物资且不能重复'), 422);
+    materialSeen.add(requirementId); requestedMaterials.push({ projectMaterialRequirementId: requirementId, quantityScaled: quantity });
   }
-  if (taskMaterials.length) {
-    const assigned = await c.env.DB.prepare(
-      `SELECT project_material_requirement_id AS id,COALESCE(SUM(required_quantity_scaled),0) AS total
-       FROM task_material_requirements tmr INNER JOIN project_tasks pt ON pt.id=tmr.task_id
-       WHERE pt.project_id=? AND project_material_requirement_id IS NOT NULL GROUP BY project_material_requirement_id`,
-    ).bind(projectId).all<{ id: string; total: number }>();
-    const assignedMap = new Map((assigned.results ?? []).map((row) => [row.id, Number(row.total)]));
-    for (const item of taskMaterials) {
-      const after = (assignedMap.get(item.projectMaterialRequirementId) ?? 0) + item.quantityScaled;
-      if (after > item.source.required_quantity_scaled) return c.json(apiError('TASK_MATERIAL_EXCEEDS_PROJECT', '任务物资分配合计超过项目当前物资需求，需先调整项目物资', { projectMaterialRequirementId: item.projectMaterialRequirementId, availableQuantityScaled: item.source.required_quantity_scaled - (assignedMap.get(item.projectMaterialRequirementId) ?? 0) }), 422);
-    }
+
+  const request = { projectId, expectedProjectVersion: projectVersion, name, description, scopeText, owner, plannedDate, plannedQuantityScaled: plannedQuantity, unit, demandScopes, materials: requestedMaterials };
+  const hash = await requestHash(request), operation = 'project-tasks.create';
+  const { database } = createCloudflarePersistence(c.env);
+  const releaseRepository = new SqlProjectReleaseRepository(database);
+  const taskRepository = new SqlProjectTaskRepository(database);
+  const project = await releaseRepository.findProject(projectId);
+  if (!project) return c.json(apiError('PROJECT_NOT_FOUND', '项目不存在'), 404);
+  if (!hasProjectAccess(c, projectId, project.frameworkId)) return c.json(apiError('SCOPE_FORBIDDEN', '无权创建该项目执行任务'), 403);
+  const replay = await replayIdempotentResponse(c, key, operation, hash); if (replay) return replay;
+  if (project.version !== projectVersion) return c.json(apiError('VERSION_CONFLICT', '项目已被修改，请刷新后重试'), 409);
+  const releaseId = await releaseRepository.findProjectReleaseId(projectId);
+  if (!releaseId) return c.json(apiError('PROJECT_NOT_RELEASED', '项目级出库完成后才能创建正式执行任务'), 422);
+
+  const linkedDemandIds = new Set(await taskRepository.listLinkedDemandIds(projectId));
+  if (demandScopes.some((item) => !linkedDemandIds.has(item.demandId))) return c.json(apiError('DEMAND_NOT_LINKED_TO_PROJECT', '任务只能关联项目已关联的需求'), 422);
+
+  const projectMaterials = await taskRepository.listProjectMaterialAvailability(projectId);
+  const projectMaterialMap = new Map(projectMaterials.map((item) => [item.id, item]));
+  const taskMaterials = requestedMaterials.map((item) => ({ ...item, source: projectMaterialMap.get(item.projectMaterialRequirementId) ?? null }));
+  if (taskMaterials.some((item) => item.source === null)) return c.json(apiError('INVALID_TASK_MATERIAL', '任务物资必须引用当前项目有效物资且不能重复'), 422);
+  for (const item of taskMaterials) {
+    const source = item.source!;
+    const after = source.assignedQuantityScaled + item.quantityScaled;
+    if (after > source.requiredQuantityScaled) return c.json(apiError('TASK_MATERIAL_EXCEEDS_PROJECT', '任务物资分配合计超过项目当前物资需求，需先调整项目物资', { projectMaterialRequirementId: item.projectMaterialRequirementId, availableQuantityScaled: source.requiredQuantityScaled - source.assignedQuantityScaled }), 422);
   }
-  const request = { projectId, expectedProjectVersion: projectVersion, name, description, scopeText, owner, plannedDate, plannedQuantityScaled: plannedQuantity, unit, demandScopes, materials: taskMaterials.map((item) => ({ projectMaterialRequirementId: item.projectMaterialRequirementId, quantityScaled: item.quantityScaled })) };
-  const hash = await requestHash(request), operation = 'project-tasks.create'; const replay = await replayIdempotentResponse(c, key, operation, hash); if (replay) return replay;
+
   const actor = c.get('currentUser'), now = new Date().toISOString(), id = crypto.randomUUID(), nextProjectVersion = projectVersion + 1;
   const scopeRows = demandScopes.map((item) => ({ id: crypto.randomUUID(), ...item }));
-  const materialRows = taskMaterials.map((item) => ({ id: crypto.randomUUID(), ...item }));
+  const materialRows = taskMaterials.map((item) => ({ id: crypto.randomUUID(), ...item, source: item.source! }));
   const data = {
-    id, projectId, projectReleaseId: release.id, name, description, scopeText, owner, plannedDate, plannedQuantityScaled: plannedQuantity, unit,
+    id, projectId, projectReleaseId: releaseId, name, description, scopeText, owner, plannedDate, plannedQuantityScaled: plannedQuantity, unit,
     version: 1, implementationVersion: 1, settlementVersion: 1, projectVersion: nextProjectVersion,
     demandScopes: scopeRows.map((item) => ({ id: item.id, taskId: id, demandId: item.demandId, plannedQuantityScaled: item.quantityScaled })),
-    materials: materialRows.map((item) => ({ id: item.id, taskId: id, projectMaterialRequirementId: item.projectMaterialRequirementId, materialId: item.source.material_id, model: item.source.model, unit: item.source.unit, requiredQuantityScaled: item.quantityScaled, supplyVersion: 1, createdAt: now, updatedAt: now })),
+    materials: materialRows.map((item) => ({ id: item.id, taskId: id, projectMaterialRequirementId: item.projectMaterialRequirementId, materialId: item.source.materialId, model: item.source.model, unit: item.source.unit, requiredQuantityScaled: item.quantityScaled, supplyVersion: 1, createdAt: now, updatedAt: now })),
     createdAt: now, updatedAt: now,
   };
   const response = { ok: true as const, data };
   try {
-    await c.env.DB.batch([
-      projectVersionGuard(c.env.DB, projectId, projectVersion, now),
-      c.env.DB.prepare(`INSERT INTO project_tasks (id,project_id,project_release_id,name,description,scope_text,owner,planned_date,planned_quantity_scaled,unit,version,implementation_version,settlement_version,created_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,1,1,1,?,?,?)`).bind(id, projectId, release.id, name, description, scopeText, owner, plannedDate, plannedQuantity, unit, actor.id, now, now),
-      ...scopeRows.map((item) => c.env.DB.prepare(`INSERT INTO task_demand_scopes (id,task_id,demand_id,planned_quantity_scaled,created_at) VALUES (?,?,?,?,?)`).bind(item.id, id, item.demandId, item.quantityScaled, now)),
-      ...materialRows.map((item) => c.env.DB.prepare(`INSERT INTO task_material_requirements (id,task_id,project_material_requirement_id,material_id,model,unit,required_quantity_scaled,supply_version,created_at,updated_at) VALUES (?,?,?,?,?,?,?,1,?,?)`).bind(item.id, id, item.projectMaterialRequirementId, item.source.material_id, item.source.model, item.source.unit, item.quantityScaled, now, now)),
-      auditStatement(c.env.DB, actor.id, 'project_task.create', 'project_task', id, null, data, now),
-      idempotencyStatement(c.env.DB, key, actor.id, operation, hash, response, 201, now),
-    ]);
+    await taskRepository.createTask({
+      task: data,
+      expectedProjectVersion: projectVersion,
+      actorId: actor.id,
+      auditId: crypto.randomUUID(),
+      idempotencyKey: key,
+      operation,
+      requestHash: hash,
+      responseJson: JSON.stringify(response),
+    });
   } catch {
     const race = await replayIdempotentResponse(c, key, operation, hash); if (race) return race;
-    const latest = await findProject(c.env.DB, projectId);
+    const latest = await releaseRepository.findProject(projectId);
     if (latest && latest.version !== projectVersion) return c.json(apiError('VERSION_CONFLICT', '项目已被并发修改，请刷新后重试'), 409);
     return c.json(apiError('TASK_CREATE_CONFLICT', '执行任务创建发生冲突'), 409);
   }
