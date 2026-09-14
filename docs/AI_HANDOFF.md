@@ -113,18 +113,6 @@ Mac 仅是历史施工环境，不再是开发、测试、发布或故障处理�
 
 但该文件明确属于 acceptance 配置，且没有 R2 绑定，不能直接当成新的正式生产配置。生产 Worker、D1、R2、域名、Secrets、migration 状态必须通过真实云端配置和发布证据确认。
 
-## 下一步顺序
-
-1. 等 PR #2 最新 GitHub CI 全绿；若失败，只在远端施工分支修复并重新由 Actions 验证。
-2. PR #2 全绿后通过 GitHub 合入 `main`，再确认合并后的 `main` CI 全绿。
-3. 在 GitHub UI/管理员接口实际建立并保护 `production` Environment，配置上述 Variables/Secret；不要把值提交进 Git。
-4. 核对真实 Cloudflare Worker、D1、R2、自定义域名归属和资源 ID；空库也要留下空库证据。
-5. 若正式 D1 需要 `0001`–`0012` migration，先完成备份/停写/目标 ID 核对，再手工运行 `Production D1 migration`；不得修改已冻结 migration。
-6. 配置永久 `AUTH_CREDENTIAL_PEPPER`；首次初始化时临时配置 `BOOTSTRAP_TOKEN`。
-7. 手工运行 `Production release`，输入准确的当前 `main` SHA 和发布记录引用；workflow 会自动验证真实 `/api/health`。
-8. 发布后继续做登录、首管理员/bootstrap 关闭、核心业务 smoke、静态资源/附件、R2、Cron、D1 状态、自定义域名和 Cloudflare Logs/Workers Analytics/CPU 指标验收。
-9. 把实际部署 SHA、Worker version/deployment ID、D1 migration 状态、R2/域名/Secrets 状态和真实验收结果写回 GitHub 文档或 release/PR 记录。
-
 ## 已完成的后端可移植化
 
 - `DatabasePort` / `TransactionPort`
