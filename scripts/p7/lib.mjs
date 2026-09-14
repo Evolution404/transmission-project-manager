@@ -15,13 +15,14 @@ export function validateConfig(c) {
   const need = (ok, field) => { if (!ok) errors.push(`Invalid production config: ${field}`); };
   const keys = (value, allowed, field) => need(object(value) && Object.keys(value).every(key => allowed.includes(key)), field);
   if (!object(c)) return ['Production config must be an object'];
-  keys(c, ['$schema', 'name', 'account_id', 'main', 'compatibility_date', 'workers_dev', 'preview_urls', 'assets', 'vars', 'triggers', 'routes', 'd1_databases', 'r2_buckets'], 'top-level keys');
+  keys(c, ['$schema', 'name', 'account_id', 'main', 'compatibility_date', 'workers_dev', 'preview_urls', 'assets', 'vars', 'secrets', 'triggers', 'routes', 'd1_databases', 'r2_buckets'], 'top-level keys');
   need(!placeholder(c.name) && /^[a-z0-9-]{1,63}$/.test(c.name), 'name');
   need(/^[a-f0-9]{32}$/.test(c.account_id) && !placeholder(c.account_id), 'account_id');
   need(c.main === 'src/index.ts', 'main');
   need(c.compatibility_date === '2026-09-12', 'tested compatibility_date');
   need(c.workers_dev === false && c.preview_urls === false, 'public preview routes');
   need(same(c.vars, { APP_ENV: 'production' }), 'vars (Secrets belong in Worker Secrets)');
+  need(same(c.secrets, ['AUTH_CREDENTIAL_PEPPER', 'BOOTSTRAP_TOKEN']), 'required Worker Secret names');
   keys(c.assets, ['directory', 'binding', 'not_found_handling', 'run_worker_first'], 'assets keys');
   need(c.assets?.directory === '../web/dist' && c.assets?.binding === 'ASSETS' && c.assets?.not_found_handling === 'single-page-application' && same(c.assets?.run_worker_first, ['/api', '/api/*']), 'assets routing');
   need(same(c.triggers, { crons: ['*/5 * * * *'] }), 'cron');
