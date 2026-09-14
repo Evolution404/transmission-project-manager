@@ -1,6 +1,6 @@
 # Cloudflare 运行、成本与部署说明
 
-核对日期：2026-09-14。**P0–P6、最终业务模型和基础台账对象化均已完成；当前在 `refactor/backend-runtime-portability-20260913` 上进行后端可移植化重构。Cloudflare Workers Free + D1 + R2 仍是当前部署基线，同时建立 Node + SQLite + Filesystem 第二运行时。P7 真实数据与正式环境验收仍未完成；本轮未升级远端 D1、未合并 `main`、未正式发布。生产环境实际版本必须以部署记录和 `/api/health` 实测为准。**
+核对日期：2026-09-14。**P0–P6、最终业务模型、基础台账对象化和本轮后端可移植化代码施工均已完成。Cloudflare Workers Free + D1 + R2 仍是当前部署基线；同一 Hono 应用已通过 `PersistencePorts` 注入在 Node + SQLite + Filesystem 第二运行时完成应用级 E2E 和旧库升级演练。P7 真实数据与正式环境验收仍未完成；本轮未升级远端 D1、未合并 `main`、未正式发布。生产环境实际版本必须以部署记录和 `/api/health` 实测为准。**
 
 ## 1. 本地开发
 
@@ -19,9 +19,9 @@ npm run dev
 npm run check
 ```
 
-检查包括三个工作区的类型检查、前端产物、Worker dry-run 打包，以及真实 workerd + 本地 D1 的认证、权限、并发和原子性测试。测试使用独立临时 D1，通过一次性 bootstrap 创建合成测试账号，不需要 Cloudflare 账号或真实 Secret，也不会污染日常本地开发库。健康接口成功只表示 Worker 存活。
+检查包括 Cloudflare 与 Node 两套类型边界、前端产物、Worker dry-run 打包、真实 workerd + 本地 D1 的认证/权限/并发/原子性测试，以及真实 Hono app + 文件型 SQLite + Filesystem 的第二运行时 E2E。Node 门禁还顺序执行 P7-era SQLite → 0012 的升级演练，并验证升级后应用可启动和读取历史事实。测试不需要 Cloudflare 账号或真实 Secret，也不会污染日常本地开发库。健康接口成功只表示对应运行时存活及 schema readiness，不等于生产验收。
 
-本轮可移植化只调整代码依赖边界，不改变当前正式部署目标。业务核心通过 Port/Repository 访问持久化；Cloudflare 是基础设施 adapter，不能重新成为业务层直接依赖。Node 第二运行时用于未来普通服务器快速切换，当前不替代 Cloudflare 部署基线。
+本轮可移植化不改变当前正式部署目标。业务/认证层只接收 `RuntimeBindings.PERSISTENCE`；Cloudflare D1/R2 adapter 仅在 Worker `index.ts` 基础设施入口组装，Node 则使用 SQLite/Filesystem adapter。业务/API 层不得重新直接依赖 D1/R2。Node 第二运行时用于未来普通服务器快速切换，当前不替代 Cloudflare 部署基线，也不代表已经完成 Node 生产进程托管、反向代理、备份介质和运维方案。
 
 ## 2. 部署拓扑
 

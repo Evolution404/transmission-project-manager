@@ -30,9 +30,10 @@
 | P2 导入/需求 | 已完成；`p2.ts` 0 直接 D1 |
 | P3 项目储备 | 已完成；`p3.ts` 0 直接 D1，已有静态防回退门禁 |
 | P4 财务 | 已完成；`p4.ts` 0 直接 D1，查询/写入/预算/流水/汇总均经 portable repository，并有静态防回退门禁 |
-| P5/P8 执行业务 | 待迁移 |
-| P6 backup / notification 后台任务 | 待迁移 |
-| Node + SQLite + Filesystem 应用级 E2E / 迁移演练 | 待完成 |
+| P5/P8 执行业务 | 已完成；P5 历史兼容链路与 P8 最终主链路均经 portable repository，`p5.ts` / `p8.ts` 0 直接 D1 |
+| P6 analysis / notification / backup | 已完成；`p6.ts` 0 直接 D1/R2，并有静态防回退门禁 |
+| 顶层 Hono app 持久化注入 | 已完成；业务/认证层只接收 `RuntimeBindings.PERSISTENCE`，Cloudflare adapter 仅在 Worker `index.ts` 组装 |
+| Node + SQLite + Filesystem 应用级 E2E / 迁移演练 | 已完成；真实 Hono app、文件型 SQLite、Filesystem、重启持久化及 P7-era→0012 升级均自动验证 |
 
 ## 2. 当前业务主路径
 
@@ -103,23 +104,30 @@
 
 所有新功能和缺陷修复继续执行 test-first，详见 `TESTING.md`。
 
-P4 可移植化完整收口后最近一次 `npm run check`：
+后端可移植化完整收口后最近一次 `npm run check`：
 
-- TypeScript：PASS。
+- Cloudflare TypeScript：PASS。
+- Node 完整 app TypeScript：PASS。
 - Web production build：PASS。
 - Worker `wrangler deploy --dry-run`：PASS。
 - Vue/Vitest：64/64 PASS。
-- Node：221/221 PASS。
+- Node：254/254 PASS。
 
-P4 专项还通过 `p4-finance` 11/11、finance query/write/budget/entry/summary repository tests、repository guards 和 Cloudflare + Node 双 runtime typecheck。`p4.ts` 已由静态门禁保证不能直接回到 D1。
+额外持续门禁：
+
+- P2/P3/P4/P5/P6/P8/P9 与顶层 `app.ts` 禁止重新直接访问 D1/R2；
+- HTTP 业务/认证模块禁止直接 import Cloudflare persistence factory；
+- `tests/node-runtime-app.test.mjs` 使用真实 Hono app + SQLite 文件 + Filesystem，并验证重启后会话/数据仍可用；
+- `tests/node-runtime-migration-rehearsal.test.mjs` 验证 P7-era SQLite 顺序升级 0008–0012 后可直接由 Node app 启动并读取历史事实；
+- Node runtime typecheck 必须覆盖真实 `app.ts`，同时排除 Cloudflare infrastructure adapter。
 
 这些只证明本地/合成门禁，不等于生产验收。
 
 ## 5. 当前施工与发布边界
 
-当前施工分支：`refactor/backend-runtime-portability-20260913`。`main` 尚未合并本轮可移植化重构；未升级远端 D1、未正式部署，也未用真实业务文件替代合成测试。
+当前施工分支：`refactor/backend-runtime-portability-20260913`。本轮代码可移植化已完成并通过完整自动门禁，进入 merge-ready 收尾；`main` 尚未合并，未升级远端 D1、未正式部署，也未用真实业务文件替代合成测试。
 
-当前详细施工状态、未提交工作区和下一步只维护在 `AI_HANDOFF.md`。历史功能分支和阶段性 WIP 以 Git 历史追溯，不再在长期文档中保留。
+当前 merge-ready 状态与合并前检查维护在 `AI_HANDOFF.md`。历史功能分支和阶段性 WIP 以 Git 历史追溯，不再在长期文档中保留。
 
 ## 6. P7 剩余工作
 
