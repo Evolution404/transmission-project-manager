@@ -9,6 +9,9 @@ import { SqlTaskImplementationRepository } from './repositories/sql-task-impleme
 import { SqlTaskSettlementRepository } from './repositories/sql-task-settlement-repository';
 import { SqlFinanceQueryRepository } from './repositories/sql-finance-query-repository';
 import { SqlExecutionQueryRepository } from './repositories/sql-execution-query-repository';
+import { SqlDemandRepository } from './repositories/sql-demand-repository';
+import { SqlDemandQueryRepository } from './repositories/sql-demand-query-repository';
+import { SqlDemandMaterialWriteRepository } from './repositories/sql-demand-material-write-repository';
 import { createCloudflarePersistence } from './runtime/cloudflare/persistence';
 
 const MAX_ITEMS = 100;
@@ -919,40 +922,45 @@ p8App.post('/demands/:id/materials', requireRoles('admin', 'project_manager'), a
   const version = expectedVersion(body.expectedVersion), materials = normalizeDemandMaterials(body);
   if (version === null || !materials || materials.length < 1) return c.json(apiError('INVALID_DEMAND_MATERIALS', 'expectedVersion 或需求物资子明细无效'), 422);
   const demandId = c.req.param('id');
-  const current = await c.env.DB.prepare(`SELECT id,version FROM demands WHERE id=? LIMIT 1`).bind(demandId).first<{ id: string; version: number }>();
+  const { database } = createCloudflarePersistence(c.env);
+  const writeRepository = new SqlDemandMaterialWriteRepository(database);
+  const current = await writeRepository.findState(demandId);
   if (!current) return c.json(apiError('DEMAND_NOT_FOUND', '需求不存在'), 404);
-  if (current.version !== version) return c.json(apiError('VERSION_CONFLICT', '需求已被修改，请刷新后重试'), 409);
-  for (const item of materials) {
-    if (item.materialId) {
-      const material = await c.env.DB.prepare(`SELECT id FROM materials WHERE id=? AND enabled=1 LIMIT 1`).bind(item.materialId).first<{ id: string }>();
-      if (!material) return c.json(apiError('MATERIAL_NOT_FOUND', '需求物资引用的标准物资不存在或已停用'), 422);
-    }
-  }
   const request = { expectedVersion: version, materials }, hash = await requestHash(request), operation = `demands.materials.add:${demandId}`;
   const replay = await replayIdempotentResponse(c, key, operation, hash); if (replay) return replay;
+  if (current.version !== version) return c.json(apiError('VERSION_CONFLICT', '需求已被修改，请刷新后重试'), 409);
+  const materialIds = [...new Set(materials.flatMap((item) => item.materialId ? [item.materialId] : []))];
+  if (materialIds.length) {
+    const enabled = await new SqlDemandRepository(database).findEnabledMaterials(materialIds);
+    if (enabled.length !== materialIds.length) return c.json(apiError('MATERIAL_NOT_FOUND', '需求物资引用的标准物资不存在或已停用'), 422);
+  }
   const actor = c.get('currentUser'), now = new Date().toISOString();
-  const rows = materials.map((item) => ({ id: crypto.randomUUID(), item }));
-  const responseData = await loadDemandDetail(c.env.DB, demandId);
+  const rows = materials.map((item) => ({ id: crypto.randomUUID(), ...item }));
+  const responseData = await new SqlDemandQueryRepository(database).getById(demandId);
+  if (!responseData) return c.json(apiError('DEMAND_NOT_FOUND', '需求不存在'), 404);
   const data = {
-    ...responseData!,
+    ...responseData,
     version: version + 1,
     updatedAt: now,
-    materials: [...responseData!.materials, ...rows.map(({ id, item }) => ({ id, rawModel: item.rawModel, quantityScaled: item.quantityScaled, unit: item.unit, material: null, version: 1 }))],
+    materials: [...responseData.materials, ...rows.map((item) => ({ id: item.id, rawModel: item.rawModel, quantityScaled: item.quantityScaled, unit: item.unit, material: null, version: 1 }))],
   };
   const response = { ok: true as const, data };
   try {
-    await c.env.DB.batch([
-      c.env.DB.prepare(`UPDATE demands SET version=version+1,updated_at=CASE WHEN version=? THEN ? ELSE NULL END WHERE id=?`).bind(version, now, demandId),
-      ...rows.map(({ id, item }) => c.env.DB.prepare(
-        `INSERT INTO demand_materials (id,demand_id,raw_model,material_id,quantity_scaled,unit,created_at,source_import_row_id,created_by,version)
-         VALUES (?,?,?,?,?,?,?,NULL,?,1)`,
-      ).bind(id, demandId, item.rawModel, item.materialId, item.quantityScaled, item.unit, now, actor.id)),
-      auditStatement(c.env.DB, actor.id, 'demand.materials.add', 'demand', demandId, { version }, { version: version + 1, added: rows.length }, now),
-      idempotencyStatement(c.env.DB, key, actor.id, operation, hash, response, 200, now),
-    ]);
+    await writeRepository.append({
+      demandId,
+      expectedVersion: version,
+      rows,
+      now,
+      actorId: actor.id,
+      auditId: crypto.randomUUID(),
+      idempotencyKey: key,
+      operation,
+      requestHash: hash,
+      responseJson: JSON.stringify(response),
+    });
   } catch {
     const race = await replayIdempotentResponse(c, key, operation, hash); if (race) return race;
-    const latest = await c.env.DB.prepare(`SELECT version FROM demands WHERE id=? LIMIT 1`).bind(demandId).first<{ version: number }>();
+    const latest = await writeRepository.findState(demandId);
     if (latest && latest.version !== version) return c.json(apiError('VERSION_CONFLICT', '需求已被并发修改，请刷新后重试'), 409);
     return c.json(apiError('DEMAND_MATERIAL_CONFLICT', '需求物资写入发生冲突'), 409);
   }
