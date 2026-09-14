@@ -25,16 +25,16 @@ jobs:
       - name: Validate protected read-only inputs
         env:
           ACCOUNT_ID: ${{ inputs.account_id }}
-          CLOUDFLARE_READ_API_TOKEN: ${{ secrets.CLOUDFLARE_READ_API_TOKEN }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
           set -euo pipefail
           [[ "$ACCOUNT_ID" =~ ^[0-9a-fA-F]{32}$ ]]
-          test -n "$CLOUDFLARE_READ_API_TOKEN"
+          test -n "$CLOUDFLARE_API_TOKEN"
 
       - name: Read Cloudflare production inventory
         env:
           ACCOUNT_ID: ${{ inputs.account_id }}
-          CLOUDFLARE_READ_API_TOKEN: ${{ secrets.CLOUDFLARE_READ_API_TOKEN }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
           set -euo pipefail
           INVENTORY_DIR="$RUNNER_TEMP/cloudflare-production-inventory"
@@ -44,7 +44,7 @@ jobs:
             local path="$1"
             local output="$2"
             curl --fail --silent --show-error \
-              -H "Authorization: Bearer ${CLOUDFLARE_READ_API_TOKEN}" \
+              -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
               -H 'Accept: application/json' \
               "https://api.cloudflare.com/client/v4${path}" \
               -o "$output"
