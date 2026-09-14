@@ -125,9 +125,11 @@
 
 ## 5. 当前施工与发布边界
 
-当前施工分支：`refactor/backend-runtime-portability-20260913`。本轮代码可移植化已完成并通过完整自动门禁，进入 merge-ready 收尾；`main` 尚未合并，未升级远端 D1、未正式部署，也未用真实业务文件替代合成测试。
+当前施工分支：`refactor/backend-runtime-portability-20260913`。本轮代码可移植化已完成并通过完整自动门禁，当前为 merge-ready；`main` 尚未合并，远端 D1 尚未升级，Cloudflare 尚未正式发布。
 
-当前 merge-ready 状态与合并前检查维护在 `AI_HANDOFF.md`。历史功能分支和阶段性 WIP 以 Git 历史追溯，不再在长期文档中保留。
+从下一位 AI 开始，开发和发布流程改为 **GitHub / Cloudflare 云上优先**：禁止把用户 Mac 或任何本地电脑作为必需开发、测试或发布环境。代码修改使用 GitHub 远端分支/PR，自动门禁使用 GitHub Actions，Cloudflare 发布通过 GitHub Actions / Cloudflare Git 集成完成。若现有发布 workflow 不完整，应先在 GitHub 完善受保护的发布流程和 Environment/Secrets，而不是回到本地 Wrangler。
+
+当前 merge-ready 状态、云上接手顺序与下一位 AI 的约束维护在 `AI_HANDOFF.md`。历史本地施工环境只用于 Git 历史追溯，不再作为后续工作依赖。
 
 ## 6. P7 剩余工作
 
@@ -139,7 +141,7 @@ P7 不再新增另一套核心业务模型，重点是证明当前系统在真�
 - 测真实 Workers CPU/配额、D1/R2 用量和目标地区网络体验；
 - 验证真实通知供应商和域名；
 - 执行正式停写备份、隔离恢复、对账、回退演练；
-- 完成 Cloudflare/GitHub 运维移交和 CI/CD 服务身份演练；
+- 完成 Cloudflare/GitHub 运维移交和 CI/CD 服务身份演练，并确保正常开发、测试、合并、发布全流程不依赖用户 Mac；
 - 保留每项真实验收证据，不能用本地合成结果替代。
 
 详细矩阵见 `P7_ACCEPTANCE.md`，操作步骤见 `P7_RUNBOOK.md`。
@@ -154,4 +156,4 @@ P7 不再新增另一套核心业务模型，重点是证明当前系统在真�
 4. migration/共享类型/文档同步；
 5. `git diff --check` 干净，无密钥/真实业务数据进入 Git；
 6. 提交并推送到当前测试分支；
-7. 部署、远端 migration、`main` 合并必须获得当次用户授权。
+7. 后续默认通过 GitHub PR/CI 和受保护的 Cloudflare 发布 workflow 执行；不得把本地电脑作为必要前置条件。

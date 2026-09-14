@@ -2,26 +2,18 @@
 
 核对日期：2026-09-14。**P0–P6、最终业务模型、基础台账对象化和本轮后端可移植化代码施工均已完成。Cloudflare Workers Free + D1 + R2 仍是当前部署基线；同一 Hono 应用已通过 `PersistencePorts` 注入在 Node + SQLite + Filesystem 第二运行时完成应用级 E2E 和旧库升级演练。P7 真实数据与正式环境验收仍未完成；本轮未升级远端 D1、未合并 `main`、未正式发布。生产环境实际版本必须以部署记录和 `/api/health` 实测为准。**
 
-## 1. 本地开发
+## 1. 云上开发与发布工作流
 
-建议 Node.js 24、npm 11，执行：
+后续默认工作流以 **GitHub + Cloudflare** 为唯一必需环境，用户 Mac 和任何本地电脑都不应成为开发、测试、合并或发布前置条件。
 
-```sh
-npm ci
-npm run dev
-```
+- 代码阅读、修改、分支、PR、合并均在 GitHub 远端完成。
+- `npm run check` 等完整自动门禁应由 GitHub Actions 执行；后续验收以远端 CI 结果为准。
+- Cloudflare Workers / D1 / R2 发布优先由 GitHub Actions、Cloudflare Git integration 或其他受保护的云端发布 workflow 触发。
+- Cloudflare API Token、Account ID、D1/R2 标识及生产 Secrets 只能存于 GitHub Environment/Secrets 或 Cloudflare Secrets，不写入仓库、PR、前端和日志。
+- 若 GitHub 当前没有完整的 Cloudflare 发布 workflow，先补齐 CI/CD、Environment protection 和最小权限服务身份，再做正式发布；不要退回依赖个人电脑 Wrangler 登录态的流程。
+- GitHub CI 仍应覆盖 Cloudflare 与 Node 两套类型边界、前端产物、Worker dry-run、认证/权限/并发/原子性测试、Node + SQLite + Filesystem E2E 和 P7-era → 0012 migration rehearsal。
 
-`npm run dev`先构建前端静态资源，再同时启动Vite（5173）和Wrangler（8787）。Vite代理 `/api` 到本地Workers，Wrangler用本地workerd模拟D1/R2，状态写在忽略目录 `.wrangler/`。
-
-本地配置 `apps/api/wrangler.jsonc` 的数据库ID为全零占位符，桶名也只是本地标识。其目的仅是本地开发与dry-run，不是可直接使用的生产配置。
-
-```sh
-npm run check
-```
-
-检查包括 Cloudflare 与 Node 两套类型边界、前端产物、Worker dry-run 打包、真实 workerd + 本地 D1 的认证/权限/并发/原子性测试，以及真实 Hono app + 文件型 SQLite + Filesystem 的第二运行时 E2E。Node 门禁还顺序执行 P7-era SQLite → 0012 的升级演练，并验证升级后应用可启动和读取历史事实。测试不需要 Cloudflare 账号或真实 Secret，也不会污染日常本地开发库。健康接口成功只表示对应运行时存活及 schema readiness，不等于生产验收。
-
-本轮可移植化不改变当前正式部署目标。业务/认证层只接收 `RuntimeBindings.PERSISTENCE`；Cloudflare D1/R2 adapter 仅在 Worker `index.ts` 基础设施入口组装，Node 则使用 SQLite/Filesystem adapter。业务/API 层不得重新直接依赖 D1/R2。Node 第二运行时用于未来普通服务器快速切换，当前不替代 Cloudflare 部署基线，也不代表已经完成 Node 生产进程托管、反向代理、备份介质和运维方案。
+仓库中保留的本地开发脚本和 Node 第二运行时仍可用于故障复现或未来普通服务器迁移，但只是**可选能力**，不是后续 AI 或正式运维的依赖。业务/认证层继续只接收 `RuntimeBindings.PERSISTENCE`；Cloudflare D1/R2 adapter 仅在 Worker `index.ts` 基础设施入口组装。
 
 ## 2. 部署拓扑
 
