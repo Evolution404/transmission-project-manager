@@ -24,6 +24,8 @@ function createRepository() {
       id TEXT PRIMARY KEY,agreement_id TEXT NOT NULL,version INTEGER NOT NULL,framework_id TEXT NOT NULL,code TEXT NOT NULL,name TEXT NOT NULL,
       amount_fen INTEGER NOT NULL,valid_from TEXT NOT NULL,valid_to TEXT NOT NULL,status TEXT NOT NULL,reason TEXT,created_at TEXT NOT NULL
     );
+    CREATE TABLE budget_versions (id TEXT PRIMARY KEY,project_id TEXT NOT NULL);
+    CREATE TABLE financial_entries (id TEXT PRIMARY KEY,project_id TEXT NOT NULL);
     INSERT INTO projects VALUES
       ('p2','Project B',2026,'confirmed','fw-b',2,'2026-09-14T02:00:00.000Z'),
       ('p1','Project A',2025,'draft','fw-a',1,'2026-09-14T01:00:00.000Z');
@@ -40,6 +42,7 @@ function createRepository() {
     INSERT INTO agreement_versions VALUES
       ('ag-a1-v2','ag-a1',2,'fw-a','A-1','Agreement A1',400,'2026-01-01','2026-12-31','active','update','2026-02-01'),
       ('ag-a1-v1','ag-a1',1,'fw-a','A-1','Agreement A1 Old',300,'2026-01-01','2026-12-31','active',NULL,'2026-01-01');
+    INSERT INTO budget_versions VALUES ('bv-p2','p2');
   `);
   return { sqlite, repository: new SqlFinanceQueryRepository(new SqliteDatabaseAdapter(sqlite)) };
 }
@@ -54,6 +57,10 @@ test('finance query repository lists projects and frameworks as business DTOs', 
     assert.deepEqual((await repository.listFrameworks()).map((item) => item.id), ['fw-a', 'fw-b']);
     assert.equal((await repository.findFramework('fw-a'))?.annualTargetFen, 800);
     assert.equal(await repository.findFramework('missing'), null);
+    assert.deepEqual(await repository.findProject('p1'), { id: 'p1', name: 'Project A', year: 2025, status: 'draft', frameworkId: 'fw-a', version: 1 });
+    assert.equal(await repository.findProject('missing'), null);
+    assert.equal(await repository.hasProjectFinanceHistory('p1'), false);
+    assert.equal(await repository.hasProjectFinanceHistory('p2'), true);
   } finally { sqlite.close(); }
 });
 

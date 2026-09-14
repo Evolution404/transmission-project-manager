@@ -148,11 +148,6 @@ function hasGlobalScope(c: Context<AppEnv>) {
   const user = c.get('currentUser');
   return user.role === 'admin' || user.scopes.some((scope) => scope.type === 'all');
 }
-function projectFrameworkGuard(db: D1Database, id: string, version: number, frameworkId: string, now: string) {
-  return db.prepare(
-    `UPDATE projects SET framework_id=?,version=version+1,updated_at=CASE WHEN version=? THEN ? ELSE NULL END WHERE id=?`,
-  ).bind(frameworkId, version, now, id);
-}
 function budgetGuard(db: D1Database, id: string, version: number, values: { total: number; note: string | null; status: 'draft' | 'confirmed'; incrementBudgetVersion: boolean; now: string }) {
   return db.prepare(
     `UPDATE project_budgets SET total_amount_fen=?,note=?,status=?,budget_version=budget_version+?,version=version+1,
@@ -420,7 +415,10 @@ p4App.get('/agreements/:id/history', async (c) => {
 
 p4App.put('/projects/:id/framework', requireRoles('admin', 'project_manager'), async (c) => {
   const key = requireIdempotencyKey(c); if (key instanceof Response) return key;
-  const project = await findProject(c.env.DB, c.req.param('id')); if (!project) return c.json(apiError('NOT_FOUND', '项目不存在'), 404);
+  const { database } = createCloudflarePersistence(c.env);
+  const queryRepository = new SqlFinanceQueryRepository(database);
+  const writeRepository = new SqlFinanceWriteRepository(database);
+  const project = await queryRepository.findProject(c.req.param('id')); if (!project) return c.json(apiError('NOT_FOUND', '项目不存在'), 404);
   if (!canProject(c, project.id) && !hasGlobalScope(c)) return c.json(apiError('SCOPE_FORBIDDEN', '无权修改该项目'), 403);
   let body: Partial<BindProjectFrameworkRequest>; try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
   const version = expectedVersion(body.expectedVersion), frameworkId = cleanText(body.frameworkId);
@@ -428,22 +426,30 @@ p4App.put('/projects/:id/framework', requireRoles('admin', 'project_manager'), a
   const request = { expectedVersion: version, frameworkId }; const hash = await requestHash(request), operation = `projects.framework:${project.id}`;
   const replay = await replayIdempotentResponse(c, key, operation, hash); if (replay) return replay;
   if (project.version !== version) return c.json(apiError('VERSION_CONFLICT', '项目已被修改，请刷新后重试'), 409);
-  const framework = await findFramework(c.env.DB, frameworkId); if (!framework) return c.json(apiError('FRAMEWORK_NOT_FOUND', '框架不存在'), 422);
+  const framework = await queryRepository.findFramework(frameworkId); if (!framework) return c.json(apiError('FRAMEWORK_NOT_FOUND', '框架不存在'), 422);
   if (!canFramework(c, frameworkId)) return c.json(apiError('SCOPE_FORBIDDEN', '无权使用目标框架'), 403);
-  if (project.framework_id && project.framework_id !== frameworkId) {
-    const history = await c.env.DB.prepare(`SELECT (SELECT COUNT(*) FROM budget_versions WHERE project_id=?) + (SELECT COUNT(*) FROM financial_entries WHERE project_id=?) AS count`).bind(project.id, project.id).first<{ count: number }>();
-    if ((history?.count ?? 0) > 0) return c.json(apiError('FRAMEWORK_CHANGE_BLOCKED', '项目已有确认预算或资金流水，不能直接改绑框架'), 422);
+  if (project.frameworkId && project.frameworkId !== frameworkId && await queryRepository.hasProjectFinanceHistory(project.id)) {
+    return c.json(apiError('FRAMEWORK_CHANGE_BLOCKED', '项目已有确认预算或资金流水，不能直接改绑框架'), 422);
   }
   const actor = c.get('currentUser'), now = new Date().toISOString(), data = { projectId: project.id, frameworkId, version: version + 1 };
   const response = { ok: true as const, data };
   try {
-    await c.env.DB.batch([
-      projectFrameworkGuard(c.env.DB, project.id, version, frameworkId, now),
-      auditStatement(c.env.DB, actor.id, 'project.framework.bind', 'project', project.id, { frameworkId: project.framework_id, version }, data, now),
-      idempotencyStatement(c.env.DB, key, actor.id, operation, hash, response, 200, now),
-    ]);
+    await writeRepository.bindProjectFramework({
+      projectId: project.id,
+      beforeFrameworkId: project.frameworkId,
+      frameworkId,
+      expectedVersion: version,
+      nextVersion: version + 1,
+      now,
+      actorId: actor.id,
+      auditId: crypto.randomUUID(),
+      idempotencyKey: key,
+      operation,
+      requestHash: hash,
+      responseJson: JSON.stringify(response),
+    });
   } catch {
-    const latest = await findProject(c.env.DB, project.id); if (latest && latest.version !== version) return c.json(apiError('VERSION_CONFLICT', '项目已被并发修改，请刷新后重试'), 409);
+    const latest = await queryRepository.findProject(project.id); if (latest && latest.version !== version) return c.json(apiError('VERSION_CONFLICT', '项目已被并发修改，请刷新后重试'), 409);
     return c.json(apiError('FRAMEWORK_BIND_CONFLICT', '项目框架绑定失败'), 409);
   }
   return c.json(response);

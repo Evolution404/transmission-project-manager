@@ -19,6 +19,9 @@ function createRepository() {
       id TEXT PRIMARY KEY,framework_id TEXT NOT NULL,code TEXT NOT NULL,name TEXT NOT NULL,amount_fen INTEGER NOT NULL,valid_from TEXT NOT NULL,valid_to TEXT NOT NULL,
       status TEXT NOT NULL,version INTEGER NOT NULL,created_by TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL, UNIQUE(framework_id,code)
     );
+    CREATE TABLE projects (
+      id TEXT PRIMARY KEY,name TEXT NOT NULL,framework_id TEXT,version INTEGER NOT NULL,updated_at TEXT NOT NULL
+    );
     CREATE TABLE agreement_versions (
       id TEXT PRIMARY KEY,agreement_id TEXT NOT NULL,version INTEGER NOT NULL,framework_id TEXT NOT NULL,code TEXT NOT NULL,name TEXT NOT NULL,
       amount_fen INTEGER NOT NULL,valid_from TEXT NOT NULL,valid_to TEXT NOT NULL,status TEXT NOT NULL,reason TEXT,created_by TEXT NOT NULL,created_at TEXT NOT NULL
@@ -48,6 +51,19 @@ test('framework create and update keep immutable version history atomically', as
     await repository.updateFramework({ before:fw,next,expectedVersion:1,reason:'update',versionId:'fw-v2',actorId:'admin',auditId:'audit-fw2',idempotencyKey:'idem-fw2',operation:'frameworks.update:fw-1',requestHash:'h2',responseJson:'{}' });
     assert.deepEqual({ ...sqlite.prepare("SELECT name,total_amount_fen,version FROM frameworks WHERE id='fw-1'").get() },{name:'Framework 2',total_amount_fen:1200,version:2});
     assert.equal(sqlite.prepare("SELECT reason FROM framework_versions WHERE id='fw-v2'").get().reason,'update');
+  } finally { sqlite.close(); }
+});
+
+test('project framework binding keeps version guard, audit, and idempotency atomic', async () => {
+  const { sqlite, repository } = createRepository();
+  try {
+    sqlite.prepare("INSERT INTO projects (id,name,framework_id,version,updated_at) VALUES ('p1','Project',NULL,1,'2026-01-01T00:00:00.000Z')").run();
+    await assert.rejects(repository.bindProjectFramework({ projectId:'p1',beforeFrameworkId:null,frameworkId:'fw-1',expectedVersion:0,nextVersion:1,now:'2026-02-01T00:00:00.000Z',actorId:'admin',auditId:'audit-bind-stale',idempotencyKey:'idem-bind-stale',operation:'projects.framework:p1',requestHash:'bs',responseJson:'{}' }));
+    assert.deepEqual({ ...sqlite.prepare("SELECT framework_id,version FROM projects WHERE id='p1'").get() }, { framework_id:null, version:1 });
+    assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM audit_events WHERE id='audit-bind-stale'").get().count,0);
+    assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM idempotency_records WHERE idempotency_key='idem-bind-stale'").get().count,0);
+    await repository.bindProjectFramework({ projectId:'p1',beforeFrameworkId:null,frameworkId:'fw-1',expectedVersion:1,nextVersion:2,now:'2026-02-01T00:00:00.000Z',actorId:'admin',auditId:'audit-bind',idempotencyKey:'idem-bind',operation:'projects.framework:p1',requestHash:'b1',responseJson:'{}' });
+    assert.deepEqual({ ...sqlite.prepare("SELECT framework_id,version,updated_at FROM projects WHERE id='p1'").get() }, { framework_id:'fw-1', version:2, updated_at:'2026-02-01T00:00:00.000Z' });
   } finally { sqlite.close(); }
 });
 

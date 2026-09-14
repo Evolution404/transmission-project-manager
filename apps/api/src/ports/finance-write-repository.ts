@@ -22,6 +22,15 @@ export interface UpdateFrameworkRecord extends MutationMeta {
   versionId: string;
 }
 
+export interface BindProjectFrameworkRecord extends MutationMeta {
+  projectId: string;
+  beforeFrameworkId: string | null;
+  frameworkId: string;
+  expectedVersion: number;
+  nextVersion: number;
+  now: string;
+}
+
 export interface CreateAgreementRecord extends MutationMeta {
   agreement: AgreementSummary;
   versionId: string;
@@ -36,6 +45,7 @@ export interface UpdateAgreementRecord extends MutationMeta {
 }
 
 export interface FinanceWriteRepository {
+  bindProjectFramework(input: BindProjectFrameworkRecord): Promise<void>;
   createFramework(input: CreateFrameworkRecord): Promise<void>;
   updateFramework(input: UpdateFrameworkRecord): Promise<void>;
   createAgreement(input: CreateAgreementRecord): Promise<void>;

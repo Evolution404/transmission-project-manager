@@ -8,6 +8,8 @@ import type {
 
 export interface FinanceQueryRepository {
   listProjects(): Promise<readonly FinanceProjectSummary[]>;
+  findProject(id: string): Promise<FinanceProjectSummary | null>;
+  hasProjectFinanceHistory(id: string): Promise<boolean>;
   listFrameworks(): Promise<readonly FrameworkSummary[]>;
   findFramework(id: string): Promise<FrameworkSummary | null>;
   getFrameworkHistory(id: string): Promise<readonly FrameworkVersionSummary[] | null>;

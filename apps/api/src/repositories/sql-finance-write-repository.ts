@@ -1,5 +1,6 @@
 import type { DatabasePort, DatabaseStatement } from '../ports/database.ts';
 import type {
+  BindProjectFrameworkRecord,
   CreateAgreementRecord,
   CreateFrameworkRecord,
   FinanceWriteRepository,
@@ -30,6 +31,27 @@ export class SqlFinanceWriteRepository implements FinanceWriteRepository {
 
   constructor(database: DatabasePort) {
     this.database = database;
+  }
+
+  async bindProjectFramework(input: BindProjectFrameworkRecord): Promise<void> {
+    await this.database.batch([
+      {
+        sql: `UPDATE projects SET framework_id=?,version=version+1,
+              updated_at=CASE WHEN version=? THEN ? ELSE NULL END WHERE id=?`,
+        params: [input.frameworkId, input.expectedVersion, input.now, input.projectId],
+      },
+      auditStatement({
+        id: input.auditId,
+        actorId: input.actorId,
+        action: 'project.framework.bind',
+        type: 'project',
+        objectId: input.projectId,
+        before: { frameworkId: input.beforeFrameworkId, version: input.expectedVersion },
+        after: { projectId: input.projectId, frameworkId: input.frameworkId, version: input.nextVersion },
+        now: input.now,
+      }),
+      idempotencyStatement({ key: input.idempotencyKey, actorId: input.actorId, operation: input.operation, hash: input.requestHash, responseJson: input.responseJson, status: 200, now: input.now }),
+    ]);
   }
 
   async createFramework(input: CreateFrameworkRecord): Promise<void> {
