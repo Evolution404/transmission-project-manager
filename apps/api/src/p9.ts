@@ -10,7 +10,6 @@ import type {
   VoltageLevelSummary,
 } from '@tpm/shared';
 import { requireRoles, type AppEnv } from './auth';
-import { gridLocationGuard } from './grid-location';
 import type { CommitSingleMasterDataInput, MasterDataWriteKind } from './ports/master-data-write-repository';
 import { SqlDemandRepository } from './repositories/sql-demand-repository';
 import { SqlMasterDataRepository } from './repositories/sql-master-data-repository';
@@ -136,72 +135,9 @@ const constraintMessages: Record<string, string> = {
   VOLTAGE_LOCATION_IN_USE: '电压等级已被业务引用，不能改变制式或标称电压',
   INVALID_GRID_LOCATION: '需求位置关联已变化或停用，请刷新并先维护基础台账',
 };
-async function commitMutation(c: Context<AppEnv>, mutation: Mutation, statements: D1PreparedStatement[], data: unknown, status: 200 | 201,
-  audits: Array<{ action: string; type: string; id: string; before: unknown; after: unknown }>,
-  versions: Array<{ table: string; id: string; version: number }> = []) {
-  const now = new Date().toISOString(), actorId = c.get('currentUser').id, response = { ok: true as const, data };
-  const condition = versions.length ? versions.map((v) => `EXISTS(SELECT 1 FROM ${v.table} WHERE id=? AND version=?)`).join(' AND ') : '1';
-  try {
-    await c.env.DB.batch([
-      c.env.DB.prepare(`INSERT INTO idempotency_records (idempotency_key,actor_member_id,operation,request_hash,response_json,status_code,created_at) VALUES (?,?,?,CASE WHEN ${condition} THEN ? ELSE NULL END,?,?,?)`)
-        .bind(mutation.key, actorId, mutation.operation, ...versions.flatMap((v) => [v.id, v.version]), mutation.hash, JSON.stringify(response), status, now),
-      ...statements,
-      ...audits.map((a) => c.env.DB.prepare(`INSERT INTO audit_events (id,actor_member_id,action,object_type,object_id,before_json,after_json,created_at) VALUES (?,?,?,?,?,?,?,?)`)
-        .bind(crypto.randomUUID(), actorId, a.action, a.type, a.id, a.before === null ? null : JSON.stringify(a.before), a.after === null ? null : JSON.stringify(a.after), now)),
-    ]);
-  } catch (cause) {
-    const raced = await replay(c, mutation); if (raced) return raced;
-    const error = String(cause);
-    for (const [code, message] of Object.entries(constraintMessages)) if (error.includes(code)) return c.json(apiError(code, message), 422);
-    if (error.includes('idempotency_records.request_hash')) return c.json(apiError('VERSION_CONFLICT', '数据已变化，请刷新后重试'), 409);
-    if (error.includes('UNIQUE constraint')) return c.json(apiError('MASTER_DATA_CONFLICT', '名称、编码、杆塔号或线路顺序重复，请检查'), 409);
-    if (error.includes('FOREIGN KEY constraint')) return c.json(apiError('MASTER_DATA_IN_USE', constraintMessages.MASTER_DATA_IN_USE!), 422);
-    throw cause;
-  }
-  return c.json(response, status);
-}
-
 type MasterKind = 'voltage-levels' | 'lines' | 'towers';
 const masterTables: Record<MasterKind, string> = { 'voltage-levels': 'voltage_levels', lines: 'transmission_lines', towers: 'transmission_towers' };
 type MasterRecord = Record<string, string | number | null>;
-type TowerParent = { line_name: string; enabled: number; voltage_enabled: number };
-async function prepareMaster(c: Context<AppEnv>, kind: MasterKind, body: Record<string, unknown>, id: string, before: MasterRecord | null, towerParent?: TowerParent) {
-  const db = c.env.DB, now = new Date().toISOString(), enabled = boolValue(body.enabled);
-  if (enabled === null) return c.json(apiError('INVALID_MASTER_DATA', '启用状态必须为布尔值'), 422);
-  const version = before ? Number(before.version) + 1 : 1;
-  let columns: string[], values: (string | number | null)[], data: VoltageLevelSummary | TransmissionLineSummary | TransmissionTowerSummary;
-  if (kind === 'voltage-levels') {
-    const displayName = cleanText(body.displayName, 40), code = cleanText(body.code, 40).toUpperCase();
-    const systemType: 'AC' | 'DC' | null = body.systemType === 'AC' || body.systemType === 'DC' ? body.systemType : null;
-    const nominalKv = intValue(body.nominalKv, 1, 2000), sortOrder = intValue(body.sortOrder ?? 0, 0, 100000);
-    if (!displayName || !code || !systemType || nominalKv === null || sortOrder === null) return c.json(apiError('INVALID_VOLTAGE_LEVEL', '电压等级参数不完整'), 422);
-    columns = ['code','display_name','system_type','nominal_kv','sort_order']; values = [code,displayName,systemType,nominalKv,sortOrder];
-    data = { id, code, displayName, systemType, nominalKv, sortOrder, enabled, version };
-  } else if (kind === 'lines') {
-    const voltageLevelId = cleanText(body.voltageLevelId, 120), lineName = cleanText(body.lineName, 200), lineCode = cleanText(body.lineCode, 80) || null;
-    if (!voltageLevelId || !lineName) return c.json(apiError('INVALID_LINE', '请选择电压等级并填写线路名称'), 422);
-    const parent = await db.prepare('SELECT display_name,enabled FROM voltage_levels WHERE id=?').bind(voltageLevelId).first<{ display_name: string; enabled: number }>();
-    if (!parent || ((!before || before.voltage_level_id !== voltageLevelId || enabled) && !parent.enabled)) return c.json(apiError('VOLTAGE_LEVEL_NOT_FOUND', constraintMessages.VOLTAGE_LEVEL_NOT_FOUND!), 422);
-    columns = ['voltage_level_id','line_name','line_code']; values = [voltageLevelId,lineName,lineCode];
-    const count = before ? await db.prepare('SELECT COUNT(*) AS total FROM transmission_towers WHERE line_id=?').bind(id).first<{ total: number }>() : null;
-    data = { id, voltageLevelId, voltageLevelName: parent.display_name, lineName, lineCode, towerCount: count?.total ?? 0, enabled, version };
-  } else {
-    const lineId = cleanText(body.lineId, 120), towerNo = cleanText(body.towerNo, 80), sortIndex = intValue(body.sortIndex, 1, 1000000), towerType = cleanText(body.towerType, 80) || null;
-    if (!lineId || !towerNo || sortIndex === null) return c.json(apiError('INVALID_TOWER', '线路、杆塔号和有效顺序不能为空'), 422);
-    const parent = towerParent ?? await db.prepare('SELECT l.line_name,l.enabled,v.enabled AS voltage_enabled FROM transmission_lines l JOIN voltage_levels v ON v.id=l.voltage_level_id WHERE l.id=?').bind(lineId).first<{ line_name: string; enabled: number; voltage_enabled: number }>();
-    if (!parent || ((!before || before.line_id !== lineId || enabled) && (!parent.enabled || !parent.voltage_enabled))) return c.json(apiError('LINE_NOT_FOUND', constraintMessages.LINE_NOT_FOUND!), 422);
-    columns = ['line_id','tower_no','sort_index','tower_type']; values = [lineId,towerNo,sortIndex,towerType];
-    data = { id, lineId, lineName: parent.line_name, towerNo, sortIndex, towerType, enabled, version };
-  }
-  columns.push('enabled'); values.push(enabled ? 1 : 0);
-  const table = masterTables[kind];
-  const statement = before
-    ? db.prepare(`UPDATE ${table} SET ${columns.map((col) => `${col}=?`).join(',')},version=version+1,updated_at=? WHERE id=?`).bind(...values, now, id)
-    : db.prepare(`INSERT INTO ${table} (id,${columns.join(',')},version,created_at,updated_at) VALUES (?,${columns.map(() => '?').join(',')},1,?,?)`).bind(id, ...values, now, now);
-  const parentGuard = kind === 'voltage-levels' ? null : db.prepare(`INSERT INTO master_data_guards (valid) VALUES (CASE WHEN EXISTS (SELECT 1 FROM ${kind === 'lines' ? 'voltage_levels' : 'transmission_lines'} WHERE id=? ${(!before || enabled || (kind === 'lines' ? before.voltage_level_id : before.line_id) !== values[0]) ? (kind === 'towers' ? 'AND enabled=1 AND EXISTS(SELECT 1 FROM voltage_levels WHERE id=transmission_lines.voltage_level_id AND enabled=1)' : 'AND enabled=1') : ''}) THEN 1 ELSE 0 END)`).bind(values[0]);
-  return { statement, parentGuard, data, audit: { action: `master.${kind}.${before ? 'update' : 'create'}`, type: table, id, before, after: data } };
-}
-
 const masterWriteKinds: Record<MasterKind, MasterDataWriteKind> = {
   'voltage-levels': 'voltage-level',
   lines: 'line',
@@ -411,33 +347,35 @@ p9App.post('/demands', requireRoles('admin', 'project_manager'), async (c) => {
   const request = { sequenceNo, year, voltageLevelId, lineId, locationType: type, startTowerId: normalizedStart, endTowerId: normalizedEnd, category, owner, materials };
   const id = crypto.randomUUID(), sourceKey = `manual:${id}`, now = new Date().toISOString(), actor = c.get('currentUser');
   const businessSignature = await hashValue({ sequenceNo, year, voltageLevelId, lineId, locationType: type, startTowerId: normalizedStart, endTowerId: normalizedEnd, category });
-  const statements: D1PreparedStatement[] = [c.env.DB.prepare(
-    `INSERT INTO demands (id,source_type,source_key,source_batch_id,source_file_sha256,source_file_name,source_sheet,source_row_number,sequence_no,business_year,voltage_raw,voltage_verified,line_name,section_text,category_key,owner,business_signature,raw_json,extra_json,version,created_by,created_at,updated_at,voltage_level_id,line_id,location_type,start_tower_id,end_tower_id) VALUES (?,'manual',?,NULL,NULL,NULL,NULL,NULL,?,?,?,?,?,?,?,?,?,?,'{}',1,?,?,?,?,?,?,?,?)`,
-  ).bind(id, sourceKey, sequenceNo, year, line.voltageName, line.voltageName, line.lineName, sectionText, category, owner, businessSignature, JSON.stringify(request), actor.id, now, now, voltageLevelId, lineId, type, normalizedStart, normalizedEnd)];
   const materialData: DemandDetail['materials'] = [];
   const materialInsertRows = materials.map((material) => {
     const match = material.materialId ? materialsById.get(material.materialId) ?? null : null;
     const materialId = crypto.randomUUID();
-    materialData.push({ id: materialId, rawModel: material.rawModel, quantityScaled: material.quantityScaled, unit: material.unit ?? null, material: match ? { ...match, enabled: Boolean(match.enabled) } : null, version: 1 });
+    materialData.push({ id: materialId, rawModel: material.rawModel, quantityScaled: material.quantityScaled, unit: material.unit ?? null, material: match, version: 1 });
     return { id: materialId, rawModel: material.rawModel, materialId: material.materialId ?? null, quantityScaled: material.quantityScaled, unit: material.unit ?? null };
   });
-  if (referencedMaterialIds.length) {
-    const expectedVersions = Object.fromEntries(referencedMaterialIds.map((materialId) => [materialId, materialsById.get(materialId)!.version]));
-    statements.push(c.env.DB.prepare(`INSERT INTO master_data_guards (valid) VALUES (CASE WHEN NOT EXISTS (
-      SELECT 1 FROM json_each(?) expected LEFT JOIN materials m ON m.id=expected.key
-      WHERE m.id IS NULL OR m.enabled<>1 OR m.version<>CAST(expected.value AS INTEGER)
-    ) THEN 1 ELSE 0 END)`).bind(JSON.stringify(expectedVersions)));
-  }
-  if (materialInsertRows.length) statements.push(c.env.DB.prepare(`INSERT INTO demand_materials
-    (id,demand_id,raw_model,material_id,quantity_scaled,unit,created_at,source_import_row_id,created_by,version)
-    SELECT json_extract(value,'$.id'),?,json_extract(value,'$.rawModel'),json_extract(value,'$.materialId'),CAST(json_extract(value,'$.quantityScaled') AS INTEGER),json_extract(value,'$.unit'),?,NULL,?,1
-    FROM json_each(?)`).bind(id, now, actor.id, JSON.stringify(materialInsertRows)));
   const detail: DemandDetail = {
     id, sequenceNo, year, voltageLevelId, lineId, locationType: type, startTowerId: normalizedStart, endTowerId: normalizedEnd,
     voltageRaw: line.voltageName, voltageVerified: line.voltageName, lineName: line.lineName, section: sectionText, category, owner, version: 1, createdAt: now,
     source: { type: 'manual', raw: request }, materials: materialData,
   };
-  // Recheck the exact selected active parents/endpoints inside the write transaction.
-  const gridGuard = gridLocationGuard(c.env.DB, voltageLevelId, lineId, normalizedStart, normalizedEnd, line.voltageName, line.lineName, sectionText);
-  return commitMutation(c, mutation, [gridGuard, ...statements], detail, 201, [{ action: 'demand.create.structured', type: 'demand', id, before: null, after: detail }], []);
+  const response = { ok: true as const, data: detail };
+  try {
+    await repository.createStructured({
+      id, sourceKey, sequenceNo, year, voltageLevelId, lineId, locationType: type,
+      startTowerId: normalizedStart, endTowerId: normalizedEnd, voltageName: line.voltageName,
+      lineName: line.lineName, sectionText, category, owner, businessSignature, rawJson: JSON.stringify(request),
+      actorId: actor.id, now, materials: materialInsertRows,
+      materialVersions: Object.fromEntries(referencedMaterialIds.map((materialId) => [materialId, materialsById.get(materialId)!.version])),
+      responseJson: JSON.stringify(response), idempotencyKey: mutation.key, operation: mutation.operation,
+      requestHash: mutation.hash, auditId: crypto.randomUUID(), auditAfter: detail,
+    });
+  } catch (cause) {
+    const raced = await replay(c, mutation); if (raced) return raced;
+    const error = String(cause);
+    for (const [code, message] of Object.entries(constraintMessages)) if (error.includes(code)) return c.json(apiError(code, message), 422);
+    if (error.includes('UNIQUE constraint')) return c.json(apiError('DEMAND_CONFLICT', '需求或来源已存在，请刷新后重试'), 409);
+    throw cause;
+  }
+  return c.json(response, 201);
 });
