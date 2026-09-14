@@ -1,0 +1,97 @@
+name: Production release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_sha:
+        description: Exact current main commit (40 hexadecimal characters)
+        required: true
+        type: string
+      release_record:
+        description: Reviewed release/backup/schema evidence reference (no secrets)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-release
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    environment: production
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      WRANGLER_SEND_METRICS: 'false'
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Bind approval to exact main revision and protected inputs
+        env:
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          RELEASE_RECORD: ${{ inputs.release_record }}
+          ENABLED: ${{ vars.PRODUCTION_DEPLOY_ENABLED }}
+          PRODUCTION_CONFIG_JSON: ${{ vars.PRODUCTION_CONFIG_JSON }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          test "$ENABLED" = "true"
+          test -n "$RELEASE_RECORD"
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test -n "$PRODUCTION_CONFIG_JSON"
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          git fetch origin main
+          test "$(git rev-parse origin/main)" = "$RELEASE_SHA"
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+      - run: npm run check
+
+      - name: Materialize and validate non-secret production config
+        env:
+          PRODUCTION_CONFIG_JSON: ${{ vars.PRODUCTION_CONFIG_JSON }}
+        run: |
+          node --input-type=module -e 'import {writeFileSync} from "node:fs"; writeFileSync("apps/api/wrangler.production.jsonc", process.env.PRODUCTION_CONFIG_JSON || "{}", {mode: 0o600});'
+          npm run p7 -- config apps/api/wrangler.production.jsonc
+
+      - name: Package exact approved revision
+        working-directory: apps/api
+        run: npm exec -- wrangler deploy --dry-run --config wrangler.production.jsonc --outdir dist-production-release
+
+      - name: Recheck approved main revision before publication
+        env:
+          RELEASE_SHA: ${{ inputs.release_sha }}
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          test "$(git rev-parse origin/main)" = "$RELEASE_SHA"
+
+      - name: Publish Worker and reviewed bindings
+        working-directory: apps/api
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: npm exec -- wrangler deploy --config wrangler.production.jsonc
+
+      - name: Verify custom domain and health
+        run: |
+          set -euo pipefail
+          DOMAIN="$(node --input-type=module -e 'import {readFileSync} from "node:fs"; const c=JSON.parse(readFileSync("apps/api/wrangler.production.jsonc","utf8")); process.stdout.write(c.routes[0].pattern);')"
+          test -n "$DOMAIN"
+          HEALTH_FILE="$(mktemp)"
+          curl --fail --silent --show-error --retry 6 --retry-all-errors --retry-delay 2 "https://${DOMAIN}/api/health" -o "$HEALTH_FILE"
+          HEALTH_FILE="$HEALTH_FILE" node --input-type=module -e 'import {readFileSync} from "node:fs"; const body=JSON.parse(readFileSync(process.env.HEALTH_FILE,"utf8")); if (body?.ok !== true || body?.data?.service !== "transmission-project-manager" || body?.data?.schema?.ready !== true) process.exit(1);'
+          printf '### Production release\n- Commit: `%s`\n- Domain: `%s`\n- `/api/health`: PASS\n' "${{ inputs.release_sha }}" "$DOMAIN" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove generated production config
+        if: always()
+        run: rm -f apps/api/wrangler.production.jsonc

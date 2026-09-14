@@ -13,6 +13,7 @@
     "run_worker_first": ["/api", "/api/*"]
   },
   "vars": { "APP_ENV": "production" },
+  "secrets": { "required": ["AUTH_CREDENTIAL_PEPPER"] },
   "triggers": { "crons": ["*/5 * * * *"] },
   "routes": [{ "pattern": "replace.example.invalid", "custom_domain": true }],
   "d1_databases": [{

@@ -14,17 +14,22 @@ function config() {
   c.d1_databases[0].database_id = '12345678-1234-4321-8321-123456789abc';
   c.r2_buckets[0].bucket_name = 'tpm-production-files';
   c.routes[0].pattern = 'projects.business.cn';
+  c.secrets = { required: ['AUTH_CREDENTIAL_PEPPER'] };
   return c;
 }
 test('production config rejects placeholders while valid non-secret config passes', () => {
   assert.ok(validateConfig(template()).length > 0);
   assert.deepEqual(validateConfig(config()), []);
 });
-test('production config rejects auth overrides, secrets, unsafe routes and wrong bindings', () => {
+test('production config rejects auth overrides, secret values, missing permanent secret declarations, unsafe routes and wrong bindings', () => {
   for (const mutate of [
     c => { c.vars.APP_ENV = 'development'; },
     c => { c.vars.AUTH_CREDENTIAL_PEPPER = 'sensitive-test-value'; },
     c => { c.vars.ACCESS_AUD = 'legacy'; },
+    c => { c.secrets = { required: [] }; },
+    c => { c.secrets = { required: ['BOOTSTRAP_TOKEN'] }; },
+    c => { c.secrets = { required: ['AUTH_CREDENTIAL_PEPPER', 'BOOTSTRAP_TOKEN'] }; },
+    c => { c.secrets = ['AUTH_CREDENTIAL_PEPPER']; },
     c => { c.workers_dev = true; },
     c => { c.preview_urls = true; },
     c => { c.assets.run_worker_first = ['/api/*']; },
@@ -96,12 +101,27 @@ test('push CI and manual production preflight contain no cloud mutation or crede
   assert.match(source, /environment: production/);
 });
 
-test('deployment template is inactive, manual, version-bound and never auto-migrates data', () => {
-  const source = readFileSync(new URL('../docs/templates/production-deploy.yml.example', import.meta.url), 'utf8');
+test('production deploy is manual, environment-bound, version-bound and never auto-migrates data', () => {
+  const source = readFileSync(new URL('../.github/workflows/production-deploy.yml', import.meta.url), 'utf8');
   assert.match(source, /workflow_dispatch:/);
   assert.match(source, /environment: production/);
   assert.match(source, /PRODUCTION_DEPLOY_ENABLED/);
-  assert.match(source, /RELEASE_SHA/);
+  assert.match(source, /release_sha/);
+  assert.match(source, /CLOUDFLARE_API_TOKEN/);
   assert.match(source, /npm run check/);
+  assert.match(source, /wrangler deploy --config wrangler\.production\.jsonc/);
   assert.doesNotMatch(source, /\n  (push|pull_request|schedule|workflow_run):|d1 migrations apply|d1 execute/);
+});
+
+test('production migration is a separate manual workflow bound to exact main revision', () => {
+  const source = readFileSync(new URL('../.github/workflows/production-migrate.yml', import.meta.url), 'utf8');
+  assert.match(source, /workflow_dispatch:/);
+  assert.match(source, /environment: production/);
+  assert.match(source, /PRODUCTION_MIGRATION_ENABLED/);
+  assert.match(source, /release_sha/);
+  assert.match(source, /database_id/);
+  assert.match(source, /CLOUDFLARE_API_TOKEN/);
+  assert.match(source, /d1 migrations list DB --remote/);
+  assert.match(source, /d1 migrations apply DB --remote/);
+  assert.doesNotMatch(source, /\n  (push|pull_request|schedule|workflow_run):|wrangler deploy --config/);
 });
