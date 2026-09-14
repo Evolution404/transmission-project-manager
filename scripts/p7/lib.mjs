@@ -22,7 +22,7 @@ export function validateConfig(c) {
   need(c.compatibility_date === '2026-09-12', 'tested compatibility_date');
   need(c.workers_dev === false && c.preview_urls === false, 'public preview routes');
   need(same(c.vars, { APP_ENV: 'production' }), 'vars (Secrets belong in Worker Secrets)');
-  need(same(c.secrets, ['AUTH_CREDENTIAL_PEPPER']), 'required permanent Worker Secret names');
+  need(object(c.secrets) && same(c.secrets, { required: ['AUTH_CREDENTIAL_PEPPER'] }), 'required permanent Worker Secret names');
   keys(c.assets, ['directory', 'binding', 'not_found_handling', 'run_worker_first'], 'assets keys');
   need(c.assets?.directory === '../web/dist' && c.assets?.binding === 'ASSETS' && c.assets?.not_found_handling === 'single-page-application' && same(c.assets?.run_worker_first, ['/api', '/api/*']), 'assets routing');
   need(same(c.triggers, { crons: ['*/5 * * * *'] }), 'cron');
