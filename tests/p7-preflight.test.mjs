@@ -14,7 +14,7 @@ function config() {
   c.d1_databases[0].database_id = '12345678-1234-4321-8321-123456789abc';
   c.r2_buckets[0].bucket_name = 'tpm-production-files';
   c.routes[0].pattern = 'projects.business.cn';
-  c.secrets = ['AUTH_CREDENTIAL_PEPPER'];
+  c.secrets = { required: ['AUTH_CREDENTIAL_PEPPER'] };
   return c;
 }
 test('production config rejects placeholders while valid non-secret config passes', () => {
@@ -26,9 +26,10 @@ test('production config rejects auth overrides, secret values, missing permanent
     c => { c.vars.APP_ENV = 'development'; },
     c => { c.vars.AUTH_CREDENTIAL_PEPPER = 'sensitive-test-value'; },
     c => { c.vars.ACCESS_AUD = 'legacy'; },
-    c => { c.secrets = []; },
-    c => { c.secrets = ['BOOTSTRAP_TOKEN']; },
-    c => { c.secrets = ['AUTH_CREDENTIAL_PEPPER', 'BOOTSTRAP_TOKEN']; },
+    c => { c.secrets = { required: [] }; },
+    c => { c.secrets = { required: ['BOOTSTRAP_TOKEN'] }; },
+    c => { c.secrets = { required: ['AUTH_CREDENTIAL_PEPPER', 'BOOTSTRAP_TOKEN'] }; },
+    c => { c.secrets = ['AUTH_CREDENTIAL_PEPPER']; },
     c => { c.workers_dev = true; },
     c => { c.preview_urls = true; },
     c => { c.assets.run_worker_first = ['/api/*']; },
