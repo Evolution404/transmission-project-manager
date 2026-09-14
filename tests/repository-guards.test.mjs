@@ -106,6 +106,11 @@ test('P5 attachment metadata goes through AttachmentRepository instead of inline
   assert.doesNotMatch(source, /\b(?:FROM|INTO)\s+attachments\b/i, 'P5 must not inline attachment metadata SQL');
 });
 
+test('P9 master data and structured demand flows do not reach D1 directly', () => {
+  const source = readFileSync(resolve(root, 'apps/api/src/p9.ts'), 'utf8');
+  assert.doesNotMatch(source, /c\.env\.DB|\bD1(?:Database|PreparedStatement)\b/, 'P9 must use portable repositories instead of D1 APIs directly');
+});
+
 test('authentication middleware uses portable session and member repositories', () => {
   const source = readFileSync(resolve(root, 'apps/api/src/auth.ts'), 'utf8');
   assert.match(source, /SqlSessionRepository/);

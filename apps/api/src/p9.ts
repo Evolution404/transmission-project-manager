@@ -12,6 +12,7 @@ import type {
 import { requireRoles, type AppEnv } from './auth';
 import type { CommitSingleMasterDataInput, MasterDataWriteKind } from './ports/master-data-write-repository';
 import { SqlDemandRepository } from './repositories/sql-demand-repository';
+import { SqlIdempotencyRepository } from './repositories/sql-idempotency-repository';
 import { SqlMasterDataRepository } from './repositories/sql-master-data-repository';
 import { SqlMasterDataWriteRepository } from './repositories/sql-master-data-write-repository';
 import { createCloudflarePersistence } from './runtime/cloudflare/persistence';
@@ -73,6 +74,11 @@ function demandRepository(c: Context<AppEnv>) {
   return new SqlDemandRepository(database);
 }
 
+function idempotencyRepository(c: Context<AppEnv>) {
+  const { database } = createCloudflarePersistence(c.env);
+  return new SqlIdempotencyRepository(database);
+}
+
 p9App.get('/master/voltage-levels', async (c) => {
   return c.json({ ok: true as const, data: { items: await masterDataRepository(c).listVoltageLevels() } });
 });
@@ -110,7 +116,7 @@ p9App.get('/master/towers', async (c) => {
   return c.json({ ok: true as const, data: { items: selected, nextCursor: rows.length > page.limit && last ? pageCursor(String(last.sortIndex),last.id) : null } });
 });
 
-// The idempotency record is the first statement in the same atomic D1 batch.
+// The idempotency record is the first statement in the same atomic persistence batch.
 // A stale version violates NOT NULL before any business write or audit is made.
 type Mutation = { key: string; operation: string; hash: string };
 async function beginMutation(c: Context<AppEnv>, body: unknown): Promise<Mutation | Response> {
@@ -120,11 +126,10 @@ async function beginMutation(c: Context<AppEnv>, body: unknown): Promise<Mutatio
   return (await replay(c, mutation)) ?? mutation;
 }
 async function replay(c: Context<AppEnv>, mutation: Mutation) {
-  const row = await c.env.DB.prepare('SELECT actor_member_id,operation,request_hash,response_json,status_code FROM idempotency_records WHERE idempotency_key=?')
-    .bind(mutation.key).first<{ actor_member_id: string; operation: string; request_hash: string; response_json: string; status_code: number }>();
+  const row = await idempotencyRepository(c).findByKey(mutation.key);
   if (!row) return null;
-  if (row.actor_member_id !== c.get('currentUser').id || row.operation !== mutation.operation || row.request_hash !== mutation.hash) return c.json(apiError('IDEMPOTENCY_CONFLICT', '该 Idempotency-Key 已用于不同请求'), 409);
-  return new Response(row.response_json, { status: row.status_code, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
+  if (row.actorMemberId !== c.get('currentUser').id || row.operation !== mutation.operation || row.requestHash !== mutation.hash) return c.json(apiError('IDEMPOTENCY_CONFLICT', '该 Idempotency-Key 已用于不同请求'), 409);
+  return new Response(row.responseJson, { status: row.statusCode, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
 }
 const constraintMessages: Record<string, string> = {
   VOLTAGE_LEVEL_NOT_FOUND: '电压等级不存在或已停用，请先维护基础台账',
