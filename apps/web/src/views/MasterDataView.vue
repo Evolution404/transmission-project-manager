@@ -49,7 +49,6 @@ let towerRequest = 0;
 
 const selectedLine = computed(() => activeLine.value);
 const selectedVoltage = computed(() => activeLine.value ? voltageLevels.value.find((item) => item.id === activeLine.value!.voltageLevelId) ?? null : null);
-const visibleLines = computed(() => lines.value.filter((item) => lineStatusFilter.value === 'all' || (lineStatusFilter.value === 'enabled' ? item.enabled : !item.enabled)));
 const lineVoltageOptions = computed(() => [
   { label: '全部电压等级', value: 'all' },
   ...voltageLevels.value.map((item) => ({ label: item.displayName, value: item.id })),
@@ -87,6 +86,7 @@ async function loadLines(append = false) {
   try {
     const params = new URLSearchParams({ limit: '100' });
     if (lineVoltageFilter.value !== 'all') params.set('voltageLevelId', lineVoltageFilter.value);
+    if (lineStatusFilter.value !== 'all') params.set('enabled', lineStatusFilter.value === 'enabled' ? 'true' : 'false');
     if (lineSearch.value.trim()) params.set('query', lineSearch.value.trim());
     if (append && lineCursor.value) params.set('cursor', lineCursor.value);
     const data: { items: TransmissionLineSummary[]; nextCursor?: string | null } = await apiRequest(`/api/master/lines?${params.toString()}`);
@@ -141,6 +141,12 @@ function backToLines() {
 
 async function setVoltageFilter(value: string) {
   lineVoltageFilter.value = value;
+  lineCursor.value = null;
+  await loadLines();
+}
+
+async function setStatusFilter(value: 'all' | 'enabled' | 'disabled') {
+  lineStatusFilter.value = value;
   lineCursor.value = null;
   await loadLines();
 }
@@ -495,11 +501,11 @@ onMounted(loadAll);
       <div class="line-toolbar">
         <n-select data-test="voltage-filter" :value="lineVoltageFilter" :options="lineVoltageOptions" @update:value="setVoltageFilter" />
         <n-input v-model:value="lineSearch" data-test="line-search" placeholder="搜索当前线路名或曾用名" @keyup.enter="loadLines()" />
-        <n-select v-model:value="lineStatusFilter" :options="lineStatusOptions" />
+        <n-select data-test="line-status-filter" :value="lineStatusFilter" :options="lineStatusOptions" @update:value="setStatusFilter" />
         <n-button :loading="loading" @click="loadLines()">查询</n-button>
       </div>
       <div class="line-list">
-        <article v-for="item in visibleLines" :key="item.id" class="line-card">
+        <article v-for="item in lines" :key="item.id" class="line-card">
           <button class="line-open" :data-test="`select-line-${item.id}`" @click="openLineDetail(item)">
             <div class="line-card-title"><n-tag size="small" :bordered="false">{{ item.voltageLevelName }}</n-tag><strong>{{ item.lineName }}</strong></div>
             <p v-if="item.matchedHistoricalName" class="history-match">曾用名匹配：{{ item.matchedHistoricalName }}</p>
@@ -508,7 +514,7 @@ onMounted(loadAll);
           <div v-if="isAdmin" class="line-card-actions"><n-button text size="tiny" @click="openLine(item)">编辑属性</n-button><n-button text size="tiny" :disabled="saving" @click="removeObject('lines',item)">删除</n-button></div>
         </article>
       </div>
-      <n-empty v-if="!visibleLines.length && !loading" description="没有符合条件的线路" />
+      <n-empty v-if="!lines.length && !loading" description="没有符合条件的线路" />
       <n-button v-if="lineCursor" :loading="loading" @click="loadLines(true)">加载更多线路</n-button>
     </section>
 

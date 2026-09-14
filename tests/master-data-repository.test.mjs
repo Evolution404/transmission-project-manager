@@ -25,7 +25,8 @@ function createRepository() {
     INSERT INTO transmission_lines VALUES
       ('l1','v110',NULL,'Alpha Line',1,1,1),
       ('l2','v110','L2','Beta Line',1,2,3),
-      ('l3','v220',NULL,'Gamma Line',0,1,1);
+      ('l3','v220',NULL,'Gamma Line',0,1,1),
+      ('l4','v220',NULL,'Delta Line',1,1,1);
     INSERT INTO transmission_towers VALUES
       ('t1','l1','1',1,NULL,1,1),
       ('t2','l1','2',2,'耐张',1,1),
@@ -49,23 +50,28 @@ test('master data repository lists voltage levels in configured order', async ()
 test('master data repository pages and filters lines with tower counts', async () => {
   const { sqlite, repository } = createRepository();
   try {
-    const first = await repository.listLines({ voltageLevelId: 'v110', cursor: null, limit: 1 });
+    const first = await repository.listLines({ voltageLevelId: 'v110', enabled: null, query: null, cursor: null, limit: 1 });
     assert.equal(first.length, 2);
     assert.equal(first[0].id, 'l1');
     assert.equal(first[0].towerCount, 2);
 
-    const second = await repository.listLines({ voltageLevelId: 'v110', cursor: { lineName: first[0].lineName, id: first[0].id }, limit: 2 });
+    const second = await repository.listLines({ voltageLevelId: 'v110', enabled: null, query: null, cursor: { lineName: first[0].lineName, id: first[0].id }, limit: 2 });
     assert.deepEqual(second.map((item) => item.id), ['l2']);
+
+    const disabled = await repository.listLines({ voltageLevelId: 'v220', enabled: false, query: null, cursor: null, limit: 10 });
+    assert.deepEqual(disabled.map((item) => item.id), ['l3']);
+    const enabled = await repository.listLines({ voltageLevelId: 'v220', enabled: true, query: null, cursor: null, limit: 10 });
+    assert.deepEqual(enabled.map((item) => item.id), ['l4']);
   } finally { sqlite.close(); }
 });
 
 test('master data repository pages and filters towers by line', async () => {
   const { sqlite, repository } = createRepository();
   try {
-    const first = await repository.listTowers({ lineId: 'l1', cursor: null, limit: 1 });
+    const first = await repository.listTowers({ lineId: 'l1', query: null, cursor: null, limit: 1 });
     assert.equal(first.length, 2);
     assert.equal(first[0].towerNo, '1');
-    const second = await repository.listTowers({ lineId: 'l1', cursor: { sortRank: first[0].sortRank, id: first[0].id }, limit: 2 });
+    const second = await repository.listTowers({ lineId: 'l1', query: null, cursor: { sortRank: first[0].sortRank, id: first[0].id }, limit: 2 });
     assert.deepEqual(second.map((item) => item.id), ['t2']);
   } finally { sqlite.close(); }
 });

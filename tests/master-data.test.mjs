@@ -321,24 +321,12 @@ test('location shapes and material references are validated without silently dis
   assert.equal((await jsonRequest('/api/demands', mutation('POST', idem('material'), { ...base, locationType: 'whole_line', materials: [{ rawModel: 'x', materialId: 'missing', quantityScaled: 10000 }] }))).response.status, 422);
 });
 
-test('bulk tower maintenance is atomic, versioned, replayable and admin-only', async () => {
+test('legacy technical tower batch endpoint is not exposed', async () => {
   const created = await jsonRequest('/api/master/lines', mutation('POST', idem('bulk-line'), { voltageLevelId: 'vl-ac-110', lineName: '批量维护线' }));
   const path = `/api/master/lines/${created.body.data.id}/towers/batch`;
-  const input = { items: [{ towerNo: '20-1', sortRank: 1000 }, { towerNo: '21', sortRank: 2000 }] };
-  assert.equal((await jsonRequest(path, mutation('POST', idem('bulk-permission'), input), managerCookie)).response.status, 403);
-  const key = idem('bulk');
-  const first = await jsonRequest(path, mutation('POST', key, input));
-  assert.equal(first.response.status, 201);
-  assert.deepEqual((await jsonRequest(path, mutation('POST', key, input))).body, first.body);
-  const a = first.body.data.items[0];
-  const invalid = { items: [{ ...a, towerType: '修改', expectedVersion: a.version }, { towerNo: '22', sortRank: 2000 }] };
-  assert.equal((await jsonRequest(path, mutation('POST', idem('bulk-rollback'), invalid))).response.status, 409);
-  const list = await jsonRequest(`/api/master/towers?lineId=${created.body.data.id}`);
-  assert.equal(list.body.data.items.length, 2);
-  assert.equal(list.body.data.items[0].version, 1);
-  const patch = { ...a, expectedVersion: a.version, towerType: '更新' };
-  const races = await Promise.all([1, 2].map(() => jsonRequest(path, mutation('POST', idem('bulk-race'), { items: [patch] }))));
-  assert.deepEqual(races.map((r) => r.response.status).sort(), [201, 409]);
+  const result = await jsonRequest(path, mutation('POST', idem('legacy-batch'), { items: [{ towerNo: '20-1', sortRank: 1000 }] }));
+  assert.equal(result.response.status, 404);
+  assert.equal(result.body.error.code, 'NOT_FOUND');
 });
 
 test('unused objects can be deleted; referenced objects and parents with children cannot', async () => {
@@ -401,13 +389,16 @@ test('master lists page within the selected parent without losing or repeating o
   assert.equal((await jsonRequest('/api/master/towers?limit=999')).response.status, 400);
 });
 
-test('unreferenced towers can exchange order atomically in a batch', async () => {
+test('unreferenced towers can exchange order through the complete business reorder contract', async () => {
   const line = (await jsonRequest('/api/master/lines', mutation('POST', idem('swap-line'), { voltageLevelId: 'vl-ac-110', lineName: '交换顺序线' }))).body.data;
-  const path = `/api/master/lines/${line.id}/towers/batch`;
-  const made = await jsonRequest(path, mutation('POST', idem('swap-seed'), { items: [{ towerNo: '1', sortRank: 1000 }, { towerNo: '2', sortRank: 2000 }] }));
-  const items = made.body.data.items.map((t) => ({ ...t, expectedVersion: t.version, sortRank: t.sortRank === 1000 ? 2000 : 1000 }));
-  const result = await jsonRequest(path, mutation('POST', idem('swap'), { items }));
-  assert.equal(result.response.status, 201);
+  const tower1 = (await jsonRequest('/api/master/towers', mutation('POST', idem('swap-1'), { lineId: line.id, towerNo: '1' }))).body.data;
+  const tower2 = (await jsonRequest('/api/master/towers', mutation('POST', idem('swap-2'), { lineId: line.id, towerNo: '2' }))).body.data;
+  const currentLine = (await jsonRequest(`/api/master/lines?query=${encodeURIComponent(line.lineName)}`)).body.data.items.find((item) => item.id === line.id);
+  const result = await jsonRequest(`/api/master/lines/${line.id}/towers/reorder`, mutation('POST', idem('swap'), {
+    expectedTowerOrderVersion: currentLine.towerOrderVersion,
+    towerIds: [tower2.id, tower1.id],
+  }));
+  assert.equal(result.response.status, 200);
   assert.deepEqual((await jsonRequest(`/api/master/towers?lineId=${line.id}`)).body.data.items.map((t) => t.towerNo), ['#002', '#001']);
 });
 

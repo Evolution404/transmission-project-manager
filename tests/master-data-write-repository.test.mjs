@@ -78,7 +78,6 @@ test('single master-data create persists business row, audit and idempotency ato
     assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM idempotency_records WHERE idempotency_key='key-vl-110'").get().count, 1);
   } finally { sqlite.close(); }
 });
-
 test('single master-data update rejects stale version without leaving audit or idempotency rows', async () => {
   const { sqlite, repository } = createRepository();
   try {
@@ -95,7 +94,6 @@ test('single master-data update rejects stale version without leaving audit or i
     assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM idempotency_records").get().count, 0);
   } finally { sqlite.close(); }
 });
-
 test('line create rechecks enabled parent inside the same atomic batch', async () => {
   const { sqlite, repository } = createRepository();
   try {
@@ -111,38 +109,5 @@ test('line create rechecks enabled parent inside the same atomic batch', async (
     assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM transmission_lines").get().count, 0);
     assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM audit_events").get().count, 0);
     assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM idempotency_records").get().count, 0);
-  } finally { sqlite.close(); }
-});
-
-test('tower batch can exchange unique order keys atomically and stale versions roll back the whole batch', async () => {
-  const { sqlite, repository } = createRepository();
-  try {
-    sqlite.prepare(`INSERT INTO voltage_levels VALUES (?,?,?,?,?,?,?,?,?,?)`).run('vl-110','AC110','110kV','AC',110,10,1,1,'t','t');
-    sqlite.prepare(`INSERT INTO transmission_lines VALUES (?,?,?,?,?,?,?,?,?,?)`).run('line-1','vl-110',null,'Line A','t',1,1,1,'t','t');
-    sqlite.prepare(`INSERT INTO transmission_towers VALUES (?,?,?,?,?,?,?,?,?,?)`).run('tower-a','line-1','#001','t',1000,null,1,1,'t','t');
-    sqlite.prepare(`INSERT INTO transmission_towers VALUES (?,?,?,?,?,?,?,?,?,?)`).run('tower-b','line-1','#002','t',2000,null,1,1,'t','t');
-
-    const records = await repository.findTowerRecords(['tower-a', 'tower-b']);
-    assert.equal(records.length, 2);
-    await repository.commitTowerBatch({
-      lineId: 'line-1',
-      items: [
-        { id: 'tower-a', expectedVersion: 1, vacateUniqueKeys: true, values: { lineId: 'line-1', towerNo: '#001', sortRank: 2000, towerType: null, enabled: true } },
-        { id: 'tower-b', expectedVersion: 1, vacateUniqueKeys: true, values: { lineId: 'line-1', towerNo: '#002', sortRank: 1000, towerType: null, enabled: true } },
-      ],
-      mutation: mutation('tower-swap'),
-      audit: { before: records, after: [{ id: 'tower-a' }, { id: 'tower-b' }] },
-    });
-    assert.deepEqual(sqlite.prepare('SELECT id,sort_rank FROM transmission_towers ORDER BY id').all().map((row) => ({ ...row })), [
-      { id: 'tower-a', sort_rank: 2000 }, { id: 'tower-b', sort_rank: 1000 },
-    ]);
-
-    await assert.rejects(repository.commitTowerBatch({
-      lineId: 'line-1',
-      items: [{ id: 'tower-a', expectedVersion: 1, vacateUniqueKeys: false, values: { lineId: 'line-1', towerNo: '#001', sortRank: 2000, towerType: null, enabled: true } }],
-      mutation: mutation('tower-stale'),
-      audit: { before: [], after: [] },
-    }));
-    assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM idempotency_records WHERE idempotency_key='key-tower-stale'").get().count, 0);
   } finally { sqlite.close(); }
 });

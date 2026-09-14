@@ -72,6 +72,14 @@ it('starts with a line-centric list and opens a full-width line detail without a
   expect(w.text()).not.toContain('#020-1');
 });
 
+it('sends line status filtering to the server before pagination instead of filtering only the loaded page', async () => {
+  const w = mount(MasterDataView, { props: { currentUser: admin } }); await flushPromises();
+  await w.get('[data-test="line-status-filter"]').setValue('disabled');
+  await flushPromises();
+  const lineCalls = vi.mocked(fetch).mock.calls.map(([url]) => String(url)).filter((url) => url.startsWith('/api/master/lines?'));
+  expect(lineCalls.at(-1)).toContain('enabled=false');
+});
+
 it('previews a large paste once and automatically sends hidden safe import chunks without sort ranks', async () => {
   const w = mount(MasterDataView, { props: { currentUser: admin } }); await flushPromises();
   await w.get('[data-test="select-line-l1"]').trigger('click'); await flushPromises();

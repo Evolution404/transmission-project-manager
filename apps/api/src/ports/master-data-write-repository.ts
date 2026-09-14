@@ -58,20 +58,6 @@ export interface CommitSingleMasterDataInput {
   audit: MasterAuditRecord;
 }
 
-export interface TowerBatchWriteItem {
-  id: string;
-  expectedVersion: number | null;
-  vacateUniqueKeys: boolean;
-  values: TransmissionTowerWriteValues;
-}
-
-export interface CommitTowerBatchInput {
-  lineId: string;
-  items: TowerBatchWriteItem[];
-  mutation: MasterMutationRecord;
-  audit: { before: unknown; after: unknown };
-}
-
 export interface CommitLineRenameInput {
   id: string;
   expectedVersion: number;
@@ -133,11 +119,9 @@ export interface MasterDataWriteRepository {
   findTowerRecords(ids: readonly string[]): Promise<readonly Record<string, string | number | null>[]>;
   findVoltageParent(id: string): Promise<{ displayName: string; enabled: boolean } | null>;
   findTowerParent(lineId: string): Promise<{ lineName: string; enabled: boolean; voltageEnabled: boolean; towerOrderVersion: number } | null>;
-  findLastTowerRank(lineId: string): Promise<number>;
   listTowerOrder(lineId: string): Promise<readonly { id: string; towerNo: string; sortRank: number }[]>;
   countLineTowers(lineId: string): Promise<number>;
   commitSingle(input: CommitSingleMasterDataInput): Promise<void>;
-  commitTowerBatch(input: CommitTowerBatchInput): Promise<void>;
   commitLineRename(input: CommitLineRenameInput): Promise<void>;
   commitTowerRename(input: CommitTowerRenameInput): Promise<void>;
   commitTowerMove(input: CommitTowerMoveInput): Promise<void>;

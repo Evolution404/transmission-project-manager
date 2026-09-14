@@ -153,7 +153,6 @@ GET /api/master/towers/:id/number-history
 POST /api/master/lines/:lineId/towers/:towerId/move
 POST /api/master/lines/:id/towers/import-chunk
 POST /api/master/lines/:id/towers/reorder
-POST /api/master/lines/:id/towers/batch   # 兼容/内部低层批量合同；产品 UI 不直接暴露技术排序字段
 POST /api/imports
 POST /api/imports/:id/chunks
 POST /api/imports/:id/validate

@@ -149,8 +149,12 @@ p9App.get('/master/lines', async (c) => {
   const page = listPage(c); if (page instanceof Response) return page;
   const voltageLevelId = cleanText(c.req.query('voltageLevelId'), 120) || null;
   const query = cleanText(c.req.query('query'), 200) || null;
+  const rawEnabled = c.req.query('enabled');
+  const enabled = rawEnabled === undefined ? null : rawEnabled === 'true' ? true : rawEnabled === 'false' ? false : null;
+  if (rawEnabled !== undefined && enabled === null) return c.json(apiError('INVALID_ENABLED_FILTER', 'enabled 必须是 true 或 false'), 400);
   const rows = await masterDataRepository(c).listLines({
     voltageLevelId,
+    enabled,
     query,
     cursor: page.cursor ? { lineName: page.cursor[0], id: page.cursor[1] } : null,
     limit: page.limit,
@@ -668,58 +672,6 @@ p9App.post('/master/lines/:id/towers/reorder', requireRoles('admin'), async (c) 
   return c.json(response, 200);
 });
 
-p9App.post('/master/lines/:id/towers/batch', requireRoles('admin'), async (c) => {
-  let body: Record<string, unknown>; try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
-  const mutation = await beginMutation(c, body); if (mutation instanceof Response) return mutation;
-  if (!body || !Array.isArray(body.items) || !body.items.length || body.items.length > 20) return c.json(apiError('INVALID_TOWER_BATCH', '每次批量维护 1–20 个杆塔'), 422);
-  const repository = masterDataWriteRepository(c), lineId = c.req.param('id');
-  const parent = await repository.findTowerParent(lineId);
-  if (!parent || !parent.enabled || !parent.voltageEnabled) return c.json(apiError('LINE_NOT_FOUND', constraintMessages.LINE_NOT_FOUND!), 422);
-  const ids = body.items.filter((item) => item && typeof item === 'object' && typeof item.id === 'string').map((item) => item.id as string);
-  const existing = await repository.findTowerRecords(ids);
-  const byId = new Map(existing.map((row) => [String(row.id), row]));
-  const writeItems = [], items: TransmissionTowerSummary[] = [], beforeRows: MasterRecord[] = [], seen = new Set<string>();
-  for (const raw of body.items) {
-    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return c.json(apiError('INVALID_TOWER', '杆塔行格式无效'), 422);
-    const item = raw as Record<string, unknown>;
-    const id = item.id === undefined ? crypto.randomUUID() : cleanText(item.id, 120);
-    if (!id || seen.has(id)) return c.json(apiError('INVALID_TOWER', '杆塔 ID 为空或重复'), 422); seen.add(id);
-    const before = byId.get(id) ?? null;
-    if (item.id !== undefined && (!before || before.line_id !== lineId)) return c.json(apiError('INVALID_TOWER_RELATION', '批量维护只能修改当前线路的杆塔'), 422);
-    const version = before ? intValue(item.expectedVersion, 1, Number.MAX_SAFE_INTEGER) : null;
-    if (before && (version === null || before.version !== version)) return c.json(apiError('VERSION_CONFLICT', '杆塔版本已变化，请刷新后重试'), 409);
-    const towerNo = normalizeTowerNo(cleanText(item.towerNo, 80)), sortRank = intValue(item.sortRank, 1, Number.MAX_SAFE_INTEGER), towerType = cleanText(item.towerType, 80) || null, enabled = boolValue(item.enabled);
-    if (!towerNo || sortRank === null || enabled === null) return c.json(apiError('INVALID_TOWER', '线路、规范杆塔号和有效顺序不能为空'), 422);
-    if (before && towerNo !== before.tower_no) return c.json(apiError('RENAME_REQUIRED', '批量维护不能直接修改杆塔编号，请使用“杆塔更名”操作'), 422);
-    const nextVersion = before ? Number(before.version) + 1 : 1;
-    const data: TransmissionTowerSummary = { id, lineId, lineName: parent.lineName, towerNo, sortRank, towerType, enabled, version: nextVersion };
-    if (before) beforeRows.push(before);
-    items.push(data);
-    writeItems.push({
-      id,
-      expectedVersion: before ? version : null,
-      vacateUniqueKeys: Boolean(before && sortRank !== before.sort_rank),
-      values: { lineId, towerNo, sortRank, towerType, enabled },
-    });
-  }
-  const response = { ok: true as const, data: { items } }, now = new Date().toISOString();
-  try {
-    await repository.commitTowerBatch({
-      lineId,
-      items: writeItems,
-      mutation: { key: mutation.key, actorId: c.get('currentUser').id, operation: mutation.operation, hash: mutation.hash, responseJson: JSON.stringify(response), statusCode: 201, now, auditId: crypto.randomUUID() },
-      audit: { before: beforeRows, after: items },
-    });
-  } catch (cause) {
-    const raced = await replay(c, mutation); if (raced) return raced;
-    const error = String(cause);
-    for (const [code, message] of Object.entries(constraintMessages)) if (error.includes(code)) return c.json(apiError(code, message), 422);
-    if (error.includes('idempotency_records.request_hash')) return c.json(apiError('VERSION_CONFLICT', '数据已变化，请刷新后重试'), 409);
-    if (error.includes('UNIQUE constraint')) return c.json(apiError('MASTER_DATA_CONFLICT', '名称、编码、杆塔号或线路顺序重复，请检查'), 409);
-    throw cause;
-  }
-  return c.json(response, 201);
-});
 function locationType(value: unknown): DemandLocationType | null {
   return value === 'whole_line' || value === 'tower' || value === 'tower_range' ? value : null;
 }

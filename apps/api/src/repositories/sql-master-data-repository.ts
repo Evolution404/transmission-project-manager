@@ -123,12 +123,16 @@ export class SqlMasterDataRepository implements MasterDataRepository {
     return rows.map(voltageSummary);
   }
 
-  async listLines(input: { voltageLevelId: string | null; query: string | null; cursor: { lineName: string; id: string } | null; limit: number }): Promise<readonly TransmissionLineSummary[]> {
+  async listLines(input: { voltageLevelId: string | null; enabled: boolean | null; query: string | null; cursor: { lineName: string; id: string } | null; limit: number }): Promise<readonly TransmissionLineSummary[]> {
     const conditions: string[] = [];
     const params: DatabaseValue[] = [];
     if (input.voltageLevelId) {
       conditions.push('l.voltage_level_id=?');
       params.push(input.voltageLevelId);
+    }
+    if (input.enabled !== null) {
+      conditions.push('l.enabled=?');
+      params.push(input.enabled ? 1 : 0);
     }
     const queryPattern = input.query ? `%${input.query}%` : null;
     if (queryPattern) {
@@ -145,7 +149,7 @@ export class SqlMasterDataRepository implements MasterDataRepository {
     const rows = await this.database.all<LineRow>({
       sql: `SELECT l.id,l.voltage_level_id,l.line_code,l.line_name,l.enabled,l.version,l.tower_order_version,
                    v.display_name AS voltage_level_name,
-                   (SELECT COUNT(*) FROM transmission_towers t WHERE t.line_id=l.id) AS tower_count,
+                   COALESCE(tc.tower_count,0) AS tower_count,
                    ${queryPattern ? `(CASE WHEN l.line_name LIKE ? COLLATE NOCASE THEN NULL ELSE (
                      SELECT h.line_name FROM transmission_line_name_history h
                      WHERE h.line_id=l.id AND h.line_name LIKE ? COLLATE NOCASE
@@ -153,6 +157,11 @@ export class SqlMasterDataRepository implements MasterDataRepository {
                    ) END)` : 'NULL'} AS matched_historical_name
             FROM transmission_lines l
             JOIN voltage_levels v ON v.id=l.voltage_level_id
+            LEFT JOIN (
+              SELECT line_id,COUNT(*) AS tower_count
+              FROM transmission_towers
+              GROUP BY line_id
+            ) tc ON tc.line_id=l.id
             ${conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''}
             ORDER BY l.line_name COLLATE NOCASE,l.id LIMIT ?`,
       params: [...(queryPattern ? [queryPattern, queryPattern] : []), ...params, input.limit + 1],
