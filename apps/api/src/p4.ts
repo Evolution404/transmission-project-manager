@@ -23,6 +23,7 @@ import type {
 } from '@tpm/shared';
 import { hasScope, requireRoles, type AppEnv } from './auth';
 import { SqlFinanceQueryRepository } from './repositories/sql-finance-query-repository';
+import { SqlIdempotencyRepository } from './repositories/sql-idempotency-repository';
 import { createCloudflarePersistence } from './runtime/cloudflare/persistence';
 
 const MAX_PAGE_SIZE = 100;
@@ -95,14 +96,13 @@ async function requestHash(value: unknown) {
 }
 async function replayIdempotentResponse(c: Context<AppEnv>, key: string, operation: string, hash: string) {
   const actor = c.get('currentUser');
-  const row = await c.env.DB.prepare(
-    `SELECT actor_member_id,operation,request_hash,response_json,status_code FROM idempotency_records WHERE idempotency_key=? LIMIT 1`,
-  ).bind(key).first<{ actor_member_id: string; operation: string; request_hash: string; response_json: string; status_code: number }>();
+  const { database } = createCloudflarePersistence(c.env);
+  const row = await new SqlIdempotencyRepository(database).findByKey(key);
   if (!row) return null;
-  if (row.actor_member_id !== actor.id || row.operation !== operation || row.request_hash !== hash) {
+  if (row.actorMemberId !== actor.id || row.operation !== operation || row.requestHash !== hash) {
     return c.json(apiError('IDEMPOTENCY_CONFLICT', '该 Idempotency-Key 已用于不同请求'), 409);
   }
-  return new Response(row.response_json, { status: row.status_code, headers: { 'Content-Type': 'application/json; charset=UTF-8', 'Cache-Control': 'no-store' } });
+  return new Response(row.responseJson, { status: row.statusCode, headers: { 'Content-Type': 'application/json; charset=UTF-8', 'Cache-Control': 'no-store' } });
 }
 function idempotencyStatement(db: D1Database, key: string, actorId: string, operation: string, hash: string, response: unknown, statusCode: number, now: string) {
   return db.prepare(
