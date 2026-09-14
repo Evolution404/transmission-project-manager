@@ -31,27 +31,13 @@ import { SqlOperationJournalRepository } from './repositories/sql-operation-jour
 import { SqlAnalysisRepository } from './repositories/sql-analysis-repository';
 import type { AnalysisRepository } from './ports/analysis-repository';
 import { SqlNotificationRepository } from './repositories/sql-notification-repository';
+import { SqlBackupRepository } from './repositories/sql-backup-repository';
+import { BACKUP_TABLES } from './ports/backup-repository';
 
 const DEFAULT_RULE_MODE: AnalysisLagMode = 'ratio';
 const DEFAULT_RULE_THRESHOLD_BP = 8000;
 const BACKUP_CHUNK_ROWS = 100;
 const MAX_OUTBOX_CLAIM = 50;
-const BACKUP_TABLES = [
-  'members', 'member_scopes', 'settings_versions', 'dictionary_items', 'audit_events', 'idempotency_records',
-  'voltage_levels', 'transmission_lines', 'transmission_towers',
-  'materials', 'import_mapping_templates', 'import_batches', 'import_rows', 'demands', 'demand_source_rows', 'demand_materials', 'field_definitions',
-  'projects', 'project_versions', 'demand_allocations', 'project_cost_lines', 'reserve_categories', 'category_mappings', 'category_cost_allocations',
-  'project_demand_links', 'project_material_requirements', 'project_material_revisions',
-  'frameworks', 'framework_versions', 'agreements', 'agreement_versions', 'project_budgets', 'budget_allocations', 'budget_versions',
-  'budget_version_allocations', 'financial_entries', 'financial_entry_allocations',
-  'project_releases', 'project_tasks', 'task_demand_scopes', 'task_material_requirements', 'material_supply_events',
-  'task_implementation_records', 'task_implementation_scope_lines', 'task_material_usage_lines',
-  'task_settlements', 'task_settlement_scope_lines', 'task_settlement_agreement_allocations', 'task_settlement_reminders',
-  'release_batches', 'release_lines', 'implementation_records', 'implementation_lines', 'settlements', 'settlement_coverage',
-  'settlement_agreement_allocations', 'attachments',
-  'analysis_rules', 'monthly_plans', 'report_snapshots', 'annual_milestones', 'notification_contacts', 'alert_events', 'notification_outbox',
-] as const;
-
 type RuleRow = { id: string; version: number; mode: AnalysisLagMode; threshold_basis_points: number; effective_from: string; created_at: string };
 type PlanRow = { id: string; project_id: string; business_year: number; month: number; target_amount_fen: number; version: number; created_at: string; updated_at: string };
 type FrameworkRow = { id: string; code: string; name: string; total_amount_fen: number; annual_target_fen: number | null; start_date: string; end_date: string };
@@ -340,102 +326,94 @@ async function deliverNotificationBatch(env: WorkerBindings, now: string) {
 }
 
 async function ensureBackup(env: WorkerBindings, backupDate: string, kind: BackupKind) {
-  const existing = await env.DB.prepare(`SELECT id,backup_date,kind,status,current_table_index,cursor_rowid,manifest_key,chunk_count,error,started_at,completed_at,verified_at,created_at,updated_at FROM backup_runs WHERE backup_date=? AND kind=? LIMIT 1`).bind(backupDate, kind).first<BackupRow>();
-  if (existing) return { created: false, backup: backupSummary(existing) };
-  const id = crypto.randomUUID(), now = new Date().toISOString();
-  await env.DB.prepare(`INSERT INTO backup_runs (id,backup_date,kind,status,current_table_index,cursor_rowid,manifest_key,chunk_count,error,started_at,completed_at,verified_at,created_at,updated_at) VALUES (?,? ,?,'pending',0,0,NULL,0,NULL,NULL,NULL,NULL,?,?)`).bind(id, backupDate, kind, now, now).run();
-  const row = await env.DB.prepare(`SELECT id,backup_date,kind,status,current_table_index,cursor_rowid,manifest_key,chunk_count,error,started_at,completed_at,verified_at,created_at,updated_at FROM backup_runs WHERE id=?`).bind(id).first<BackupRow>();
-  return { created: true, backup: backupSummary(row!) };
+  const { database } = createCloudflarePersistence(env);
+  return new SqlBackupRepository(database).ensure(backupDate, kind, new Date().toISOString());
 }
-async function loadBackup(db: D1Database, id: string) {
-  return db.prepare(`SELECT id,backup_date,kind,status,current_table_index,cursor_rowid,manifest_key,chunk_count,error,started_at,completed_at,verified_at,created_at,updated_at FROM backup_runs WHERE id=? LIMIT 1`).bind(id).first<BackupRow>();
-}
+
 async function cleanupBackupRetention(env: WorkerBindings, kind: BackupKind) {
+  const { database, objectStore } = createCloudflarePersistence(env);
+  const repository = new SqlBackupRepository(database);
   const keep = kind === 'daily' ? 7 : 3;
-  const old = await env.DB.prepare(`SELECT id,manifest_key FROM backup_runs WHERE kind=? AND status='completed' ORDER BY backup_date DESC,completed_at DESC LIMIT 100 OFFSET ?`).bind(kind, keep).all<{ id: string; manifest_key: string | null }>();
-  for (const run of old.results ?? []) {
-    const chunks = await env.DB.prepare(`SELECT r2_key FROM backup_chunks WHERE backup_run_id=?`).bind(run.id).all<{ r2_key: string }>();
-    for (const chunk of chunks.results ?? []) await env.FILES.delete(chunk.r2_key);
-    if (run.manifest_key) await env.FILES.delete(run.manifest_key);
-    await env.DB.prepare(`DELETE FROM backup_runs WHERE id=?`).bind(run.id).run();
+  for (const run of await repository.retentionCandidates(kind, keep)) {
+    for (const key of await repository.chunkObjectKeys(run.id)) await objectStore.delete(key);
+    if (run.manifestKey) await objectStore.delete(run.manifestKey);
+    await repository.deleteRun(run.id);
   }
 }
 export async function processBackupStep(env: WorkerBindings, backupId: string): Promise<BackupSummary | null> {
-  const run = await loadBackup(env.DB, backupId);
+  const { database, objectStore } = createCloudflarePersistence(env);
+  const repository = new SqlBackupRepository(database);
+  const run = await repository.find(backupId);
   if (!run) return null;
-  if (run.status === 'completed' || run.status === 'failed') return backupSummary(run);
+  if (run.status === 'completed' || run.status === 'failed') return run;
   const now = new Date().toISOString();
-  if (run.current_table_index >= BACKUP_TABLES.length) {
-    const chunks = await env.DB.prepare(`SELECT id,backup_run_id,table_name,chunk_index,r2_key,row_count,sha256,created_at FROM backup_chunks WHERE backup_run_id=? ORDER BY table_name,chunk_index`).bind(run.id).all<BackupChunkRow>();
-    const attachments = await env.DB.prepare(`SELECT r2_key FROM attachments WHERE deleted_at IS NULL ORDER BY r2_key`).all<{ r2_key: string }>();
+  if (run.currentTableIndex >= BACKUP_TABLES.length) {
+    const chunks = await repository.listChunks(run.id);
+    const attachmentKeys = await repository.listAttachmentKeys();
     const manifest = {
       version: 1,
       backupId: run.id,
-      backupDate: run.backup_date,
+      backupDate: run.backupDate,
       kind: run.kind,
       completedAt: now,
-      chunks: (chunks.results ?? []).map((item) => ({ table: item.table_name, index: item.chunk_index, key: item.r2_key, rowCount: item.row_count, sha256: item.sha256 })),
-      attachmentKeys: (attachments.results ?? []).map((item) => item.r2_key),
+      chunks: chunks.map((item) => ({ table: item.tableName, index: item.chunkIndex, key: item.objectKey, rowCount: item.rowCount, sha256: item.sha256 })),
+      attachmentKeys,
     };
-    const manifestKey = `backups/${run.backup_date}/${run.kind}/${run.id}/manifest.json`;
-    await env.FILES.put(manifestKey, JSON.stringify(manifest), { httpMetadata: { contentType: 'application/json' } });
-    await env.DB.prepare(`UPDATE backup_runs SET status='completed',manifest_key=?,completed_at=?,updated_at=? WHERE id=?`).bind(manifestKey, now, now, run.id).run();
+    const manifestKey = `backups/${run.backupDate}/${run.kind}/${run.id}/manifest.json`;
+    await objectStore.put(manifestKey, JSON.stringify(manifest), { contentType: 'application/json' });
+    await repository.markCompleted(run.id, manifestKey, now);
     await cleanupBackupRetention(env, run.kind);
-    return backupSummary((await loadBackup(env.DB, run.id))!);
+    return repository.find(run.id);
   }
-  const table = BACKUP_TABLES[run.current_table_index]!;
+  const table = BACKUP_TABLES[run.currentTableIndex]!;
   try {
-    const result = await env.DB.prepare(`SELECT rowid AS __rowid,* FROM ${table} WHERE rowid>? ORDER BY rowid LIMIT ?`).bind(run.cursor_rowid, BACKUP_CHUNK_ROWS).all<Record<string, unknown> & { __rowid: number }>();
-    const resultRows = result.results ?? [];
-    const startedAt = run.started_at ?? now;
+    const resultRows = await repository.readTableRows(table, run.cursorRowid, BACKUP_CHUNK_ROWS);
+    const startedAt = run.startedAt ?? now;
     if (resultRows.length === 0) {
-      await env.DB.prepare(`UPDATE backup_runs SET status='running',current_table_index=current_table_index+1,cursor_rowid=0,started_at=?,updated_at=? WHERE id=?`).bind(startedAt, now, run.id).run();
-      return backupSummary((await loadBackup(env.DB, run.id))!);
+      await repository.advanceEmptyTable(run.id, startedAt, now);
+      return repository.find(run.id);
     }
-    const chunkMeta = await env.DB.prepare(`SELECT COALESCE(MAX(chunk_index),-1)+1 AS next_index FROM backup_chunks WHERE backup_run_id=? AND table_name=?`).bind(run.id, table).first<{ next_index: number }>();
-    const chunkIndex = Number(chunkMeta?.next_index ?? 0);
+    const chunkIndex = await repository.nextChunkIndex(run.id, table);
     const rowsForBackup = resultRows.map((row) => {
       const { __rowid: _rowid, ...copy } = row;
       return copy;
     });
     const payload = new TextEncoder().encode(JSON.stringify({ table, rows: rowsForBackup }));
     const sha256 = await sha256Hex(payload);
-    const r2Key = `backups/${run.backup_date}/${run.kind}/${run.id}/${String(run.current_table_index).padStart(2, '0')}-${table}-${chunkIndex}.json`;
-    await env.FILES.put(r2Key, payload, { httpMetadata: { contentType: 'application/json' } });
+    const objectKey = `backups/${run.backupDate}/${run.kind}/${run.id}/${String(run.currentTableIndex).padStart(2, '0')}-${table}-${chunkIndex}.json`;
+    await objectStore.put(objectKey, payload, { contentType: 'application/json' });
     const lastRowid = Number(resultRows.at(-1)!.__rowid);
     const finishedTable = resultRows.length < BACKUP_CHUNK_ROWS;
     try {
-      await env.DB.batch([
-        env.DB.prepare(`INSERT INTO backup_chunks (id,backup_run_id,table_name,chunk_index,r2_key,row_count,sha256,created_at) VALUES (?,?,?,?,?,?,?,?)`).bind(crypto.randomUUID(), run.id, table, chunkIndex, r2Key, resultRows.length, sha256, now),
-        env.DB.prepare(`UPDATE backup_runs SET status='running',current_table_index=?,cursor_rowid=?,chunk_count=chunk_count+1,started_at=?,updated_at=? WHERE id=?`).bind(finishedTable ? run.current_table_index + 1 : run.current_table_index, finishedTable ? 0 : lastRowid, startedAt, now, run.id),
-      ]);
+      await repository.recordChunk({ backupId: run.id, table, chunkIndex, objectKey, rowCount: resultRows.length, sha256, nextTableIndex: finishedTable ? run.currentTableIndex + 1 : run.currentTableIndex, nextCursorRowid: finishedTable ? 0 : lastRowid, startedAt, now });
     } catch (error) {
-      await env.FILES.delete(r2Key);
+      await objectStore.delete(objectKey);
       throw error;
     }
-    return backupSummary((await loadBackup(env.DB, run.id))!);
+    return repository.find(run.id);
   } catch (cause) {
     const message = cause instanceof Error ? cause.message.slice(0, 1000) : 'backup step failed';
-    await env.DB.prepare(`UPDATE backup_runs SET status='failed',error=?,updated_at=? WHERE id=?`).bind(message, now, run.id).run();
-    return backupSummary((await loadBackup(env.DB, run.id))!);
+    await repository.markFailed(run.id, message, now);
+    return repository.find(run.id);
   }
 }
 async function verifyBackup(env: WorkerBindings, backupId: string): Promise<BackupVerificationSummary | null> {
-  const run = await loadBackup(env.DB, backupId);
-  if (!run || run.status !== 'completed' || !run.manifest_key) return null;
+  const { database, objectStore } = createCloudflarePersistence(env);
+  const repository = new SqlBackupRepository(database);
+  const run = await repository.find(backupId);
+  if (!run || run.status !== 'completed' || !run.manifestKey) return null;
   const missingObjects: string[] = [], mismatchedObjects: string[] = [];
-  const manifestObject = await env.FILES.get(run.manifest_key);
-  if (!manifestObject) missingObjects.push(run.manifest_key);
-  const chunks = await env.DB.prepare(`SELECT r2_key,sha256 FROM backup_chunks WHERE backup_run_id=? ORDER BY table_name,chunk_index`).bind(run.id).all<{ r2_key: string; sha256: string }>();
-  for (const chunk of chunks.results ?? []) {
-    const object = await env.FILES.get(chunk.r2_key);
-    if (!object) { missingObjects.push(chunk.r2_key); continue; }
-    const bytes = await object.arrayBuffer();
-    if (await sha256Hex(bytes) !== chunk.sha256) mismatchedObjects.push(chunk.r2_key);
+  const manifestObject = await objectStore.get(run.manifestKey);
+  if (!manifestObject) missingObjects.push(run.manifestKey);
+  for (const chunk of await repository.listChunks(run.id)) {
+    const object = await objectStore.get(chunk.objectKey);
+    if (!object) { missingObjects.push(chunk.objectKey); continue; }
+    const bytes = await object.bytes();
+    if (await sha256Hex(bytes) !== chunk.sha256) mismatchedObjects.push(chunk.objectKey);
   }
   const verified = missingObjects.length === 0 && mismatchedObjects.length === 0;
   const verifiedAt = verified ? new Date().toISOString() : null;
-  if (verifiedAt) await env.DB.prepare(`UPDATE backup_runs SET verified_at=?,updated_at=? WHERE id=?`).bind(verifiedAt, verifiedAt, run.id).run();
+  if (verifiedAt) await repository.markVerified(run.id, verifiedAt);
   return { backupId: run.id, verified, missingObjects, mismatchedObjects, verifiedAt };
 }
 function shanghaiParts(nowIso: string) {
@@ -456,9 +434,10 @@ export async function runP6Tick(env: WorkerBindings, nowIso: string) {
     backupCreated = daily.created;
     if (isMonthEnd(local.businessDate)) await ensureBackup(env, local.businessDate, 'monthly');
   }
-  const pending = await env.DB.prepare(`SELECT id FROM backup_runs WHERE status IN ('pending','running') ORDER BY backup_date,kind,id LIMIT 1`).first<{ id: string }>();
-  if (pending) await processBackupStep(env, pending.id);
-  return { businessDate: local.businessDate, backupCreated, createdEvents: alerts.createdEvents, notificationDelivery, backupProcessed: pending?.id ?? null };
+  const { database } = createCloudflarePersistence(env);
+  const pendingId = await new SqlBackupRepository(database).findPending();
+  if (pendingId) await processBackupStep(env, pendingId);
+  return { businessDate: local.businessDate, backupCreated, createdEvents: alerts.createdEvents, notificationDelivery, backupProcessed: pendingId };
 }
 
 async function currentReserveRemaining(c: Context<AppEnv>): Promise<{ data: ReserveRemainingSummary | null; error: ApiError | null }> {
@@ -838,14 +817,15 @@ p6App.post('/backups', requireRoles('admin'), async (c) => {
   if (!backupDate || !['daily','monthly'].includes(kind)) return c.json(apiError('INVALID_BACKUP', '备份日期或类型无效'), 422);
   const request = { backupDate, kind }, hash = await requestHash(request), operation = `backups.create:${backupDate}:${kind}`; const replay = await replayIdempotentResponse(c, key, operation, hash); if (replay) return replay;
   const ensured = await ensureBackup(c.env, backupDate, kind), actor = c.get('currentUser'), now = new Date().toISOString(), response = { ok: true as const, data: ensured.backup };
-  try { await c.env.DB.batch([auditStatement(c.env.DB, actor.id, 'backup.create', 'backup', ensured.backup.id, null, ensured.backup, now), idempotencyStatement(c.env.DB, key, actor.id, operation, hash, response, ensured.created ? 201 : 200, now)]); }
+  const { database } = createCloudflarePersistence(c.env);
+  try { await new SqlOperationJournalRepository(database).record({ auditId: crypto.randomUUID(), actorId: actor.id, action: 'backup.create', objectType: 'backup', objectId: ensured.backup.id, before: null, after: ensured.backup, idempotencyKey: key, operation, requestHash: hash, responseJson: JSON.stringify(response), statusCode: ensured.created ? 201 : 200, now }); }
   catch { return c.json(apiError('BACKUP_CONFLICT', '备份创建记录冲突'), 409); }
   return c.json(response, ensured.created ? 201 : 200);
 });
 
 p6App.get('/backups', requireRoles('admin'), async (c) => {
-  const result = await c.env.DB.prepare(`SELECT id,backup_date,kind,status,current_table_index,cursor_rowid,manifest_key,chunk_count,error,started_at,completed_at,verified_at,created_at,updated_at FROM backup_runs ORDER BY backup_date DESC,kind,id DESC LIMIT 100`).all<BackupRow>();
-  return c.json({ ok: true as const, data: { items: (result.results ?? []).map(backupSummary) } });
+  const { database } = createCloudflarePersistence(c.env);
+  return c.json({ ok: true as const, data: { items: await new SqlBackupRepository(database).list(100) } });
 });
 
 p6App.post('/backups/:id/step', requireRoles('admin'), async (c) => {
@@ -853,7 +833,8 @@ p6App.post('/backups/:id/step', requireRoles('admin'), async (c) => {
   const hash = await requestHash({}), operation = `backups.step:${c.req.param('id')}:${key}`; const replay = await replayIdempotentResponse(c, key, operation, hash); if (replay) return replay;
   const data = await processBackupStep(c.env, c.req.param('id')); if (!data) return c.json(apiError('NOT_FOUND', '备份任务不存在'), 404);
   const actor = c.get('currentUser'), now = new Date().toISOString(), response = { ok: true as const, data };
-  try { await c.env.DB.batch([auditStatement(c.env.DB, actor.id, 'backup.step', 'backup', data.id, null, { status: data.status, currentTableIndex: data.currentTableIndex, chunkCount: data.chunkCount }, now), idempotencyStatement(c.env.DB, key, actor.id, operation, hash, response, 200, now)]); }
+  const { database } = createCloudflarePersistence(c.env);
+  try { await new SqlOperationJournalRepository(database).record({ auditId: crypto.randomUUID(), actorId: actor.id, action: 'backup.step', objectType: 'backup', objectId: data.id, before: null, after: { status: data.status, currentTableIndex: data.currentTableIndex, chunkCount: data.chunkCount }, idempotencyKey: key, operation, requestHash: hash, responseJson: JSON.stringify(response), statusCode: 200, now }); }
   catch { return c.json(apiError('BACKUP_STEP_CONFLICT', '备份步骤记录冲突'), 409); }
   return c.json(response);
 });
@@ -863,7 +844,8 @@ p6App.post('/backups/:id/verify', requireRoles('admin'), async (c) => {
   const hash = await requestHash({}), operation = `backups.verify:${c.req.param('id')}`; const replay = await replayIdempotentResponse(c, key, operation, hash); if (replay) return replay;
   const data = await verifyBackup(c.env, c.req.param('id')); if (!data) return c.json(apiError('BACKUP_NOT_READY', '备份不存在或尚未完成'), 422);
   const actor = c.get('currentUser'), now = new Date().toISOString(), response = { ok: true as const, data };
-  try { await c.env.DB.batch([auditStatement(c.env.DB, actor.id, 'backup.verify', 'backup', data.backupId, null, data, now), idempotencyStatement(c.env.DB, key, actor.id, operation, hash, response, 200, now)]); }
+  const { database } = createCloudflarePersistence(c.env);
+  try { await new SqlOperationJournalRepository(database).record({ auditId: crypto.randomUUID(), actorId: actor.id, action: 'backup.verify', objectType: 'backup', objectId: data.backupId, before: null, after: data, idempotencyKey: key, operation, requestHash: hash, responseJson: JSON.stringify(response), statusCode: 200, now }); }
   catch { return c.json(apiError('BACKUP_VERIFY_CONFLICT', '备份校验记录冲突'), 409); }
   return c.json(response);
 });
@@ -874,7 +856,8 @@ p6App.post('/system/tasks/run', requireRoles('admin'), async (c) => {
   const nowInput = validIso(body.now); if (!nowInput) return c.json(apiError('INVALID_SCHEDULED_TIME', 'now 必须为有效 ISO 时间'), 422);
   const request = { now: nowInput }, hash = await requestHash(request), operation = `system.tasks.run:${nowInput}`; const replay = await replayIdempotentResponse(c, key, operation, hash); if (replay) return replay;
   const data = await runP6Tick(c.env, nowInput), actor = c.get('currentUser'), storedAt = new Date().toISOString(), response = { ok: true as const, data };
-  try { await c.env.DB.batch([auditStatement(c.env.DB, actor.id, 'system.tasks.run', 'scheduled_tick', nowInput, null, data, storedAt), idempotencyStatement(c.env.DB, key, actor.id, operation, hash, response, 200, storedAt)]); }
+  const { database } = createCloudflarePersistence(c.env);
+  try { await new SqlOperationJournalRepository(database).record({ auditId: crypto.randomUUID(), actorId: actor.id, action: 'system.tasks.run', objectType: 'scheduled_tick', objectId: nowInput, before: null, after: data, idempotencyKey: key, operation, requestHash: hash, responseJson: JSON.stringify(response), statusCode: 200, now: storedAt }); }
   catch { return c.json(apiError('TASK_RUN_CONFLICT', '后台任务运行记录冲突'), 409); }
   return c.json(response);
 });
