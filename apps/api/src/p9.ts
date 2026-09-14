@@ -11,7 +11,9 @@ import type {
 } from '@tpm/shared';
 import { requireRoles, type AppEnv } from './auth';
 import { gridLocationGuard } from './grid-location';
+import type { CommitSingleMasterDataInput, MasterDataWriteKind } from './ports/master-data-write-repository';
 import { SqlMasterDataRepository } from './repositories/sql-master-data-repository';
+import { SqlMasterDataWriteRepository } from './repositories/sql-master-data-write-repository';
 import { createCloudflarePersistence } from './runtime/cloudflare/persistence';
 
 export const p9App = new Hono<AppEnv>();
@@ -59,6 +61,11 @@ function parseMaterials(value: unknown): DemandMaterialInput[] | null {
 function masterDataRepository(c: Context<AppEnv>) {
   const { database } = createCloudflarePersistence(c.env);
   return new SqlMasterDataRepository(database);
+}
+
+function masterDataWriteRepository(c: Context<AppEnv>) {
+  const { database } = createCloudflarePersistence(c.env);
+  return new SqlMasterDataWriteRepository(database);
 }
 
 p9App.get('/master/voltage-levels', async (c) => {
@@ -159,7 +166,7 @@ async function prepareMaster(c: Context<AppEnv>, kind: MasterKind, body: Record<
   let columns: string[], values: (string | number | null)[], data: VoltageLevelSummary | TransmissionLineSummary | TransmissionTowerSummary;
   if (kind === 'voltage-levels') {
     const displayName = cleanText(body.displayName, 40), code = cleanText(body.code, 40).toUpperCase();
-    const systemType = body.systemType === 'AC' || body.systemType === 'DC' ? body.systemType : null;
+    const systemType: 'AC' | 'DC' | null = body.systemType === 'AC' || body.systemType === 'DC' ? body.systemType : null;
     const nominalKv = intValue(body.nominalKv, 1, 2000), sortOrder = intValue(body.sortOrder ?? 0, 0, 100000);
     if (!displayName || !code || !systemType || nominalKv === null || sortOrder === null) return c.json(apiError('INVALID_VOLTAGE_LEVEL', '电压等级参数不完整'), 422);
     columns = ['code','display_name','system_type','nominal_kv','sort_order']; values = [code,displayName,systemType,nominalKv,sortOrder];
@@ -189,23 +196,114 @@ async function prepareMaster(c: Context<AppEnv>, kind: MasterKind, body: Record<
   return { statement, parentGuard, data, audit: { action: `master.${kind}.${before ? 'update' : 'create'}`, type: table, id, before, after: data } };
 }
 
+const masterWriteKinds: Record<MasterKind, MasterDataWriteKind> = {
+  'voltage-levels': 'voltage-level',
+  lines: 'line',
+  towers: 'tower',
+};
+
+async function prepareSingleMaster(c: Context<AppEnv>, kind: MasterKind, body: Record<string, unknown>, id: string, before: MasterRecord | null) {
+  const repository = masterDataWriteRepository(c);
+  const enabled = boolValue(body.enabled);
+  if (enabled === null) return c.json(apiError('INVALID_MASTER_DATA', '启用状态必须为布尔值'), 422);
+  const version = before ? Number(before.version) + 1 : 1;
+  if (kind === 'voltage-levels') {
+    const displayName = cleanText(body.displayName, 40), code = cleanText(body.code, 40).toUpperCase();
+    const systemType: 'AC' | 'DC' | null = body.systemType === 'AC' || body.systemType === 'DC' ? body.systemType : null;
+    const nominalKv = intValue(body.nominalKv, 1, 2000), sortOrder = intValue(body.sortOrder ?? 0, 0, 100000);
+    if (!displayName || !code || !systemType || nominalKv === null || sortOrder === null) return c.json(apiError('INVALID_VOLTAGE_LEVEL', '电压等级参数不完整'), 422);
+    const data: VoltageLevelSummary = { id, code, displayName, systemType, nominalKv, sortOrder, enabled, version };
+    return {
+      values: { code, displayName, systemType, nominalKv, sortOrder, enabled },
+      data,
+      requireEnabledParent: false,
+      audit: { action: `master.${kind}.${before ? 'update' : 'create'}`, objectType: masterTables[kind], before, after: data },
+    };
+  }
+  if (kind === 'lines') {
+    const voltageLevelId = cleanText(body.voltageLevelId, 120), lineName = cleanText(body.lineName, 200), lineCode = cleanText(body.lineCode, 80) || null;
+    if (!voltageLevelId || !lineName) return c.json(apiError('INVALID_LINE', '请选择电压等级并填写线路名称'), 422);
+    const parent = await repository.findVoltageParent(voltageLevelId);
+    const requireEnabledParent = !before || before.voltage_level_id !== voltageLevelId || enabled;
+    if (!parent || (requireEnabledParent && !parent.enabled)) return c.json(apiError('VOLTAGE_LEVEL_NOT_FOUND', constraintMessages.VOLTAGE_LEVEL_NOT_FOUND!), 422);
+    const towerCount = before ? await repository.countLineTowers(id) : 0;
+    const data: TransmissionLineSummary = { id, voltageLevelId, voltageLevelName: parent.displayName, lineName, lineCode, towerCount, enabled, version };
+    return {
+      values: { voltageLevelId, lineName, lineCode, enabled },
+      data,
+      requireEnabledParent,
+      audit: { action: `master.${kind}.${before ? 'update' : 'create'}`, objectType: masterTables[kind], before, after: data },
+    };
+  }
+  const lineId = cleanText(body.lineId, 120), towerNo = cleanText(body.towerNo, 80), sortIndex = intValue(body.sortIndex, 1, 1000000), towerType = cleanText(body.towerType, 80) || null;
+  if (!lineId || !towerNo || sortIndex === null) return c.json(apiError('INVALID_TOWER', '线路、杆塔号和有效顺序不能为空'), 422);
+  const parent = await repository.findTowerParent(lineId);
+  const requireEnabledParent = !before || before.line_id !== lineId || enabled;
+  if (!parent || (requireEnabledParent && (!parent.enabled || !parent.voltageEnabled))) return c.json(apiError('LINE_NOT_FOUND', constraintMessages.LINE_NOT_FOUND!), 422);
+  const data: TransmissionTowerSummary = { id, lineId, lineName: parent.lineName, towerNo, sortIndex, towerType, enabled, version };
+  return {
+    values: { lineId, towerNo, sortIndex, towerType, enabled },
+    data,
+    requireEnabledParent,
+    audit: { action: `master.${kind}.${before ? 'update' : 'create'}`, objectType: masterTables[kind], before, after: data },
+  };
+}
+
+async function commitSingleMaster(c: Context<AppEnv>, mutation: Mutation, input: Omit<CommitSingleMasterDataInput, 'mutation'>, data: unknown, status: 200 | 201) {
+  const response = { ok: true as const, data };
+  const now = new Date().toISOString();
+  try {
+    await masterDataWriteRepository(c).commitSingle({
+      ...input,
+      mutation: {
+        key: mutation.key,
+        actorId: c.get('currentUser').id,
+        operation: mutation.operation,
+        hash: mutation.hash,
+        responseJson: JSON.stringify(response),
+        statusCode: status,
+        now,
+        auditId: crypto.randomUUID(),
+      },
+    });
+  } catch (cause) {
+    const raced = await replay(c, mutation); if (raced) return raced;
+    const error = String(cause);
+    for (const [code, message] of Object.entries(constraintMessages)) if (error.includes(code)) return c.json(apiError(code, message), 422);
+    if (error.includes('idempotency_records.request_hash')) return c.json(apiError('VERSION_CONFLICT', '数据已变化，请刷新后重试'), 409);
+    if (error.includes('UNIQUE constraint')) return c.json(apiError('MASTER_DATA_CONFLICT', '名称、编码、杆塔号或线路顺序重复，请检查'), 409);
+    if (error.includes('FOREIGN KEY constraint')) return c.json(apiError('MASTER_DATA_IN_USE', constraintMessages.MASTER_DATA_IN_USE!), 422);
+    throw cause;
+  }
+  return c.json(response, status);
+}
+
 for (const kind of Object.keys(masterTables) as MasterKind[]) {
   for (const method of ['post', 'patch', 'delete'] as const) {
     p9App[method](`/master/${kind}${method === 'post' ? '' : '/:id'}`, requireRoles('admin'), async (c) => {
       let body: Record<string, unknown>; try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
       const mutation = await beginMutation(c, body); if (mutation instanceof Response) return mutation;
       if (!body || typeof body !== 'object' || Array.isArray(body)) return c.json(apiError('INVALID_MASTER_DATA', '请求体必须为对象'), 422);
-      const table = masterTables[kind], id = method === 'post' ? crypto.randomUUID() : c.req.param('id')!;
-      const before = method === 'post' ? null : await c.env.DB.prepare(`SELECT * FROM ${table} WHERE id=?`).bind(id).first<MasterRecord>();
+      const repository = masterDataWriteRepository(c);
+      const id = method === 'post' ? crypto.randomUUID() : c.req.param('id')!;
+      const before = method === 'post' ? null : await repository.findRecord(masterWriteKinds[kind], id);
       if (method !== 'post' && !before) return c.json(apiError('MASTER_DATA_NOT_FOUND', '台账对象不存在'), 404);
       const version = intValue(body.expectedVersion, 1, Number.MAX_SAFE_INTEGER);
       if (method !== 'post' && version === null) return c.json(apiError('INVALID_VERSION', 'expectedVersion 必须为正整数'), 422);
       if (before && before.version !== version) return c.json(apiError('VERSION_CONFLICT', '数据已变化，请刷新后重试'), 409);
-      const versions = before ? [{ table, id, version: version! }] : [];
-      if (method === 'delete') return commitMutation(c, mutation, [c.env.DB.prepare(`DELETE FROM ${table} WHERE id=?`).bind(id)], { id, deleted: true }, 200,
-        [{ action: `master.${kind}.delete`, type: table, id, before, after: null }], versions);
-      const prepared = await prepareMaster(c, kind, body, id, before); if (prepared instanceof Response) return prepared;
-      return commitMutation(c, mutation, [...(prepared.parentGuard ? [prepared.parentGuard] : []), prepared.statement], prepared.data, method === 'post' ? 201 : 200, [prepared.audit], versions);
+      if (method === 'delete') {
+        const data = { id, deleted: true };
+        return commitSingleMaster(c, mutation, {
+          kind: masterWriteKinds[kind], action: 'delete', id, expectedVersion: version,
+          audit: { action: `master.${kind}.delete`, objectType: masterTables[kind], before, after: null },
+        }, data, 200);
+      }
+      const prepared = await prepareSingleMaster(c, kind, body, id, before); if (prepared instanceof Response) return prepared;
+      return commitSingleMaster(c, mutation, {
+        kind: masterWriteKinds[kind], action: method === 'post' ? 'create' : 'update', id,
+        values: prepared.values, expectedVersion: method === 'post' ? null : version,
+        requireEnabledParent: prepared.requireEnabledParent, audit: prepared.audit,
+      }, prepared.data, method === 'post' ? 201 : 200);
     });
   }
 }
