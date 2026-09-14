@@ -28,6 +28,8 @@ import type { WorkerBindings } from './env';
 import { createCloudflarePersistence } from './runtime/cloudflare/persistence';
 import { SqlIdempotencyRepository } from './repositories/sql-idempotency-repository';
 import { SqlOperationJournalRepository } from './repositories/sql-operation-journal-repository';
+import { SqlAnalysisRepository } from './repositories/sql-analysis-repository';
+import type { AnalysisRepository } from './ports/analysis-repository';
 
 const DEFAULT_RULE_MODE: AnalysisLagMode = 'ratio';
 const DEFAULT_RULE_THRESHOLD_BP = 8000;
@@ -169,8 +171,8 @@ function outboxSummary(row: OutboxRow, leasedAt: string | null = null): Notifica
 function backupSummary(row: BackupRow): BackupSummary {
   return { id: row.id, backupDate: row.backup_date, kind: row.kind, status: row.status, currentTableIndex: row.current_table_index, cursorRowid: row.cursor_rowid, manifestKey: row.manifest_key, chunkCount: row.chunk_count, error: row.error, startedAt: row.started_at, completedAt: row.completed_at, verifiedAt: row.verified_at, createdAt: row.created_at, updatedAt: row.updated_at };
 }
-async function currentRule(db: D1Database) {
-  return db.prepare(`SELECT id,version,mode,threshold_basis_points,effective_from,created_at FROM analysis_rules ORDER BY version DESC LIMIT 1`).first<RuleRow>();
+async function currentRule(repository: AnalysisRepository) {
+  return repository.currentRule();
 }
 function ratioBasisPoints(numerator: number, denominator: number): number | null {
   if (denominator <= 0) return null;
@@ -206,73 +208,51 @@ function dayDifference(from: string, to: string) {
   return Math.round((Date.parse(`${to}T00:00:00.000Z`) - Date.parse(`${from}T00:00:00.000Z`)) / 86_400_000);
 }
 
-async function frameworkProgress(db: D1Database, frameworkId: string, asOf: string): Promise<FrameworkProgressSummary | null> {
-  const framework = await db.prepare(`SELECT id,code,name,total_amount_fen,annual_target_fen,start_date,end_date FROM frameworks WHERE id=? LIMIT 1`).bind(frameworkId).first<FrameworkRow>();
+async function frameworkProgress(repository: AnalysisRepository, frameworkId: string, asOf: string): Promise<FrameworkProgressSummary | null> {
+  const framework = await repository.findFramework(frameworkId);
   if (!framework) return null;
-  const ruleRow = await currentRule(db);
-  const rule = ruleRow ? ruleSummary(ruleRow) : { id: 'default', version: 1, mode: DEFAULT_RULE_MODE, thresholdBasisPoints: DEFAULT_RULE_THRESHOLD_BP, effectiveFrom: '1970-01-01T00:00:00.000Z', createdAt: '1970-01-01T00:00:00.000Z' };
-  const businessYear = Number(framework.start_date.slice(0, 4));
+  const storedRule = await currentRule(repository);
+  const rule = storedRule ?? { id: 'default', version: 1, mode: DEFAULT_RULE_MODE, thresholdBasisPoints: DEFAULT_RULE_THRESHOLD_BP, effectiveFrom: '1970-01-01T00:00:00.000Z', createdAt: '1970-01-01T00:00:00.000Z' };
+  const businessYear = Number(framework.startDate.slice(0, 4));
   const months = elapsedMonths(businessYear, asOf);
-  const annualTargetFen = framework.annual_target_fen ?? framework.total_amount_fen;
-  const planMeta = await db.prepare(
-    `SELECT COUNT(*) AS count_all,
-            COALESCE(SUM(CASE WHEN mp.month<=? THEN mp.target_amount_fen ELSE 0 END),0) AS cumulative
-     FROM monthly_plans mp INNER JOIN projects p ON p.id=mp.project_id
-     WHERE p.framework_id=? AND mp.business_year=?`,
-  ).bind(months, frameworkId, businessYear).first<{ count_all: number; cumulative: number }>();
-  const hasCustom = Number(planMeta?.count_all ?? 0) > 0;
-  let plannedToDateFen = Number(planMeta?.cumulative ?? 0);
+  const annualTargetFen = framework.annualTargetFen ?? framework.totalAmountFen;
+  const planMeta = await repository.planMeta(frameworkId, businessYear, months);
+  const hasCustom = planMeta.countAll > 0;
+  let plannedToDateFen = planMeta.cumulativeFen;
   if (!hasCustom && annualTargetFen > 0) plannedToDateFen = Number((BigInt(annualTargetFen) * BigInt(months)) / 12n);
-  const actualRow = await db.prepare(
-    `SELECT COALESCE(SUM(amount_fen),0) AS total FROM financial_entries
-     WHERE framework_id=? AND entry_type='budget_occurrence' AND business_date<=? AND substr(business_date,1,4)=?`,
-  ).bind(frameworkId, asOf, String(businessYear)).first<{ total: number }>();
-  const actualToDateFen = Number(actualRow?.total ?? 0);
+  const actualToDateFen = await repository.actualFrameworkOccurrence(frameworkId, businessYear, asOf);
   const annualTargetConfigured = annualTargetFen > 0;
   const plannedProgressBasisPoints = annualTargetConfigured ? ratioBasisPoints(plannedToDateFen, annualTargetFen) : null;
   const actualProgressBasisPoints = annualTargetConfigured ? ratioBasisPoints(actualToDateFen, annualTargetFen) : null;
   const attainmentBasisPoints = plannedToDateFen > 0 ? ratioBasisPoints(actualToDateFen, plannedToDateFen) : null;
   let lagging = false;
   if (annualTargetConfigured && plannedToDateFen > 0) {
-    if (rule.mode === 'ratio') {
-      lagging = BigInt(actualToDateFen) * 10000n < BigInt(plannedToDateFen) * BigInt(rule.thresholdBasisPoints);
-    } else if (plannedToDateFen > actualToDateFen) {
-      lagging = BigInt(plannedToDateFen - actualToDateFen) * 10000n >= BigInt(annualTargetFen) * BigInt(rule.thresholdBasisPoints);
-    }
+    if (rule.mode === 'ratio') lagging = BigInt(actualToDateFen) * 10000n < BigInt(plannedToDateFen) * BigInt(rule.thresholdBasisPoints);
+    else if (plannedToDateFen > actualToDateFen) lagging = BigInt(plannedToDateFen - actualToDateFen) * 10000n >= BigInt(annualTargetFen) * BigInt(rule.thresholdBasisPoints);
   }
   const quarters: QuarterProgressSummary[] = ([1, 2, 3, 4] as const).map((quarter) => ({ quarter, cumulativeTargetBasisPoints: quarter * 2500, status: quarterStatus(businessYear, quarter, asOf) }));
-  return {
-    frameworkId, frameworkCode: framework.code, frameworkName: framework.name, businessYear, asOf,
-    annualTargetFen, annualTargetConfigured, plannedToDateFen, actualToDateFen, plannedProgressBasisPoints,
-    actualProgressBasisPoints, attainmentBasisPoints, lagging, planSource: hasCustom ? 'custom' : 'default', rule, quarters,
-  };
+  return { frameworkId, frameworkCode: framework.code, frameworkName: framework.name, businessYear, asOf, annualTargetFen, annualTargetConfigured, plannedToDateFen, actualToDateFen, plannedProgressBasisPoints, actualProgressBasisPoints, attainmentBasisPoints, lagging, planSource: hasCustom ? 'custom' : 'default', rule, quarters };
 }
 
-async function projectGaps(db: D1Database, frameworkId: string, asOf: string): Promise<ProjectGapSummary[]> {
+async function projectGaps(repository: AnalysisRepository, frameworkId: string, asOf: string): Promise<ProjectGapSummary[]> {
   const businessYear = Number(asOf.slice(0, 4));
   const months = elapsedMonths(businessYear, asOf);
-  const result = await db.prepare(
-    `SELECT p.id,p.name,
-            COALESCE((SELECT SUM(mp.target_amount_fen) FROM monthly_plans mp WHERE mp.project_id=p.id AND mp.business_year=? AND mp.month<=?),0) AS planned,
-            COALESCE((SELECT SUM(fe.amount_fen) FROM financial_entries fe WHERE fe.project_id=p.id AND fe.entry_type='budget_occurrence' AND fe.business_date<=? AND substr(fe.business_date,1,4)=?),0) AS actual
-     FROM projects p WHERE p.framework_id=? ORDER BY p.name COLLATE NOCASE,p.id`,
-  ).bind(businessYear, months, asOf, String(businessYear), frameworkId).all<{ id: string; name: string; planned: number; actual: number }>();
-  return (result.results ?? []).map((row) => ({ projectId: row.id, projectName: row.name, plannedToDateFen: Number(row.planned), actualToDateFen: Number(row.actual), gapFen: Math.max(0, Number(row.planned) - Number(row.actual)) })).sort((a, b) => b.gapFen - a.gapFen || a.projectName.localeCompare(b.projectName));
+  const rows = await repository.projectGapFacts(frameworkId, businessYear, months, asOf);
+  return rows.map((row) => ({ ...row, gapFen: Math.max(0, row.plannedToDateFen - row.actualToDateFen) })).sort((a, b) => b.gapFen - a.gapFen || a.projectName.localeCompare(b.projectName));
 }
 
 function reportSummary(row: ReportRow): MonthlyReportSummary {
   return { id: row.id, frameworkId: row.framework_id, businessMonth: row.business_month, revision: row.revision, dataCutoffDate: row.data_cutoff_date, ruleVersion: row.rule_version, rule: JSON.parse(row.rule_json) as AnalysisRuleSummary, snapshot: JSON.parse(row.snapshot_json) as MonthlyReportSummary['snapshot'], createdAt: row.created_at };
 }
-function milestoneDue(row: MilestoneRow, asOf: string): MilestoneDueSummary {
-  const base = milestoneSummary(row);
-  if (row.status === 'completed') return { ...base, dueMonth: row.month ? `${row.business_year}-${String(row.month).padStart(2, '0')}` : null, dueDate: row.specific_date, needsDate: row.date_precision === 'unknown', reminderDue: false, reminderLeadDays: null, overdue: false };
-  if (row.date_precision === 'unknown') return { ...base, dueMonth: null, dueDate: null, needsDate: true, reminderDue: false, reminderLeadDays: null, overdue: false };
-  const dueMonth = `${row.business_year}-${String(row.month).padStart(2, '0')}`;
-  if (row.date_precision === 'month') {
+function milestoneDue(base: MilestoneSummary, asOf: string): MilestoneDueSummary {
+  if (base.status === 'completed') return { ...base, dueMonth: base.month ? `${base.businessYear}-${String(base.month).padStart(2, '0')}` : null, dueDate: base.specificDate, needsDate: base.datePrecision === 'unknown', reminderDue: false, reminderLeadDays: null, overdue: false };
+  if (base.datePrecision === 'unknown') return { ...base, dueMonth: null, dueDate: null, needsDate: true, reminderDue: false, reminderLeadDays: null, overdue: false };
+  const dueMonth = `${base.businessYear}-${String(base.month).padStart(2, '0')}`;
+  if (base.datePrecision === 'month') {
     const first = `${dueMonth}-01`, end = monthEnd(dueMonth);
     return { ...base, dueMonth, dueDate: null, needsDate: false, reminderDue: asOf >= first, reminderLeadDays: null, overdue: asOf > end };
   }
-  const dueDate = row.specific_date!;
+  const dueDate = base.specificDate!;
   const diff = dayDifference(asOf, dueDate);
   const leadDays = base.leadDays.find((item) => item === diff) ?? null;
   return { ...base, dueMonth, dueDate, needsDate: false, reminderDue: diff < 0 || leadDays !== null, reminderLeadDays: leadDays, overdue: diff < 0 };
@@ -366,29 +346,30 @@ async function resolveActiveAlerts(db: D1Database, input: { ruleKey: string; obj
 }
 
 export async function evaluateAlerts(env: WorkerBindings, asOf: string) {
-  const ruleRow = await currentRule(env.DB);
-  const rule = ruleRow ? ruleSummary(ruleRow) : null;
+  const { database } = createCloudflarePersistence(env);
+  const analysis = new SqlAnalysisRepository(database);
+  const rule = await currentRule(analysis);
   let createdEvents = 0;
   const now = `${asOf}T00:00:00.000Z`;
-  const frameworks = await env.DB.prepare(`SELECT id FROM frameworks ORDER BY id`).all<{ id: string }>();
-  for (const item of frameworks.results ?? []) {
-    const progress = await frameworkProgress(env.DB, item.id, asOf);
+  const frameworks = await analysis.listFrameworkIds();
+  for (const frameworkId of frameworks) {
+    const progress = await frameworkProgress(analysis, frameworkId, asOf);
     if (!progress || !rule) continue;
-    const recipients = await verifiedRecipients(env.DB, item.id, null);
+    const recipients = await verifiedRecipients(env.DB, frameworkId, null);
     if (progress.lagging) {
-      const event = await ensureAlert(env.DB, { ruleKey: 'analysis.lag', ruleVersion: rule.version, objectType: 'framework', objectId: item.id, periodKey: asOf.slice(0, 7), severity: 'warning', message: `${progress.frameworkName} 实际进度低于同期计划`, now, recipients });
+      const event = await ensureAlert(env.DB, { ruleKey: 'analysis.lag', ruleVersion: rule.version, objectType: 'framework', objectId: frameworkId, periodKey: asOf.slice(0, 7), severity: 'warning', message: `${progress.frameworkName} 实际进度低于同期计划`, now, recipients });
       if (event.created) createdEvents += 1;
       else if (event.firstSeenAt.slice(0, 10) < asOf) await ensureDailySummary(env.DB, event.eventId, asOf, now, recipients);
     } else {
-      createdEvents += await resolveActiveAlerts(env.DB, { ruleKey: 'analysis.lag', objectId: item.id, now, recipients });
+      createdEvents += await resolveActiveAlerts(env.DB, { ruleKey: 'analysis.lag', objectId: frameworkId, now, recipients });
     }
   }
-  const milestoneRows = await env.DB.prepare(`SELECT id,business_year,title,owner,project_id,date_precision,month,specific_date,lead_days_json,status,version,created_at,updated_at FROM annual_milestones WHERE status='open' ORDER BY id`).all<MilestoneRow>();
-  for (const row of milestoneRows.results ?? []) {
+  const milestoneRows = await analysis.listOpenMilestones();
+  for (const row of milestoneRows) {
     const due = milestoneDue(row, asOf);
     if (!due.reminderDue) continue;
-    const recipients = await verifiedRecipients(env.DB, null, row.project_id);
-    const periodKey = row.date_precision === 'month' ? `${asOf.slice(0, 7)}:${asOf}` : asOf;
+    const recipients = await verifiedRecipients(env.DB, null, row.projectId);
+    const periodKey = row.datePrecision === 'month' ? `${asOf.slice(0, 7)}:${asOf}` : asOf;
     const event = await ensureAlert(env.DB, { ruleKey: 'milestone.due', ruleVersion: row.version, objectType: 'milestone', objectId: row.id, periodKey, severity: due.overdue ? 'warning' : 'info', message: `年度事项：${row.title}`, now, recipients });
     if (event.created) createdEvents += 1;
   }
@@ -741,9 +722,10 @@ p6App.get('/analysis/reserve-remaining', async (c) => {
 });
 
 p6App.get('/analysis/rules', async (c) => {
-  const row = await currentRule(c.env.DB);
+  const { database } = createCloudflarePersistence(c.env);
+  const row = await currentRule(new SqlAnalysisRepository(database));
   if (!row) return c.json(apiError('ANALYSIS_RULE_MISSING', '分析规则未配置'), 500);
-  return c.json({ ok: true as const, data: ruleSummary(row) });
+  return c.json({ ok: true as const, data: row });
 });
 
 p6App.put('/analysis/rules', requireRoles('admin'), async (c) => {
@@ -753,16 +735,14 @@ p6App.put('/analysis/rules', requireRoles('admin'), async (c) => {
   if (version === null || !['ratio','gap'].includes(mode) || threshold === null || threshold > 10000) return c.json(apiError('INVALID_ANALYSIS_RULE', '分析规则参数无效'), 422);
   const request = { expectedVersion: version, mode, thresholdBasisPoints: threshold };
   const hash = await requestHash(request), operation = 'analysis.rules.put'; const replay = await replayIdempotentResponse(c, key, operation, hash); if (replay) return replay;
-  const current = await currentRule(c.env.DB); if (!current || current.version !== version) return c.json(apiError('VERSION_CONFLICT', '分析规则已被修改，请刷新后重试'), 409);
+  const { database } = createCloudflarePersistence(c.env);
+  const repository = new SqlAnalysisRepository(database);
+  const current = await currentRule(repository); if (!current || current.version !== version) return c.json(apiError('VERSION_CONFLICT', '分析规则已被修改，请刷新后重试'), 409);
   const actor = c.get('currentUser'), now = new Date().toISOString(), next = version + 1, id = crypto.randomUUID();
   const data: AnalysisRuleSummary = { id, version: next, mode, thresholdBasisPoints: threshold, effectiveFrom: now, createdAt: now };
   const response = { ok: true as const, data };
   try {
-    await c.env.DB.batch([
-      c.env.DB.prepare(`INSERT INTO analysis_rules (id,version,mode,threshold_basis_points,effective_from,created_by,created_at) VALUES (?,?,?,?,?,?,?)`).bind(id, next, mode, threshold, now, actor.id, now),
-      auditStatement(c.env.DB, actor.id, 'analysis.rule.create', 'analysis_rule', id, ruleSummary(current), data, now),
-      idempotencyStatement(c.env.DB, key, actor.id, operation, hash, response, 200, now),
-    ]);
+    await repository.createRule({ current, next: data, meta: { actorId: actor.id, auditId: crypto.randomUUID(), idempotencyKey: key, operation, requestHash: hash, responseJson: JSON.stringify(response), statusCode: 200, now } });
   } catch { return c.json(apiError('VERSION_CONFLICT', '分析规则已被并发修改，请刷新后重试'), 409); }
   return c.json(response);
 });
@@ -771,13 +751,9 @@ p6App.get('/analysis/plans', async (c) => {
   const frameworkId = cleanText(c.req.query('frameworkId')), year = Number(c.req.query('year'));
   if (!frameworkId || !Number.isInteger(year) || year < 2000 || year > 2200) return c.json(apiError('INVALID_QUERY', 'frameworkId 和 year 必须有效'), 400);
   if (!canFramework(c, frameworkId)) return c.json(apiError('SCOPE_FORBIDDEN', '无权查看该框架月计划'), 403);
-  const result = await c.env.DB.prepare(
-    `SELECT mp.id,mp.project_id,mp.business_year,mp.month,mp.target_amount_fen,mp.version,mp.created_at,mp.updated_at
-     FROM monthly_plans mp INNER JOIN projects p ON p.id=mp.project_id
-     WHERE p.framework_id=? AND mp.business_year=?
-     ORDER BY mp.project_id,mp.month`,
-  ).bind(frameworkId, year).all<PlanRow>();
-  return c.json({ ok: true as const, data: { items: (result.results ?? []).map(planSummary) } });
+  const { database } = createCloudflarePersistence(c.env);
+  const items = await new SqlAnalysisRepository(database).listPlans(frameworkId, year);
+  return c.json({ ok: true as const, data: { items } });
 });
 
 p6App.put('/analysis/plans/:projectId/:year/:month', requireRoles('admin','project_manager'), async (c) => {
@@ -785,21 +761,20 @@ p6App.put('/analysis/plans/:projectId/:year/:month', requireRoles('admin','proje
   const projectId = cleanText(c.req.param('projectId')), year = Number(c.req.param('year')), month = Number(c.req.param('month'));
   if (!projectId || !Number.isInteger(year) || year < 2000 || year > 2200 || !Number.isInteger(month) || month < 1 || month > 12) return c.json(apiError('INVALID_PLAN_KEY', '计划项目、年份或月份无效'), 422);
   if (!canProject(c, projectId)) return c.json(apiError('SCOPE_FORBIDDEN', '无权维护该项目计划'), 403);
-  const project = await c.env.DB.prepare(`SELECT id FROM projects WHERE id=? LIMIT 1`).bind(projectId).first<{ id: string }>(); if (!project) return c.json(apiError('PROJECT_NOT_FOUND', '项目不存在'), 404);
+  const { database } = createCloudflarePersistence(c.env);
+  const repository = new SqlAnalysisRepository(database);
+  const project = await repository.findProject(projectId); if (!project) return c.json(apiError('PROJECT_NOT_FOUND', '项目不存在'), 404);
   let body: Record<string, unknown>; try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
   const expected = body.expectedVersion === null ? null : expectedVersion(body.expectedVersion), target = safeNonNegative(body.targetAmountFen);
   if ((body.expectedVersion !== null && expected === null) || target === null) return c.json(apiError('INVALID_PLAN', '计划版本或金额无效'), 422);
   const request = { expectedVersion: expected, targetAmountFen: target }, hash = await requestHash(request), operation = `analysis.plan.put:${projectId}:${year}:${month}`;
   const replay = await replayIdempotentResponse(c, key, operation, hash); if (replay) return replay;
-  const current = await c.env.DB.prepare(`SELECT id,project_id,business_year,month,target_amount_fen,version,created_at,updated_at FROM monthly_plans WHERE project_id=? AND business_year=? AND month=? LIMIT 1`).bind(projectId, year, month).first<PlanRow>();
+  const current = await repository.findPlan(projectId, year, month);
   if ((current?.version ?? null) !== expected) return c.json(apiError('VERSION_CONFLICT', '月计划已被修改，请刷新后重试', { currentVersion: current?.version ?? null }), 409);
   const actor = c.get('currentUser'), now = new Date().toISOString(), id = current?.id ?? crypto.randomUUID(), next = (current?.version ?? 0) + 1;
-  const data: MonthlyPlanSummary = { id, projectId, businessYear: year, month, targetAmountFen: target, version: next, createdAt: current?.created_at ?? now, updatedAt: now };
+  const data: MonthlyPlanSummary = { id, projectId, businessYear: year, month, targetAmountFen: target, version: next, createdAt: current?.createdAt ?? now, updatedAt: now };
   const response = { ok: true as const, data };
-  const write = current
-    ? c.env.DB.prepare(`UPDATE monthly_plans SET target_amount_fen=?,version=version+1,updated_at=CASE WHEN version=? THEN ? ELSE NULL END WHERE id=?`).bind(target, expected, now, id)
-    : c.env.DB.prepare(`INSERT INTO monthly_plans (id,project_id,business_year,month,target_amount_fen,version,created_by,created_at,updated_at) VALUES (?,?,?,?,?,1,?,?,?)`).bind(id, projectId, year, month, target, actor.id, now, now);
-  try { await c.env.DB.batch([write, auditStatement(c.env.DB, actor.id, 'analysis.plan.put', 'monthly_plan', id, current ? planSummary(current) : null, data, now), idempotencyStatement(c.env.DB, key, actor.id, operation, hash, response, 200, now)]); }
+  try { await repository.putPlan({ previous: current, next: data, meta: { actorId: actor.id, auditId: crypto.randomUUID(), idempotencyKey: key, operation, requestHash: hash, responseJson: JSON.stringify(response), statusCode: 200, now } }); }
   catch { return c.json(apiError('VERSION_CONFLICT', '月计划已被并发修改，请刷新后重试'), 409); }
   return c.json(response);
 });
@@ -807,7 +782,8 @@ p6App.put('/analysis/plans/:projectId/:year/:month', requireRoles('admin','proje
 p6App.get('/analysis/frameworks/:id/progress', async (c) => {
   const asOf = validDate(c.req.query('asOf')); if (!asOf) return c.json(apiError('INVALID_AS_OF', 'asOf 必须为有效日期'), 400);
   if (!canFramework(c, c.req.param('id'))) return c.json(apiError('SCOPE_FORBIDDEN', '无权查看该框架分析'), 403);
-  const data = await frameworkProgress(c.env.DB, c.req.param('id'), asOf); if (!data) return c.json(apiError('NOT_FOUND', '框架不存在'), 404);
+  const { database } = createCloudflarePersistence(c.env);
+  const data = await frameworkProgress(new SqlAnalysisRepository(database), c.req.param('id'), asOf); if (!data) return c.json(apiError('NOT_FOUND', '框架不存在'), 404);
   return c.json({ ok: true as const, data });
 });
 
@@ -815,7 +791,8 @@ p6App.get('/analysis/projects/gaps', async (c) => {
   const frameworkId = cleanText(c.req.query('frameworkId')), asOf = validDate(c.req.query('asOf'));
   if (!frameworkId || !asOf) return c.json(apiError('INVALID_QUERY', 'frameworkId 和 asOf 必须有效'), 400);
   if (!canFramework(c, frameworkId)) return c.json(apiError('SCOPE_FORBIDDEN', '无权查看该框架分析'), 403);
-  return c.json({ ok: true as const, data: { items: await projectGaps(c.env.DB, frameworkId, asOf) } });
+  const { database } = createCloudflarePersistence(c.env);
+  return c.json({ ok: true as const, data: { items: await projectGaps(new SqlAnalysisRepository(database), frameworkId, asOf) } });
 });
 
 p6App.post('/reports/monthly', requireRoles('admin','project_manager'), async (c) => {
@@ -826,17 +803,15 @@ p6App.post('/reports/monthly', requireRoles('admin','project_manager'), async (c
   if (!canFramework(c, frameworkId)) return c.json(apiError('SCOPE_FORBIDDEN', '无权生成该框架月报'), 403);
   const request = { frameworkId, businessMonth, dataCutoffDate }, hash = await requestHash(request), operation = `reports.monthly.create:${frameworkId}:${businessMonth}`;
   const replay = await replayIdempotentResponse(c, key, operation, hash); if (replay) return replay;
-  const progress = await frameworkProgress(c.env.DB, frameworkId, dataCutoffDate); if (!progress) return c.json(apiError('NOT_FOUND', '框架不存在'), 404);
-  const gaps = await projectGaps(c.env.DB, frameworkId, dataCutoffDate), rule = progress.rule;
-  const revisionRow = await c.env.DB.prepare(`SELECT COALESCE(MAX(revision),0)+1 AS next_revision FROM report_snapshots WHERE framework_id=? AND business_month=?`).bind(frameworkId, businessMonth).first<{ next_revision: number }>();
-  const revision = Number(revisionRow?.next_revision ?? 1), id = crypto.randomUUID(), actor = c.get('currentUser'), now = new Date().toISOString();
+  const { database } = createCloudflarePersistence(c.env);
+  const repository = new SqlAnalysisRepository(database);
+  const progress = await frameworkProgress(repository, frameworkId, dataCutoffDate); if (!progress) return c.json(apiError('NOT_FOUND', '框架不存在'), 404);
+  const gaps = await projectGaps(repository, frameworkId, dataCutoffDate), rule = progress.rule;
+  const revision = await repository.nextReportRevision(frameworkId, businessMonth), id = crypto.randomUUID(), actor = c.get('currentUser'), now = new Date().toISOString();
   const snapshot = { progress, projectGaps: gaps }, data: MonthlyReportSummary = { id, frameworkId, businessMonth, revision, dataCutoffDate, ruleVersion: rule.version, rule, snapshot, createdAt: now };
   const response = { ok: true as const, data };
-  try { await c.env.DB.batch([
-    c.env.DB.prepare(`INSERT INTO report_snapshots (id,framework_id,business_month,revision,data_cutoff_date,rule_version,rule_json,snapshot_json,created_by,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)`).bind(id, frameworkId, businessMonth, revision, dataCutoffDate, rule.version, JSON.stringify(rule), JSON.stringify(snapshot), actor.id, now),
-    auditStatement(c.env.DB, actor.id, 'report.monthly.create', 'report_snapshot', id, null, { frameworkId, businessMonth, revision, ruleVersion: rule.version }, now),
-    idempotencyStatement(c.env.DB, key, actor.id, operation, hash, response, 201, now),
-  ]); } catch { return c.json(apiError('REPORT_CONFLICT', '月报修订创建冲突'), 409); }
+  try { await repository.createReport({ report: data, meta: { actorId: actor.id, auditId: crypto.randomUUID(), idempotencyKey: key, operation, requestHash: hash, responseJson: JSON.stringify(response), statusCode: 201, now } }); }
+  catch { return c.json(apiError('REPORT_CONFLICT', '月报修订创建冲突'), 409); }
   return c.json(response, 201);
 });
 
@@ -844,8 +819,8 @@ p6App.get('/reports/monthly', async (c) => {
   const frameworkId = cleanText(c.req.query('frameworkId')), businessMonth = validMonth(c.req.query('businessMonth'));
   if (!frameworkId || !businessMonth) return c.json(apiError('INVALID_QUERY', 'frameworkId 和 businessMonth 必须有效'), 400);
   if (!canFramework(c, frameworkId)) return c.json(apiError('SCOPE_FORBIDDEN', '无权查看该框架月报'), 403);
-  const result = await c.env.DB.prepare(`SELECT id,framework_id,business_month,revision,data_cutoff_date,rule_version,rule_json,snapshot_json,created_at FROM report_snapshots WHERE framework_id=? AND business_month=? ORDER BY revision DESC`).bind(frameworkId, businessMonth).all<ReportRow>();
-  return c.json({ ok: true as const, data: { items: (result.results ?? []).map(reportSummary) } });
+  const { database } = createCloudflarePersistence(c.env);
+  return c.json({ ok: true as const, data: { items: await new SqlAnalysisRepository(database).listReports(frameworkId, businessMonth) } });
 });
 
 p6App.post('/milestones', requireRoles('admin','project_manager'), async (c) => {
@@ -863,23 +838,22 @@ p6App.post('/milestones', requireRoles('admin','project_manager'), async (c) => 
   const actor = c.get('currentUser'), id = crypto.randomUUID(), now = new Date().toISOString();
   const data: MilestoneSummary = { id, businessYear, title, owner, projectId, datePrecision, month, specificDate, leadDays, status: 'open', version: 1, createdAt: now, updatedAt: now };
   const response = { ok: true as const, data };
-  try { await c.env.DB.batch([
-    c.env.DB.prepare(`INSERT INTO annual_milestones (id,business_year,title,owner,project_id,date_precision,month,specific_date,lead_days_json,status,version,created_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,'open',1,?,?,?)`).bind(id, businessYear, title, owner, projectId, datePrecision, month, specificDate, JSON.stringify(leadDays), actor.id, now, now),
-    auditStatement(c.env.DB, actor.id, 'milestone.create', 'milestone', id, null, data, now), idempotencyStatement(c.env.DB, key, actor.id, operation, hash, response, 201, now),
-  ]); } catch { return c.json(apiError('MILESTONE_CONFLICT', '年度事项写入冲突'), 409); }
+  const { database } = createCloudflarePersistence(c.env);
+  try { await new SqlAnalysisRepository(database).createMilestone({ milestone: data, meta: { actorId: actor.id, auditId: crypto.randomUUID(), idempotencyKey: key, operation, requestHash: hash, responseJson: JSON.stringify(response), statusCode: 201, now } }); }
+  catch { return c.json(apiError('MILESTONE_CONFLICT', '年度事项写入冲突'), 409); }
   return c.json(response, 201);
 });
 
 p6App.get('/milestones', async (c) => {
-  const result = await c.env.DB.prepare(`SELECT id,business_year,title,owner,project_id,date_precision,month,specific_date,lead_days_json,status,version,created_at,updated_at FROM annual_milestones ORDER BY business_year DESC,month,specific_date,title LIMIT 200`).all<MilestoneRow>();
-  const items = (result.results ?? []).filter((row) => !row.project_id || canProject(c, row.project_id)).map(milestoneSummary);
+  const { database } = createCloudflarePersistence(c.env);
+  const items = (await new SqlAnalysisRepository(database).listMilestones()).filter((item) => !item.projectId || canProject(c, item.projectId));
   return c.json({ ok: true as const, data: { items } });
 });
 
 p6App.get('/milestones/due', async (c) => {
   const asOf = validDate(c.req.query('asOf')); if (!asOf) return c.json(apiError('INVALID_AS_OF', 'asOf 必须为有效日期'), 400);
-  const result = await c.env.DB.prepare(`SELECT id,business_year,title,owner,project_id,date_precision,month,specific_date,lead_days_json,status,version,created_at,updated_at FROM annual_milestones ORDER BY business_year,month,specific_date,title`).all<MilestoneRow>();
-  const items = (result.results ?? []).filter((row) => !row.project_id || canProject(c, row.project_id)).map((row) => milestoneDue(row, asOf));
+  const { database } = createCloudflarePersistence(c.env);
+  const items = (await new SqlAnalysisRepository(database).listMilestones()).filter((item) => !item.projectId || canProject(c, item.projectId)).map((item) => milestoneDue(item, asOf));
   return c.json({ ok: true as const, data: { items } });
 });
 
@@ -890,18 +864,16 @@ p6App.put('/milestones/:id/status', requireRoles('admin','project_manager'), asy
   if (version === null || !['open','completed'].includes(status)) return c.json(apiError('INVALID_MILESTONE_STATUS', '事项版本或状态无效'), 422);
   const request = { expectedVersion: version, status }, hash = await requestHash(request), operation = `milestones.status:${c.req.param('id')}`;
   const replay = await replayIdempotentResponse(c, key, operation, hash); if (replay) return replay;
-  const current = await c.env.DB.prepare(`SELECT id,business_year,title,owner,project_id,date_precision,month,specific_date,lead_days_json,status,version,created_at,updated_at FROM annual_milestones WHERE id=? LIMIT 1`).bind(c.req.param('id')).first<MilestoneRow>();
+  const { database } = createCloudflarePersistence(c.env);
+  const repository = new SqlAnalysisRepository(database);
+  const current = await repository.findMilestone(c.req.param('id'));
   if (!current) return c.json(apiError('NOT_FOUND', '年度事项不存在'), 404);
-  if (current.project_id && !canProject(c, current.project_id)) return c.json(apiError('SCOPE_FORBIDDEN', '无权修改该事项'), 403);
+  if (current.projectId && !canProject(c, current.projectId)) return c.json(apiError('SCOPE_FORBIDDEN', '无权修改该事项'), 403);
   if (current.version !== version) return c.json(apiError('VERSION_CONFLICT', '年度事项已被修改，请刷新后重试'), 409);
   const actor = c.get('currentUser'), now = new Date().toISOString();
-  const data = milestoneSummary({ ...current, status, version: version + 1, updated_at: now }), response = { ok: true as const, data };
+  const data: MilestoneSummary = { ...current, status, version: version + 1, updatedAt: now }, response = { ok: true as const, data };
   try {
-    await c.env.DB.batch([
-      c.env.DB.prepare(`UPDATE annual_milestones SET status=?,version=version+1,updated_at=CASE WHEN version=? THEN ? ELSE NULL END WHERE id=?`).bind(status, version, now, current.id),
-      auditStatement(c.env.DB, actor.id, 'milestone.status', 'milestone', current.id, milestoneSummary(current), data, now),
-      idempotencyStatement(c.env.DB, key, actor.id, operation, hash, response, 200, now),
-    ]);
+    await repository.updateMilestoneStatus({ current, status, next: data, meta: { actorId: actor.id, auditId: crypto.randomUUID(), idempotencyKey: key, operation, requestHash: hash, responseJson: JSON.stringify(response), statusCode: 200, now } });
   } catch {
     const raceReplay = await replayIdempotentResponse(c, key, operation, hash); if (raceReplay) return raceReplay;
     return c.json(apiError('VERSION_CONFLICT', '年度事项已被并发修改，请刷新后重试'), 409);

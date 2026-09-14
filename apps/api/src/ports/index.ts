@@ -1,3 +1,4 @@
+export type { AnalysisFrameworkFacts, AnalysisPlanMeta, AnalysisProjectGapFacts, AnalysisProjectState, AnalysisRepository, AnalysisWriteMeta } from './analysis-repository';
 export type { AttachmentIdempotencyRecord, AttachmentObjectType, AttachmentRecord, AttachmentRepository, CreateAttachmentRecord } from './attachment-repository';
 export type { ClockPort } from './clock';
 export type { CredentialMutationInput, CredentialRepository, MemberCredentialRecord, ResetCredentialInput } from './credential-repository';
