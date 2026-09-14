@@ -27,6 +27,7 @@ export type { DemandRepository, ResolvedDemandLine, ResolvedDemandTower } from '
 export type { AppendDemandMaterialsRecord, DemandMaterialWrite, DemandMaterialWriteRepository, DemandMaterialWriteState } from './demand-material-write-repository';
 export type { DemandPage, DemandPageCursor, DemandQueryRepository } from './demand-query-repository';
 export type { IdempotencyReplayRecord, IdempotencyRepository } from './idempotency-repository';
+export type { LegacyExecutionRepository, LegacyImplementationState, LegacyProjectState, LegacyReleaseLineState, LegacyScopeItem, LegacySettlementState, LegacyWriteMeta } from './legacy-execution-repository';
 export type { CreateImportMappingRecord, ImportMappingRepository } from './import-mapping-repository';
 export type { CreateImportBatchRecord, ImportChunkWriteRow, ImportRepository, RecordImportReuseInput, UploadImportChunkInput } from './import-repository';
 export type { CommitImportValidationInput, ImportValidationRepository, ImportValidationRow } from './import-validation-repository';
