@@ -184,6 +184,15 @@ test('Cloudflare infrastructure adapters depend inward on portable ports', () =>
   }
 });
 
+test('Notion object storage adapter depends inward on the portable ObjectStorePort', () => {
+  const file = resolve(root, 'apps/api/src/adapters/notion/notion-object-store.ts');
+  assert.equal(existsSync(file), true, '缺少 Notion object-store adapter');
+  const source = readFileSync(file, 'utf8');
+  assert.match(source, /implements\s+ObjectStorePort/);
+  assert.match(source, /ports\/object-store/);
+  assert.doesNotMatch(source, /\bD1Database\b|\bR2Bucket\b/, 'Notion adapter must not bind directly to Cloudflare persistence types');
+});
+
 test('business batch import is never the only creation path for demand data', () => {
   const apiSource = readFileSync(resolve(root, 'apps/api/src/p2.ts'), 'utf8');
   const webSource = readFileSync(resolve(root, 'apps/web/src/views/DemandsView.vue'), 'utf8');
