@@ -1,5 +1,5 @@
 import type { DatabasePort, DatabaseStatement } from '../ports/database.ts';
-import type { AllocationFailure, CreateProjectRecord, ProjectAllocationWrite, ProjectWriteRepository, ProjectWriteState, ProtectedProjectScopeItem, ReplaceProjectAllocationsRecord, ReplaceProjectCostsRecord } from '../ports/project-write-repository.ts';
+import type { AllocationFailure, CreateProjectRecord, ProjectAllocationWrite, ProjectWriteRepository, ProjectWriteState, ProtectedProjectScopeItem, ReplaceProjectAllocationsRecord, ReplaceProjectCategoryAllocationsRecord, ReplaceProjectCostsRecord } from '../ports/project-write-repository.ts';
 
 export class SqlProjectWriteRepository implements ProjectWriteRepository {
   private readonly database: DatabasePort;
@@ -163,6 +163,35 @@ export class SqlProjectWriteRepository implements ProjectWriteRepository {
     statements.push({
       sql: `INSERT INTO audit_events (id,actor_member_id,action,object_type,object_id,before_json,after_json,created_at)
             VALUES (?,?,'project.costs.replace','project',?,?,?,?)`,
+      params: [input.auditId, input.actorId, input.projectId, JSON.stringify({ version: input.expectedVersion }), JSON.stringify(input.auditAfter), input.now],
+    }, {
+      sql: `INSERT INTO idempotency_records (idempotency_key,actor_member_id,operation,request_hash,response_json,status_code,created_at)
+            VALUES (?,?,?,?,?,200,?)`,
+      params: [input.idempotencyKey, input.actorId, input.operation, input.requestHash, input.responseJson, input.now],
+    });
+    await this.database.batch(statements);
+  }
+
+  async replaceCategoryAllocations(input: ReplaceProjectCategoryAllocationsRecord): Promise<void> {
+    const statements: DatabaseStatement[] = [{
+      sql: `UPDATE projects
+            SET status='draft',version=version+1,updated_at=CASE WHEN version=? THEN ? ELSE NULL END
+            WHERE id=?`,
+      params: [input.expectedVersion, input.now, input.projectId],
+    }, {
+      sql: 'DELETE FROM category_cost_allocations WHERE project_id=?',
+      params: [input.projectId],
+    }];
+    for (const allocation of input.allocations) {
+      statements.push({
+        sql: `INSERT INTO category_cost_allocations (id,project_id,cost_line_id,reserve_category_id,amount_fen,created_at)
+              VALUES (?,?,?,?,?,?)`,
+        params: [allocation.id, input.projectId, allocation.costLineId, allocation.reserveCategoryId, allocation.amountFen, input.now],
+      });
+    }
+    statements.push({
+      sql: `INSERT INTO audit_events (id,actor_member_id,action,object_type,object_id,before_json,after_json,created_at)
+            VALUES (?,?,'project.category_allocations.replace','project',?,?,?,?)`,
       params: [input.auditId, input.actorId, input.projectId, JSON.stringify({ version: input.expectedVersion }), JSON.stringify(input.auditAfter), input.now],
     }, {
       sql: `INSERT INTO idempotency_records (idempotency_key,actor_member_id,operation,request_hash,response_json,status_code,created_at)

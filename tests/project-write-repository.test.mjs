@@ -36,6 +36,10 @@ function createRepository() {
       unit_price_scaled INTEGER,amount_fen INTEGER,price_source TEXT,price_date TEXT,tax_inclusive INTEGER,
       created_at TEXT NOT NULL,updated_at TEXT NOT NULL
     );
+    CREATE TABLE category_cost_allocations (
+      id TEXT PRIMARY KEY,project_id TEXT NOT NULL,cost_line_id TEXT NOT NULL,reserve_category_id TEXT NOT NULL,
+      amount_fen INTEGER NOT NULL,created_at TEXT NOT NULL
+    );
     INSERT INTO demand_materials VALUES ('dm-1',100),('dm-2',50);
   `);
   return { sqlite, repository: new SqlProjectWriteRepository(new SqliteDatabaseAdapter(sqlite)) };
@@ -169,5 +173,31 @@ test('cost replacement keeps old costs on stale version and swaps them atomicall
     ]);
     assert.equal(sqlite.prepare("SELECT version FROM projects WHERE id='p1'").get().version, 4);
     assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM audit_events WHERE id='cost-audit'").get().count, 1);
+  } finally { sqlite.close(); }
+});
+
+test('category allocation replacement is atomic on stale versions and success', async () => {
+  const { sqlite, repository } = createRepository();
+  try {
+    sqlite.prepare("INSERT INTO projects VALUES ('p1','Reserve',2026,NULL,'draft',0,NULL,4,'admin-1','t','t')").run();
+    sqlite.prepare("INSERT INTO category_cost_allocations VALUES ('old-ca','p1','cost-1','rc-old',100,'t')").run();
+    const base = {
+      projectId: 'p1', expectedVersion: 4, now: '2026-09-14T02:25:00.000Z',
+      allocations: [{ id: 'new-ca', costLineId: 'cost-1', reserveCategoryId: 'rc-1', amountFen: 100 }],
+      actorId: 'admin-1', auditId: 'ca-audit', idempotencyKey: 'ca-idem', operation: 'projects.category-allocations:p1', requestHash: 'ca-hash', responseJson: '{"ok":true}',
+      auditAfter: { version: 5, knownAmountFen: 100, classifiedAmountFen: 100, unclassifiedAmountFen: 0, categories: [] },
+    };
+    await assert.rejects(repository.replaceCategoryAllocations({ ...base, expectedVersion: 3 }));
+    assert.deepEqual(sqlite.prepare("SELECT id,reserve_category_id FROM category_cost_allocations WHERE project_id='p1'").all().map((row) => ({ ...row })), [
+      { id: 'old-ca', reserve_category_id: 'rc-old' },
+    ]);
+    assert.equal(sqlite.prepare("SELECT version FROM projects WHERE id='p1'").get().version, 4);
+
+    await repository.replaceCategoryAllocations(base);
+    assert.deepEqual(sqlite.prepare("SELECT id,reserve_category_id FROM category_cost_allocations WHERE project_id='p1'").all().map((row) => ({ ...row })), [
+      { id: 'new-ca', reserve_category_id: 'rc-1' },
+    ]);
+    assert.equal(sqlite.prepare("SELECT version FROM projects WHERE id='p1'").get().version, 5);
+    assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM audit_events WHERE id='ca-audit'").get().count, 1);
   } finally { sqlite.close(); }
 });

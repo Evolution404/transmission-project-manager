@@ -85,14 +85,6 @@ interface CostLineRow {
   suggested_reserve_category_id: string | null;
 }
 
-interface CategoryRow {
-  id: string;
-  category_key: string;
-  label: string;
-  enabled: number;
-  version: number;
-}
-
 function apiError(code: string, message: string, details?: unknown): ApiError {
   return { ok: false, error: { code, message, ...(details === undefined ? {} : { details }) } };
 }
@@ -911,18 +903,18 @@ p3App.put('/projects/:id/category-allocations', requireRoles('admin', 'project_m
   const hash = await requestHash(requestBody);
   const replay = await replayIdempotentResponse(c, key, operation, hash);
   if (replay) return replay;
-  const project = await findProject(c.env.DB, c.req.param('id'));
+  const { database } = createCloudflarePersistence(c.env);
+  const queryRepository = new SqlProjectQueryRepository(database);
+  const writeRepository = new SqlProjectWriteRepository(database);
+  const project = await queryRepository.getProjectDetail(c.req.param('id'));
   if (!project) return c.json(apiError('PROJECT_NOT_FOUND', '储备项目不存在'), 404);
   if (!canAccessProject(c, project.id)) return c.json(apiError('SCOPE_FORBIDDEN', '当前成员无权修改该项目'), 403);
   if (project.version !== expectedVersion) return c.json(apiError('VERSION_CONFLICT', '项目已被修改，请刷新后重试'), 409);
 
-  const costs = await loadCostRows(c.env.DB, project.id);
-  const knownCosts = new Map(costs.filter((line) => line.amount_fen !== null).map((line) => [line.id, line.amount_fen as number]));
+  const costs = project.costLines;
+  const knownCosts = new Map(costs.filter((line) => line.amountFen !== null).map((line) => [line.id, line.amountFen as number]));
   const allCosts = new Map(costs.map((line) => [line.id, line]));
-  const categoriesResult = await c.env.DB.prepare(
-    `SELECT id,category_key,label,enabled,version FROM reserve_categories WHERE enabled=1`,
-  ).all<CategoryRow>();
-  const categories = new Map((categoriesResult.results ?? []).map((row) => [row.id, row]));
+  const categories = new Map((await queryRepository.listReserveCategories()).filter((row) => row.enabled).map((row) => [row.id, row]));
   const seenPairs = new Set<string>();
   const sums = new Map<string, number>();
   const normalized: ReplaceCategoryAllocationsRequest['allocations'] = [];
@@ -936,7 +928,7 @@ p3App.put('/projects/:id/category-allocations', requireRoles('admin', 'project_m
     if (!costLineId || !reserveCategoryId || amountFen === null || seenPairs.has(pair)) return c.json(apiError('INVALID_CATEGORY_ALLOCATIONS', '分类分摊存在无效或重复明细'), 422);
     const cost = allCosts.get(costLineId);
     if (!cost) return c.json(apiError('COST_LINE_NOT_FOUND', '费用明细不属于该项目'), 422);
-    if (cost.amount_fen === null) return c.json(apiError('COST_LINE_UNKNOWN_AMOUNT', '未知金额费用不能参与分类金额分摊'), 422);
+    if (cost.amountFen === null) return c.json(apiError('COST_LINE_UNKNOWN_AMOUNT', '未知金额费用不能参与分类金额分摊'), 422);
     if (!categories.has(reserveCategoryId)) return c.json(apiError('RESERVE_CATEGORY_NOT_FOUND', '储备大类不存在或已停用'), 422);
     seenPairs.add(pair);
     sums.set(costLineId, (sums.get(costLineId) ?? 0) + amountFen);
@@ -956,7 +948,7 @@ p3App.put('/projects/:id/category-allocations', requireRoles('admin', 'project_m
   for (const item of normalized) categoryTotals.set(item.reserveCategoryId, (categoryTotals.get(item.reserveCategoryId) ?? 0) + item.amountFen);
   const categorySummaryItems: ProjectCategorySummary[] = [...categoryTotals].map(([categoryId, amountFen]) => {
     const row = categories.get(categoryId)!;
-    return { reserveCategoryId: categoryId, key: row.category_key, label: row.label, amountFen };
+    return { reserveCategoryId: categoryId, key: row.key, label: row.label, amountFen };
   }).sort((a, b) => a.label.localeCompare(b.label, 'zh-CN'));
   const knownAmountFen = [...knownCosts.values()].reduce((sum, amount) => sum + amount, 0);
   const classifiedAmountFen = normalized.reduce((sum, item) => sum + item.amountFen, 0);
@@ -973,26 +965,29 @@ p3App.put('/projects/:id/category-allocations', requireRoles('admin', 'project_m
       categories: categorySummaryItems,
     },
   };
-  const statements: D1PreparedStatement[] = [
-    projectVersionGuard(c.env.DB, project.id, expectedVersion, now, 'draft'),
-    c.env.DB.prepare('DELETE FROM category_cost_allocations WHERE project_id=?').bind(project.id),
-  ];
-  for (const item of normalized) {
-    statements.push(c.env.DB.prepare(
-      `INSERT INTO category_cost_allocations (id,project_id,cost_line_id,reserve_category_id,amount_fen,created_at)
-       VALUES (?,?,?,?,?,?)`,
-    ).bind(crypto.randomUUID(), project.id, item.costLineId, item.reserveCategoryId, item.amountFen, now));
-  }
-  statements.push(
-    auditStatement(c.env.DB, actor.id, 'project.category_allocations.replace', 'project', project.id, { version: expectedVersion }, response.data, now),
-    idempotencyStatement(c.env.DB, key, actor.id, operation, hash, response, 200, now),
-  );
   try {
-    await c.env.DB.batch(statements);
+    await writeRepository.replaceCategoryAllocations({
+      projectId: project.id,
+      expectedVersion,
+      now,
+      allocations: normalized.map((item) => ({
+        id: crypto.randomUUID(),
+        costLineId: item.costLineId,
+        reserveCategoryId: item.reserveCategoryId,
+        amountFen: item.amountFen,
+      })),
+      actorId: actor.id,
+      auditId: crypto.randomUUID(),
+      idempotencyKey: key,
+      operation,
+      requestHash: hash,
+      responseJson: JSON.stringify(response),
+      auditAfter: response.data,
+    });
   } catch {
     const replayAfterRace = await replayIdempotentResponse(c, key, operation, hash);
     if (replayAfterRace) return replayAfterRace;
-    const current = await findProject(c.env.DB, project.id);
+    const current = await writeRepository.findProject(project.id);
     if (current && current.version !== expectedVersion) return c.json(apiError('VERSION_CONFLICT', '项目已被并发修改，请刷新后重试'), 409);
     return c.json(apiError('CATEGORY_ALLOCATION_CONFLICT', '分类分摊更新发生冲突，请刷新后重试'), 409);
   }
