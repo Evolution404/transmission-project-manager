@@ -1,6 +1,6 @@
 # 实施计划与验收清单
 
-版本：2026-09-14。长期业务事实见 `BUSINESS_BASELINE.md`，本文件只维护当前阶段状态、已完成能力和下一步，不再保存每个历史阶段的完整施工日志。业务阶段与后端可移植化施工状态分开记录，避免把“业务 P4 已完成”误解为“P4 portability 已完成”。
+版本：2026-09-14。长期业务事实见 `BUSINESS_BASELINE.md`。本文件维护当前阶段状态、已完成能力和下一步；详细云端接手状态见 `AI_HANDOFF.md`。
 
 ## 1. 阶段总览
 
@@ -14,26 +14,10 @@
 | P4 | 框架、协议、预算版本、预算发生与实际费用 | 已完成 |
 | P5 | 一次项目级出库、多执行任务、供应/实施/结算三线、四状态反馈 | 已完成 |
 | P6 | 月报、分析、预警、年度事项、通知 outbox、D1→R2 逻辑备份 | 已完成 |
-| 基础台账重构 | 电压等级 → 线路 → 杆塔 → 需求位置对象化 | 已完成并通过本地/合成门禁 |
-| P7 | 真实业务数据、真实 Cloudflare/D1/R2/通知/网络、恢复和运维移交 | 未完成，需真实环境验收 |
-
-### 后端可移植化施工线
-
-当前施工分支：`refactor/backend-runtime-portability-20260913`。
-
-| 模块 | 状态 |
-|---|---|
-| Portable ports + D1/R2 + SQLite/Filesystem adapters | 已完成 |
-| Auth / Session / Credential / Member admin | 已完成 |
-| P5 附件内容与元数据 | 已完成 |
-| P9 基础台账与结构化需求 | 已完成 |
-| P2 导入/需求 | 已完成；`p2.ts` 0 直接 D1 |
-| P3 项目储备 | 已完成；`p3.ts` 0 直接 D1，已有静态防回退门禁 |
-| P4 财务 | 已完成；`p4.ts` 0 直接 D1，查询/写入/预算/流水/汇总均经 portable repository，并有静态防回退门禁 |
-| P5/P8 执行业务 | 已完成；P5 历史兼容链路与 P8 最终主链路均经 portable repository，`p5.ts` / `p8.ts` 0 直接 D1 |
-| P6 analysis / notification / backup | 已完成；`p6.ts` 0 直接 D1/R2，并有静态防回退门禁 |
-| 顶层 Hono app 持久化注入 | 已完成；业务/认证层只接收 `RuntimeBindings.PERSISTENCE`，Cloudflare adapter 仅在 Worker `index.ts` 组装 |
-| Node + SQLite + Filesystem 应用级 E2E / 迁移演练 | 已完成；真实 Hono app、文件型 SQLite、Filesystem、重启持久化及 P7-era→0012 升级均自动验证 |
+| 基础台账重构 | 电压等级 → 线路 → 杆塔 → 需求位置对象化 | 已完成 |
+| 后端可移植化 | Cloudflare D1/R2 + Node SQLite/Filesystem 双运行时 | 已完成并通过 PR #1 合入 `main` |
+| 云端发布流水线 | GitHub Actions → Cloudflare 受控发布、D1 migration 分离 | PR #2 施工/验收中 |
+| P7 | 真实业务数据、真实 Cloudflare/D1/R2/网络、恢复和运维移交 | 未完成，必须真实环境验收 |
 
 ## 2. 当前业务主路径
 
@@ -64,87 +48,123 @@
 - 支持管理员创建/停用成员、角色、业务范围、重置密码；最后一个启用管理员受保护。
 - 生产接口只信任系统会话，前端隐藏按钮不能替代后端授权。
 
-### 需求与导入
-
-- 需求是抽象事项，可无物资，也可带多条物资子明细。
-- 手工新增和标准 `.xlsx`/`.csv` 导入同时存在。
-- Excel 多行可归并为一个抽象需求并保留全部来源行。
-- chunk/validate/publish 使用版本守卫和幂等，失败不留下半批正式数据。
-- 完整文件解析在浏览器 Web Worker，服务端只接收小分片。
-
-### 基础台账与位置对象化
+### 需求、基础台账与导入
 
 - `VoltageLevel 1:N TransmissionLine 1:N TransmissionTower` 已落地。
-- 电压等级后台统一维护，正式业务禁止自由文本电压成为事实。
-- 杆塔号为字符串，`sort_index` 独立表达真实顺序。
-- `/master-data`：桌面三级 master-detail；手机逐级导航。
+- 需求是抽象事项，可无物资，也可带多条物资子明细。
+- 手工新增和标准 `.xlsx`/`.csv` 导入同时存在。
 - 手工需求使用电压 → 线路 → 位置类型 → 杆塔级联。
-- Excel 发布前必须解析到已有且启用的台账对象；未知/停用对象阻断发布，禁止自动建线路/杆塔。
-- 引用保护采用保守规则：线路已有需求后，其杆塔身份/顺序/删除整体冻结；对象可停用用于历史显示。
-- 迁移 `0009`–`0012` 已冻结，只能追加后续 migration。
+- Excel 多行可归并为一个抽象需求并保留全部来源行。
+- Excel 发布前必须解析到已有且启用的台账对象；未知/停用对象阻断发布。
+- 完整文件解析在浏览器 Web Worker，服务端只接收小分片。
+- migration `0009`–`0012` 已冻结，只能追加后续 migration。
 
-### 项目储备与执行
+### 项目储备、执行与资金
 
 - 项目需求来源与项目物资分开建模；项目物资可持续修订并保留历史。
 - 储备项目允许 0 条物资先建立。
 - 项目只做一次项目级出库；出库后可创建多个执行任务。
 - 任务物资供应、实施、结算分别使用独立版本推进。
-- 供应累计满足 `到货 <= 发货 <= 上报 <= 任务需求`。
 - 实施和结算允许任意先后，四状态由任务范围事实回投需求。
-
-### 资金、分析、提醒与备份
-
 - 框架、协议、预算、预算发生、实际费用、结算分别保存；预算确认不会自动产生预算发生。
 - 金额使用整数分，数量使用定点整数；缺价格不等于零价。
-- 分析规则/月计划/月报快照版本化；储备分析只统计未项目级出库项目的当前项目物资。
+
+### 分析、提醒与备份
+
+- 分析规则/月计划/月报快照版本化。
 - 服务端定时任务处理预警、通知 outbox 和备份；关闭浏览器不影响。
-- D1→R2 备份按表分片、带 SHA-256/manifest；测试已恢复到独立 D1 对账，`auth_sessions` 不恢复。
+- D1→R2 逻辑备份按表分片、带 SHA-256/manifest；`auth_sessions` 不恢复。
+
+### 后端可移植化
+
+以下能力已完成并于 2026-09-14 通过 PR #1 合入 `main`：
+
+- `DatabasePort` / `TransactionPort`、`ObjectStorePort`、Queue/Scheduler/Clock ports；
+- Cloudflare D1/R2 adapters；
+- Node SQLite/Filesystem adapters；
+- `RuntimeBindings.PERSISTENCE` 作为 Hono 应用持久化注入边界；
+- P2/P3/P4/P5/P6/P8/P9 与认证层不再直接绑定 D1/R2；
+- Node + SQLite + Filesystem 真实 Hono app E2E；
+- P7-era → 0012 migration rehearsal；
+- 静态 repository guards 防止重新耦合 Cloudflare persistence。
+
+PR #1 合并前 GitHub CI 全绿；合并后的 `main@7a49b44275038dddd3803cb17de9b7e4fe06ba33` CI #31 再次全绿。
 
 ## 4. 当前自动门禁
 
 所有新功能和缺陷修复继续执行 test-first，详见 `TESTING.md`。
 
-后端可移植化完整收口后最近一次 `npm run check`：
+当前 `npm run check` 覆盖：
 
-- Cloudflare TypeScript：PASS。
-- Node 完整 app TypeScript：PASS。
-- Web production build：PASS。
-- Worker `wrangler deploy --dry-run`：PASS。
-- Vue/Vitest：64/64 PASS。
-- Node：254/254 PASS。
+- Cloudflare TypeScript；
+- Node 完整 app TypeScript；
+- Web production build；
+- Worker `wrangler deploy --dry-run`；
+- Vue/Vitest；
+- Node tests；
+- Node SQLite + Filesystem application E2E；
+- P7-era → 0012 migration rehearsal；
+- repository/static guards。
 
-额外持续门禁：
+云端发布施工新增 `tests/p7-preflight.test.mjs` 门禁，约束：
 
-- P2/P3/P4/P5/P6/P8/P9 与顶层 `app.ts` 禁止重新直接访问 D1/R2；
-- HTTP 业务/认证模块禁止直接 import Cloudflare persistence factory；
-- `tests/node-runtime-app.test.mjs` 使用真实 Hono app + SQLite 文件 + Filesystem，并验证重启后会话/数据仍可用；
-- `tests/node-runtime-migration-rehearsal.test.mjs` 验证 P7-era SQLite 顺序升级 0008–0012 后可直接由 Node app 启动并读取历史事实；
-- Node runtime typecheck 必须覆盖真实 `app.ts`，同时排除 Cloudflare infrastructure adapter。
+- 普通 CI / preflight 不得携带 Cloudflare 凭据或产生远端变更；
+- 生产代码发布只能手工触发、绑定 `production` Environment、精确 `main` SHA；
+- D1 migration 必须使用独立手工 workflow，禁止混入 Worker deploy；
+- production config 必须保持 `workers_dev=false`、`preview_urls=false`、固定同域 API 路由、唯一 D1/R2 绑定；
+- production config 使用 Wrangler `secrets.required` 长期要求 `AUTH_CREDENTIAL_PEPPER`。
 
-这些只证明本地/合成门禁，不等于生产验收。
+自动门禁只证明代码和流程定义，不等于生产环境已经配置或通过 P7。
 
 ## 5. 当前施工与发布边界
 
-当前施工分支：`refactor/backend-runtime-portability-20260913`。本轮代码可移植化已完成并通过完整自动门禁，当前为 merge-ready；`main` 尚未合并，远端 D1 尚未升级，Cloudflare 尚未正式发布。
+后端可移植化施工已经结束并合入 `main`。当前施工分支改为：
 
-从下一位 AI 开始，开发和发布流程改为 **GitHub / Cloudflare 云上优先**：禁止把用户 Mac 或任何本地电脑作为必需开发、测试或发布环境。代码修改使用 GitHub 远端分支/PR，自动门禁使用 GitHub Actions，Cloudflare 发布通过 GitHub Actions / Cloudflare Git 集成完成。若现有发布 workflow 不完整，应先在 GitHub 完善受保护的发布流程和 Environment/Secrets，而不是回到本地 Wrangler。
+`ops/cloudflare-github-deploy-20260914`
 
-当前 merge-ready 状态、云上接手顺序与下一位 AI 的约束维护在 `AI_HANDOFF.md`。历史本地施工环境只用于 Git 历史追溯，不再作为后续工作依赖。
+当前 PR：#2 `ops: add protected Cloudflare production workflows`。
+
+PR #2 建立：
+
+- `.github/workflows/production-deploy.yml`：代码发布，发布后真实 `/api/health` 校验；
+- `.github/workflows/production-migrate.yml`：独立 D1 migration，并要求人工再次确认目标 D1 UUID；
+- `PRODUCTION_DEPLOY_ENABLED` 与 `PRODUCTION_MIGRATION_ENABLED` 两个独立开关；
+- `PRODUCTION_CONFIG_JSON` 非敏感配置变量；
+- `CLOUDFLARE_API_TOKEN` GitHub Environment Secret；
+- 永久 Worker Secret `AUTH_CREDENTIAL_PEPPER` 缺失时 deploy fail-closed。
+
+一次性 `BOOTSTRAP_TOKEN` 不属于永久 `secrets.required`；首次管理员初始化完成后应删除。
+
+当前 GitHub 连接没有 Administration / Environment / Secrets 管理权限，也没有 workflow dispatch 写能力；`main` 当前 branch endpoint 显示 `protected: false`。因此以下事项**尚未完成且不得伪造已完成状态**：
+
+- GitHub `production` Environment 的真实创建/审批策略/分支限制；
+- `PRODUCTION_CONFIG_JSON`、两个 enable variable 的真实配置；
+- `CLOUDFLARE_API_TOKEN` 的真实配置；
+- Cloudflare 永久/一次性 Worker Secrets 的真实配置；
+- 正式 D1/R2/Worker 资源核对或创建；
+- 正式 migration；
+- 正式 Worker 发布。
+
+后续不得退回 Mac、本地 shell、本地 Wrangler 或本地测试环境解决上述事项。
 
 ## 6. P7 剩余工作
 
-P7 不再新增另一套核心业务模型，重点是证明当前系统在真实环境可正式使用：
+P7 重点是证明当前系统在真实环境可正式使用：
 
-- 使用系统标准模板填报代表性真实需求数据并抽样核对；
-- 核对真实框架、执行协议、预算、年度事项、储备类别等资料；
-- 建立/确认正式 Cloudflare Workers、D1、R2、域名和 Secrets；
+- 等 PR #2 GitHub CI 全绿后合入 `main`，并确认合并后 CI；
+- 在 GitHub 实际配置受保护 `production` Environment、Variables、account-owned Cloudflare token；
+- 核对/建立正式 Worker、D1、R2、自定义域名和 Worker Secrets；
+- 对正式 D1 做备份/停写/目标 ID 核对后，通过独立 workflow 执行 migration；
+- 通过 `Production release` 发布准确 `main` SHA；
+- 真实 `/api/health`、登录、首管理员/bootstrap 关闭、核心业务、附件/R2、Cron、静态资源、自定义域名验收；
 - 测真实 Workers CPU/配额、D1/R2 用量和目标地区网络体验；
-- 验证真实通知供应商和域名；
+- 核对 Cloudflare Logs / Workers Analytics / 错误率和 CPU 指标；
+- 使用系统标准模板填报代表性真实需求并抽样核对；
 - 执行正式停写备份、隔离恢复、对账、回退演练；
-- 完成 Cloudflare/GitHub 运维移交和 CI/CD 服务身份演练，并确保正常开发、测试、合并、发布全流程不依赖用户 Mac；
-- 保留每项真实验收证据，不能用本地合成结果替代。
+- 完成 Cloudflare/GitHub 运维移交和 CI/CD 服务身份演练；
+- 为每项真实验收保留证据，不能用本地或合成结果代替。
 
-详细矩阵见 `P7_ACCEPTANCE.md`，操作步骤见 `P7_RUNBOOK.md`。
+详细矩阵见 `P7_ACCEPTANCE.md`，操作步骤见 `P7_RUNBOOK.md`，最新云端状态见 `AI_HANDOFF.md`。
 
 ## 7. 完成标准
 
@@ -152,8 +172,10 @@ P7 不再新增另一套核心业务模型，重点是证明当前系统在真�
 
 1. 先有自动测试约束目标行为；
 2. 相关定向测试通过；
-3. 完整 `npm run check` 或等价全覆盖门禁通过；
+3. GitHub Actions 完整 `npm run check` 或等价全覆盖门禁通过；
 4. migration/共享类型/文档同步；
-5. `git diff --check` 干净，无密钥/真实业务数据进入 Git；
-6. 提交并推送到当前测试分支；
-7. 后续默认通过 GitHub PR/CI 和受保护的 Cloudflare 发布 workflow 执行；不得把本地电脑作为必要前置条件。
+5. 无密钥/真实业务数据进入 Git；
+6. 提交到远端施工分支并通过 PR；
+7. 合并后 `main` CI 通过；
+8. 需要发布时通过受保护的 GitHub/Cloudflare 云端 workflow 完成，不得把本地电脑作为必要前置条件；
+9. 生产相关结论必须有真实云端证据。
