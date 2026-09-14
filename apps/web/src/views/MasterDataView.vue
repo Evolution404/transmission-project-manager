@@ -4,7 +4,7 @@ import {
   NAlert, NButton, NCard, NDataTable, NEmpty, NForm, NFormItem, NInput, NModal, NSelect,
   NSpace, NSwitch, NTag, useMessage,
 } from 'naive-ui';
-import type { CurrentUser, TransmissionLineSummary, TransmissionTowerSummary, VoltageLevelSummary, VoltageSystemType } from '@tpm/shared';
+import { normalizeTowerNo, type CurrentUser, type TransmissionLineSummary, type TransmissionTowerSummary, type VoltageLevelSummary, type VoltageSystemType } from '@tpm/shared';
 import { parseApiResponse } from '../api/response';
 
 const props = defineProps<{ currentUser: CurrentUser }>();
@@ -35,7 +35,7 @@ const saving = ref(false);
 
 const voltageForm = ref({ displayName: '', code: '', systemType: 'AC' as VoltageSystemType, nominalKv: '', sortOrder: '', enabled: true });
 const lineForm = ref({ voltageLevelId: '', lineCode: '', lineName: '', enabled: true });
-const towerForm = ref({ lineId: '', towerNo: '', sortIndex: '', towerType: '', enabled: true });
+const towerForm = ref({ lineId: '', towerNo: '', sortRank: '', towerType: '', enabled: true });
 
 const voltageOptions = computed(() => voltageLevels.value.map((item) => ({ label: item.displayName + (item.enabled ? '' : '（停用）'), value: item.id, disabled: !item.enabled && item.id !== editingLine.value?.voltageLevelId })));
 const systemOptions = [{ label: '交流', value: 'AC' }, { label: '直流', value: 'DC' }];
@@ -102,11 +102,12 @@ async function saveBulk() {
   const items = [];
   for (const row of rows) {
     const cells = row.split('\t').map((v) => v.trim());
-    const [towerNo, order, towerType = '', state = '启用'] = cells;
-    const sortIndex = Number(order);
-    if (cells.length < 2 || cells.length > 4 || !towerNo || !Number.isInteger(sortIndex) || sortIndex <= 0 || !['启用', '停用', '1', '0', ''].includes(state)) { message.warning('请按“杆塔号、顺序、类型、启用/停用”粘贴，每列用制表符分隔'); return; }
+    const [towerNoInput, order, towerType = '', state = '启用'] = cells;
+    const towerNo = normalizeTowerNo(towerNoInput ?? '');
+    const sortRank = Number(order);
+    if (cells.length < 2 || cells.length > 4 || !towerNo || !Number.isInteger(sortRank) || sortRank <= 0 || !['启用', '停用', '1', '0', ''].includes(state)) { message.warning('杆塔编号必须为 10、10-1、#010 等可识别格式，并填写有效顺序'); return; }
     const existing = towers.value.find((t) => t.towerNo.toLowerCase() === towerNo.toLowerCase());
-    items.push({ ...(existing ? { id: existing.id, expectedVersion: existing.version } : {}), towerNo, sortIndex, towerType: towerType || null, enabled: !['停用', '0'].includes(state) });
+    items.push({ ...(existing ? { id: existing.id, expectedVersion: existing.version } : {}), towerNo, sortRank, towerType: towerType || null, enabled: !['停用', '0'].includes(state) });
   }
   saving.value = true;
   try {
@@ -164,16 +165,17 @@ async function saveLine() {
 
 function openTower(item?: TransmissionTowerSummary) {
   editingTower.value = item ?? null;
-  towerForm.value = item ? { lineId: item.lineId, towerNo: item.towerNo, sortIndex: String(item.sortIndex), towerType: item.towerType ?? '', enabled: item.enabled } : { lineId: selectedLineId.value ?? '', towerNo: '', sortIndex: '', towerType: '', enabled: true };
+  towerForm.value = item ? { lineId: item.lineId, towerNo: item.towerNo, sortRank: String(item.sortRank), towerType: item.towerType ?? '', enabled: item.enabled } : { lineId: selectedLineId.value ?? '', towerNo: '', sortRank: '', towerType: '', enabled: true };
   towerModal.value = true;
 }
 
 async function saveTower() {
-  const sortIndex = Number(towerForm.value.sortIndex);
-  if (!towerForm.value.lineId || !towerForm.value.towerNo.trim() || !Number.isInteger(sortIndex) || sortIndex <= 0) { message.warning('请选择线路并填写杆塔号和有效顺序'); return; }
+  const towerNo = normalizeTowerNo(towerForm.value.towerNo);
+  const sortRank = Number(towerForm.value.sortRank);
+  if (!towerForm.value.lineId || !towerNo || !Number.isInteger(sortRank) || sortRank <= 0) { message.warning('请选择线路，并填写如 10、10-1、#010 的有效杆塔编号'); return; }
   saving.value = true;
   try {
-    const body = { ...towerForm.value, towerNo: towerForm.value.towerNo.trim(), sortIndex, towerType: towerForm.value.towerType.trim() || null };
+    const body = { ...towerForm.value, towerNo, sortRank, towerType: towerForm.value.towerType.trim() || null };
     if (editingTower.value) await apiRequest(`/api/master/towers/${editingTower.value.id}`, jsonInit('PATCH', { ...body, expectedVersion: editingTower.value.version }));
     else await apiRequest('/api/master/towers', jsonInit('POST', body));
     towerModal.value = false; await loadAll(); message.success('杆塔已保存');
@@ -182,7 +184,7 @@ async function saveTower() {
 }
 
 const towerColumns = computed(() => [
-  { title: '顺序', key: 'sortIndex', width: 64 }, { title: '杆塔号', key: 'towerNo' },
+  { title: '顺序', key: 'sortRank', width: 64 }, { title: '杆塔号', key: 'towerNo' },
   { title: '类型', key: 'towerType', render: (row: TransmissionTowerSummary) => row.towerType ?? '—' },
   { title: '状态', key: 'enabled', render: (row: TransmissionTowerSummary) => row.enabled ? '启用' : '停用' },
   ...(isAdmin.value ? [{ title: '操作', key: 'actions', width: 112, render: (row: TransmissionTowerSummary) => h(NSpace, { size: 4 }, { default: () => [
@@ -236,7 +238,7 @@ onMounted(loadAll);
     <n-modal v-model:show="bulkModal" preset="card" title="批量维护杆塔" style="width:min(680px,calc(100vw - 32px))">
       <p>当前线路：{{ selectedLine?.lineName }}。从表格粘贴，每行依次为杆塔号、线路顺序、类型（可空）、启用/停用（可空）。每次最多 20 行。</p>
       <p>已加载的同号杆塔将更新，其余新增。未粘贴的杆塔保留。{{ towerCursor ? '还有未加载杆塔，请先加载对应记录再修改。' : '' }}</p>
-      <n-button size="small" @click="bulkText=towers.slice(0,20).map(t => [t.towerNo,t.sortIndex,t.towerType ?? '',t.enabled ? '启用' : '停用'].join('\t')).join('\n')">填入已加载杆塔（最多 20 行）</n-button>
+      <n-button size="small" @click="bulkText=towers.slice(0,20).map(t => [t.towerNo,t.sortRank,t.towerType ?? '',t.enabled ? '启用' : '停用'].join('\t')).join('\n')">填入已加载杆塔（最多 20 行）</n-button>
       <n-input v-model:value="bulkText" data-test="bulk-tower-text" type="textarea" :rows="10" placeholder="请粘贴杆塔号、顺序、类型、状态，例如从表格复制的四列数据" />
       <template #footer><div class="actions"><n-button @click="bulkModal=false">取消</n-button><n-button data-test="save-bulk-towers" type="primary" :loading="saving" @click="saveBulk">保存本批</n-button></div></template>
     </n-modal>
@@ -252,7 +254,7 @@ onMounted(loadAll);
     </n-modal>
 
     <n-modal v-model:show="towerModal" preset="card" title="杆塔" style="width:min(560px,calc(100vw - 32px))">
-      <n-form label-placement="top"><n-form-item label="所属线路"><span>{{ selectedLine?.lineName }}</span></n-form-item><n-form-item label="杆塔号"><n-input v-model:value="towerForm.towerNo" placeholder="例如：#20" /></n-form-item><n-form-item label="线路顺序"><n-input v-model:value="towerForm.sortIndex" placeholder="例如：20" /></n-form-item><n-form-item label="杆塔类型（可选）"><n-input v-model:value="towerForm.towerType" placeholder="例如：角钢塔、钢管杆" /></n-form-item><n-form-item label="启用"><n-switch v-model:value="towerForm.enabled" /></n-form-item></n-form>
+      <n-form label-placement="top"><n-form-item label="所属线路"><span>{{ selectedLine?.lineName }}</span></n-form-item><n-form-item label="杆塔号"><n-input v-model:value="towerForm.towerNo" placeholder="例如：10-1" /></n-form-item><n-form-item label="线路顺序"><n-input v-model:value="towerForm.sortRank" placeholder="请输入排序值" /></n-form-item><n-form-item label="杆塔类型（可选）"><n-input v-model:value="towerForm.towerType" placeholder="例如：角钢塔、钢管杆" /></n-form-item><n-form-item label="启用"><n-switch v-model:value="towerForm.enabled" /></n-form-item></n-form>
       <template #footer><div class="actions"><n-button @click="towerModal=false">取消</n-button><n-button type="primary" :loading="saving" @click="saveTower">保存</n-button></div></template>
     </n-modal>
   </div>

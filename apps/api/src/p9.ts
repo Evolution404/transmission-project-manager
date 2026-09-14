@@ -9,6 +9,7 @@ import type {
   TransmissionTowerSummary,
   VoltageLevelSummary,
 } from '@tpm/shared';
+import { normalizeTowerNo } from '@tpm/shared';
 import { requireRoles, type AppEnv } from './auth.ts';
 import type { CommitSingleMasterDataInput, MasterDataWriteKind } from './ports/master-data-write-repository';
 import { SqlDemandRepository } from './repositories/sql-demand-repository.ts';
@@ -109,11 +110,11 @@ p9App.get('/master/towers', async (c) => {
   if (page.cursor && !Number.isSafeInteger(Number(page.cursor[0]))) return c.json(apiError('INVALID_CURSOR', '分页游标无效'), 400);
   const rows = await masterDataRepository(c).listTowers({
     lineId,
-    cursor: page.cursor ? { sortIndex: Number(page.cursor[0]), id: page.cursor[1] } : null,
+    cursor: page.cursor ? { sortRank: Number(page.cursor[0]), id: page.cursor[1] } : null,
     limit: page.limit,
   });
   const selected = rows.slice(0,page.limit), last = selected.at(-1);
-  return c.json({ ok: true as const, data: { items: selected, nextCursor: rows.length > page.limit && last ? pageCursor(String(last.sortIndex),last.id) : null } });
+  return c.json({ ok: true as const, data: { items: selected, nextCursor: rows.length > page.limit && last ? pageCursor(String(last.sortRank),last.id) : null } });
 });
 
 // The idempotency record is the first statement in the same atomic persistence batch.
@@ -174,7 +175,7 @@ async function prepareSingleMaster(c: Context<AppEnv>, kind: MasterKind, body: R
     const requireEnabledParent = !before || before.voltage_level_id !== voltageLevelId || enabled;
     if (!parent || (requireEnabledParent && !parent.enabled)) return c.json(apiError('VOLTAGE_LEVEL_NOT_FOUND', constraintMessages.VOLTAGE_LEVEL_NOT_FOUND!), 422);
     const towerCount = before ? await repository.countLineTowers(id) : 0;
-    const data: TransmissionLineSummary = { id, voltageLevelId, voltageLevelName: parent.displayName, lineName, lineCode, towerCount, enabled, version };
+    const data: TransmissionLineSummary = { id, voltageLevelId, voltageLevelName: parent.displayName, lineName, lineCode, towerCount, enabled, version, towerOrderVersion: before ? Number(before.tower_order_version) : 1 };
     return {
       values: { voltageLevelId, lineName, lineCode, enabled },
       data,
@@ -182,14 +183,14 @@ async function prepareSingleMaster(c: Context<AppEnv>, kind: MasterKind, body: R
       audit: { action: `master.${kind}.${before ? 'update' : 'create'}`, objectType: masterTables[kind], before, after: data },
     };
   }
-  const lineId = cleanText(body.lineId, 120), towerNo = cleanText(body.towerNo, 80), sortIndex = intValue(body.sortIndex, 1, 1000000), towerType = cleanText(body.towerType, 80) || null;
-  if (!lineId || !towerNo || sortIndex === null) return c.json(apiError('INVALID_TOWER', '线路、杆塔号和有效顺序不能为空'), 422);
+  const lineId = cleanText(body.lineId, 120), towerNo = normalizeTowerNo(cleanText(body.towerNo, 80)), sortRank = intValue(body.sortRank, 1, Number.MAX_SAFE_INTEGER), towerType = cleanText(body.towerType, 80) || null;
+  if (!lineId || !towerNo || sortRank === null) return c.json(apiError('INVALID_TOWER', '线路、规范杆塔号和有效顺序不能为空'), 422);
   const parent = await repository.findTowerParent(lineId);
   const requireEnabledParent = !before || before.line_id !== lineId || enabled;
   if (!parent || (requireEnabledParent && (!parent.enabled || !parent.voltageEnabled))) return c.json(apiError('LINE_NOT_FOUND', constraintMessages.LINE_NOT_FOUND!), 422);
-  const data: TransmissionTowerSummary = { id, lineId, lineName: parent.lineName, towerNo, sortIndex, towerType, enabled, version };
+  const data: TransmissionTowerSummary = { id, lineId, lineName: parent.lineName, towerNo, sortRank, towerType, enabled, version };
   return {
-    values: { lineId, towerNo, sortIndex, towerType, enabled },
+    values: { lineId, towerNo, sortRank, towerType, enabled },
     data,
     requireEnabledParent,
     audit: { action: `master.${kind}.${before ? 'update' : 'create'}`, objectType: masterTables[kind], before, after: data },
@@ -275,17 +276,17 @@ p9App.post('/master/lines/:id/towers/batch', requireRoles('admin'), async (c) =>
     if (item.id !== undefined && (!before || before.line_id !== lineId)) return c.json(apiError('INVALID_TOWER_RELATION', '批量维护只能修改当前线路的杆塔'), 422);
     const version = before ? intValue(item.expectedVersion, 1, Number.MAX_SAFE_INTEGER) : null;
     if (before && (version === null || before.version !== version)) return c.json(apiError('VERSION_CONFLICT', '杆塔版本已变化，请刷新后重试'), 409);
-    const towerNo = cleanText(item.towerNo, 80), sortIndex = intValue(item.sortIndex, 1, 1000000), towerType = cleanText(item.towerType, 80) || null, enabled = boolValue(item.enabled);
-    if (!towerNo || sortIndex === null || enabled === null) return c.json(apiError('INVALID_TOWER', '线路、杆塔号和有效顺序不能为空'), 422);
+    const towerNo = normalizeTowerNo(cleanText(item.towerNo, 80)), sortRank = intValue(item.sortRank, 1, Number.MAX_SAFE_INTEGER), towerType = cleanText(item.towerType, 80) || null, enabled = boolValue(item.enabled);
+    if (!towerNo || sortRank === null || enabled === null) return c.json(apiError('INVALID_TOWER', '线路、规范杆塔号和有效顺序不能为空'), 422);
     const nextVersion = before ? Number(before.version) + 1 : 1;
-    const data: TransmissionTowerSummary = { id, lineId, lineName: parent.lineName, towerNo, sortIndex, towerType, enabled, version: nextVersion };
+    const data: TransmissionTowerSummary = { id, lineId, lineName: parent.lineName, towerNo, sortRank, towerType, enabled, version: nextVersion };
     if (before) beforeRows.push(before);
     items.push(data);
     writeItems.push({
       id,
       expectedVersion: before ? version : null,
-      vacateUniqueKeys: Boolean(before && (sortIndex !== before.sort_index || towerNo !== before.tower_no)),
-      values: { lineId, towerNo, sortIndex, towerType, enabled },
+      vacateUniqueKeys: Boolean(before && sortRank !== before.sort_rank),
+      values: { lineId, towerNo, sortRank, towerType, enabled },
     });
   }
   const response = { ok: true as const, data: { items } }, now = new Date().toISOString();
@@ -338,7 +339,7 @@ p9App.post('/demands', requireRoles('admin', 'project_manager'), async (c) => {
     const map = new Map(rows.map((row) => [row.id, row]));
     const start = map.get(startTowerId), end = type === 'tower_range' ? map.get(endTowerId ?? '') : start;
     if (!start || !end || !start.enabled || !end.enabled || start.lineId !== lineId || end.lineId !== lineId) return c.json(apiError('INVALID_TOWER_RELATION', '杆塔不存在、已停用或不属于所选线路'), 422);
-    if (type === 'tower_range' && start.sortIndex >= end.sortIndex) return c.json(apiError('INVALID_TOWER_RANGE', '区段必须选择两个不同杆塔，起始顺序必须早于终止'), 422);
+    if (type === 'tower_range' && start.sortRank >= end.sortRank) return c.json(apiError('INVALID_TOWER_RANGE', '区段必须选择两个不同杆塔，起始顺序必须早于终止'), 422);
     normalizedStart = start.id;
     normalizedEnd = end.id;
     sectionText = type === 'tower' ? start.towerNo : `${start.towerNo}—${end.towerNo}`;

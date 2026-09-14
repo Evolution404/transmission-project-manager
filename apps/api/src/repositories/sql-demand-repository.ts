@@ -14,7 +14,7 @@ type LineRow = {
 type TowerRow = {
   id: string;
   tower_no: string;
-  sort_index: number;
+  sort_rank: number;
   line_id: string;
   enabled: number;
 };
@@ -58,16 +58,16 @@ export class SqlDemandRepository implements DemandRepository {
   async findTowers(ids: readonly string[]): Promise<readonly ResolvedDemandTower[]> {
     if (!ids.length) return [];
     const rows = await this.database.all<TowerRow>({
-      sql: `SELECT id,tower_no,sort_index,line_id,enabled
+      sql: `SELECT id,tower_no,sort_rank,line_id,enabled
             FROM transmission_towers
             WHERE id IN (${ids.map(() => '?').join(',')})
-            ORDER BY sort_index,id`,
+            ORDER BY sort_rank,id`,
       params: [...ids],
     });
     return rows.map((row) => ({
       id: row.id,
       towerNo: row.tower_no,
-      sortIndex: row.sort_index,
+      sortRank: row.sort_rank,
       lineId: row.line_id,
       enabled: row.enabled === 1,
     }));
@@ -105,7 +105,7 @@ export class SqlDemandRepository implements DemandRepository {
               WHERE l.id=? AND v.id=? AND l.enabled=1 AND v.enabled=1 AND v.display_name=? AND l.line_name=?
               AND ((? IS NULL AND ? IS NULL AND ?='全线') OR EXISTS (
                 SELECT 1 FROM transmission_towers s JOIN transmission_towers e ON e.line_id=s.line_id
-                WHERE s.id=? AND e.id=? AND s.line_id=l.id AND s.enabled=1 AND e.enabled=1 AND s.sort_index<=e.sort_index
+                WHERE s.id=? AND e.id=? AND s.line_id=l.id AND s.enabled=1 AND e.enabled=1 AND s.sort_rank<=e.sort_rank
                 AND (CASE WHEN s.id=e.id THEN s.tower_no ELSE s.tower_no || '—' || e.tower_no END)=?
               ))
             ) THEN 1 ELSE 0 END)

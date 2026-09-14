@@ -19,8 +19,8 @@ vi.mock('naive-ui', async () => {
 import MasterDataView from '../src/views/MasterDataView.vue';
 const admin = { id: 'a', role: 'admin' } as CurrentUser;
 const voltages = [{ id: 'v1', displayName: '110kV', enabled: true, version: 1 }, { id: 'v2', displayName: '220kV', enabled: true, version: 1 }];
-const line = { id: 'l1', voltageLevelId: 'v1', voltageLevelName: '110kV', lineName: '甲线', enabled: true, version: 1 };
-const tower = { id: 't1', lineId: 'l1', lineName: '甲线', towerNo: '#20+1', sortIndex: 2, towerType: null, enabled: true, version: 3 };
+const line = { id: 'l1', voltageLevelId: 'v1', voltageLevelName: '110kV', lineName: '甲线', enabled: true, version: 1, towerOrderVersion: 1 };
+const tower = { id: 't1', lineId: 'l1', lineName: '甲线', towerNo: '#020-1', sortRank: 2000, towerType: null, enabled: true, version: 3 };
 const ok = (items: unknown[]) => new Response(JSON.stringify({ ok: true, data: { items } }), { headers: { 'Content-Type': 'application/json' } });
 beforeEach(() => vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
   if (init?.method) return ok([]);
@@ -38,10 +38,10 @@ it('drills into parents, loads only selected children and clears stale tower sel
   await w.get('[data-test="select-voltage-v1"]').trigger('click'); await flushPromises();
   expect(w.get('[data-test="master-columns"]').attributes('data-step')).toBe('lines');
   await w.get('[data-test="select-line-l1"]').trigger('click'); await flushPromises();
-  expect(w.text()).toContain('#20+1');
+  expect(w.text()).toContain('#020-1');
   expect(w.get('[data-test="master-columns"]').attributes('data-step')).toBe('towers');
   await w.get('[data-test="select-voltage-v2"]').trigger('click'); await flushPromises();
-  expect(w.text()).not.toContain('#20+1');
+  expect(w.text()).not.toContain('#020-1');
   await w.get('[data-test="back-voltage"]').trigger('click');
   expect(w.get('[data-test="master-columns"]').attributes('data-step')).toBe('voltage');
 });
@@ -50,19 +50,19 @@ it('bulk paste creates new towers and submits current versions for existing towe
   const w = mount(MasterDataView, { props: { currentUser: admin } }); await flushPromises();
   await w.get('[data-test="select-line-l1"]').trigger('click'); await flushPromises();
   await w.get('[data-test="open-bulk-towers"]').trigger('click');
-  await w.get('[data-test="bulk-tower-text"]').setValue('#20+1\t2\t角钢塔\t停用\nG1\t3\t\t启用');
+  await w.get('[data-test="bulk-tower-text"]').setValue('20-1\t2000\t角钢塔\t停用\n21\t3000\t\t启用');
   await w.get('[data-test="save-bulk-towers"]').trigger('click'); await flushPromises();
   const call = vi.mocked(fetch).mock.calls.find(([u, init]) => String(u).endsWith('/towers/batch') && init?.method === 'POST');
   expect(call).toBeTruthy();
   expect(JSON.parse(String(call![1]!.body))).toEqual({ items: [
-    { id: 't1', expectedVersion: 3, towerNo: '#20+1', sortIndex: 2, towerType: '角钢塔', enabled: false },
-    { towerNo: 'G1', sortIndex: 3, towerType: null, enabled: true },
+    { id: 't1', expectedVersion: 3, towerNo: '#020-1', sortRank: 2000, towerType: '角钢塔', enabled: false },
+    { towerNo: '#021', sortRank: 3000, towerType: null, enabled: true },
   ] });
 });
 
 it('readonly users navigate the same hierarchy without mutation controls', async () => {
   const w = mount(MasterDataView, { props: { currentUser: { ...admin, role: 'readonly' } } }); await flushPromises();
   await w.get('[data-test="select-line-l1"]').trigger('click'); await flushPromises();
-  expect(w.text()).toContain('#20+1');
+  expect(w.text()).toContain('#020-1');
   for (const label of ['新增电压等级', '新增线路', '新增杆塔', '编辑', '删除', '批量维护']) expect(w.text()).not.toContain(label);
 });

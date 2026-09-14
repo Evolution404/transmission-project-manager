@@ -139,8 +139,8 @@ describe('DemandsView P2 behavior', () => {
       if (url === '/api/master/voltage-levels') return ok({ items: [{ id: 'vl-ac-220', code: 'AC_220KV', displayName: '220kV', systemType: 'AC', nominalKv: 220, sortOrder: 30, enabled: true, version: 1 }] });
       if (url.startsWith('/api/master/lines?voltageLevelId=')) return ok({ items: [{ id: 'line-1', voltageLevelId: 'vl-ac-220', voltageLevelName: '220kV', lineCode: null, lineName: '手工需求线', enabled: true, version: 1, towerCount: 2 }] });
       if (url.startsWith('/api/master/towers?lineId=')) return ok({ items: [
-        { id: 'tower-1', lineId: 'line-1', lineName: '手工需求线', towerNo: '#1', sortIndex: 1, towerType: null, enabled: true, version: 1 },
-        { id: 'tower-2', lineId: 'line-1', lineName: '手工需求线', towerNo: '#2', sortIndex: 2, towerType: null, enabled: true, version: 1 },
+        { id: 'tower-1', lineId: 'line-1', lineName: '手工需求线', towerNo: '#001', sortRank: 1000, towerType: null, enabled: true, version: 1 },
+        { id: 'tower-2', lineId: 'line-1', lineName: '手工需求线', towerNo: '#002', sortRank: 2000, towerType: null, enabled: true, version: 1 },
       ] });
       if (url === '/api/materials' && init?.method === 'POST') return new Response(JSON.stringify({ ok: true, data: { id: 'm1', code: null, name: '线夹', model: 'JX-01', unit: '套', enabled: true, version: 1 } }), { status: 201, headers: { 'Content-Type': 'application/json' } });
       if (url.startsWith('/api/materials')) return ok({ items: [] });

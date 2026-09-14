@@ -48,12 +48,12 @@ before(async () => {
   }));
   assert.equal(line.response.status, 201);
   globalThis.__finalLineId = line.body.data.id;
-  for (const [towerNo, sortIndex] of [['#10', 10], ['#20', 20]]) {
-    const tower = await jsonRequest('/api/master/towers', mutation('POST', `master-tower-${sortIndex}`, {
-      lineId: line.body.data.id, towerNo, sortIndex, towerType: '测试塔', enabled: true,
+  for (const [towerNo, sortRank] of [['10', 1000], ['20', 2000]]) {
+    const tower = await jsonRequest('/api/master/towers', mutation('POST', `master-tower-${sortRank}`, {
+      lineId: line.body.data.id, towerNo, sortRank, towerType: '测试塔', enabled: true,
     }));
     assert.equal(tower.response.status, 201);
-    globalThis[`__finalTower${sortIndex}`] = tower.body.data.id;
+    globalThis[`__finalTower${sortRank}`] = tower.body.data.id;
   }
 }, { timeout: 80000 });
 
@@ -69,8 +69,8 @@ test('abstract demand can exist without materials and later receive multiple chi
     voltageLevelId: 'vl-ac-220',
     lineId: globalThis.__finalLineId,
     locationType: 'tower_range',
-    startTowerId: globalThis.__finalTower10,
-    endTowerId: globalThis.__finalTower20,
+    startTowerId: globalThis.__finalTower1000,
+    endTowerId: globalThis.__finalTower2000,
     category: '防鸟治理',
     owner: '测试负责人',
     materials: [],

@@ -47,7 +47,7 @@ function gridGuard(input: CommitImportPublishInput['rows'][number]): DatabaseSta
             WHERE l.id=? AND v.id=? AND l.enabled=1 AND v.enabled=1 AND v.display_name=? AND l.line_name=?
             AND ((? IS NULL AND ? IS NULL AND ?='全线') OR EXISTS (
               SELECT 1 FROM transmission_towers s JOIN transmission_towers e ON e.line_id=s.line_id
-              WHERE s.id=? AND e.id=? AND s.line_id=l.id AND s.enabled=1 AND e.enabled=1 AND s.sort_index<=e.sort_index
+              WHERE s.id=? AND e.id=? AND s.line_id=l.id AND s.enabled=1 AND e.enabled=1 AND s.sort_rank<=e.sort_rank
               AND (CASE WHEN s.id=e.id THEN s.tower_no ELSE s.tower_no || '—' || e.tower_no END)=?
             ))
           ) THEN 1 ELSE 0 END)

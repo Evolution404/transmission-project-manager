@@ -26,6 +26,7 @@ type LineRow = {
   line_name: string;
   enabled: number;
   version: number;
+  tower_order_version: number;
   tower_count: number;
 };
 
@@ -34,7 +35,7 @@ type TowerRow = {
   line_id: string;
   line_name: string;
   tower_no: string;
-  sort_index: number;
+  sort_rank: number;
   tower_type: string | null;
   enabled: number;
   version: number;
@@ -62,6 +63,7 @@ function lineSummary(row: LineRow): TransmissionLineSummary {
     lineName: row.line_name,
     enabled: Boolean(row.enabled),
     version: row.version,
+    towerOrderVersion: row.tower_order_version,
     towerCount: Number(row.tower_count),
   };
 }
@@ -72,7 +74,7 @@ function towerSummary(row: TowerRow): TransmissionTowerSummary {
     lineId: row.line_id,
     lineName: row.line_name,
     towerNo: row.tower_no,
-    sortIndex: row.sort_index,
+    sortRank: row.sort_rank,
     towerType: row.tower_type,
     enabled: Boolean(row.enabled),
     version: row.version,
@@ -106,7 +108,7 @@ export class SqlMasterDataRepository implements MasterDataRepository {
       params.push(input.cursor.lineName, input.cursor.lineName, input.cursor.id);
     }
     const rows = await this.database.all<LineRow>({
-      sql: `SELECT l.id,l.voltage_level_id,l.line_code,l.line_name,l.enabled,l.version,
+      sql: `SELECT l.id,l.voltage_level_id,l.line_code,l.line_name,l.enabled,l.version,l.tower_order_version,
                    v.display_name AS voltage_level_name,
                    (SELECT COUNT(*) FROM transmission_towers t WHERE t.line_id=l.id) AS tower_count
             FROM transmission_lines l
@@ -118,7 +120,7 @@ export class SqlMasterDataRepository implements MasterDataRepository {
     return rows.map(lineSummary);
   }
 
-  async listTowers(input: { lineId: string | null; cursor: { sortIndex: number; id: string } | null; limit: number }): Promise<readonly TransmissionTowerSummary[]> {
+  async listTowers(input: { lineId: string | null; cursor: { sortRank: number; id: string } | null; limit: number }): Promise<readonly TransmissionTowerSummary[]> {
     const conditions: string[] = [];
     const params: DatabaseValue[] = [];
     if (input.lineId) {
@@ -126,15 +128,15 @@ export class SqlMasterDataRepository implements MasterDataRepository {
       params.push(input.lineId);
     }
     if (input.cursor) {
-      conditions.push('(t.sort_index>? OR (t.sort_index=? AND t.id>?))');
-      params.push(input.cursor.sortIndex, input.cursor.sortIndex, input.cursor.id);
+      conditions.push('(t.sort_rank>? OR (t.sort_rank=? AND t.id>?))');
+      params.push(input.cursor.sortRank, input.cursor.sortRank, input.cursor.id);
     }
     const rows = await this.database.all<TowerRow>({
-      sql: `SELECT t.id,t.line_id,t.tower_no,t.sort_index,t.tower_type,t.enabled,t.version,l.line_name
+      sql: `SELECT t.id,t.line_id,t.tower_no,t.sort_rank,t.tower_type,t.enabled,t.version,l.line_name
             FROM transmission_towers t
             JOIN transmission_lines l ON l.id=t.line_id
             ${conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''}
-            ORDER BY t.sort_index,t.id LIMIT ?`,
+            ORDER BY t.sort_rank,t.id LIMIT ?`,
       params: [...params, input.limit + 1],
     });
     return rows.map(towerSummary);

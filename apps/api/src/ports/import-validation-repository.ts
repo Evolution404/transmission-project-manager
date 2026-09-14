@@ -17,7 +17,7 @@ export interface ImportValidationRow {
 
 export interface ImportVoltageLookup { id: string; displayName: string }
 export interface ImportLineLookup { id: string; lineName: string }
-export interface ImportTowerLookup { id: string; towerNo: string; sortIndex: number }
+export interface ImportTowerLookup { id: string; towerNo: string; sortRank: number }
 export interface ImportMaterialLookup { id: string; model: string; unit: string }
 
 export interface CommitValidationRow {

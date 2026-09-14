@@ -38,7 +38,7 @@ export interface TransmissionLineWriteValues {
 export interface TransmissionTowerWriteValues {
   lineId: string;
   towerNo: string;
-  sortIndex: number;
+  sortRank: number;
   towerType: string | null;
   enabled: boolean;
 }

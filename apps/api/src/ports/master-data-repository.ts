@@ -6,7 +6,7 @@ export interface LinePageCursor {
 }
 
 export interface TowerPageCursor {
-  sortIndex: number;
+  sortRank: number;
   id: string;
 }
 

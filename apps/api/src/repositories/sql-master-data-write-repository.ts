@@ -147,13 +147,13 @@ export class SqlMasterDataWriteRepository implements MasterDataWriteRepository {
         sql: `INSERT INTO master_data_guards (id,tower_reference)
               VALUES (1,CASE WHEN NOT EXISTS (
                 SELECT 1 FROM transmission_towers
-                WHERE id=? AND (line_id IS NOT ? OR sort_index IS NOT ? OR tower_no IS NOT ?)
+                WHERE id=? AND line_id IS NOT ?
               ) OR NOT EXISTS (
                 SELECT 1 FROM demands
                 WHERE line_id IN ((SELECT line_id FROM transmission_towers WHERE id=?), ?)
               ) THEN 1 ELSE 0 END)
               ON CONFLICT(id) DO UPDATE SET tower_reference=excluded.tower_reference`,
-        params: [input.id, values.lineId, values.sortIndex, values.towerNo, input.id, values.lineId],
+        params: [input.id, values.lineId, input.id, values.lineId],
       });
     }
     if (input.kind === 'tower' && input.action === 'delete') {
@@ -216,23 +216,12 @@ export class SqlMasterDataWriteRepository implements MasterDataWriteRepository {
       params: [input.lineId],
     }];
 
-    if (input.items.some((item) => item.vacateUniqueKeys)) {
-      statements.push({
-        sql: `INSERT INTO master_data_guards (id,tower_reference)
-              VALUES (1,CASE WHEN NOT EXISTS (
-                SELECT 1 FROM demands WHERE line_id=?
-              ) THEN 1 ELSE 0 END)
-              ON CONFLICT(id) DO UPDATE SET tower_reference=excluded.tower_reference`,
-        params: [input.lineId],
-      });
-    }
-
     let temporaryIndex = 0;
     for (const item of input.items) {
       if (!item.vacateUniqueKeys) continue;
       statements.push({
-        sql: 'UPDATE transmission_towers SET sort_index=?,tower_no=? WHERE id=?',
-        params: [-1000001 - temporaryIndex, `temporary:${item.id}`, item.id],
+        sql: 'UPDATE transmission_towers SET sort_rank=? WHERE id=?',
+        params: [-1000001 - temporaryIndex, item.id],
       });
       temporaryIndex += 1;
     }
@@ -294,9 +283,9 @@ export class SqlMasterDataWriteRepository implements MasterDataWriteRepository {
       if (input.action === 'create') {
         return {
           sql: `INSERT INTO transmission_lines
-                (id,voltage_level_id,line_name,line_code,enabled,version,created_at,updated_at)
-                VALUES (?,?,?,?,?,1,?,?)`,
-          params: [input.id, ...params, input.mutation.now, input.mutation.now],
+                (id,voltage_level_id,line_name,line_code,name_valid_from,enabled,version,tower_order_version,created_at,updated_at)
+                VALUES (?,?,?,?,?, ?,1,1,?,?)`,
+          params: [input.id, values.voltageLevelId, values.lineName, values.lineCode, input.mutation.now, values.enabled ? 1 : 0, input.mutation.now, input.mutation.now],
         };
       }
       return {
@@ -307,17 +296,17 @@ export class SqlMasterDataWriteRepository implements MasterDataWriteRepository {
 
     const values = input.values as TransmissionTowerWriteValues | undefined;
     if (!values) throw new Error('MASTER_DATA_VALUES_REQUIRED');
-    const params: DatabaseValue[] = [values.lineId, values.towerNo, values.sortIndex, values.towerType, values.enabled ? 1 : 0];
+    const params: DatabaseValue[] = [values.lineId, values.towerNo, values.sortRank, values.towerType, values.enabled ? 1 : 0];
     if (input.action === 'create') {
       return {
         sql: `INSERT INTO transmission_towers
-              (id,line_id,tower_no,sort_index,tower_type,enabled,version,created_at,updated_at)
-              VALUES (?,?,?,?,?,?,1,?,?)`,
-        params: [input.id, ...params, input.mutation.now, input.mutation.now],
+              (id,line_id,tower_no,number_valid_from,sort_rank,tower_type,enabled,version,created_at,updated_at)
+              VALUES (?,?,?,?,?,?,?,1,?,?)`,
+        params: [input.id, values.lineId, values.towerNo, input.mutation.now, values.sortRank, values.towerType, values.enabled ? 1 : 0, input.mutation.now, input.mutation.now],
       };
     }
     return {
-      sql: `UPDATE transmission_towers SET line_id=?,tower_no=?,sort_index=?,tower_type=?,enabled=?,version=version+1,updated_at=? WHERE id=?`,
+      sql: `UPDATE transmission_towers SET line_id=?,tower_no=?,sort_rank=?,tower_type=?,enabled=?,version=version+1,updated_at=? WHERE id=?`,
       params: [...params, input.mutation.now, input.id],
     };
   }

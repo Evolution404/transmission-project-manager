@@ -72,15 +72,15 @@ before(async () => {
   lineB = lineBResult.body.data;
 
   for (const input of [
-    { lineId: lineA.id, towerNo: '#10', sortIndex: 10 },
-    { lineId: lineA.id, towerNo: '#20', sortIndex: 20 },
-    { lineId: lineB.id, towerNo: '#10', sortIndex: 10 },
+    { lineId: lineA.id, towerNo: '10', sortRank: 1000 },
+    { lineId: lineA.id, towerNo: '20', sortRank: 2000 },
+    { lineId: lineB.id, towerNo: '10', sortRank: 1000 },
   ]) {
     const result = await jsonRequest('/api/master/towers', mutation('POST', idem('tower'), {
       ...input, towerType: '测试塔', enabled: true,
     }));
     assert.equal(result.response.status, 201);
-    if (input.lineId === lineA.id && input.sortIndex === 10) towerA10 = result.body.data;
+    if (input.lineId === lineA.id && input.sortRank === 1000) towerA10 = result.body.data;
     else if (input.lineId === lineA.id) towerA20 = result.body.data;
     else towerB10 = result.body.data;
   }
@@ -120,7 +120,7 @@ test('master data writes are admin-only and idempotent', async () => {
   assert.equal(duplicateCode.response.status, 409);
 });
 
-test('line and tower parent relations reject disabled parents and duplicate siblings', async () => {
+test('line and tower parent relations reject disabled parents while names/numbers may repeat', async () => {
   const disabledVoltage = await jsonRequest('/api/master/voltage-levels', mutation('POST', idem('disabled-voltage'), {
     displayName: '750kV', code: 'AC_750KV', systemType: 'AC', nominalKv: 750, sortOrder: 45, enabled: true,
   }));
@@ -141,7 +141,8 @@ test('line and tower parent relations reject disabled parents and duplicate sibl
   const duplicateLine = await jsonRequest('/api/master/lines', mutation('POST', idem('duplicate-line'), {
     voltageLevelId: 'vl-ac-220', lineName: '主数据甲线', lineCode: 'MASTER-A-DUP', enabled: true,
   }));
-  assert.equal(duplicateLine.response.status, 409);
+  assert.equal(duplicateLine.response.status, 201);
+  assert.notEqual(duplicateLine.body.data.id, lineA.id);
 
   const invalidLineMove = await jsonRequest(`/api/master/lines/${lineB.id}`, mutation('PATCH', idem('line-disabled-parent'), {
     voltageLevelId: disabledVoltage.body.data.id,
@@ -166,18 +167,19 @@ test('line and tower parent relations reject disabled parents and duplicate sibl
   assert.equal(disabledLinePatch.response.status, 200);
 
   const towerOnDisabledLine = await jsonRequest('/api/master/towers', mutation('POST', idem('tower-disabled-line'), {
-    lineId: disabledLine.body.data.id, towerNo: '#1', sortIndex: 1, towerType: null, enabled: true,
+    lineId: disabledLine.body.data.id, towerNo: '1', sortRank: 1000, towerType: null, enabled: true,
   }));
   assert.equal(towerOnDisabledLine.response.status, 422);
   assert.equal(towerOnDisabledLine.body.error.code, 'LINE_NOT_FOUND');
 
   const duplicateTowerNo = await jsonRequest('/api/master/towers', mutation('POST', idem('duplicate-tower-no'), {
-    lineId: lineA.id, towerNo: '#10', sortIndex: 11, towerType: null, enabled: true,
+    lineId: lineA.id, towerNo: '10', sortRank: 1500, towerType: null, enabled: true,
   }));
-  assert.equal(duplicateTowerNo.response.status, 409);
+  assert.equal(duplicateTowerNo.response.status, 201);
+  assert.equal(duplicateTowerNo.body.data.towerNo, '#010');
 
   const duplicateTowerOrder = await jsonRequest('/api/master/towers', mutation('POST', idem('duplicate-tower-order'), {
-    lineId: lineA.id, towerNo: '#11', sortIndex: 10, towerType: null, enabled: true,
+    lineId: lineA.id, towerNo: '11', sortRank: 1000, towerType: null, enabled: true,
   }));
   assert.equal(duplicateTowerOrder.response.status, 409);
 });
@@ -249,7 +251,7 @@ test('structured demand rejects cross-line, reversed and disabled tower location
   const disabled = await jsonRequest(`/api/master/towers/${towerB10.id}`, mutation('PATCH', idem('disable-tower'), {
     lineId: lineB.id,
     towerNo: towerB10.towerNo,
-    sortIndex: towerB10.sortIndex,
+    sortRank: towerB10.sortRank,
     towerType: towerB10.towerType,
     enabled: false,
     expectedVersion: towerB10.version,
@@ -265,7 +267,7 @@ test('structured demand rejects cross-line, reversed and disabled tower location
   assert.equal(disabledTower.body.error.code, 'INVALID_TOWER_RELATION');
 });
 
-test('referenced line hierarchy and tower order cannot be mutated underneath demand locations', async () => {
+test('referenced line cannot change parent and referenced tower cannot move to another line', async () => {
   const moveLine = await jsonRequest(`/api/master/lines/${lineA.id}`, mutation('PATCH', idem('move-referenced-line'), {
     voltageLevelId: 'vl-ac-110',
     lineName: lineA.lineName,
@@ -276,21 +278,10 @@ test('referenced line hierarchy and tower order cannot be mutated underneath dem
   assert.equal(moveLine.response.status, 422);
   assert.equal(moveLine.body.error.code, 'LINE_LOCATION_IN_USE');
 
-  const reorderTower = await jsonRequest(`/api/master/towers/${towerA10.id}`, mutation('PATCH', idem('reorder-referenced-tower'), {
-    lineId: lineA.id,
-    towerNo: towerA10.towerNo,
-    sortIndex: 15,
-    towerType: towerA10.towerType,
-    enabled: true,
-    expectedVersion: towerA10.version,
-  }));
-  assert.equal(reorderTower.response.status, 422);
-  assert.equal(reorderTower.body.error.code, 'TOWER_LOCATION_IN_USE');
-
   const moveTower = await jsonRequest(`/api/master/towers/${towerA20.id}`, mutation('PATCH', idem('move-referenced-tower'), {
     lineId: lineB.id,
     towerNo: towerA20.towerNo,
-    sortIndex: 20,
+    sortRank: towerA20.sortRank,
     towerType: towerA20.towerType,
     enabled: true,
     expectedVersion: towerA20.version,
@@ -332,14 +323,14 @@ test('location shapes and material references are validated without silently dis
 test('bulk tower maintenance is atomic, versioned, replayable and admin-only', async () => {
   const created = await jsonRequest('/api/master/lines', mutation('POST', idem('bulk-line'), { voltageLevelId: 'vl-ac-110', lineName: '批量维护线' }));
   const path = `/api/master/lines/${created.body.data.id}/towers/batch`;
-  const input = { items: [{ towerNo: '#20+1', sortIndex: 1 }, { towerNo: 'G1', sortIndex: 2 }] };
+  const input = { items: [{ towerNo: '20-1', sortRank: 1000 }, { towerNo: '21', sortRank: 2000 }] };
   assert.equal((await jsonRequest(path, mutation('POST', idem('bulk-permission'), input), managerCookie)).response.status, 403);
   const key = idem('bulk');
   const first = await jsonRequest(path, mutation('POST', key, input));
   assert.equal(first.response.status, 201);
   assert.deepEqual((await jsonRequest(path, mutation('POST', key, input))).body, first.body);
   const a = first.body.data.items[0];
-  const invalid = { items: [{ ...a, towerType: '修改', expectedVersion: a.version }, { towerNo: 'G2', sortIndex: 2 }] };
+  const invalid = { items: [{ ...a, towerType: '修改', expectedVersion: a.version }, { towerNo: '22', sortRank: 2000 }] };
   assert.equal((await jsonRequest(path, mutation('POST', idem('bulk-rollback'), invalid))).response.status, 409);
   const list = await jsonRequest(`/api/master/towers?lineId=${created.body.data.id}`);
   assert.equal(list.body.data.items.length, 2);
@@ -354,7 +345,7 @@ test('unused objects can be deleted; referenced objects and parents with childre
     const result = await jsonRequest(`/api/master/${kind}/${item.id}`, mutation('DELETE', idem('referenced-delete'), { expectedVersion: item.version }));
     assert.equal(result.response.status, 422);
   }
-  const made = await jsonRequest('/api/master/towers', mutation('POST', idem('delete-tower'), { lineId: lineB.id, towerNo: 'DELETE', sortIndex: 99 }));
+  const made = await jsonRequest('/api/master/towers', mutation('POST', idem('delete-tower'), { lineId: lineB.id, towerNo: '99', sortRank: 99000 }));
   assert.equal(made.response.status, 201);
   const path = `/api/master/towers/${made.body.data.id}`, body = { expectedVersion: 1 }, key = idem('delete');
   assert.equal((await jsonRequest(path, mutation('DELETE', idem('delete-denied'), body), managerCookie)).response.status, 403);
@@ -364,19 +355,20 @@ test('unused objects can be deleted; referenced objects and parents with childre
   assert.deepEqual((await jsonRequest(path, mutation('DELETE', key, body))).body, deleted.body);
 });
 
-test('interior towers on a referenced line cannot move or reorder, and disabled history remains readable', async () => {
-  const made = await jsonRequest('/api/master/towers', mutation('POST', idem('interior'), { lineId: lineA.id, towerNo: '#15', sortIndex: 15 }));
+test('referenced-line tower can change current order while deletion remains protected and history stays readable', async () => {
+  const made = await jsonRequest('/api/master/towers', mutation('POST', idem('interior'), { lineId: lineA.id, towerNo: '15', sortRank: 15000 }));
   assert.equal(made.response.status, 201);
   const item = made.body.data;
-  assert.equal((await jsonRequest(`/api/master/towers/${item.id}`, mutation('PATCH', idem('interior-move'), { ...item, expectedVersion: 1, sortIndex: 30 }))).response.status, 422);
-  assert.equal((await jsonRequest(`/api/master/towers/${item.id}`, mutation('DELETE', idem('interior-delete'), { expectedVersion: 1 }))).response.status, 422);
+  const reordered = await jsonRequest(`/api/master/towers/${item.id}`, mutation('PATCH', idem('interior-move'), { ...item, expectedVersion: 1, sortRank: 30000 }));
+  assert.equal(reordered.response.status, 200);
+  assert.equal((await jsonRequest(`/api/master/towers/${item.id}`, mutation('DELETE', idem('interior-delete'), { expectedVersion: reordered.body.data.version }))).response.status, 422);
   const disabled = await jsonRequest(`/api/master/lines/${lineA.id}`, mutation('PATCH', idem('history-disable'), { ...lineA, expectedVersion: 1, enabled: false }));
   assert.equal(disabled.response.status, 200);
   const history = await jsonRequest('/api/demands?query=MD-RANGE');
   assert.equal(history.body.data.items[0].lineId, lineA.id);
-  assert.equal(history.body.data.items[0].section, '#10—#20');
+  assert.equal(history.body.data.items[0].section, '#010—#020');
   assert.equal((await jsonRequest('/api/demands', mutation('POST', idem('new-disabled'), { sequenceNo: 'NEW', voltageLevelId: 'vl-ac-220', lineId: lineA.id, locationType: 'whole_line' }))).response.status, 422);
-  const disableChild = await jsonRequest(`/api/master/towers/${item.id}`, mutation('PATCH', idem('child-disable'), { ...item, expectedVersion: 1, enabled: false }));
+  const disableChild = await jsonRequest(`/api/master/towers/${item.id}`, mutation('PATCH', idem('child-disable'), { ...reordered.body.data, expectedVersion: reordered.body.data.version, enabled: false }));
   assert.equal(disableChild.response.status, 200, 'must be able to disable children of a disabled parent');
 });
 
@@ -406,9 +398,9 @@ test('master lists page within the selected parent without losing or repeating o
 test('unreferenced towers can exchange order atomically in a batch', async () => {
   const line = (await jsonRequest('/api/master/lines', mutation('POST', idem('swap-line'), { voltageLevelId: 'vl-ac-110', lineName: '交换顺序线' }))).body.data;
   const path = `/api/master/lines/${line.id}/towers/batch`;
-  const made = await jsonRequest(path, mutation('POST', idem('swap-seed'), { items: [{ towerNo: 'G1', sortIndex: 1 }, { towerNo: 'G2', sortIndex: 2 }] }));
-  const items = made.body.data.items.map((t) => ({ ...t, expectedVersion: t.version, sortIndex: t.sortIndex === 1 ? 2 : 1 }));
+  const made = await jsonRequest(path, mutation('POST', idem('swap-seed'), { items: [{ towerNo: '1', sortRank: 1000 }, { towerNo: '2', sortRank: 2000 }] }));
+  const items = made.body.data.items.map((t) => ({ ...t, expectedVersion: t.version, sortRank: t.sortRank === 1000 ? 2000 : 1000 }));
   const result = await jsonRequest(path, mutation('POST', idem('swap'), { items }));
   assert.equal(result.response.status, 201);
-  assert.deepEqual((await jsonRequest(`/api/master/towers?lineId=${line.id}`)).body.data.items.map((t) => t.towerNo), ['G2', 'G1']);
+  assert.deepEqual((await jsonRequest(`/api/master/towers?lineId=${line.id}`)).body.data.items.map((t) => t.towerNo), ['#002', '#001']);
 });

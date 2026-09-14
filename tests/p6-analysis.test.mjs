@@ -461,7 +461,7 @@ test('logical D1 backup is resumable in R2, integrity verified, and restorable i
       VALUES ('p6-restore-settlement-line','p6-restore-settlement','p6-reserve','p6-reserve-dm',100000,'${factTime}');
     `,
   });
-  executeLocalD1(stateDir, { command: `INSERT INTO transmission_lines VALUES ('backup-line','vl-ac-220',NULL,'备份线路',1,1,'2026-09-13','2026-09-13'); INSERT INTO transmission_towers VALUES ('backup-tower','backup-line','#20+1',20,NULL,0,1,'2026-09-13','2026-09-13'); UPDATE demands SET voltage_level_id='vl-ac-220',line_id='backup-line',location_type='tower',start_tower_id='backup-tower',end_tower_id='backup-tower' WHERE id='p6-reserve-demand';` });
+  executeLocalD1(stateDir, { command: `INSERT INTO transmission_lines(id,voltage_level_id,line_code,line_name,name_valid_from,enabled,version,tower_order_version,created_at,updated_at) VALUES ('backup-line','vl-ac-220',NULL,'备份线路','2026-09-13',1,1,1,'2026-09-13','2026-09-13'); INSERT INTO transmission_towers(id,line_id,tower_no,number_valid_from,sort_rank,tower_type,enabled,version,created_at,updated_at) VALUES ('backup-tower','backup-line','#020-1','2026-09-13',20000,NULL,0,1,'2026-09-13','2026-09-13'); UPDATE demands SET voltage_level_id='vl-ac-220',line_id='backup-line',location_type='tower',start_tower_id='backup-tower',end_tower_id='backup-tower' WHERE id='p6-reserve-demand';` });
   const sourceFacts = {
     project: rows("SELECT id,name,framework_id,reserve_version FROM projects WHERE id='p6-reserve';")[0],
     finance: rows("SELECT COALESCE(SUM(amount_fen),0) AS total FROM financial_entries WHERE framework_id='p6-fw';")[0],
@@ -520,7 +520,7 @@ test('logical D1 backup is resumable in R2, integrity verified, and restorable i
     assert.deepEqual(restoredRows("SELECT project_id,demand_material_id,completed_quantity_scaled,actual_used_quantity_scaled FROM implementation_lines WHERE id='p6-restore-impl-line';")[0], sourceFacts.implementation);
     assert.deepEqual(restoredRows("SELECT project_id,demand_material_id,quantity_scaled FROM settlement_coverage WHERE id='p6-restore-settlement-line';")[0], sourceFacts.settlement);
     assert.deepEqual(restoredRows("SELECT version,mode,threshold_basis_points FROM analysis_rules ORDER BY version DESC LIMIT 1;")[0], sourceFacts.rule);
-    assert.equal(restoredRows("SELECT tower_no FROM transmission_towers WHERE id='backup-tower';")[0].tower_no, '#20+1');
+    assert.equal(restoredRows("SELECT tower_no FROM transmission_towers WHERE id='backup-tower';")[0].tower_no, '#020-1');
     assert.equal(restoredRows("SELECT COUNT(*) AS count FROM voltage_levels;")[0].count, 8);
     assert.equal(restoredRows("SELECT COUNT(*) AS count FROM auth_sessions;")[0].count, 0, 'backup restore deliberately does not revive login sessions');
   } finally {

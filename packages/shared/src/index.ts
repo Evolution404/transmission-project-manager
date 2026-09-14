@@ -276,6 +276,29 @@ export interface MaterialSummary {
 export type VoltageSystemType = 'AC' | 'DC';
 export type DemandLocationType = 'whole_line' | 'tower' | 'tower_range';
 
+/**
+ * 将用户输入的杆塔编号转换为数据库标准形式。
+ *
+ * 允许明显的全角输入法差异，但不猜测业务语义。主号 1..999 补足三位，
+ * 主号 >=1000 保持自然位数；可选支号使用 `-正整数`，不补零。
+ */
+export function normalizeTowerNo(input: string): string | null {
+  const normalized = input
+    .trim()
+    .normalize('NFKC')
+    .replace(/^#/, '');
+  const match = /^(\d+)(?:-(\d+))?$/.exec(normalized);
+  if (!match) return null;
+
+  const main = Number(match[1]);
+  const branch = match[2] === undefined ? null : Number(match[2]);
+  if (!Number.isSafeInteger(main) || main <= 0) return null;
+  if (branch !== null && (!Number.isSafeInteger(branch) || branch <= 0)) return null;
+
+  const mainText = main <= 999 ? String(main).padStart(3, '0') : String(main);
+  return branch === null ? `#${mainText}` : `#${mainText}-${branch}`;
+}
+
 export interface VoltageLevelSummary {
   id: string;
   code: string;
@@ -295,6 +318,7 @@ export interface TransmissionLineSummary {
   lineName: string;
   enabled: boolean;
   version: number;
+  towerOrderVersion: number;
   towerCount?: number;
 }
 
@@ -303,7 +327,7 @@ export interface TransmissionTowerSummary {
   lineId: string;
   lineName: string;
   towerNo: string;
-  sortIndex: number;
+  sortRank: number;
   towerType: string | null;
   enabled: boolean;
   version: number;
