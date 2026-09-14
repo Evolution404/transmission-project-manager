@@ -6,19 +6,9 @@ P7 不新增另一套核心业务模型，目标是用真实业务资料、真�
 
 ## 1. P7 入口基线
 
-当前 P7 入口不再绑定历史功能分支。正式验收前应从当前施工分支选择一个**完整门禁全绿且工作区干净的明确 commit**作为验收基线，并记录 commit SHA。
+截至 2026-09-14，后端可移植化和云端生产 workflow 均已合入 `main@bc4774767c159068d59e16d6726444c5c1525dd6`，合并后 [CI #37](https://github.com/Evolution404/transmission-project-manager/actions/runs/34811093528) 完整门禁 PASS。此代码基线不构成生产验收通过。
 
-当前最近一次完整门禁基线是后端可移植化分支 `refactor/backend-runtime-portability-20260913` 上的 `e34bde3`：
-
-- 业务模型：基础台账 → 抽象需求 → 项目储备 → 一次项目级出库 → 多执行任务 → 供应/实施/结算三线并行 → 四状态回投需求；
-- 认证：系统自维护 username/password；浏览器 Argon2id；服务端 HMAC verifier + 7 天 HttpOnly session；
-- 本地/合成门禁：Node 210/210、Vue/Vitest 64/64 PASS；TypeScript、Web production build、Worker dry-run PASS；
-- D1→R2 逻辑备份已在测试中恢复至独立 D1 并对账；`auth_sessions` 不恢复；
-- Cloudflare Free 仍是部署基线，同时正在建立 Node + SQLite + Filesystem 第二运行时；
-- 当前 portability 后续提交尚在继续，因此进入 P7 前必须再次跑完整 `npm run check` 并以当时最新全绿 commit 替换这里的临时基线；
-- 本轮没有执行远端 D1 migration、`main` 合并或正式发布。
-
-这些结果只证明代码和本地/合成环境，不代表生产验收完成。生产实际版本、资源和配置必须在 P7 中重新读取/核对，不能根据旧文档状态猜测。
+GitHub `production` Environment 已创建且只允许 `main` 部署，发布/迁移开关均为 `false`；审核者、main 分支保护、真实生产配置和 CI Secret 尚未完成。Cloudflare Dashboard 在本次云端浏览器中持续安全验证，正式 Worker、D1、R2、Secret、migration 和生产健康尚未核实。P7-01～13 保持待真实证据确认。云端接续状态见 `AI_HANDOFF.md`。
 
 ## 2. 验收矩阵
 
