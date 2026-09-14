@@ -117,8 +117,9 @@ test('production migration is a separate manual workflow bound to exact main rev
   const source = readFileSync(new URL('../.github/workflows/production-migrate.yml', import.meta.url), 'utf8');
   assert.match(source, /workflow_dispatch:/);
   assert.match(source, /environment: production/);
-  assert.match(source, /PRODUCTION_DEPLOY_ENABLED/);
+  assert.match(source, /PRODUCTION_MIGRATION_ENABLED/);
   assert.match(source, /release_sha/);
+  assert.match(source, /database_id/);
   assert.match(source, /CLOUDFLARE_API_TOKEN/);
   assert.match(source, /d1 migrations list DB --remote/);
   assert.match(source, /d1 migrations apply DB --remote/);
