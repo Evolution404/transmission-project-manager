@@ -1,6 +1,6 @@
 import type { ImportBatchSummary, ImportFieldMapping } from '@tpm/shared';
 import type { DatabasePort } from '../ports/database.ts';
-import type { CreateImportBatchRecord, ImportRepository, RecordImportReuseInput } from '../ports/import-repository.ts';
+import type { CreateImportBatchRecord, ImportRepository, RecordImportReuseInput, UploadImportChunkInput } from '../ports/import-repository.ts';
 
 type ImportBatchRow = {
   id: string;
@@ -100,5 +100,36 @@ export class SqlImportRepository implements ImportRepository {
             VALUES (?,?,?,?,?,200,?)`,
       params: [input.idempotencyKey, input.actorId, input.operation, input.requestHash, input.responseJson, input.now],
     });
+  }
+
+  async uploadChunk(input: UploadImportChunkInput): Promise<void> {
+    const statements = [{
+      sql: `INSERT INTO idempotency_records
+            (idempotency_key,actor_member_id,operation,request_hash,response_json,status_code,created_at)
+            VALUES (
+              ?,
+              (SELECT ? WHERE EXISTS (
+                SELECT 1 FROM import_batches WHERE id=? AND version=? AND status='draft'
+              )),
+              ?,?,?,200,?
+            )`,
+      params: [input.idempotencyKey, input.actorId, input.batchId, input.expectedVersion, input.operation, input.requestHash, input.responseJson, input.now],
+    }];
+    for (const row of input.rows) {
+      statements.push({
+        sql: `INSERT INTO import_rows
+              (id,batch_id,chunk_index,sheet_name,source_row_number,source_key,raw_json,normalized_json,errors_json,warnings_json,row_status,published_demand_id,created_at,updated_at)
+              VALUES (?,?,?,?,?,?,?,NULL,'[]','[]','uploaded',NULL,?,?)`,
+        params: [row.id, input.batchId, input.chunkIndex, row.sheetName, row.rowNumber, row.sourceKey, row.rawJson, input.now, input.now],
+      });
+    }
+    statements.push({
+      sql: `UPDATE import_batches
+            SET uploaded_rows=uploaded_rows+?,version=version+1,updated_at=?
+            WHERE id=? AND version=? AND status='draft'`,
+      params: [input.rows.length, input.now, input.batchId, input.expectedVersion],
+    });
+    const result = await this.database.batch(statements);
+    if (result.at(-1)?.changes !== 1) throw new Error('IMPORT_VERSION_CONFLICT');
   }
 }

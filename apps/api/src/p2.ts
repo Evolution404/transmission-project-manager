@@ -613,50 +613,45 @@ p2App.post('/imports/:id/chunks', requireRoles('admin', 'project_manager'), asyn
   const hash = await requestHash(requestBody);
   const replay = await replayIdempotentResponse(c, key, operation, hash);
   if (replay) return replay;
-  const batch = await findBatch(c.env.DB, c.req.param('id'));
+  const { database } = createCloudflarePersistence(c.env);
+  const repository = new SqlImportRepository(database);
+  const batch = await repository.findById(c.req.param('id'));
   if (!batch) return c.json(apiError('IMPORT_NOT_FOUND', '导入批次不存在'), 404);
   if (batch.version !== expectedVersion) return c.json(apiError('VERSION_CONFLICT', '导入批次版本已变化，请刷新后重试'), 409);
   if (batch.status !== 'draft') return c.json(apiError('IMPORT_CHUNK_CLOSED', '该批次已进入校验，不能继续上传分片'), 409);
 
   const now = new Date().toISOString();
   const actor = c.get('currentUser');
-  const sourceKeys = await Promise.all(rows.map((row) => hashText(`${batch.file_sha256}\u0000${row.sheetName.trim()}\u0000${row.rowNumber}`)));
+  const sourceKeys = await Promise.all(rows.map((row) => hashText(`${batch.fileSha256}\u0000${row.sheetName.trim()}\u0000${row.rowNumber}`)));
   const data: ImportChunkResult = {
-    uploadedRows: batch.uploaded_rows + rows.length,
+    uploadedRows: batch.uploadedRows + rows.length,
     chunkIndex: requestBody.chunkIndex,
     version: expectedVersion + 1,
   };
   const response = { ok: true as const, data };
-  const statements: D1PreparedStatement[] = [guardedIdempotencyInsert(c.env.DB, {
-    key,
-    actorId: actor.id,
-    operation,
-    requestHash: hash,
-    responseJson: JSON.stringify(response),
-    statusCode: 200,
-    now,
-    batchId: batch.id,
-    expectedVersion,
-    allowedStatuses: ['draft'],
-  })];
-  statements.push(...rows.map((row, index) => c.env.DB.prepare(
-    `INSERT INTO import_rows
-     (id,batch_id,chunk_index,sheet_name,source_row_number,source_key,raw_json,normalized_json,errors_json,warnings_json,row_status,published_demand_id,created_at,updated_at)
-     VALUES (?,?,?,?,?,?,?,NULL,'[]','[]','uploaded',NULL,?,?)`,
-  ).bind(
-    crypto.randomUUID(), batch.id, requestBody.chunkIndex, row.sheetName.trim(), row.rowNumber, sourceKeys[index], JSON.stringify(row.cells), now, now,
-  )));
-  statements.push(
-    c.env.DB.prepare(`UPDATE import_batches SET uploaded_rows=uploaded_rows+?, version=version+1, updated_at=? WHERE id=? AND version=? AND status='draft'`)
-      .bind(rows.length, now, batch.id, expectedVersion),
-  );
   try {
-    const result = await c.env.DB.batch(statements);
-    if (Number(result.at(-1)?.meta.changes ?? 0) !== 1) return c.json(apiError('VERSION_CONFLICT', '导入批次已变化，请刷新后重试'), 409);
+    await repository.uploadChunk({
+      batchId: batch.id,
+      expectedVersion,
+      chunkIndex: requestBody.chunkIndex,
+      actorId: actor.id,
+      now,
+      idempotencyKey: key,
+      operation,
+      requestHash: hash,
+      responseJson: JSON.stringify(response),
+      rows: rows.map((row, index) => ({
+        id: crypto.randomUUID(),
+        sheetName: row.sheetName.trim(),
+        rowNumber: row.rowNumber,
+        sourceKey: sourceKeys[index]!,
+        rawJson: JSON.stringify(row.cells),
+      })),
+    });
   } catch {
     const replayAfterRace = await replayIdempotentResponse(c, key, operation, hash);
     if (replayAfterRace) return replayAfterRace;
-    const current = await findBatch(c.env.DB, batch.id);
+    const current = await repository.findById(batch.id);
     if (current && current.version !== expectedVersion) return c.json(apiError('VERSION_CONFLICT', '导入批次版本已变化，请刷新后重试'), 409);
     return c.json(apiError('IMPORT_ROW_CONFLICT', '源工作表行重复或批次状态已变化'), 409);
   }
