@@ -37,6 +37,16 @@ function createRepository() {
       scope_id TEXT,
       created_at TEXT NOT NULL
     );
+    CREATE TABLE auth_sessions (
+      id TEXT PRIMARY KEY,
+      member_id TEXT NOT NULL,
+      token_hash TEXT NOT NULL,
+      session_version INTEGER NOT NULL,
+      created_at TEXT NOT NULL,
+      last_seen_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      revoked_at TEXT
+    );
     CREATE TABLE audit_events (
       id TEXT PRIMARY KEY,
       actor_member_id TEXT,
@@ -121,6 +131,61 @@ test('member admin repository creates a member, scopes, audit and idempotency at
     assert.equal(await database.first({ sql: "SELECT id FROM audit_events WHERE id='audit-create-3'" }), null);
   } finally {
     sqlite.close();
+  }
+});
+
+test('member admin repository update is atomic on stale versions and protects the last enabled admin', async () => {
+  const first = createRepository();
+  try {
+    assert.equal(await first.repository.bootstrapAdmin(bootstrapInput()), true);
+    const protectedResult = await first.repository.updateMember({
+      memberId: 'admin-1', expectedVersion: 1, displayName: '管理员', role: 'readonly', enabled: true,
+      protectsLastAdmin: true, invalidateSessions: false, nowIso: '2026-09-14T00:03:00.000Z', actorId: 'admin-1',
+      scopes: [{ id: 'scope-update-protected', type: 'all', scopeId: null }],
+      auditEventId: 'audit-update-protected', beforeJson: '{"version":1}', afterJson: '{"version":2}',
+      idempotency: { key: 'idem-update-protected', operation: 'members.patch:admin-1', requestHash: 'protected', responseJson: '{}', statusCode: 200 },
+    });
+    assert.equal(protectedResult, 'last_admin');
+    assert.equal((await first.database.first({ sql: "SELECT role,version FROM members WHERE id='admin-1'" })).role, 'admin');
+    assert.equal(await first.database.first({ sql: "SELECT id FROM audit_events WHERE id='audit-update-protected'" }), null);
+  } finally {
+    first.sqlite.close();
+  }
+
+  const second = createRepository();
+  try {
+    assert.equal(await second.repository.bootstrapAdmin(bootstrapInput()), true);
+    await second.repository.createMember({
+      memberId: 'admin-2', username: 'admin2', displayName: '管理员2', role: 'admin', enabled: true,
+      salt: 'salt-2', verifier: 'verifier-2', credentialParamsJson: '{}', nowIso: '2026-09-14T00:01:00.000Z', actorId: 'admin-1',
+      scopes: [{ id: 'scope-admin-2', type: 'all', scopeId: null }], auditEventId: 'audit-admin-2', auditAfterJson: '{}',
+      idempotency: { key: 'idem-admin-2', operation: 'members.create:admin2', requestHash: 'create-admin2', responseJson: '{}', statusCode: 201 },
+    });
+
+    const updated = await second.repository.updateMember({
+      memberId: 'admin-1', expectedVersion: 1, displayName: '管理员A', role: 'readonly', enabled: true,
+      protectsLastAdmin: true, invalidateSessions: false, nowIso: '2026-09-14T00:04:00.000Z', actorId: 'admin-1',
+      scopes: [{ id: 'scope-update-1', type: 'project', scopeId: 'project-1' }],
+      auditEventId: 'audit-update-1', beforeJson: '{"version":1}', afterJson: '{"version":2}',
+      idempotency: { key: 'idem-update-1', operation: 'members.patch:admin-1', requestHash: 'update-1', responseJson: '{}', statusCode: 200 },
+    });
+    assert.equal(updated, 'updated');
+    assert.deepEqual(await second.database.all({ sql: "SELECT scope_type,scope_id FROM member_scopes WHERE member_id='admin-1'" }), [
+      { scope_type: 'project', scope_id: 'project-1' },
+    ]);
+
+    const stale = await second.repository.updateMember({
+      memberId: 'admin-1', expectedVersion: 1, displayName: '不应写入', role: 'readonly', enabled: false,
+      protectsLastAdmin: false, invalidateSessions: true, nowIso: '2026-09-14T00:05:00.000Z', actorId: 'admin-2',
+      scopes: [{ id: 'scope-stale', type: 'all', scopeId: null }], auditEventId: 'audit-stale', beforeJson: '{}', afterJson: '{}',
+      idempotency: { key: 'idem-stale', operation: 'members.patch:admin-1', requestHash: 'stale', responseJson: '{}', statusCode: 200 },
+    });
+    assert.equal(stale, 'version_conflict');
+    assert.equal(await second.database.first({ sql: "SELECT id FROM member_scopes WHERE id='scope-stale'" }), null);
+    assert.equal(await second.database.first({ sql: "SELECT id FROM audit_events WHERE id='audit-stale'" }), null);
+    assert.equal(await second.database.first({ sql: "SELECT idempotency_key FROM idempotency_records WHERE idempotency_key='idem-stale'" }), null);
+  } finally {
+    second.sqlite.close();
   }
 });
 

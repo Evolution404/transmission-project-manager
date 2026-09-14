@@ -42,8 +42,34 @@ export interface CreateManagedMemberRecord {
   };
 }
 
+export type UpdateManagedMemberResult = 'updated' | 'version_conflict' | 'last_admin';
+
+export interface UpdateManagedMemberRecord {
+  memberId: string;
+  expectedVersion: number;
+  displayName: string;
+  role: MemberRole;
+  enabled: boolean;
+  protectsLastAdmin: boolean;
+  invalidateSessions: boolean;
+  nowIso: string;
+  actorId: string;
+  scopes: readonly ManagedMemberScopeRecord[];
+  auditEventId: string;
+  beforeJson: string;
+  afterJson: string;
+  idempotency: {
+    key: string;
+    operation: string;
+    requestHash: string;
+    responseJson: string;
+    statusCode: number;
+  };
+}
+
 export interface MemberAdminRepository {
   bootstrapAdmin(record: BootstrapAdminRecord): Promise<boolean>;
   createMember(record: CreateManagedMemberRecord): Promise<void>;
+  updateMember(record: UpdateManagedMemberRecord): Promise<UpdateManagedMemberResult>;
   usernameExists(username: string): Promise<boolean>;
 }

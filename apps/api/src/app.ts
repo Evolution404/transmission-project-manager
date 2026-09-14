@@ -16,7 +16,6 @@ import {
 } from '@tpm/shared';
 import { hasScope, requireAuthentication, requireRoles, type AppEnv } from './auth';
 import {
-  countEnabledAdmins,
   getSettingHistory,
   listCurrentSettings,
   listDictionary,
@@ -124,34 +123,6 @@ function requireIdempotencyKey(c: Context<AppEnv>): string | Response {
     return c.json(apiError('IDEMPOTENCY_KEY_REQUIRED', '变更请求必须提供有效的 Idempotency-Key'), 400);
   }
   return key;
-}
-
-function scopeStatements(
-  c: Context<AppEnv>,
-  memberId: string,
-  scopes: MemberScope[],
-  conditionVersion?: number,
-  conditionUpdatedAt?: string,
-) {
-  const statements: D1PreparedStatement[] = [];
-  for (const scope of scopes) {
-    if (conditionVersion !== undefined && conditionUpdatedAt) {
-      statements.push(c.env.DB.prepare(
-        `INSERT INTO member_scopes (id, member_id, scope_type, scope_id, created_at)
-         SELECT ?, ?, ?, ?, ?
-         WHERE EXISTS (SELECT 1 FROM members WHERE id = ? AND version = ? AND updated_at = ?)`,
-      ).bind(
-        crypto.randomUUID(), memberId, scope.type, scope.id, conditionUpdatedAt,
-        memberId, conditionVersion, conditionUpdatedAt,
-      ));
-    } else {
-      statements.push(c.env.DB.prepare(
-        `INSERT INTO member_scopes (id, member_id, scope_type, scope_id, created_at)
-         VALUES (?, ?, ?, ?, ?)`,
-      ).bind(crypto.randomUUID(), memberId, scope.type, scope.id, new Date().toISOString()));
-    }
-  }
-  return statements;
 }
 
 function currentUserData<T extends { mustChangePassword: boolean }>(member: T) {
@@ -536,7 +507,7 @@ app.patch('/api/members/:id', requireRoles('admin'), async (c) => {
   const replay = await replayIdempotentResponse(c, idempotency, operation, hash);
   if (replay) return replay;
 
-  const { members } = authRepositories(c);
+  const { memberAdmin, members } = authRepositories(c);
   const before = await members.findById(c.req.param('id'));
   if (!before) return c.json(apiError('MEMBER_NOT_FOUND', '成员不存在'), 404);
   if (before.version !== body.expectedVersion) {
@@ -551,9 +522,6 @@ app.patch('/api/members/:id', requireRoles('admin'), async (c) => {
   if (!nextScopes) return c.json(apiError('INVALID_SCOPES', '授权范围格式无效'), 422);
 
   const protectsLastAdmin = before.enabled && before.role === 'admin' && (!nextEnabled || nextRole !== 'admin');
-  if (protectsLastAdmin && await countEnabledAdmins(c.env.DB) <= 1) {
-    return c.json(apiError('LAST_ADMIN_REQUIRED', '不能停用或降权最后一个启用管理员'), 422);
-  }
 
   const actor = c.get('currentUser');
   const now = new Date().toISOString();
@@ -570,44 +538,31 @@ app.patch('/api/members/:id', requireRoles('admin'), async (c) => {
   };
   const response = { ok: true as const, data: nextData };
   const responseJson = JSON.stringify(response);
-  const condition = `EXISTS (SELECT 1 FROM members WHERE id = ? AND version = ? AND updated_at = ?)`;
-  const statements: D1PreparedStatement[] = [
-    c.env.DB.prepare(
-      `UPDATE members
-       SET display_name=?,role=?,enabled=?,version=version+1,session_version=session_version+?,updated_at=?
-       WHERE id=? AND version=?
-         ${protectsLastAdmin ? "AND (SELECT COUNT(*) FROM members WHERE enabled=1 AND role='admin') > 1" : ''}`,
-    ).bind(nextDisplayName, nextRole, nextEnabled ? 1 : 0, invalidateSessions ? 1 : 0, now, before.id, before.version),
-    c.env.DB.prepare(`DELETE FROM member_scopes WHERE member_id=? AND ${condition}`)
-      .bind(before.id, before.id, nextVersion, now),
-    ...scopeStatements(c, before.id, nextScopes, nextVersion, now),
-    c.env.DB.prepare(
-      `INSERT INTO audit_events
-       (id,actor_member_id,action,object_type,object_id,before_json,after_json,created_at)
-       SELECT ?,?,'member.update','member',?,?,?,? WHERE ${condition}`,
-    ).bind(
-      crypto.randomUUID(), actor.id, before.id, JSON.stringify(before), JSON.stringify(nextData), now,
-      before.id, nextVersion, now,
-    ),
-    c.env.DB.prepare(
-      `INSERT INTO idempotency_records
-       (idempotency_key,actor_member_id,operation,request_hash,response_json,status_code,created_at)
-       SELECT ?,?,?,?,?,200,? WHERE ${condition}`,
-    ).bind(idempotency, actor.id, operation, hash, responseJson, now, before.id, nextVersion, now),
-  ];
-  if (invalidateSessions) {
-    statements.push(c.env.DB.prepare(
-      `UPDATE auth_sessions SET revoked_at=COALESCE(revoked_at,?) WHERE member_id=? AND revoked_at IS NULL AND ${condition}`,
-    ).bind(now, before.id, before.id, nextVersion, now));
-  }
   try {
-    const results = await c.env.DB.batch(statements);
-    if (Number(results[0]?.meta.changes ?? 0) !== 1) {
-      if (protectsLastAdmin && await countEnabledAdmins(c.env.DB) <= 1) {
-        return c.json(apiError('LAST_ADMIN_REQUIRED', '不能停用或降权最后一个启用管理员'), 422);
-      }
-      return c.json(apiError('VERSION_CONFLICT', '成员已被其他人修改，请刷新后重试'), 409);
-    }
+    const result = await memberAdmin.updateMember({
+      memberId: before.id,
+      expectedVersion: before.version,
+      displayName: nextDisplayName,
+      role: nextRole,
+      enabled: nextEnabled,
+      protectsLastAdmin,
+      invalidateSessions,
+      nowIso: now,
+      actorId: actor.id,
+      scopes: nextScopes.map((scope) => ({ id: crypto.randomUUID(), type: scope.type, scopeId: scope.id })),
+      auditEventId: crypto.randomUUID(),
+      beforeJson: JSON.stringify(before),
+      afterJson: JSON.stringify(nextData),
+      idempotency: {
+        key: idempotency,
+        operation,
+        requestHash: hash,
+        responseJson,
+        statusCode: 200,
+      },
+    });
+    if (result === 'last_admin') return c.json(apiError('LAST_ADMIN_REQUIRED', '不能停用或降权最后一个启用管理员'), 422);
+    if (result === 'version_conflict') return c.json(apiError('VERSION_CONFLICT', '成员已被其他人修改，请刷新后重试'), 409);
   } catch {
     return c.json(apiError('MEMBER_UPDATE_FAILED', '成员更新失败，请刷新后重试'), 409);
   }
