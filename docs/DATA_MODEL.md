@@ -61,7 +61,7 @@
 - 手工创建和 Excel 发布都必须在同一写事务中重新校验父子关系、启用状态和显示快照，避免“校验后停用/改名”的竞态。
 - 线路已有需求引用后不能更换电压等级；该线路所有杆塔的 `line_id/tower_no/sort_index` 和删除采用保守冻结，防止区段内部杆塔变化重写历史语义。
 - 停用不破坏历史读取；新需求和导入发布不得选择停用对象。
-- `0009_master_grid_assets.sql`、`0010_master_grid_relations.sql`、`0011_master_data_integrity.sql`、`0012_master_data_write_guards.sql` 均已冻结，只能通过后续追加 migration 修改 schema。
+- 当前开发阶段数据库只有 `0001_initial_schema.sql` 一个可重建基线；除非用户明确要求兼容已有数据/保留升级路径，否则 schema 变化直接修改 `0001` 并重建开发/测试数据库，禁止新增 `0002+` migration。
 
 ## 4. 必须保持的不变量
 

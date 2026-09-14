@@ -83,7 +83,7 @@
 - `CLOUDFLARE_API_TOKEN` 已配置并实测有效；account-owned token verify、Workers Scripts、D1、Worker Domains、Zones API 均可访问。
 - Cloudflare Account：`642d30520d6c494dd418b1f4b3853aa6`；Zone `980923.xyz` 为 active；`project.980923.xyz` 已绑定 Worker `transmission-project-manager`。
 - 当前 Worker 实际仍绑定 acceptance D1 `transmission-project-manager-acceptance`（UUID `c1dbd68e-8626-4cb1-a7a8-f9fe07df705b`），不能冒充新的正式 production D1。
-- 当前公网 `https://project.980923.xyz/api/health` 返回 HTTP 200，但 `schema.ready=false`：current=`0008_final_business_flow.sql`，required=`0012_master_data_write_guards.sql`；acceptance D1 尚缺 `0009`–`0012`。
+- 当前公网 `https://project.980923.xyz` 仍由旧 acceptance D1 承载，属于 schema squash 前的开发环境，不再执行历史升级；后续发布直接切换到新的单基线 production D1。
 - Cloudflare R2 API 返回 `403 / 10042 Please enable R2 through the Cloudflare Dashboard`。用户决定当前生产不启用 R2，改用已有付费 Notion Workspace；R2 保留为未来可替换后端，因此 R2 未开通不再是当前发布硬阻塞。
 - Notion Internal Integration 已创建并授权给唯一根页面 `Transmission Project Manager Storage`，根 Page ID `3db9afbc-cb69-80c4-ab94-fbb4a8f6b1b5`；Token 仅保存在本机 `.env.notion`，不得提交或打印。
 - 本分支已新增 `NotionObjectStoreAdapter`、Notion/R2/Filesystem provider 选择、P7 双 provider 校验、`npm run notion:init` 与 `npm run notion:smoke`。真实 Notion `TPM Object Store` 已初始化：Database ID `71dc9aae-5e92-458d-91b0-e1118b76df69`，Data Source ID `33a70b5a-c477-409f-ba61-78679279ce7e`；真实 `put → get → delete → get=null` smoke 已 PASS。Token 仍只保存在被 Git 忽略的本机 `.env.notion`。
@@ -92,7 +92,7 @@
 
 1. 本分支本地完整 `npm run check` 已 PASS（Node 260/260、Web 64/64）；继续拆小提交并 push，建立 PR，由 GitHub CI 复现后再考虑合并。
 2. 用已初始化的 `NOTION_STORAGE_DATA_SOURCE_ID` 生成真实 `PRODUCTION_CONFIG_JSON`，并把 `NOTION_API_TOKEN` 安全配置为 Worker Secret；当前 production config 不包含 `r2_buckets`。
-3. 建立独立正式 production D1，不复用 acceptance D1；空库按 `0001`–`0012` 初始化并核对 schema ready。
+3. 独立正式 production D1 已重建为开发期单基线数据库，只应用 `0001_initial_schema.sql`；后续发布直接绑定该库，不复用或升级旧 acceptance D1。
 4. 查清/关闭意外的 main→Cloudflare 自动部署链路后，再按受控 migration/release workflow 合并和发布。
 5. 发布后真实验收 health、登录、核心业务、Notion 附件/备份、Cron、域名和 Cloudflare/Notion 错误指标。
 
@@ -121,9 +121,9 @@
 - Auth / Session / Credential / Member admin portable
 - P2/P3/P4/P5/P6/P8/P9 业务层 0 直接 D1/R2/Notion
 - repository/static guards 防止业务层重新绑定 Cloudflare persistence
-- Node + SQLite + Filesystem 应用级 E2E 和 P7-era → 0012 migration rehearsal
+- Node + SQLite + Filesystem 应用级 E2E 和单一 `0001_initial_schema.sql` 从空库建库验证
 
-本分支最近一次本地完整 `npm run check` 已通过：Node **260/260 PASS**、Web/Vitest **64/64 PASS**，同时包含 Cloudflare/Node TypeScript、Web build、Worker dry-run、Node 第二运行时 E2E 和 migration rehearsal。合入前仍必须由 GitHub Actions 在本 PR 复现。
+schema squash 后本地完整 `npm run check` 已通过：Node **251/251 PASS**、Web/Vitest **64/64 PASS**，同时包含 Cloudflare/Node TypeScript、Web build、Worker dry-run、Node 第二运行时 E2E 和单一 `0001_initial_schema.sql` 标准建库验证。数据库门禁只允许 `0001_initial_schema.sql`，禁止开发阶段追加 `0002+`；合入前仍需 GitHub Actions 在本 PR 复现。
 
 ## 继续保持的业务与技术约束
 
@@ -133,5 +133,5 @@
 - 单 SQL 按 D1 100 个绑定参数上限设计。
 - Cloudflare Free 的 CPU/配额只能用真实云端指标判断。
 - Cloudflare、Notion 与 Node infrastructure adapter 必须留在外层，业务/API 不得重新绑定 D1/R2/Notion。
-- migration `0009`–`0012` 已冻结，不得修改，只能追加。
+- 当前仍处开发阶段，migration 只允许 `0001_initial_schema.sql`；除非用户明确要求兼容已有数据/保留升级路径，否则禁止新增 `0002+`，schema 变化直接修改 `0001` 并重建开发数据库。
 - 业务事实仍以 `BUSINESS_BASELINE.md`、`DESIGN.md`、`DATA_MODEL.md` 为准；生产操作与验收见 `DEPLOYMENT.md`、`P7_RUNBOOK.md`、`P7_ACCEPTANCE.md`。

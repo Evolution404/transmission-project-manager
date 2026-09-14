@@ -8,7 +8,7 @@ P7 不新增另一套核心业务模型，目标是用真实业务资料、真�
 
 截至 2026-09-14，后端可移植化和云端生产 workflow 均已合入 `main@bc4774767c159068d59e16d6726444c5c1525dd6`，合并后 [CI #37](https://github.com/Evolution404/transmission-project-manager/actions/runs/34811093528) 完整门禁 PASS。此代码基线不构成生产验收通过。
 
-GitHub `production` Environment 已创建且只允许 `main` 部署，发布/迁移开关均为 `false`。Cloudflare Account/Zone/Worker/域名和 CI Token 已实测；当前 Worker 仍绑定 acceptance D1 且 schema 仅到 0008。当前正式对象存储方案改为 Notion，R2 未启用不是当前阻塞；Notion `TPM Object Store` Database/Data Source 已初始化且真实 `put/get/delete` smoke PASS。独立 production D1、正式 Worker Secrets、migration/release 仍待完成。P7-01～13 保持待真实证据确认，最新状态见 `AI_HANDOFF.md`。
+GitHub `production` Environment 已创建且只允许 `main` 部署，发布/迁移开关均为 `false`。Cloudflare Account/Zone/Worker/域名和 CI Token 已实测；当前线上 Worker 仍绑定旧 acceptance D1，属于 schema squash 前开发环境。当前正式对象存储方案为 Notion；Notion `TPM Object Store` Database/Data Source 已初始化且真实 `put/get/delete` smoke PASS。独立 production D1 已按单一 `0001_initial_schema.sql` 从空库标准创建成功；正式 Worker Secrets、release 和线上切换仍待完成。P7-01～13 保持待真实证据确认，最新状态见 `AI_HANDOFF.md`。
 
 ## 2. 验收矩阵
 
@@ -90,7 +90,7 @@ Secret 值、Global API Key、长期个人 Token 不得写入验收文档。
 
 ## 7. 发布门禁
 
-生产升级顺序必须明确且可回退。基础台账当前代码要求 migration `0012_master_data_write_guards.sql`；正式数据库低于该版本时，代码应保持 `SCHEMA_OUTDATED` fail-closed。
+当前仍处开发阶段，数据库不维护历史升级链；代码要求唯一基线 `0001_initial_schema.sql`，数据库未记录该基线时保持 `SCHEMA_OUTDATED` fail-closed。除非用户明确要求兼容已有数据/保留升级路径，否则禁止新增 `0002+` migration。
 
 任何正式 migration、Secret 变更、域名切换、代码部署、回退和 `main` 合并均需当次用户授权。发布成功不能只看 HTTP 200，至少需要：
 

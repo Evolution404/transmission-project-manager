@@ -29,7 +29,7 @@ PR #1 合并前 CI 与合并后的 `main` CI #31 均通过。Cloudflare Workers 
 - Cloudflare API Token、认证 Secret、bootstrap Secret 不进入 Git、PR、前端或 Actions 日志；
 - 普通 push/PR 不允许自动执行 D1 migration 或正式 Worker deploy；
 - D1 migration 与 Worker deploy 分离，分别显式批准；
-- `0009`–`0012` 已冻结，正式/共享环境只追加新 migration，不修改历史 migration。
+- 当前仍处开发阶段，D1 只允许 `0001_initial_schema.sql` 单一可重建基线；除非用户明确要求兼容已有数据/保留升级路径，否则禁止新增 `0002+` migration 或兼容补丁，schema 变化直接修改 `0001` 并重建开发/测试数据库。
 
 ## 3. 生产拓扑
 
@@ -228,7 +228,7 @@ Workers/D1 配额与价格必须在正式上线前再次按 Cloudflare 官方页
 - D1 数据恢复只先恢复到隔离库并对账，不能直接覆盖有新写入的正式库；
 - 对象存储中的附件需要独立核对，不以 D1 manifest checksum 代替附件本体完整性；Notion 的应用删除是逻辑删除，底层 FileUpload 当前无法通过 API 物理撤销，敏感数据治理必须单独考虑这一边界；
 - `auth_sessions` 不恢复；
-- 首次正式/共享环境使用后 migration 历史冻结，只追加；
+- 只有用户明确宣布进入“兼容已有数据/保留升级路径”阶段后，才冻结当前基线并开始追加 migration；在此之前仍执行单基线重建策略；
 - 保留前一 Worker version/deployment ID、准确 schema 状态、备份引用和回退证据。
 
 详细步骤见 `P7_RUNBOOK.md`。

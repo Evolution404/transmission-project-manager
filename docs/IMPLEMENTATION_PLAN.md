@@ -84,7 +84,7 @@
 - `RuntimeBindings.PERSISTENCE` 作为 Hono 应用持久化注入边界；
 - P2/P3/P4/P5/P6/P8/P9 与认证层不再直接绑定 D1/R2/Notion；
 - Node + SQLite + Filesystem 真实 Hono app E2E；
-- P7-era → 0012 migration rehearsal；
+- `0001_initial_schema.sql` 单一开发基线从空库建库验证；
 - 静态 repository guards 防止重新耦合 Cloudflare persistence。
 
 PR #1 合并前 GitHub CI 全绿；合并后的 `main@7a49b44275038dddd3803cb17de9b7e4fe06ba33` CI #31 再次全绿。
@@ -102,7 +102,7 @@ PR #1 合并前 GitHub CI 全绿；合并后的 `main@7a49b44275038dddd3803cb17d
 - Vue/Vitest；
 - Node tests；
 - Node SQLite + Filesystem application E2E；
-- P7-era → 0012 migration rehearsal；
+- 单一 `0001_initial_schema.sql` 的 SQLite + Wrangler 标准建库验证；
 - repository/static guards。
 
 云端发布施工新增 `tests/p7-preflight.test.mjs` 门禁，约束：
