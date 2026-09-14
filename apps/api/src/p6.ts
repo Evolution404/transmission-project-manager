@@ -1,12 +1,10 @@
 import { Hono, type Context } from 'hono';
 import type {
-  AlertEventSummary,
   AnalysisDashboardSummary,
   AnalysisLagMode,
   AnalysisRuleSummary,
   ApiError,
   BackupKind,
-  BackupStatus,
   BackupSummary,
   BackupVerificationSummary,
   FrameworkProgressSummary,
@@ -38,16 +36,6 @@ const DEFAULT_RULE_MODE: AnalysisLagMode = 'ratio';
 const DEFAULT_RULE_THRESHOLD_BP = 8000;
 const BACKUP_CHUNK_ROWS = 100;
 const MAX_OUTBOX_CLAIM = 50;
-type RuleRow = { id: string; version: number; mode: AnalysisLagMode; threshold_basis_points: number; effective_from: string; created_at: string };
-type PlanRow = { id: string; project_id: string; business_year: number; month: number; target_amount_fen: number; version: number; created_at: string; updated_at: string };
-type FrameworkRow = { id: string; code: string; name: string; total_amount_fen: number; annual_target_fen: number | null; start_date: string; end_date: string };
-type ReportRow = { id: string; framework_id: string; business_month: string; revision: number; data_cutoff_date: string; rule_version: number; rule_json: string; snapshot_json: string; created_at: string };
-type MilestoneRow = { id: string; business_year: number; title: string; owner: string | null; project_id: string | null; date_precision: MilestoneDatePrecision; month: number | null; specific_date: string | null; lead_days_json: string; status: MilestoneStatus; version: number; created_at: string; updated_at: string };
-type ContactRow = { id: string; member_id: string; address: string; verified_at: string | null; enabled: number; version: number; created_at: string; updated_at: string };
-type AlertRow = { id: string; rule_key: string; rule_version: number; object_type: string; object_id: string; period_key: string; severity: 'info' | 'warning' | 'critical'; state: 'active' | 'resolved'; message: string; first_seen_at: string; last_seen_at: string; resolved_at: string | null };
-type OutboxRow = { id: string; event_id: string; recipient: string; status: NotificationOutboxStatus; lease_token: string | null; lease_until: string | null; attempt_count: number; next_attempt_at: string; last_error: string | null; created_at: string; updated_at: string };
-type BackupRow = { id: string; backup_date: string; kind: BackupKind; status: BackupStatus; current_table_index: number; cursor_rowid: number; manifest_key: string | null; chunk_count: number; error: string | null; started_at: string | null; completed_at: string | null; verified_at: string | null; created_at: string; updated_at: string };
-type BackupChunkRow = { id: string; backup_run_id: string; table_name: string; chunk_index: number; r2_key: string; row_count: number; sha256: string; created_at: string };
 
 function apiError(code: string, message: string, details?: unknown): ApiError {
   return { ok: false, error: { code, message, ...(details === undefined ? {} : { details }) } };
@@ -94,12 +82,6 @@ async function replayIdempotentResponse(c: Context<AppEnv>, key: string, operati
   if (row.actorMemberId !== actor.id || row.operation !== operation || row.requestHash !== hash) return c.json(apiError('IDEMPOTENCY_CONFLICT', '该 Idempotency-Key 已用于不同请求'), 409);
   return new Response(row.responseJson, { status: row.statusCode, headers: { 'Content-Type': 'application/json; charset=UTF-8', 'Cache-Control': 'no-store' } });
 }
-function idempotencyStatement(db: D1Database, key: string, actorId: string, operation: string, hash: string, response: unknown, statusCode: number, now: string) {
-  return db.prepare(`INSERT INTO idempotency_records (idempotency_key,actor_member_id,operation,request_hash,response_json,status_code,created_at) VALUES (?,?,?,?,?,?,?)`).bind(key, actorId, operation, hash, JSON.stringify(response), statusCode, now);
-}
-function auditStatement(db: D1Database, actorId: string, action: string, objectType: string, objectId: string, before: unknown, after: unknown, now: string) {
-  return db.prepare(`INSERT INTO audit_events (id,actor_member_id,action,object_type,object_id,before_json,after_json,created_at) VALUES (?,?,?,?,?,?,?,?)`).bind(crypto.randomUUID(), actorId, action, objectType, objectId, before === null ? null : JSON.stringify(before), after === null ? null : JSON.stringify(after), now);
-}
 function canFramework(c: Context<AppEnv>, frameworkId: string) {
   const user = c.get('currentUser');
   return user.role === 'admin' || hasScope(user.scopes, 'framework', frameworkId);
@@ -111,22 +93,6 @@ function canProject(c: Context<AppEnv>, projectId: string) {
 function canProjectOrFramework(c: Context<AppEnv>, projectId: string, frameworkId: string | null) {
   return canProject(c, projectId) || (frameworkId !== null && canFramework(c, frameworkId));
 }
-function projectAccessFilter(c: Context<AppEnv>, alias = 'p') {
-  const user = c.get('currentUser');
-  if (user.role === 'admin' || user.scopes.some((scope) => scope.type === 'all')) return { sql: '1=1', binds: [] as string[] };
-  const projectIds = user.scopes.filter((scope) => scope.type === 'project' && scope.id).map((scope) => scope.id!);
-  const frameworkIds = user.scopes.filter((scope) => scope.type === 'framework' && scope.id).map((scope) => scope.id!);
-  const clauses: string[] = [], binds: string[] = [];
-  if (projectIds.length) {
-    clauses.push(`${alias}.id IN (${projectIds.map(() => '?').join(',')})`);
-    binds.push(...projectIds);
-  }
-  if (frameworkIds.length) {
-    clauses.push(`${alias}.framework_id IN (${frameworkIds.map(() => '?').join(',')})`);
-    binds.push(...frameworkIds);
-  }
-  return { sql: clauses.length ? `(${clauses.join(' OR ')})` : '0=1', binds };
-}
 function bigintToSafe(value: bigint): number | null {
   return value <= BigInt(Number.MAX_SAFE_INTEGER) && value >= BigInt(Number.MIN_SAFE_INTEGER) ? Number(value) : null;
 }
@@ -134,29 +100,6 @@ function prorateFen(amountFen: number, remainingQuantityScaled: number, allocate
   if (amountFen === 0 || remainingQuantityScaled <= 0 || allocatedQuantityScaled <= 0) return 0;
   const numerator = BigInt(amountFen) * BigInt(remainingQuantityScaled);
   return bigintToSafe((numerator + BigInt(Math.floor(allocatedQuantityScaled / 2))) / BigInt(allocatedQuantityScaled));
-}
-function ruleSummary(row: RuleRow): AnalysisRuleSummary {
-  return { id: row.id, version: row.version, mode: row.mode, thresholdBasisPoints: row.threshold_basis_points, effectiveFrom: row.effective_from, createdAt: row.created_at };
-}
-function planSummary(row: PlanRow): MonthlyPlanSummary {
-  return { id: row.id, projectId: row.project_id, businessYear: row.business_year, month: row.month, targetAmountFen: row.target_amount_fen, version: row.version, createdAt: row.created_at, updatedAt: row.updated_at };
-}
-function milestoneSummary(row: MilestoneRow): MilestoneSummary {
-  let leadDays: number[] = [];
-  try { leadDays = JSON.parse(row.lead_days_json) as number[]; } catch { leadDays = []; }
-  return { id: row.id, businessYear: row.business_year, title: row.title, owner: row.owner, projectId: row.project_id, datePrecision: row.date_precision, month: row.month, specificDate: row.specific_date, leadDays, status: row.status, version: row.version, createdAt: row.created_at, updatedAt: row.updated_at };
-}
-function contactSummary(row: ContactRow): NotificationContactSummary {
-  return { id: row.id, memberId: row.member_id, address: row.address, verifiedAt: row.verified_at, enabled: row.enabled === 1, version: row.version, createdAt: row.created_at, updatedAt: row.updated_at };
-}
-function alertSummary(row: AlertRow): AlertEventSummary {
-  return { id: row.id, ruleKey: row.rule_key, ruleVersion: row.rule_version, objectType: row.object_type, objectId: row.object_id, periodKey: row.period_key, severity: row.severity, state: row.state, message: row.message, firstSeenAt: row.first_seen_at, lastSeenAt: row.last_seen_at, resolvedAt: row.resolved_at };
-}
-function outboxSummary(row: OutboxRow, leasedAt: string | null = null): NotificationOutboxSummary {
-  return { id: row.id, eventId: row.event_id, recipient: row.recipient, status: row.status, leaseToken: row.lease_token, leasedAt, leaseUntil: row.lease_until, attemptCount: row.attempt_count, nextAttemptAt: row.next_attempt_at, lastError: row.last_error, createdAt: row.created_at, updatedAt: row.updated_at };
-}
-function backupSummary(row: BackupRow): BackupSummary {
-  return { id: row.id, backupDate: row.backup_date, kind: row.kind, status: row.status, currentTableIndex: row.current_table_index, cursorRowid: row.cursor_rowid, manifestKey: row.manifest_key, chunkCount: row.chunk_count, error: row.error, startedAt: row.started_at, completedAt: row.completed_at, verifiedAt: row.verified_at, createdAt: row.created_at, updatedAt: row.updated_at };
 }
 async function currentRule(repository: AnalysisRepository) {
   return repository.currentRule();
@@ -228,9 +171,6 @@ async function projectGaps(repository: AnalysisRepository, frameworkId: string, 
   return rows.map((row) => ({ ...row, gapFen: Math.max(0, row.plannedToDateFen - row.actualToDateFen) })).sort((a, b) => b.gapFen - a.gapFen || a.projectName.localeCompare(b.projectName));
 }
 
-function reportSummary(row: ReportRow): MonthlyReportSummary {
-  return { id: row.id, frameworkId: row.framework_id, businessMonth: row.business_month, revision: row.revision, dataCutoffDate: row.data_cutoff_date, ruleVersion: row.rule_version, rule: JSON.parse(row.rule_json) as AnalysisRuleSummary, snapshot: JSON.parse(row.snapshot_json) as MonthlyReportSummary['snapshot'], createdAt: row.created_at };
-}
 function milestoneDue(base: MilestoneSummary, asOf: string): MilestoneDueSummary {
   if (base.status === 'completed') return { ...base, dueMonth: base.month ? `${base.businessYear}-${String(base.month).padStart(2, '0')}` : null, dueDate: base.specificDate, needsDate: base.datePrecision === 'unknown', reminderDue: false, reminderLeadDays: null, overdue: false };
   if (base.datePrecision === 'unknown') return { ...base, dueMonth: null, dueDate: null, needsDate: true, reminderDue: false, reminderLeadDays: null, overdue: false };
@@ -441,50 +381,35 @@ export async function runP6Tick(env: WorkerBindings, nowIso: string) {
 }
 
 async function currentReserveRemaining(c: Context<AppEnv>): Promise<{ data: ReserveRemainingSummary | null; error: ApiError | null }> {
-  const access = projectAccessFilter(c, 'p');
-  const rows = await c.env.DB.prepare(
-    `SELECT pmr.required_quantity_scaled,pmr.amount_fen,pmr.reserve_category_id,rc.category_key,rc.label
-     FROM project_material_requirements pmr
-     INNER JOIN projects p ON p.id=pmr.project_id
-     LEFT JOIN reserve_categories rc ON rc.id=pmr.reserve_category_id
-     WHERE pmr.active=1
-       AND NOT EXISTS (SELECT 1 FROM project_releases pr WHERE pr.project_id=p.id)
-       AND ${access.sql}
-     ORDER BY pmr.project_id,pmr.id`,
-  ).bind(...access.binds).all<{
-    required_quantity_scaled: number;
-    amount_fen: number | null;
-    reserve_category_id: string | null;
-    category_key: string | null;
-    label: string | null;
-  }>();
+  const user = c.get('currentUser');
+  const access = { memberId: user.id, unrestricted: user.role === 'admin' || user.scopes.some((scope) => scope.type === 'all') };
+  const { database } = createCloudflarePersistence(c.env);
+  const repository = new SqlAnalysisRepository(database);
+  const rows = await repository.reserveMaterialFacts(access);
 
   let currentMaterialQuantity = 0n;
   let knownCurrentMaterialAmount = 0n;
   let unclassifiedCurrentMaterial = 0n;
   let missingPriceCount = 0;
   const categoryTotals = new Map<string, { categoryKey: string; label: string; amount: bigint }>();
-  for (const row of rows.results ?? []) {
-    currentMaterialQuantity += BigInt(Number(row.required_quantity_scaled));
-    if (row.amount_fen === null) {
+  for (const row of rows) {
+    currentMaterialQuantity += BigInt(Number(row.requiredQuantityScaled));
+    if (row.amountFen === null) {
       missingPriceCount += 1;
       continue;
     }
-    const amount = BigInt(Number(row.amount_fen));
+    const amount = BigInt(Number(row.amountFen));
     knownCurrentMaterialAmount += amount;
-    if (!row.reserve_category_id || !row.category_key || !row.label) {
+    if (!row.reserveCategoryId || !row.categoryKey || !row.label) {
       unclassifiedCurrentMaterial += amount;
       continue;
     }
-    const current = categoryTotals.get(row.reserve_category_id) ?? { categoryKey: row.category_key, label: row.label, amount: 0n };
+    const current = categoryTotals.get(row.reserveCategoryId) ?? { categoryKey: row.categoryKey, label: row.label, amount: 0n };
     current.amount += amount;
-    categoryTotals.set(row.reserve_category_id, current);
+    categoryTotals.set(row.reserveCategoryId, current);
   }
 
-  const releasedProject = await c.env.DB.prepare(
-    `SELECT COUNT(*) AS count FROM projects p
-     WHERE ${access.sql} AND EXISTS (SELECT 1 FROM project_releases pr WHERE pr.project_id=p.id)`,
-  ).bind(...access.binds).first<{ count: number }>();
+  const releasedProjectCount = await repository.releasedProjectCount(access);
   const quantityNumber = bigintToSafe(currentMaterialQuantity);
   const knownNumber = bigintToSafe(knownCurrentMaterialAmount);
   const unclassifiedNumber = bigintToSafe(unclassifiedCurrentMaterial);
@@ -505,7 +430,7 @@ async function currentReserveRemaining(c: Context<AppEnv>): Promise<{ data: Rese
       knownCurrentMaterialAmountFen: knownNumber!,
       missingPriceCount,
       unclassifiedCurrentMaterialFen: unclassifiedNumber!,
-      releasedProjectCount: Number(releasedProject?.count ?? 0),
+      releasedProjectCount,
       unscopedCommonCostFen: 0,
       categories,
     },
@@ -514,51 +439,18 @@ async function currentReserveRemaining(c: Context<AppEnv>): Promise<{ data: Rese
 }
 
 async function dashboardSummary(c: Context<AppEnv>, asOf: string): Promise<AnalysisDashboardSummary> {
-  const access = projectAccessFilter(c, 'p');
-  const projectCount = await c.env.DB.prepare(`SELECT COUNT(*) AS count FROM projects p WHERE ${access.sql}`).bind(...access.binds).first<{ count: number }>();
-  const demandCount = await c.env.DB.prepare(
-    `SELECT COUNT(DISTINCT pdl.demand_id) AS count
-     FROM project_demand_links pdl INNER JOIN projects p ON p.id=pdl.project_id
-     WHERE ${access.sql}`,
-  ).bind(...access.binds).first<{ count: number }>();
-  const unreleased = await c.env.DB.prepare(
-    `SELECT COUNT(*) AS count FROM projects p
-     WHERE ${access.sql}
-       AND NOT EXISTS (SELECT 1 FROM project_releases pr WHERE pr.project_id=p.id)`,
-  ).bind(...access.binds).first<{ count: number }>();
-  const pendingSettlement = await c.env.DB.prepare(
-    `SELECT COUNT(*) AS count FROM projects p
-     WHERE ${access.sql}
-       AND EXISTS (
-         SELECT 1
-         FROM project_tasks pt
-         INNER JOIN task_implementation_records tir ON tir.task_id=pt.id
-         WHERE pt.project_id=p.id
-           AND NOT EXISTS (
-             SELECT 1 FROM task_settlements ts
-             WHERE ts.task_id=pt.id AND ts.final=1 AND ts.voided_at IS NULL
-           )
-       )`,
-  ).bind(...access.binds).first<{ count: number }>();
-  const activeRows = await c.env.DB.prepare(
-    `SELECT ae.object_type,ae.object_id,am.project_id AS milestone_project_id
-     FROM alert_events ae LEFT JOIN annual_milestones am ON ae.object_type='milestone' AND am.id=ae.object_id
-     WHERE ae.state='active'`,
-  ).all<{ object_type: string; object_id: string; milestone_project_id: string | null }>();
+  const user = c.get('currentUser');
+  const access = { memberId: user.id, unrestricted: user.role === 'admin' || user.scopes.some((scope) => scope.type === 'all') };
+  const { database } = createCloudflarePersistence(c.env);
+  const repository = new SqlAnalysisRepository(database);
+  const facts = await repository.dashboardFacts(access);
   let activeAlertCount = 0;
-  for (const row of activeRows.results ?? []) {
-    if (row.object_type === 'framework' && canFramework(c, row.object_id)) activeAlertCount += 1;
-    else if (row.object_type === 'project' && canProject(c, row.object_id)) activeAlertCount += 1;
-    else if (row.object_type === 'milestone' && (!row.milestone_project_id || canProject(c, row.milestone_project_id))) activeAlertCount += 1;
+  for (const row of await repository.activeAlertReferences()) {
+    if (row.objectType === 'framework' && canFramework(c, row.objectId)) activeAlertCount += 1;
+    else if (row.objectType === 'project' && canProject(c, row.objectId)) activeAlertCount += 1;
+    else if (row.objectType === 'milestone' && (!row.milestoneProjectId || canProject(c, row.milestoneProjectId))) activeAlertCount += 1;
   }
-  return {
-    asOf,
-    projectCount: Number(projectCount?.count ?? 0),
-    demandCount: Number(demandCount?.count ?? 0),
-    unreleasedProjectCount: Number(unreleased?.count ?? 0),
-    pendingSettlementCount: Number(pendingSettlement?.count ?? 0),
-    activeAlertCount,
-  };
+  return { asOf, ...facts, activeAlertCount };
 }
 
 export const p6App = new Hono<AppEnv>();

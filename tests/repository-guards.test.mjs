@@ -133,6 +133,14 @@ test('P5 legacy delivery flows do not reach D1 directly', () => {
   assert.doesNotMatch(source, /c\.env\.DB|\bD1(?:Database|PreparedStatement)\b|\.prepare\(/, 'P5 must use portable repositories instead of D1 APIs directly');
 });
 
+test('P6 analysis, notification, and backup flows do not reach Cloudflare persistence directly', () => {
+  const source = readFileSync(resolve(root, 'apps/api/src/p6.ts'), 'utf8');
+  assert.match(source, /SqlAnalysisRepository/, 'P6 analysis flows must use AnalysisRepository');
+  assert.match(source, /SqlNotificationRepository/, 'P6 notification flows must use NotificationRepository');
+  assert.match(source, /SqlBackupRepository/, 'P6 backup flows must use BackupRepository');
+  assert.doesNotMatch(source, /c\.env\.DB|env\.DB|env\.FILES|\bD1(?:Database|PreparedStatement)\b|\.prepare\(/, 'P6 must use portable persistence ports instead of Cloudflare bindings directly');
+});
+
 test('P8 final business flows do not reach D1 directly', () => {
   const source = readFileSync(resolve(root, 'apps/api/src/p8.ts'), 'utf8');
   assert.match(source, /Sql(?:ReserveProject|ProjectRelease|ProjectTask|TaskSupply|TaskImplementation|TaskSettlement|ExecutionQuery)Repository/, 'P8 must use portable business repositories');

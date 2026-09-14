@@ -35,6 +35,32 @@ export interface AnalysisProjectState {
   frameworkId: string | null;
 }
 
+export interface AnalysisAccessScope {
+  memberId: string;
+  unrestricted: boolean;
+}
+
+export interface ReserveMaterialFact {
+  requiredQuantityScaled: number;
+  amountFen: number | null;
+  reserveCategoryId: string | null;
+  categoryKey: string | null;
+  label: string | null;
+}
+
+export interface AnalysisDashboardFacts {
+  projectCount: number;
+  demandCount: number;
+  unreleasedProjectCount: number;
+  pendingSettlementCount: number;
+}
+
+export interface ActiveAlertReference {
+  objectType: string;
+  objectId: string;
+  milestoneProjectId: string | null;
+}
+
 export interface AnalysisWriteMeta {
   actorId: string;
   auditId: string;
@@ -66,6 +92,10 @@ export interface AnalysisRepository {
   listOpenMilestones(): Promise<readonly MilestoneSummary[]>;
   findMilestone(id: string): Promise<MilestoneSummary | null>;
   updateMilestoneStatus(input: { current: MilestoneSummary; status: MilestoneStatus; next: MilestoneSummary; meta: AnalysisWriteMeta }): Promise<void>;
+  reserveMaterialFacts(access: AnalysisAccessScope): Promise<readonly ReserveMaterialFact[]>;
+  releasedProjectCount(access: AnalysisAccessScope): Promise<number>;
+  dashboardFacts(access: AnalysisAccessScope): Promise<AnalysisDashboardFacts>;
+  activeAlertReferences(): Promise<readonly ActiveAlertReference[]>;
 }
 
 export interface CreateAnalysisRuleInput {

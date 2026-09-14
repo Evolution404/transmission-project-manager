@@ -6,12 +6,16 @@ import type {
 } from '@tpm/shared';
 import type { DatabasePort, DatabaseStatement } from '../ports/database';
 import type {
+  ActiveAlertReference,
+  AnalysisAccessScope,
+  AnalysisDashboardFacts,
   AnalysisFrameworkFacts,
   AnalysisPlanMeta,
   AnalysisProjectGapFacts,
   AnalysisProjectState,
   AnalysisRepository,
   AnalysisWriteMeta,
+  ReserveMaterialFact,
 } from '../ports/analysis-repository';
 
 function audit(meta: AnalysisWriteMeta, action: string, objectType: string, objectId: string, before: unknown, after: unknown): DatabaseStatement {
@@ -44,6 +48,14 @@ function milestone(row: { id: string; business_year: number; title: string; owne
 
 function report(row: { id: string; framework_id: string; business_month: string; revision: number; data_cutoff_date: string; rule_version: number; rule_json: string; snapshot_json: string; created_at: string }): MonthlyReportSummary {
   return { id: row.id, frameworkId: row.framework_id, businessMonth: row.business_month, revision: row.revision, dataCutoffDate: row.data_cutoff_date, ruleVersion: row.rule_version, rule: JSON.parse(row.rule_json) as AnalysisRuleSummary, snapshot: JSON.parse(row.snapshot_json) as MonthlyReportSummary['snapshot'], createdAt: row.created_at };
+}
+
+function projectAccess(alias: string, access: AnalysisAccessScope) {
+  if (access.unrestricted) return { sql: '1=1', params: [] as string[] };
+  return {
+    sql: `EXISTS (SELECT 1 FROM member_scopes ms WHERE ms.member_id=? AND (ms.scope_type='all' OR (ms.scope_type='project' AND ms.scope_id=${alias}.id) OR (ms.scope_type='framework' AND ms.scope_id=${alias}.framework_id)))`,
+    params: [access.memberId],
+  };
 }
 
 export class SqlAnalysisRepository implements AnalysisRepository {
@@ -164,5 +176,41 @@ export class SqlAnalysisRepository implements AnalysisRepository {
       { sql: `UPDATE annual_milestones SET status=?,version=version+1,updated_at=CASE WHEN version=? THEN ? ELSE NULL END WHERE id=?`, params: [input.status, input.current.version, input.meta.now, input.current.id] },
       audit(input.meta, 'milestone.status', 'milestone', input.current.id, input.current, input.next), idempotency(input.meta),
     ]);
+  }
+
+  async reserveMaterialFacts(access: AnalysisAccessScope): Promise<readonly ReserveMaterialFact[]> {
+    const filter = projectAccess('p', access);
+    const rows = await this.database.all<{ required_quantity_scaled: number; amount_fen: number | null; reserve_category_id: string | null; category_key: string | null; label: string | null }>({
+      sql: `SELECT pmr.required_quantity_scaled,pmr.amount_fen,pmr.reserve_category_id,rc.category_key,rc.label
+            FROM project_material_requirements pmr
+            INNER JOIN projects p ON p.id=pmr.project_id
+            LEFT JOIN reserve_categories rc ON rc.id=pmr.reserve_category_id
+            WHERE pmr.active=1 AND NOT EXISTS (SELECT 1 FROM project_releases pr WHERE pr.project_id=p.id) AND ${filter.sql}
+            ORDER BY pmr.project_id,pmr.id`,
+      params: filter.params,
+    });
+    return rows.map((row) => ({ requiredQuantityScaled: row.required_quantity_scaled, amountFen: row.amount_fen, reserveCategoryId: row.reserve_category_id, categoryKey: row.category_key, label: row.label }));
+  }
+
+  async releasedProjectCount(access: AnalysisAccessScope): Promise<number> {
+    const filter = projectAccess('p', access);
+    const row = await this.database.first<{ count: number | string }>({ sql: `SELECT COUNT(*) AS count FROM projects p WHERE ${filter.sql} AND EXISTS (SELECT 1 FROM project_releases pr WHERE pr.project_id=p.id)`, params: filter.params });
+    return Number(row?.count ?? 0);
+  }
+
+  async dashboardFacts(access: AnalysisAccessScope): Promise<AnalysisDashboardFacts> {
+    const filter = projectAccess('p', access);
+    const [projectCount, demandCount, unreleased, pendingSettlement] = await Promise.all([
+      this.database.first<{ count: number | string }>({ sql: `SELECT COUNT(*) AS count FROM projects p WHERE ${filter.sql}`, params: filter.params }),
+      this.database.first<{ count: number | string }>({ sql: `SELECT COUNT(DISTINCT pdl.demand_id) AS count FROM project_demand_links pdl INNER JOIN projects p ON p.id=pdl.project_id WHERE ${filter.sql}`, params: filter.params }),
+      this.database.first<{ count: number | string }>({ sql: `SELECT COUNT(*) AS count FROM projects p WHERE ${filter.sql} AND NOT EXISTS (SELECT 1 FROM project_releases pr WHERE pr.project_id=p.id)`, params: filter.params }),
+      this.database.first<{ count: number | string }>({ sql: `SELECT COUNT(*) AS count FROM projects p WHERE ${filter.sql} AND EXISTS (SELECT 1 FROM project_tasks pt INNER JOIN task_implementation_records tir ON tir.task_id=pt.id WHERE pt.project_id=p.id AND NOT EXISTS (SELECT 1 FROM task_settlements ts WHERE ts.task_id=pt.id AND ts.final=1 AND ts.voided_at IS NULL))`, params: filter.params }),
+    ]);
+    return { projectCount: Number(projectCount?.count ?? 0), demandCount: Number(demandCount?.count ?? 0), unreleasedProjectCount: Number(unreleased?.count ?? 0), pendingSettlementCount: Number(pendingSettlement?.count ?? 0) };
+  }
+
+  async activeAlertReferences(): Promise<readonly ActiveAlertReference[]> {
+    const rows = await this.database.all<{ object_type: string; object_id: string; milestone_project_id: string | null }>({ sql: `SELECT ae.object_type,ae.object_id,am.project_id AS milestone_project_id FROM alert_events ae LEFT JOIN annual_milestones am ON ae.object_type='milestone' AND am.id=ae.object_id WHERE ae.state='active'` });
+    return rows.map((row) => ({ objectType: row.object_type, objectId: row.object_id, milestoneProjectId: row.milestone_project_id }));
   }
 }
