@@ -131,8 +131,9 @@ test('production Cloudflare inventory is manual, environment-bound and read-only
   assert.match(source, /workflow_dispatch:/);
   assert.match(source, /environment: production/);
   assert.match(source, /account_id/);
-  assert.match(source, /CLOUDFLARE_READ_API_TOKEN/);
-  assert.doesNotMatch(source, /secrets\.CLOUDFLARE_API_TOKEN/);
+  assert.match(source, /CLOUDFLARE_API_TOKEN/);
+  assert.match(source, /secrets\.CLOUDFLARE_API_TOKEN/);
+  assert.doesNotMatch(source, /CLOUDFLARE_READ_API_TOKEN/);
   assert.match(source, /\/workers\/scripts/);
   assert.match(source, /\/d1\/database/);
   assert.match(source, /\/r2\/buckets/);
