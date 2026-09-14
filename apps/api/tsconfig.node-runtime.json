@@ -1,0 +1,29 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2022"],
+    "types": ["node"],
+    "allowImportingTsExtensions": true
+  },
+  "include": [
+    "src/app.ts",
+    "src/auth.ts",
+    "src/credential.ts",
+    "src/runtime-env.ts",
+    "src/schema.ts",
+    "src/session.ts",
+    "src/p2.ts",
+    "src/p3.ts",
+    "src/p4.ts",
+    "src/p5.ts",
+    "src/p6.ts",
+    "src/p8.ts",
+    "src/p9.ts",
+    "src/application/**/*.ts",
+    "src/ports/**/*.ts",
+    "src/repositories/**/*.ts",
+    "src/adapters/node/**/*.ts",
+    "src/runtime/persistence.ts",
+    "src/runtime/node/**/*.ts"
+  ]
+}

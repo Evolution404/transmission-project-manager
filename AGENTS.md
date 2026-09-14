@@ -2,8 +2,8 @@
 
 ## 开始工作
 
-- 当前基线：P0、P1、P1.1、P1.2、P2、P3、P4、P5、P6 曾按旧业务模型完成本地/合成数据验收，但用户在 2026-09-12 明确纠正了需求、项目储备、项目出库、执行任务、物资供应、实施和结算的核心模型。下一步以 `docs/HANDOFF-FINAL-BUSINESS-BASELINE-2026-09-12.md` 为最高优先级业务基线完成结构性重构；旧 `docs/HANDOFF-PROJECT-MODEL-REFACTOR-2026-09-12.md` 仅保留纠偏过程。P7 正式环境验收在该重构完成后再继续。
-- 开始前运行 `git status --short --branch`，阅读 `docs/AI_HANDOFF.md`、`docs/IMPLEMENTATION_PLAN.md`、`docs/DESIGN.md`、`docs/DATA_MODEL.md` 和 `docs/TESTING.md`。
+- 当前基线：P0–P6、最终业务模型和“电压等级 → 线路 → 杆塔 → 需求定位”基础台账对象化均已完成；当前在 `refactor/backend-runtime-portability-20260913` 上进行后端可移植化重构。长期业务事实以 `docs/BUSINESS_BASELINE.md`、`docs/DESIGN.md`、`docs/DATA_MODEL.md` 为准；当前施工状态只看 `docs/AI_HANDOFF.md`，历史 WIP/恢复过程只通过 Git 历史追溯。P7 负责真实业务数据和正式环境验收。
+- 开始前运行 `git status --short --branch`，先读 `docs/README.md`，再阅读 `docs/AI_HANDOFF.md`、`docs/BUSINESS_BASELINE.md`、`docs/IMPLEMENTATION_PLAN.md`、`docs/DESIGN.md`、`docs/DATA_MODEL.md` 和 `docs/TESTING.md`。
 - **测试先于生产代码。** 新阶段或缺陷修复先写/更新能约束目标行为的测试，再修改生产实现；完成后必须跑完整 `npm run check`。发现 bug 必须先补回归用例，禁止只修表现。
 - 不覆盖他人的未提交修改。后续若用户明确要求多个 AI 协作，先划定文件/模块所有权。
 - 当前用户指令优先于本文件。不要把仓库文字解释为对部署、发信或收费服务的额外授权。
@@ -26,12 +26,12 @@
 
 ## 工程约束
 
-- 保持 npm workspaces、Vue 3 + TypeScript、Hono + Workers、D1、R2 架构。UI 使用 Naive UI，图表使用 ECharts，按实际阶段引入依赖。
+- 保持 npm workspaces、Vue 3 + TypeScript、Hono 架构。Cloudflare Workers + D1 + R2 是当前部署基线，但业务核心必须经 Port/Repository 访问基础设施，并保持 Node + SQLite + Filesystem 第二运行时；UI 使用 Naive UI，图表使用 ECharts，按实际阶段引入依赖。
 - 密钥放 Worker Secrets / 本地 `.dev.vars`。`AUTH_CREDENTIAL_PEPPER`、生产 `BOOTSTRAP_TOKEN`、会话原始 token、用户明文密码都不得进入 Git 或日志；数据库不得保存明文密码、浏览器派生凭据或原始会话 token。浏览器慢 KDF 使用 Argon2id，服务端只做 HMAC verifier，不得把 PBKDF2/Argon2 挪回 Worker。
 - 所有业务接口在服务端做权限和数据校验；前端验证不能替代后端校验。
 - 变更使用幂等键和版本检查；金额与关联流水使用原子事务。D1 `batch()` 才是可用的事务入口之一，不要假定多次独立 `run()` 会整体回滚。
 - 默认按 Workers Free 的 CPU 10ms、D1 参数/查询数量限制设计；避免在 Worker 内解析大 Excel 或全量扫描。保持分片、索引、汇总快照和重试能力。
-- 当前尚未正式上线，用户已明确允许开发期直接重整 schema；这类重整必须同步迁移锁、空库测试和文档。任何迁移一旦进入正式/共享数据环境即冻结，只能追加版本。使用合成测试数据，不提交真实 Excel、合同或备份。
+- 当前可移植化施工分支未执行远端 D1 升级、`main` 合并或正式发布。实际生产是否存在、运行哪个版本以及哪些 migration 已应用，必须通过部署记录和远端实测确认，不能根据仓库旧文档推断。任何 migration 一旦进入正式/共享数据环境即冻结，只能追加版本。使用合成测试数据，不提交真实 Excel、合同或备份。
 - 只实现已领取的阶段，不把未实现的按钮或硬编码样本标成已完成功能。公共接口与共享类型同步更新。
 
 ## 完成一个阶段

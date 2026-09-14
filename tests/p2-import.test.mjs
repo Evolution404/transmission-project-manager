@@ -14,6 +14,10 @@ const stateDir = makeStateDir('tpm-p2-import-');
 let runtime;
 let adminCookie;
 let readonlyCookie;
+let manualLineId;
+let manualTower1;
+let manualTower2;
+let manualTower3;
 
 const mapping = {
   sequenceNo: '序号',
@@ -94,6 +98,36 @@ before(async () => {
   assert.equal(bootstrap.response.status, 201);
   adminCookie = cookiePair(bootstrap.response.headers.get('set-cookie'));
 
+  const line = await jsonRequest('/api/master/lines', mutation('POST', idem('master-line'), {
+    voltageLevelId: 'vl-ac-220', lineName: '手工需求线', lineCode: 'MANUAL-220', enabled: true,
+  }));
+  assert.equal(line.response.status, 201);
+  manualLineId = line.body.data.id;
+  const createdTowers = [];
+  for (const [towerNo, sortIndex] of [['#1', 1], ['#2', 2], ['#3', 3]]) {
+    const tower = await jsonRequest('/api/master/towers', mutation('POST', idem(`master-tower-${sortIndex}`), {
+      lineId: manualLineId, towerNo, sortIndex, towerType: '测试塔', enabled: true,
+    }));
+    assert.equal(tower.response.status, 201);
+    createdTowers.push(tower.body.data.id);
+  }
+  [manualTower1, manualTower2, manualTower3] = createdTowers;
+
+  async function createGridLine(voltageLevelId, lineName, towerNos) {
+    const lineResult = await jsonRequest('/api/master/lines', mutation('POST', idem('grid-line'), {
+      voltageLevelId, lineName, lineCode: null, enabled: true,
+    }));
+    assert.equal(lineResult.response.status, 201);
+    for (const [index, towerNo] of towerNos.entries()) {
+      const tower = await jsonRequest('/api/master/towers', mutation('POST', idem(`grid-tower-${index}`), {
+        lineId: lineResult.body.data.id, towerNo, sortIndex: index + 1, towerType: '测试塔', enabled: true,
+      }));
+      assert.equal(tower.response.status, 201);
+    }
+  }
+  await createGridLine('vl-ac-220', '导入测试线', ['#1', '#2', '#3', '#4', '#10', '#11', '#20']);
+  await createGridLine('vl-ac-110', '江北线', ['#1', '#2', '#3', '#20']);
+
   const readonly = await createMember(runtime, adminCookie, {
     username: 'p2-readonly',
     displayName: 'P2 只读成员',
@@ -165,12 +199,12 @@ test('material dictionary distinguishes same model with different units and reje
 test('manual demand creation is available alongside batch import and keeps a real manual source', async () => {
   const created = await jsonRequest('/api/demands', mutation('POST', idem('manual-demand'), {
     sequenceNo: 'M-001',
-    voltage: '220kV',
-    lineName: '手工需求线',
-    section: '#1-#2',
-    materialModel: 'JX-01',
-    materialQuantity: '2.5',
-    unit: '套',
+    voltageLevelId: 'vl-ac-220',
+    lineId: manualLineId,
+    locationType: 'tower_range',
+    startTowerId: manualTower1,
+    endTowerId: manualTower2,
+    materials: [{ rawModel: 'JX-01', quantityScaled: 25000, unit: '套' }],
     year: 2026,
     category: '临时补充',
     owner: '张三',
@@ -188,8 +222,8 @@ test('manual demand creation is available alongside batch import and keeps a rea
   assert.equal(detail.body.data.materials[0].rawModel, 'JX-01');
 
   const invalid = await jsonRequest('/api/demands', mutation('POST', idem('manual-demand-invalid'), {
-    sequenceNo: 'M-002', voltage: '220kV', lineName: '手工需求线', section: '#3',
-    materialModel: 'JX-01', materialQuantity: '-1', unit: '套', year: 2026,
+    sequenceNo: 'M-002', voltageLevelId: 'vl-ac-220', lineId: manualLineId, locationType: 'tower', startTowerId: manualTower3,
+    materials: [{ rawModel: 'JX-01', quantityScaled: -10000, unit: '套' }], year: 2026,
   }));
   assert.equal(invalid.response.status, 422);
   assert.equal(invalid.body.error.code, 'INVALID_DEMAND');
@@ -201,15 +235,15 @@ test('import normalizes repeated business rows into one abstract demand with mul
   const uploaded = await uploadChunk(batch, [
     {
       sheetName: '需求', rowNumber: 2,
-      cells: { 序号: 'G-001', 年度: 2026, 电压等级: '220kV', 线路名称: '导入抽象线', 杆段: '#1-#2', 类别: '防鸟治理', 物资型号: 'A', 物资数量: 8, 单位: '套' },
+      cells: { 序号: 'G-001', 年度: 2026, 电压等级: '220kV', 线路名称: '导入测试线', 杆段: '#1-#2', 类别: '防鸟治理', 物资型号: 'A', 物资数量: 8, 单位: '套' },
     },
     {
       sheetName: '需求', rowNumber: 3,
-      cells: { 序号: 'G-001', 年度: 2026, 电压等级: '220kV', 线路名称: '导入抽象线', 杆段: '#1-#2', 类别: '防鸟治理', 物资型号: 'B', 物资数量: 2, 单位: '只' },
+      cells: { 序号: 'G-001', 年度: 2026, 电压等级: '220kV', 线路名称: '导入测试线', 杆段: '#1-#2', 类别: '防鸟治理', 物资型号: 'B', 物资数量: 2, 单位: '只' },
     },
     {
       sheetName: '需求', rowNumber: 4,
-      cells: { 序号: 'G-002', 年度: 2026, 电压等级: '220kV', 线路名称: '导入抽象线', 杆段: '#3-#4', 类别: '通道治理', 物资型号: '', 物资数量: '', 单位: '' },
+      cells: { 序号: 'G-002', 年度: 2026, 电压等级: '220kV', 线路名称: '导入测试线', 杆段: '#3-#4', 类别: '通道治理', 物资型号: '', 物资数量: '', 单位: '' },
     },
   ]);
   assert.equal(uploaded.response.status, 200);
@@ -221,7 +255,7 @@ test('import normalizes repeated business rows into one abstract demand with mul
   assert.equal(published.response.status, 200, JSON.stringify(published.body));
   assert.equal(published.body.data.done, true);
 
-  const list = await jsonRequest('/api/demands?query=%E5%AF%BC%E5%85%A5%E6%8A%BD%E8%B1%A1%E7%BA%BF&limit=20');
+  const list = await jsonRequest('/api/demands?query=G-00&limit=20');
   assert.equal(list.response.status, 200);
   const grouped = list.body.data.items.filter((item) => item.sequenceNo === 'G-001');
   const noMaterial = list.body.data.items.filter((item) => item.sequenceNo === 'G-002');
@@ -245,7 +279,7 @@ test('stale import batch versions fail atomically without leaving uploaded rows'
   assert.equal(batch.response.status, 201);
   const stale = await uploadChunk(batch, [{
     sheetName: '需求', rowNumber: 2,
-    cells: { 序号: 1, 电压等级: '220kV', 线路名称: '版本冲突线', 杆段: '#1', 物资型号: 'JX-01', 物资数量: 1, 单位: '套' },
+    cells: { 序号: 1, 电压等级: '220kV', 线路名称: '导入测试线', 杆段: '#1', 物资型号: 'JX-01', 物资数量: 1, 单位: '套' },
   }], 0, batch.currentVersion + 1);
   assert.equal(stale.response.status, 409);
   assert.equal(stale.body.error.code, 'VERSION_CONFLICT');
@@ -264,7 +298,7 @@ test('a clean import validates, publishes resumably, and produces traceable pagi
   const rows = [
     {
       sheetName: '需求', rowNumber: 2,
-      cells: { 序号: 1, 电压等级: '220kV', 线路名称: '龙城线', 杆段: '#10-#11', 物资型号: 'JX-01', 物资数量: 2, 单位: '套', 年度: 2026, 类别: '防断线' },
+      cells: { 序号: 1, 电压等级: '220kV', 线路名称: '导入测试线', 杆段: '#10-#11', 物资型号: 'JX-01', 物资数量: 2, 单位: '套', 年度: 2026, 类别: '防断线' },
     },
     {
       sheetName: '需求', rowNumber: 3,
@@ -339,7 +373,7 @@ test('validation classifies blocking errors separately from warnings and never p
     },
     {
       sheetName: '需求', rowNumber: 4,
-      cells: { 序号: 3, 电压等级: '110kV', 线路名称: '线路C', 杆段: '#3', 物资型号: 'UNKNOWN', 物资数量: 1.23456, 单位: '套', 年度: 2026 },
+      cells: { 序号: 3, 电压等级: '110kV', 线路名称: '江北线', 杆段: '#3', 物资型号: 'UNKNOWN', 物资数量: 1.23456, 单位: '套', 年度: 2026 },
     },
   ];
   const upload = await uploadChunk(batch, rows);
@@ -360,7 +394,7 @@ test('validation classifies blocking errors separately from warnings and never p
   assert.ok(codes.includes('QUANTITY_NEGATIVE'));
   assert.ok(codes.includes('QUANTITY_PRECISION'));
   assert.ok(codes.includes('MATERIAL_UNRESOLVED'));
-  assert.ok(codes.includes('VOLTAGE_UNVERIFIED'));
+  assert.ok(codes.includes('VOLTAGE_LEVEL_UNKNOWN'));
 
   const publish = await publishBatch(batch, 20);
   assert.equal(publish.response.status, 422);
@@ -371,7 +405,7 @@ test('unknown material is a warning, not zero-price or silent success, and can s
   const batch = await createBatch({ fileSha256: 'c'.repeat(64) });
   const rows = [{
     sheetName: '需求', rowNumber: 2,
-    cells: { 序号: 1, 电压等级: '220kV', 线路名称: '未知物资线', 杆段: '#1', 物资型号: 'NOT-MAPPED', 物资数量: 1, 单位: '套', 年度: 2026 },
+    cells: { 序号: 1, 电压等级: '220kV', 线路名称: '导入测试线', 杆段: '#1', 物资型号: 'NOT-MAPPED', 物资数量: 1, 单位: '套', 年度: 2026 },
   }];
   await uploadChunk(batch, rows);
   const validated = await validateBatch(batch);
@@ -399,7 +433,7 @@ test('same file hash reuses the existing batch, while same business text from a 
   const sourceOne = await createBatch({ fileSha256: 'e'.repeat(64) });
   const row = {
     sheetName: '需求', rowNumber: 2,
-    cells: { 序号: 99, 电压等级: '220kV', 线路名称: '合法重复线', 杆段: '#1', 物资型号: 'JX-01', 物资数量: 1, 单位: '套', 年度: 2026 },
+    cells: { 序号: 99, 电压等级: '220kV', 线路名称: '导入测试线', 杆段: '#1', 物资型号: 'JX-01', 物资数量: 1, 单位: '套', 年度: 2026 },
   };
   await uploadChunk(sourceOne, [row]);
   await validateBatch(sourceOne);
@@ -415,7 +449,7 @@ test('same file hash reuses the existing batch, while same business text from a 
   const secondPublish = await publishBatch(sourceTwo, 20);
   assert.equal(secondPublish.response.status, 200);
 
-  const search = await jsonRequest('/api/demands?query=%E5%90%88%E6%B3%95%E9%87%8D%E5%A4%8D%E7%BA%BF&limit=10');
+  const search = await jsonRequest('/api/demands?query=99&limit=10');
   assert.equal(search.response.status, 200);
   assert.equal(search.body.data.items.length, 2, '不同来源的合法相同需求不得被字符串自动去重');
 });
@@ -444,7 +478,7 @@ test('concurrent validation calls serialize on the batch version instead of both
   const batch = await createBatch({ fileSha256: '7'.repeat(64) });
   const rows = Array.from({ length: 20 }, (_, index) => ({
     sheetName: '需求', rowNumber: index + 2,
-    cells: { 序号: index + 1, 电压等级: '220kV', 线路名称: `并发校验${index}`, 杆段: '#1', 物资型号: 'JX-01', 物资数量: 1, 单位: '套' },
+    cells: { 序号: `VALIDATE-${index + 1}`, 电压等级: '220kV', 线路名称: '导入测试线', 杆段: '#1', 物资型号: 'JX-01', 物资数量: 1, 单位: '套' },
   }));
   const upload = await uploadChunk(batch, rows);
   assert.equal(upload.response.status, 200);
@@ -466,11 +500,11 @@ test('concurrent publish calls cannot leave duplicate or half-published demand d
   const rows = [
     {
       sheetName: '需求', rowNumber: 2,
-      cells: { 序号: 1, 电压等级: '220kV', 线路名称: '并发发布线A', 杆段: '#1', 物资型号: 'JX-01', 物资数量: 1, 单位: '套' },
+      cells: { 序号: 'RACE-PUB-1', 电压等级: '220kV', 线路名称: '导入测试线', 杆段: '#1', 物资型号: 'JX-01', 物资数量: 1, 单位: '套' },
     },
     {
       sheetName: '需求', rowNumber: 3,
-      cells: { 序号: 2, 电压等级: '220kV', 线路名称: '并发发布线B', 杆段: '#2', 物资型号: 'JX-01', 物资数量: 1, 单位: '套' },
+      cells: { 序号: 'RACE-PUB-2', 电压等级: '220kV', 线路名称: '导入测试线', 杆段: '#2', 物资型号: 'JX-01', 物资数量: 1, 单位: '套' },
     },
   ];
   await uploadChunk(batch, rows);
@@ -490,7 +524,7 @@ test('concurrent publish calls cannot leave duplicate or half-published demand d
   assert.equal(detail.body.data.rows.filter((row) => row.status === 'published').length, 1);
   assert.equal(detail.body.data.rows.filter((row) => row.status === 'valid').length, 1);
 
-  const demands = await jsonRequest('/api/demands?query=%E5%B9%B6%E5%8F%91%E5%8F%91%E5%B8%83%E7%BA%BF&limit=10');
+  const demands = await jsonRequest('/api/demands?query=RACE-PUB-&limit=10');
   assert.equal(demands.response.status, 200);
   assert.equal(demands.body.data.items.length, 1, '失败的并发发布不能留下额外需求');
 });
@@ -525,4 +559,34 @@ test('chunk size, idempotency payload conflicts, pagination limits and write rol
   }, { Cookie: readonlyCookie }));
   assert.equal(readonlyCreate.response.status, 403);
   assert.equal(readonlyCreate.body.error.code, 'FORBIDDEN');
+});
+
+test('unknown grid objects block publication and are never created by import', async () => {
+  for (const [voltage, line, section, code] of [
+    ['999kV', '未维护线路', '#1', 'VOLTAGE_LEVEL_UNKNOWN'],
+    ['220kV', '未维护线路', '#1', 'LINE_UNKNOWN'],
+    ['220kV', '手工需求线', '#MISSING', 'TOWER_UNKNOWN'],
+  ]) {
+    const batch = await createBatch({ fileSha256: crypto.randomUUID().replaceAll('-', '').repeat(2) });
+    await uploadChunk(batch, [{ sheetName: '需求', rowNumber: 2, cells: { 序号: 'UNKNOWN', 电压等级: voltage, 线路名称: line, 杆段: section } }]);
+    await validateBatch(batch);
+    const detail = await jsonRequest(`/api/imports/${batch.body.data.id}`);
+    assert.ok(detail.body.data.rows[0].errors.some((e) => e.code === code));
+    assert.equal((await publishBatch(batch)).response.status, 422);
+  }
+  assert.ok(!(await jsonRequest('/api/master/lines')).body.data.items.some((l) => l.lineName === '未维护线路'));
+});
+
+test('publication revalidates an already validated location after master data is disabled', async () => {
+  const batch = await createBatch({ fileSha256: crypto.randomUUID().replaceAll('-', '').repeat(2) });
+  await uploadChunk(batch, [{ sheetName: '需求', rowNumber: 2, cells: { 序号: 'STALE-GRID', 电压等级: '220kV', 线路名称: '手工需求线', 杆段: '#1-#2' } }]);
+  const validated = await validateBatch(batch);
+  assert.equal(validated.response.status, 200);
+  const line = (await jsonRequest('/api/master/lines')).body.data.items.find((l) => l.id === manualLineId);
+  assert.equal((await jsonRequest(`/api/master/lines/${line.id}`, mutation('PATCH', idem('disable-before-publish'), { ...line, enabled: false, expectedVersion: line.version }))).response.status, 200);
+  const result = await publishBatch(batch);
+  assert.equal(result.response.status, 422);
+  assert.equal(result.body.error.code, 'IMPORT_GRID_CHANGED');
+  assert.ok(result.body.error.details.some((e) => e.rowNumber === 2));
+  assert.equal((await jsonRequest('/api/demands?query=STALE-GRID')).body.data.items.length, 0);
 });

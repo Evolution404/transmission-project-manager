@@ -14,19 +14,7 @@ import {
   type UpdateMemberRequest,
   type UpdateSettingRequest,
 } from '@tpm/shared';
-import { hasScope, requireAuthentication, requireRoles, type AppEnv } from './auth';
-import {
-  countEnabledAdmins,
-  countMembers,
-  findCredentialByMemberId,
-  findCredentialByUsername,
-  findMemberById,
-  getSettingHistory,
-  listCurrentSettings,
-  listDictionary,
-  listMembers,
-  recordSuccessfulLogin,
-} from './db';
+import { hasScope, requireAuthentication, requireRoles, type AppEnv } from './auth.ts';
 import {
   constantTimeEqualText,
   credentialDescriptor,
@@ -37,20 +25,27 @@ import {
   normalizeUsername,
   validateCredentialValue,
   validateDerivedCredential,
-} from './credential';
+} from './credential.ts';
 import {
   clearSessionCookie,
   createSession,
   getSessionToken,
   revokeSessionToken,
-} from './session';
-import { p8App } from './p8';
-import { p2App } from './p2';
-import { p3App } from './p3';
-import { p4App } from './p4';
-import { p5App } from './p5';
-import { p6App } from './p6';
-import { schemaReadiness } from './schema';
+} from './session.ts';
+import { p9App } from './p9.ts';
+import { p8App } from './p8.ts';
+import { p2App } from './p2.ts';
+import { p3App } from './p3.ts';
+import { p4App } from './p4.ts';
+import { p5App } from './p5.ts';
+import { p6App } from './p6.ts';
+import { SqlCredentialRepository } from './repositories/sql-credential-repository.ts';
+import { SqlMemberAdminRepository } from './repositories/sql-member-admin-repository.ts';
+import { SqlMemberRepository } from './repositories/sql-member-repository.ts';
+import { SqlIdempotencyRepository } from './repositories/sql-idempotency-repository.ts';
+import { SqlSystemConfigRepository } from './repositories/sql-system-config-repository.ts';
+import { resolvePersistence as createCloudflarePersistence } from './runtime/persistence.ts';
+import { schemaReadiness } from './schema.ts';
 
 export const app = new Hono<AppEnv>();
 
@@ -102,21 +97,13 @@ function requireCredentialPepper(c: Context<AppEnv>): string | Response {
 
 async function replayIdempotentResponse(c: Context<AppEnv>, key: string, operation: string, hash: string) {
   const user = c.get('currentUser');
-  const row = await c.env.DB.prepare(
-    `SELECT actor_member_id, operation, request_hash, response_json, status_code
-     FROM idempotency_records WHERE idempotency_key = ? LIMIT 1`,
-  ).bind(key).first<{
-    actor_member_id: string;
-    operation: string;
-    request_hash: string;
-    response_json: string;
-    status_code: number;
-  }>();
+  const { database } = createCloudflarePersistence(c.env);
+  const row = await new SqlIdempotencyRepository(database).findByKey(key);
   if (!row) return null;
-  if (row.actor_member_id !== user.id || row.operation !== operation || row.request_hash !== hash) {
+  if (row.actorMemberId !== user.id || row.operation !== operation || row.requestHash !== hash) {
     return c.json(apiError('IDEMPOTENCY_CONFLICT', '该 Idempotency-Key 已用于不同请求'), 409);
   }
-  return new Response(row.response_json, { status: row.status_code, headers: jsonHeaders });
+  return new Response(row.responseJson, { status: row.statusCode, headers: jsonHeaders });
 }
 
 function requireIdempotencyKey(c: Context<AppEnv>): string | Response {
@@ -127,45 +114,32 @@ function requireIdempotencyKey(c: Context<AppEnv>): string | Response {
   return key;
 }
 
-function scopeStatements(
-  c: Context<AppEnv>,
-  memberId: string,
-  scopes: MemberScope[],
-  conditionVersion?: number,
-  conditionUpdatedAt?: string,
-) {
-  const statements: D1PreparedStatement[] = [];
-  for (const scope of scopes) {
-    if (conditionVersion !== undefined && conditionUpdatedAt) {
-      statements.push(c.env.DB.prepare(
-        `INSERT INTO member_scopes (id, member_id, scope_type, scope_id, created_at)
-         SELECT ?, ?, ?, ?, ?
-         WHERE EXISTS (SELECT 1 FROM members WHERE id = ? AND version = ? AND updated_at = ?)`,
-      ).bind(
-        crypto.randomUUID(), memberId, scope.type, scope.id, conditionUpdatedAt,
-        memberId, conditionVersion, conditionUpdatedAt,
-      ));
-    } else {
-      statements.push(c.env.DB.prepare(
-        `INSERT INTO member_scopes (id, member_id, scope_type, scope_id, created_at)
-         VALUES (?, ?, ?, ?, ?)`,
-      ).bind(crypto.randomUUID(), memberId, scope.type, scope.id, new Date().toISOString()));
-    }
-  }
-  return statements;
-}
-
 function currentUserData<T extends { mustChangePassword: boolean }>(member: T) {
   return { ...member, authSource: 'session' as const };
 }
 
+function authRepositories(c: Context<AppEnv>) {
+  const { database } = createCloudflarePersistence(c.env);
+  return {
+    credentials: new SqlCredentialRepository(database),
+    memberAdmin: new SqlMemberAdminRepository(database),
+    members: new SqlMemberRepository(database),
+  };
+}
+
+function systemConfigRepository(c: Context<AppEnv>) {
+  const { database } = createCloudflarePersistence(c.env);
+  return new SqlSystemConfigRepository(database);
+}
+
 app.get('/api/health', async (c) => {
+  const { database } = createCloudflarePersistence(c.env);
   const body: HealthResponse = {
     ok: true,
     data: {
       service: 'transmission-project-manager',
       stage: 'p6',
-      schema: await schemaReadiness(c.env.DB),
+      schema: await schemaReadiness(database),
     },
   };
   c.header('Cache-Control', 'no-store');
@@ -174,7 +148,8 @@ app.get('/api/health', async (c) => {
 
 app.get('/api/auth/status', async (c) => {
   c.header('Cache-Control', 'no-store');
-  return c.json({ ok: true as const, data: { initialized: (await countMembers(c.env.DB)) > 0 } });
+  const { members } = authRepositories(c);
+  return c.json({ ok: true as const, data: { initialized: (await members.count()) > 0 } });
 });
 
 app.post('/api/auth/kdf', async (c) => {
@@ -185,7 +160,8 @@ app.post('/api/auth/kdf', async (c) => {
     return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400);
   }
   const username = normalizeUsername(body.username);
-  const credential = username ? await findCredentialByUsername(c.env.DB, username) : null;
+  const { credentials } = authRepositories(c);
+  const credential = username ? await credentials.findByUsername(username) : null;
   const salt = credential?.credentialSalt ?? await fakeSaltForUsername(username ?? 'invalid-user', pepper);
   c.header('Cache-Control', 'no-store');
   return c.json({ ok: true as const, data: credentialDescriptor(salt) });
@@ -209,7 +185,8 @@ app.post('/api/auth/bootstrap', async (c) => {
   if (!username) return c.json(apiError('INVALID_USERNAME', '账号需为 3-64 位字母、数字、点、横线或下划线'), 422);
   if (!displayName || displayName.length > 80) return c.json(apiError('INVALID_DISPLAY_NAME', '管理员名称不能为空且最多 80 个字符'), 422);
   if (!validateDerivedCredential(body)) return c.json(apiError('INVALID_CREDENTIAL', '认证凭据格式无效'), 422);
-  if (await countMembers(c.env.DB) > 0) return c.json(apiError('BOOTSTRAP_CLOSED', '系统已有账号，首管理员初始化已关闭'), 409);
+  const { memberAdmin, members } = authRepositories(c);
+  if (await members.count() > 0) return c.json(apiError('BOOTSTRAP_CLOSED', '系统已有账号，首管理员初始化已关闭'), 409);
 
   const verifier = await credentialVerifier(body.credential, pepper);
   const memberId = crypto.randomUUID();
@@ -230,33 +207,19 @@ app.post('/api/auth/bootstrap', async (c) => {
   };
 
   try {
-    const results = await c.env.DB.batch([
-      c.env.DB.prepare(
-        `INSERT INTO members
-         (id,username,display_name,role,enabled,version,
-          credential_salt,credential_verifier,credential_algorithm,credential_params_json,
-          must_change_password,session_version,failed_login_count,locked_until,last_failed_login_at,
-          credential_changed_at,invited_at,first_login_at,last_login_at,created_at,updated_at)
-         SELECT ?,?,?,'admin',1,1,?,?,'argon2id-v1',?,0,1,0,NULL,NULL,?,?,?,?,?,?
-         WHERE NOT EXISTS (SELECT 1 FROM members)`,
-      ).bind(
-        memberId, username, displayName, body.salt, verifier, credentialParamsJson,
-        now, now, now, now, now, now,
-      ),
-      c.env.DB.prepare(
-        `INSERT INTO member_scopes (id,member_id,scope_type,scope_id,created_at)
-         SELECT ?,?,'all',NULL,? WHERE EXISTS (SELECT 1 FROM members WHERE id=?)`,
-      ).bind(crypto.randomUUID(), memberId, now, memberId),
-      c.env.DB.prepare(
-        `INSERT INTO audit_events
-         (id,actor_member_id,action,object_type,object_id,before_json,after_json,created_at)
-         SELECT ?,NULL,'auth.bootstrap','member',?,NULL,?,?
-         WHERE EXISTS (SELECT 1 FROM members WHERE id=?)`,
-      ).bind(crypto.randomUUID(), memberId, JSON.stringify(data), now, memberId),
-    ]);
-    if (Number(results[0]?.meta.changes ?? 0) !== 1) {
-      return c.json(apiError('BOOTSTRAP_CLOSED', '首管理员已被其他请求初始化'), 409);
-    }
+    const created = await memberAdmin.bootstrapAdmin({
+      memberId,
+      username,
+      displayName,
+      salt: body.salt,
+      verifier,
+      credentialParamsJson,
+      nowIso: now,
+      scopeId: crypto.randomUUID(),
+      auditEventId: crypto.randomUUID(),
+      auditAfterJson: JSON.stringify(data),
+    });
+    if (!created) return c.json(apiError('BOOTSTRAP_CLOSED', '首管理员已被其他请求初始化'), 409);
   } catch {
     return c.json(apiError('BOOTSTRAP_CLOSED', '首管理员初始化失败或已经完成'), 409);
   }
@@ -276,7 +239,8 @@ app.post('/api/auth/login', async (c) => {
   const generic = () => c.json(apiError('INVALID_CREDENTIALS', '账号或密码错误'), 401);
   if (!username || !validateCredentialValue(body.credential)) return generic();
 
-  const record = await findCredentialByUsername(c.env.DB, username);
+  const { credentials, members } = authRepositories(c);
+  const record = await credentials.findByUsername(username);
   const expected = record?.credentialVerifier ?? await fakeVerifierForUsername(username, pepper);
   const actual = await credentialVerifier(body.credential, pepper);
   const matches = constantTimeEqualText(actual, expected);
@@ -288,28 +252,23 @@ app.post('/api/auth/login', async (c) => {
   if (!matches) {
     const failures = record.failedLoginCount + 1;
     const lockedUntil = failures >= LOCK_AFTER_FAILURES ? new Date(now.getTime() + LOCK_DURATION_MS).toISOString() : null;
-    await c.env.DB.batch([
-      c.env.DB.prepare(
-        `UPDATE members
-         SET failed_login_count=?,locked_until=?,last_failed_login_at=?,updated_at=? WHERE id=?`,
-      ).bind(failures, lockedUntil, nowIso, nowIso, record.memberId),
-      c.env.DB.prepare(
-        `INSERT INTO audit_events
-         (id,actor_member_id,action,object_type,object_id,before_json,after_json,created_at)
-         VALUES (?,NULL,'auth.login_failed','member',?,NULL,?,?)`,
-      ).bind(crypto.randomUUID(), record.memberId, JSON.stringify({ failedLoginCount: failures, locked: Boolean(lockedUntil) }), nowIso),
-    ]);
+    await credentials.recordLoginFailure({
+      memberId: record.memberId,
+      failedLoginCount: failures,
+      lockedUntil,
+      nowIso,
+      auditEventId: crypto.randomUUID(),
+    });
     return generic();
   }
 
-  const member = await findMemberById(c.env.DB, record.memberId);
+  const member = await members.findById(record.memberId);
   if (!member) return generic();
   if (!member.enabled) return c.json(apiError('MEMBER_DISABLED', '当前账号已停用'), 403);
 
-  await c.env.DB.prepare(
-    `UPDATE members SET failed_login_count=0,locked_until=NULL,last_failed_login_at=NULL,updated_at=? WHERE id=?`,
-  ).bind(nowIso, member.id).run();
-  const activeMember = await recordSuccessfulLogin(c.env.DB, member);
+  await credentials.clearLoginFailures(member.id, nowIso);
+  const staleBefore = new Date(now.getTime() - 60 * 60 * 1000).toISOString();
+  const activeMember = await members.recordSuccessfulLogin(member, nowIso, staleBefore);
   await createSession(c, member.id, record.sessionVersion);
   return c.json({ ok: true as const, data: currentUserData(activeMember) });
 });
@@ -332,7 +291,8 @@ app.use('/api/*', async (c, next) => {
     '/api/me',
   ]);
   if (schemaExemptPaths.has(c.req.path)) return next();
-  const schema = await schemaReadiness(c.env.DB);
+  const { database } = createCloudflarePersistence(c.env);
+  const schema = await schemaReadiness(database);
   if (!schema.ready) {
     return c.json(apiError(
       'SCHEMA_OUTDATED',
@@ -350,7 +310,7 @@ app.get('/api/me', (c) => {
 
 app.post('/api/auth/logout', async (c) => {
   const token = getSessionToken(c);
-  if (token) await revokeSessionToken(c.env.DB, token);
+  if (token) await revokeSessionToken(c, token);
   clearSessionCookie(c);
   return c.json({ ok: true as const, data: { loggedOut: true } });
 });
@@ -367,7 +327,8 @@ app.post('/api/auth/change-password', async (c) => {
   }
 
   const user = c.get('currentUser');
-  const record = await findCredentialByMemberId(c.env.DB, user.id);
+  const { credentials, members } = authRepositories(c);
+  const record = await credentials.findByMemberId(user.id);
   if (!record) return c.json(apiError('MEMBER_NOT_FOUND', '成员不存在'), 404);
   const currentVerifier = await credentialVerifier(body.currentCredential, pepper);
   if (!constantTimeEqualText(currentVerifier, record.credentialVerifier)) {
@@ -377,31 +338,25 @@ app.post('/api/auth/change-password', async (c) => {
   const nextVerifier = await credentialVerifier(body.next.credential, pepper);
   const now = new Date().toISOString();
   const nextSessionVersion = record.sessionVersion + 1;
-  await c.env.DB.batch([
-    c.env.DB.prepare(
-      `UPDATE members
-       SET credential_salt=?,credential_verifier=?,credential_algorithm='argon2id-v1',credential_params_json=?,
-           must_change_password=0,session_version=?,failed_login_count=0,locked_until=NULL,last_failed_login_at=NULL,
-           credential_changed_at=?,updated_at=? WHERE id=?`,
-    ).bind(body.next.salt, nextVerifier, credentialParamsJson, nextSessionVersion, now, now, user.id),
-    c.env.DB.prepare(
-      `UPDATE auth_sessions SET revoked_at=COALESCE(revoked_at,?) WHERE member_id=? AND revoked_at IS NULL`,
-    ).bind(now, user.id),
-    c.env.DB.prepare(
-      `INSERT INTO audit_events
-       (id,actor_member_id,action,object_type,object_id,before_json,after_json,created_at)
-       VALUES (?,?,'auth.credential_change','member',?,NULL,?,?)`,
-    ).bind(crypto.randomUUID(), user.id, user.id, JSON.stringify({ sessionVersion: nextSessionVersion }), now),
-  ]);
+  await credentials.changeOwnCredential({
+    memberId: user.id,
+    salt: body.next.salt,
+    verifier: nextVerifier,
+    paramsJson: credentialParamsJson,
+    nextSessionVersion,
+    nowIso: now,
+    auditEventId: crypto.randomUUID(),
+  });
   await createSession(c, user.id, nextSessionVersion);
-  const refreshed = await findMemberById(c.env.DB, user.id);
+  const refreshed = await members.findById(user.id);
   if (!refreshed) return c.json(apiError('MEMBER_NOT_FOUND', '成员不存在'), 404);
   return c.json({ ok: true as const, data: currentUserData(refreshed) });
 });
 
 app.get('/api/members', requireRoles('admin'), async (c) => {
   c.header('Cache-Control', 'no-store');
-  return c.json({ ok: true as const, data: { items: await listMembers(c.env.DB) } });
+  const { members } = authRepositories(c);
+  return c.json({ ok: true as const, data: { items: await members.list() } });
 });
 
 app.post('/api/members', requireRoles('admin'), async (c) => {
@@ -451,36 +406,32 @@ app.post('/api/members', requireRoles('admin'), async (c) => {
   const response = { ok: true as const, data };
   const responseJson = JSON.stringify(response);
 
+  const { memberAdmin } = authRepositories(c);
   try {
-    await c.env.DB.batch([
-      c.env.DB.prepare(
-        `INSERT INTO members
-         (id,username,display_name,role,enabled,version,
-          credential_salt,credential_verifier,credential_algorithm,credential_params_json,
-          must_change_password,session_version,failed_login_count,locked_until,last_failed_login_at,
-          credential_changed_at,invited_at,first_login_at,last_login_at,created_at,updated_at)
-         VALUES (?,?,?,?,?,1,?,?,'argon2id-v1',?,1,1,0,NULL,NULL,?,?,NULL,NULL,?,?)`,
-      ).bind(
-        memberId, username, displayName, body.role, enabled,
-        body.salt, verifier, credentialParamsJson,
-        now, now, now, now,
-      ),
-      ...scopeStatements(c, memberId, scopes),
-      c.env.DB.prepare(
-        `INSERT INTO audit_events
-         (id,actor_member_id,action,object_type,object_id,before_json,after_json,created_at)
-         VALUES (?,?,'member.create','member',?,NULL,?,?)`,
-      ).bind(crypto.randomUUID(), actor.id, memberId, JSON.stringify(data), now),
-      c.env.DB.prepare(
-        `INSERT INTO idempotency_records
-         (idempotency_key,actor_member_id,operation,request_hash,response_json,status_code,created_at)
-         VALUES (?,?,?,?,?,201,?)`,
-      ).bind(idempotency, actor.id, operation, hash, responseJson, now),
-    ]);
+    await memberAdmin.createMember({
+      memberId,
+      username,
+      displayName,
+      role: body.role,
+      enabled: enabled === 1,
+      salt: body.salt,
+      verifier,
+      credentialParamsJson,
+      nowIso: now,
+      actorId: actor.id,
+      scopes: scopes.map((scope) => ({ id: crypto.randomUUID(), type: scope.type, scopeId: scope.id })),
+      auditEventId: crypto.randomUUID(),
+      auditAfterJson: JSON.stringify(data),
+      idempotency: {
+        key: idempotency,
+        operation,
+        requestHash: hash,
+        responseJson,
+        statusCode: 201,
+      },
+    });
   } catch {
-    const existing = await c.env.DB.prepare('SELECT id FROM members WHERE username=? COLLATE NOCASE LIMIT 1')
-      .bind(username).first<{ id: string }>();
-    if (existing) return c.json(apiError('USERNAME_EXISTS', '该账号已存在'), 409);
+    if (await memberAdmin.usernameExists(username)) return c.json(apiError('USERNAME_EXISTS', '该账号已存在'), 409);
     return c.json(apiError('MEMBER_CREATE_FAILED', '账号创建失败，请刷新后重试'), 409);
   }
   return c.json(response, 201);
@@ -497,8 +448,9 @@ app.post('/api/members/:id/reset-password', requireRoles('admin'), async (c) => 
   }
   if (!validateDerivedCredential(body)) return c.json(apiError('INVALID_CREDENTIAL', '认证凭据格式无效'), 422);
 
-  const before = await findMemberById(c.env.DB, c.req.param('id'));
-  const record = before ? await findCredentialByMemberId(c.env.DB, before.id) : null;
+  const { credentials, members } = authRepositories(c);
+  const before = await members.findById(c.req.param('id'));
+  const record = before ? await credentials.findByMemberId(before.id) : null;
   if (!before || !record) return c.json(apiError('MEMBER_NOT_FOUND', '成员不存在'), 404);
   const operation = `members.reset-password:${before.id}`;
   const hash = await requestHash(body);
@@ -511,26 +463,23 @@ app.post('/api/members/:id/reset-password', requireRoles('admin'), async (c) => 
   const nextSessionVersion = record.sessionVersion + 1;
   const data = { ...before, mustChangePassword: true };
   const response = { ok: true as const, data };
-  await c.env.DB.batch([
-    c.env.DB.prepare(
-      `UPDATE members
-       SET credential_salt=?,credential_verifier=?,credential_algorithm='argon2id-v1',credential_params_json=?,
-           must_change_password=1,session_version=?,failed_login_count=0,locked_until=NULL,last_failed_login_at=NULL,
-           credential_changed_at=?,updated_at=? WHERE id=?`,
-    ).bind(body.salt, verifier, credentialParamsJson, nextSessionVersion, now, now, before.id),
-    c.env.DB.prepare(`UPDATE auth_sessions SET revoked_at=COALESCE(revoked_at,?) WHERE member_id=? AND revoked_at IS NULL`)
-      .bind(now, before.id),
-    c.env.DB.prepare(
-      `INSERT INTO audit_events
-       (id,actor_member_id,action,object_type,object_id,before_json,after_json,created_at)
-       VALUES (?,?,'auth.credential_reset','member',?,NULL,?,?)`,
-    ).bind(crypto.randomUUID(), actor.id, before.id, JSON.stringify({ mustChangePassword: true }), now),
-    c.env.DB.prepare(
-      `INSERT INTO idempotency_records
-       (idempotency_key,actor_member_id,operation,request_hash,response_json,status_code,created_at)
-       VALUES (?,?,?,?,?,200,?)`,
-    ).bind(idempotency, actor.id, operation, hash, JSON.stringify(response), now),
-  ]);
+  await credentials.resetCredential({
+    memberId: before.id,
+    actorId: actor.id,
+    salt: body.salt,
+    verifier,
+    paramsJson: credentialParamsJson,
+    nextSessionVersion,
+    nowIso: now,
+    auditEventId: crypto.randomUUID(),
+    idempotency: {
+      key: idempotency,
+      operation,
+      requestHash: hash,
+      responseJson: JSON.stringify(response),
+      statusCode: 200,
+    },
+  });
   return c.json(response);
 });
 
@@ -554,7 +503,8 @@ app.patch('/api/members/:id', requireRoles('admin'), async (c) => {
   const replay = await replayIdempotentResponse(c, idempotency, operation, hash);
   if (replay) return replay;
 
-  const before = await findMemberById(c.env.DB, c.req.param('id'));
+  const { memberAdmin, members } = authRepositories(c);
+  const before = await members.findById(c.req.param('id'));
   if (!before) return c.json(apiError('MEMBER_NOT_FOUND', '成员不存在'), 404);
   if (before.version !== body.expectedVersion) {
     return c.json(apiError('VERSION_CONFLICT', '成员已被其他人修改，请刷新后重试', { currentVersion: before.version }), 409);
@@ -568,9 +518,6 @@ app.patch('/api/members/:id', requireRoles('admin'), async (c) => {
   if (!nextScopes) return c.json(apiError('INVALID_SCOPES', '授权范围格式无效'), 422);
 
   const protectsLastAdmin = before.enabled && before.role === 'admin' && (!nextEnabled || nextRole !== 'admin');
-  if (protectsLastAdmin && await countEnabledAdmins(c.env.DB) <= 1) {
-    return c.json(apiError('LAST_ADMIN_REQUIRED', '不能停用或降权最后一个启用管理员'), 422);
-  }
 
   const actor = c.get('currentUser');
   const now = new Date().toISOString();
@@ -587,44 +534,31 @@ app.patch('/api/members/:id', requireRoles('admin'), async (c) => {
   };
   const response = { ok: true as const, data: nextData };
   const responseJson = JSON.stringify(response);
-  const condition = `EXISTS (SELECT 1 FROM members WHERE id = ? AND version = ? AND updated_at = ?)`;
-  const statements: D1PreparedStatement[] = [
-    c.env.DB.prepare(
-      `UPDATE members
-       SET display_name=?,role=?,enabled=?,version=version+1,session_version=session_version+?,updated_at=?
-       WHERE id=? AND version=?
-         ${protectsLastAdmin ? "AND (SELECT COUNT(*) FROM members WHERE enabled=1 AND role='admin') > 1" : ''}`,
-    ).bind(nextDisplayName, nextRole, nextEnabled ? 1 : 0, invalidateSessions ? 1 : 0, now, before.id, before.version),
-    c.env.DB.prepare(`DELETE FROM member_scopes WHERE member_id=? AND ${condition}`)
-      .bind(before.id, before.id, nextVersion, now),
-    ...scopeStatements(c, before.id, nextScopes, nextVersion, now),
-    c.env.DB.prepare(
-      `INSERT INTO audit_events
-       (id,actor_member_id,action,object_type,object_id,before_json,after_json,created_at)
-       SELECT ?,?,'member.update','member',?,?,?,? WHERE ${condition}`,
-    ).bind(
-      crypto.randomUUID(), actor.id, before.id, JSON.stringify(before), JSON.stringify(nextData), now,
-      before.id, nextVersion, now,
-    ),
-    c.env.DB.prepare(
-      `INSERT INTO idempotency_records
-       (idempotency_key,actor_member_id,operation,request_hash,response_json,status_code,created_at)
-       SELECT ?,?,?,?,?,200,? WHERE ${condition}`,
-    ).bind(idempotency, actor.id, operation, hash, responseJson, now, before.id, nextVersion, now),
-  ];
-  if (invalidateSessions) {
-    statements.push(c.env.DB.prepare(
-      `UPDATE auth_sessions SET revoked_at=COALESCE(revoked_at,?) WHERE member_id=? AND revoked_at IS NULL AND ${condition}`,
-    ).bind(now, before.id, before.id, nextVersion, now));
-  }
   try {
-    const results = await c.env.DB.batch(statements);
-    if (Number(results[0]?.meta.changes ?? 0) !== 1) {
-      if (protectsLastAdmin && await countEnabledAdmins(c.env.DB) <= 1) {
-        return c.json(apiError('LAST_ADMIN_REQUIRED', '不能停用或降权最后一个启用管理员'), 422);
-      }
-      return c.json(apiError('VERSION_CONFLICT', '成员已被其他人修改，请刷新后重试'), 409);
-    }
+    const result = await memberAdmin.updateMember({
+      memberId: before.id,
+      expectedVersion: before.version,
+      displayName: nextDisplayName,
+      role: nextRole,
+      enabled: nextEnabled,
+      protectsLastAdmin,
+      invalidateSessions,
+      nowIso: now,
+      actorId: actor.id,
+      scopes: nextScopes.map((scope) => ({ id: crypto.randomUUID(), type: scope.type, scopeId: scope.id })),
+      auditEventId: crypto.randomUUID(),
+      beforeJson: JSON.stringify(before),
+      afterJson: JSON.stringify(nextData),
+      idempotency: {
+        key: idempotency,
+        operation,
+        requestHash: hash,
+        responseJson,
+        statusCode: 200,
+      },
+    });
+    if (result === 'last_admin') return c.json(apiError('LAST_ADMIN_REQUIRED', '不能停用或降权最后一个启用管理员'), 422);
+    if (result === 'version_conflict') return c.json(apiError('VERSION_CONFLICT', '成员已被其他人修改，请刷新后重试'), 409);
   } catch {
     return c.json(apiError('MEMBER_UPDATE_FAILED', '成员更新失败，请刷新后重试'), 409);
   }
@@ -633,12 +567,12 @@ app.patch('/api/members/:id', requireRoles('admin'), async (c) => {
 
 app.get('/api/settings', async (c) => {
   c.header('Cache-Control', 'no-store');
-  return c.json({ ok: true as const, data: { items: await listCurrentSettings(c.env.DB) } });
+  return c.json({ ok: true as const, data: { items: await systemConfigRepository(c).listCurrentSettings() } });
 });
 
 app.get('/api/settings/:key/history', requireRoles('admin'), async (c) => {
   c.header('Cache-Control', 'no-store');
-  return c.json({ ok: true as const, data: { items: await getSettingHistory(c.env.DB, c.req.param('key')) } });
+  return c.json({ ok: true as const, data: { items: await systemConfigRepository(c).getSettingHistory(c.req.param('key')) } });
 });
 
 app.put('/api/settings/:key', requireRoles('admin'), async (c) => {
@@ -666,10 +600,8 @@ app.put('/api/settings/:key', requireRoles('admin'), async (c) => {
   const operation = `settings.put:${key}`;
   const replay = await replayIdempotentResponse(c, idempotency, operation, hash);
   if (replay) return replay;
-  const current = await c.env.DB.prepare(
-    `SELECT version FROM settings_versions WHERE setting_key=? ORDER BY version DESC LIMIT 1`,
-  ).bind(key).first<{ version: number }>();
-  const currentVersion = current?.version ?? null;
+  const repository = systemConfigRepository(c);
+  const currentVersion = await repository.currentSettingVersion(key);
   if (currentVersion !== body.expectedVersion) {
     return c.json(apiError('VERSION_CONFLICT', '配置版本已变化，请刷新后重试', { currentVersion }), 409);
   }
@@ -683,22 +615,20 @@ app.put('/api/settings/:key', requireRoles('admin'), async (c) => {
   const data = { id, key, version: nextVersion, value: body.value, effectiveFrom, createdBy: actor.id, createdAt: now };
   const response = { ok: true as const, data };
   try {
-    await c.env.DB.batch([
-      c.env.DB.prepare(
-        `INSERT INTO settings_versions
-         (id,setting_key,version,value_json,effective_from,created_by,created_at) VALUES (?,?,?,?,?,?,?)`,
-      ).bind(id, key, nextVersion, valueJson, effectiveFrom, actor.id, now),
-      c.env.DB.prepare(
-        `INSERT INTO audit_events
-         (id,actor_member_id,action,object_type,object_id,before_json,after_json,created_at)
-         VALUES (?,?,'setting.version.create','setting',?,?,?,?)`,
-      ).bind(crypto.randomUUID(), actor.id, key, JSON.stringify({ version: currentVersion }), JSON.stringify(data), now),
-      c.env.DB.prepare(
-        `INSERT INTO idempotency_records
-         (idempotency_key,actor_member_id,operation,request_hash,response_json,status_code,created_at)
-         VALUES (?,?,?,?,?,200,?)`,
-      ).bind(idempotency, actor.id, operation, hash, JSON.stringify(response), now),
-    ]);
+    await repository.createSettingVersion(
+      { id, key, version: nextVersion, valueJson, effectiveFrom, createdBy: actor.id, createdAt: now },
+      {
+        auditId: crypto.randomUUID(),
+        actorId: actor.id,
+        beforeJson: JSON.stringify({ version: currentVersion }),
+        afterJson: JSON.stringify(data),
+        idempotencyKey: idempotency,
+        operation,
+        requestHash: hash,
+        responseJson: JSON.stringify(response),
+        statusCode: 200,
+      },
+    );
   } catch {
     return c.json(apiError('VERSION_CONFLICT', '配置已被并发修改，请刷新后重试'), 409);
   }
@@ -708,7 +638,7 @@ app.put('/api/settings/:key', requireRoles('admin'), async (c) => {
 app.get('/api/dictionaries', async (c) => {
   const key = c.req.query('key')?.trim();
   c.header('Cache-Control', 'no-store');
-  return c.json({ ok: true as const, data: { items: await listDictionary(c.env.DB, key || undefined) } });
+  return c.json({ ok: true as const, data: { items: await systemConfigRepository(c).listDictionary(key || undefined) } });
 });
 
 app.get('/api/scopes/:scopeType/:scopeId/check', async (c) => {
@@ -723,6 +653,7 @@ app.get('/api/scopes/:scopeType/:scopeId/check', async (c) => {
   return c.json({ ok: true as const, data: { allowed: true } });
 });
 
+app.route('/api', p9App);
 app.route('/api', p8App);
 app.route('/api', p2App);
 app.route('/api', p3App);

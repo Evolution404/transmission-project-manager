@@ -56,7 +56,7 @@ test('health exposes explicit schema readiness when the database is behind code'
   assert.equal(body.ok, true);
   assert.equal(body.data.schema.ready, false);
   assert.equal(body.data.schema.currentMigration, '0007_p7_flexible_demand_sources.sql');
-  assert.equal(body.data.schema.requiredMigration, '0008_final_business_flow.sql');
+  assert.equal(body.data.schema.requiredMigration, '0012_master_data_write_guards.sql');
 });
 
 test('authenticated business routes fail closed with SCHEMA_OUTDATED instead of reaching missing-table SQL', async () => {
@@ -71,6 +71,6 @@ test('authenticated business routes fail closed with SCHEMA_OUTDATED instead of 
   assert.deepEqual(body.error.details, {
     ready: false,
     currentMigration: '0007_p7_flexible_demand_sources.sql',
-    requiredMigration: '0008_final_business_flow.sql',
+    requiredMigration: '0012_master_data_write_guards.sql',
   });
 });

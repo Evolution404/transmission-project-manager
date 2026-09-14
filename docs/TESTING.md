@@ -1,245 +1,205 @@
 # 测试策略与开发门禁
 
-版本：2026-09-12。P1.2 起适用于所有高风险认证重构、P2 及之后全部业务开发。
+版本：2026-09-14。适用于所有业务功能、基础台账、认证、后端可移植化、数据迁移、缺陷修复和正式环境准备。
 
-## 1. 核心规则：先测试，后业务代码
+## 1. 核心规则：测试先于生产代码
 
-每个新阶段、缺陷修复或高风险重构都遵循以下顺序：
+每个新功能、高风险重构或缺陷修复都遵循：
 
-1. 先把业务不变量和验收场景写入本文件或对应阶段计划。
-2. 在修改生产实现前，先新增/更新能够复现目标行为的自动测试；对于缺陷，必须先确认测试能复现原问题；对于全新功能，可在本地短暂保持失败状态验证测试确实有约束力。
-3. 再修改生产代码直到测试通过。
-4. 运行完整 `npm run check`，不能只运行新增用例。
-5. 更新实施计划和交接记录后再提交。禁止把故意失败或跳过的测试提交到 `main` 充当“以后再做”的占位。
+1. 先明确业务不变量和验收场景。
+2. 先新增/更新自动测试；缺陷必须先用回归测试复现旧问题。
+3. 再修改生产代码直到定向测试通过。
+4. 运行完整 `npm run check`；如果工具存在单次时长上限，可按完全等价阶段/文件组执行，但必须覆盖全部测试文件。
+5. 更新共享类型、migration lock 和长期文档。
+6. `git diff --check`、密钥/真实数据检查后再提交并推送。
 
-前端隐藏按钮不是权限测试；接口返回成功不是数据一致性测试；本地 workerd 通过也不是 Cloudflare 真实 CPU/额度/网络验收。
+禁止用 `.skip`、`.only`、`test.todo` 或删除断言来“修绿”。前端隐藏按钮不算权限测试；本地 workerd 通过不等于真实 Cloudflare CPU/配额/网络通过。
 
-## 2. 当前自动测试层级
+## 2. 统一门禁
 
-### A. 仓库与迁移守卫
+仓库根目录：
 
-`tests/repository-guards.test.mjs`
+```sh
+npm run check
+```
 
-- `tests/migrations.lock.json` 显式锁定当前开发 schema 基线。
-- 当前系统尚未正式上线、没有真实共享数据，因此在用户明确决定下允许重整开发迁移，但必须同步锁文件、空库测试和文档，不能留下隐式兼容层。
-- 一旦进入正式/共享数据环境，迁移立即切换为只追加策略，历史迁移不得再回改。
-- 正式迁移不得混入测试账号、固定密码或其他合成身份。
+等价组成：
 
-### B. D1 升级与可重复性
+- 所有工作区生产代码 TypeScript 检查；
+- Vue 测试代码类型检查；
+- Web production build；
+- Worker `wrangler deploy --dry-run`；
+- 全部 `tests/*.test.mjs` Node/workerd+D1 测试；
+- 全部 `apps/web/tests/*.test.ts` Vue/Vitest 行为测试。
 
-`tests/migrations.test.mjs`
+P3 后端可移植化收口提交 `e34bde3` 后最近一次完整结果：
 
-- 验证当前开发迁移在空库可执行且重复执行安全。
-- 验证 `members` 为 username/credential 模型，不含邮箱身份列或明文/普通 password hash 字段。
-- 验证默认配置和角色字典存在，同时空库不注入合成账号。
-- P2 已增加 P1.2→P2 数据保留升级用例，明确验证账号、范围、活动会话、自定义设置和审计不丢失。
-- P3 已增加 P2→P3 数据保留升级用例，明确验证既有需求、标准物资及源文件/工作表/行号追溯信息不丢失。
-- P4 已增加 P3→P4 数据保留升级用例，明确验证储备项目、需求分配和既有储备确认版本不丢失。
-- 正式上线后，每个涉及 schema 的阶段继续保留“上一正式结构 → 新结构”的升级与数据保留用例。
+- TypeScript：PASS；
+- Web production build：PASS；
+- Worker `wrangler deploy --dry-run`：PASS；
+- Vue/Vitest：64/64 PASS；
+- Node：210/210 PASS。
 
-### C. Worker + D1 集成
+此结果是本地/合成门禁，不代表 Cloudflare 正式环境 CPU、D1/R2 配额、网络或通知链路已经验收。之后的 P4 查询迁移和幂等 replay 只跑了定向回归与双 runtime typecheck；P4 当前 WIP 完成后必须重新运行完整 `npm run check`。
 
-`tests/scaffold.test.mjs`、`tests/member-atomicity.test.mjs`、`tests/admin-concurrency.test.mjs`、`tests/p2-import.test.mjs`、`tests/p3-reserves.test.mjs`、`tests/p4-finance.test.mjs`、`tests/p5-delivery.test.mjs`、`tests/p6-analysis.test.mjs`
+## 3. 迁移与仓库守卫
+
+主要文件：`tests/repository-guards.test.mjs`、`tests/migrations.test.mjs`、`tests/schema-readiness.test.mjs`、`tests/migration-watcher.test.mjs`。
+
+必须保持：
+
+- `tests/migrations.lock.json` 锁定每个 migration checksum。
+- 已应用 migration 不得修改或删除；当前 `0009`–`0012` 已明确冻结。
+- 空库可按顺序应用全部 migration，重复 apply 不破坏当前 schema。
+- schema readiness 必须指向最新 migration；数据库落后时业务接口统一 fail-closed 为 `SCHEMA_OUTDATED`。
+- 本地开发启动器先验证 migration 文件与 checksum lock 稳定，再从不可变临时快照执行。
+- 本地 checksum ledger 记录已执行 migration；已执行文件变化必须报错。
+- `wrangler --json` 的机器可读 stdout 与 stderr 诊断分离，warning 不能污染 JSON 解析。
+- migration 不得包含真实账号、固定生产密码、Secret 或真实业务数据。
+
+## 4. 认证、成员和权限
+
+主要测试：`p1-2-auth.test.mjs`、`p1-2-production-auth.test.mjs`、`admin-concurrency.test.mjs`、`member-atomicity.test.mjs`。
 
 覆盖：
 
-- 一次性 bootstrap、账号创建、登录、首次改密、管理员重置密码、退出和停用撤销会话；
-- Argon2id 公共 KDF 参数、服务端 HMAC verifier、会话 token 只存哈希；
-- 未知账号/错误凭据统一响应、连续失败锁定；
-- 角色与项目/框架范围；
-- 幂等键、版本冲突；
-- 失败写入不能产生孤立范围、审计或幂等记录；
-- 幂等重放不能重复写审计；
-- 两管理员并发降权不能把启用管理员归零；
-- 设置版本和未知 API 回退；
-- P2 映射模板、物资唯一性、导入分片、校验、发布、来源追溯、疑似重复提示与分页上限；
-- P2 stale version、并发分片、并发校验、并发发布的事务原子性，失败请求不得留下半批源行、重复需求或错误发布状态；
-- P3 储备候选/归并建议、候选池游标分页与完整池聚合、60/40 数量拆分、并发超分配、分配替换与 stale version 原子性；
-- P3 相同型号不同单位隔离、物资估算定点乘算/四舍五入、安全整数溢出、`null` 单价与显式零价；
-- P3 储备大类与类别映射、分类金额逐费用行守恒、类别建议、不可变储备版本与确认历史；
-- P4 框架/协议版本历史、项目框架归属、预算草稿/确认版本与协议分配；
-- P4 预算确认不产生预算发生、最新预算版本单计、预算发生/实际发生独立流水、跨框架/无有效协议拒绝；
-- P4 90%/80% 精确边界、79.9999% 不提前预警、预算超框架 1 分边界、0 分母未配置；
-- P4 冲销留痕、同键幂等重放、并发版本更新和并发追加流水。
+- 一次性 bootstrap、账号创建、登录、首次强制改密、退出、管理员重置密码、停用撤销会话；
+- 浏览器 Argon2id 公共参数与服务端 HMAC verifier 边界；
+- 数据库只保存 verifier 和 session token hash，不保存明文密码或浏览器派生凭据；
+- 未知账号与错误密码统一响应、失败登录锁定；
+- 角色和 `all/framework/project` 业务范围；
+- 最后一个启用管理员在并发降权下仍受保护；
+- stale version、幂等重放和失败事务不会留下孤立 scope/audit/idempotency；
+- production 不信任 Cloudflare Access、开发身份头或客户端角色字段。
 
-所有金额、数量、预算、出库、实施、结算阶段都必须在这里补“守恒 + 并发 + 幂等 + 冲突”测试，而不是只测正常路径。
+## 5. 基础台账与需求位置
 
-### D. 生产鉴权模式
+主要测试：`master-data.test.mjs`、`p2-import.test.mjs`、`MasterDataView.test.ts`、`DemandsView.test.ts`。
 
-`tests/p1-2-production-auth.test.mjs`
+必须覆盖：
 
-- production 使用系统账号和会话即可完成 bootstrap/login，不需要 Cloudflare Access 配置。
-- `X-Dev-User-*`、`Cf-Access-Jwt-Assertion` 等旧身份头不能构成业务身份。
-- production Cookie 必须包含 HttpOnly、SameSite=Strict、Secure。
-- `AUTH_CREDENTIAL_PEPPER` 与 `BOOTSTRAP_TOKEN` 属于运行时 Secret；正式部署不得使用仓库中的开发值。
+- 管理员才可写电压等级、线路、杆塔；读取按既有业务权限开放。
+- 电压等级/线路/杆塔唯一性、父级关系、启停状态和版本冲突。
+- `VoltageLevel 1:N TransmissionLine 1:N TransmissionTower` 严格成立。
+- `tower_no` 支持字符串编号；`sort_index` 与杆塔号分别唯一。
+- `whole_line / tower / tower_range` 三种位置形状及严格正向区段。
+- 跨线路杆塔、倒序区段、停用父级/杆塔必须拒绝。
+- 线路被需求引用后不能换电压等级；该线路所有杆塔身份/顺序/删除整体受保护，包括区段内部杆塔。
+- 未引用对象可删除；引用对象删除拒绝；停用后历史需求仍可读取，新需求不可使用。
+- 杆塔批量 1–20 行原子写入、版本竞争、幂等重放、失败整体回滚，以及未引用杆塔顺序交换。
+- 线路/杆塔父级过滤和 cursor 分页无重复/遗漏，单页上限 100。
+- 手工需求只提交对象 ID；父级变化清空下游选择。
+- Excel validate/publish 都必须重新解析台账；未知或停用对象阻断发布，不自动创建台账。
+- 杆塔号完整匹配优先于区段拆分，带连字符编号不能误拆。
+- 手工需求大量物资使用集合校验/写入，不能按物资条数线性放大 D1 invocation 查询次数。
 
-### E. Vue 行为合同
+## 6. 需求导入与物资
 
-`apps/web/tests/*.test.ts` 使用 Vitest + Vue Test Utils + happy-dom。
+主要测试：`p2-import.test.mjs` 和 Web import/parser 测试。
 
-当前覆盖认证、成员管理、P2 需求导入、P3 储备转换和 P4 资金管理：
+覆盖：
 
-- 登录只呈现账号/密码，不出现邮箱认证入口；
-- 浏览器先取得 KDF salt，再本地派生凭据，API payload 不含明文密码；
-- 首次改密同样只发送当前/新派生凭据；
-- 管理员新增账号时浏览器派生初始凭据，邮箱不是字段；
-- 管理员/非管理员页面行为、自定义范围前端阻断、编辑时保留版本和授权范围；
-- `.xlsx`/`.csv` 解析一致性、多工作表与源行号、`.xls` 拒绝、浏览器导入 Worker 客户端；
-- P2 workflow 每批最多 20 行上传、分批校验/发布、`expectedVersion` 连续推进和 review 阻断；
-- `DemandsView` 的权限、导入/物资操作，以及 `/demands` 必须懒加载真实页面而不是占位页；
-- `ReservesView` 的只读/写角色差异、需求数量→`quantity_scaled`、元→`unit_price_scaled`/`amount_fen` 精确 payload、确认使用当前版本，以及 `/reserves` 必须懒加载真实页面；
-- `FinanceView` 的预算确认/预算发生/实际发生独立展示、元→整数分 payload、多协议预算分配、财务角色与框架结构管理角色差异，以及 `/finance` 必须懒加载真实页面。
+- `.xlsx`/UTF-8 `.csv`，多工作表和真实物理行号；旧 `.xls` 明确拒绝。
+- 标准模板下载/回导和自定义字段映射。
+- 同一抽象需求多行归并为一个需求 + 0..N 物资，并保留全部来源行。
+- 无物资需求合法；型号/数量单边缺失拒绝。
+- chunk/validate/publish 使用 `expectedVersion`；并发竞争只有一个成功，失败不留下半批正式数据。
+- 同一文件来源幂等；业务文字相同但不同来源只提示疑似重复，不自动删除。
+- 未知标准物资不伪造价格或已匹配事实。
+- 需求列表分页，完整 Excel 不交给 Worker 解析。
 
-后续页面优先测试“用户操作 → 请求 payload → 错误/成功状态”的合同，不做低价值像素快照。关键金额、数量和状态推导应优先测试纯函数/服务端规则。
+## 7. 项目储备与项目物资
 
-### F. 类型、构建与打包
+主要测试：`p3-reserves.test.mjs`、`final-business-flow.test.mjs`、`ReservesView.test.ts`。
 
-`npm run check` 统一执行：
+覆盖：
 
-- 所有工作区生产代码类型检查；
-- Vue 测试代码类型检查；
-- 前端生产构建；
-- Worker dry-run 打包；
-- Node/D1/Worker 全部测试；
-- Vue 行为测试。
+- 项目可 0 物资创建。
+- `project_demand_links` 与 `project_material_requirements` 分离。
+- 项目物资可独立增删改/换型并记录修订原因与前后快照。
+- 相同型号不同单位不得合并。
+- `unit_price_scaled=null` 与显式 0 区分；金额定点计算并四舍五入到分。
+- 已分配到任务的项目物资形成保护下限，不能静默缩减/删除。
+- 储备确认形成不可变版本，后续修订产生新版本。
+- 候选池和列表分页无遗漏，聚合不只统计当前页。
 
-CI 只认完整门禁结果，不允许以“我本地只跑了某个测试文件”替代。
+旧 `demand_allocations` 回归只用于历史兼容，不得据旧数量守恒测试恢复旧主模型。
 
-## 3. P2 已建立的测试基线
+## 8. 框架、协议与资金
 
-P2 已按以下清单先建立失败测试/合同测试，再完成生产实现；后续阶段不得删除或弱化这些回归：
+主要测试：`p4-finance.test.mjs`、`FinanceView.test.ts`。
 
-- `.xlsx` 和 `.csv` 解析产生同一标准行结构；`.xls` 明确拒绝并提示另存为 `.xlsx`。
-- 多工作表、不同列名映射、映射模板复用。
-- 必填字段缺失、负数量、超过 4 位小数、未知物资、未核实电压的错误/警告分类。
-- 同一文件哈希 + 工作表 + 源行重复上传幂等；合法相同业务需求不能被字符串去重误删。
-- `Idempotency-Key` 相同但 payload 不同返回 409。
-- 分片中断可继续；未发布批次不得出现在正式需求列表。
-- 发布失败不留下半批正式数据；stale version、并发上传/校验/发布均必须 fail-closed。
-- 需求列表默认分页 50、最大 100，5 万行规模不得通过单请求全量返回前端；完整 Excel 解析只在浏览器 Web Worker 中进行，不交给 Cloudflare Worker。
-- 原始字段和值、来源文件/工作表/行号能够反查。
-- P1.2→P2 迁移必须保留既有账号、授权范围、活动会话、自定义设置和审计。
-- `/demands` 必须连接并懒加载真实需求页，避免恢复占位页或把重业务页塞回首屏主包。
+覆盖：
 
-P2 完成时门禁为 43/43 Node/workerd+D1 + 26/26 Vue/Vitest，共 69 项 PASS；这些用例继续作为后续阶段回归基线。
+- 框架/协议版本历史与并发版本守卫。
+- 预算草稿与预算发生严格分离；预算确认不能自动产生资金流水。
+- 预算协议分配精确等于预算金额且同框架、业务日期有效。
+- `budget_occurrence` 与 `actual_cost` 独立统计。
+- 一协议多项目、一项目多协议不会重复放大金额。
+- 90%/80% 精确边界、预算超框架 1 分边界、0 分母未配置。
+- 冲销通过负数追加记录保留原流水；同一原记录最多冲销一次。
+- 资金流水游标分页、汇总集合查询和幂等重放。
 
-## 4. P3 已建立的测试基线
+## 9. 项目出库、任务、供应、实施和结算
 
-P3 同样先建立失败测试，再实现 schema/API/UI；后续阶段不得删除或弱化以下约束：
+主要测试：`final-business-flow.test.mjs`、`p5-delivery.test.mjs`、`DeliveryView.test.ts`。
 
-- 需求物资 100 单位允许拆为 60 + 40，但任何顺序/并发提交都不得使有效分配超过 100；失败事务不得留下项目、分配或幂等残片。
-- 替换项目分配必须在同一事务内释放旧分配并写入新分配；stale `expectedVersion` 返回 409 且原分配保持不变。
-- 相同物资型号但单位不同必须分开汇总；项目详情必须保留需求与源文件/工作表/行号追溯。
-- `unit_price_scaled=null` 是未知价格，显式 0 是有效零价；已知物资金额使用定点整数精确计算并四舍五入到分，禁止浮点累计。
-- 固定费用、物资金额和项目已知合计必须在 JS 安全整数范围内；越界返回 `AMOUNT_OVERFLOW`。
-- 每条已知费用的分类分摊总额必须精确等于该费用金额；共同费用可拆分多个储备大类，但分类关联不能放大项目金额。
-- 需求类别→储备大类映射使用版本检查，并能作为物资费用行分类建议；映射不能代替用户最终确认。
-- 储备确认生成不可变快照；修改后再次确认只能产生新的 `reserve_version`，历史原因和金额完整度不得被覆盖。
-- P2→P3 迁移必须保留已导入需求、标准物资以及来源追溯信息。
-- 候选池单页最大 100 条并使用不透明游标继续读取；105+ 条合成候选必须跨页无重复、无遗漏，非法游标拒绝；归并建议必须统计完整剩余池而不是候选第一页。
-- `/reserves` 必须连接真实懒加载页面；只读角色可查看，不能发出项目/估算/分类/确认写请求；有后续候选页时必须提供“加载更多”，不能只展示前 100 条。
+最终主模型必须覆盖：
 
-P3 完成时完整门禁结果为 58/58 Node/workerd+D1 + 32/32 Vue/Vitest，共 90 项 PASS；这些用例继续作为 P4/P5 回归基线。
+- 每项目一次项目级出库，保存不可变快照，不生成新的逐物资 `release_lines`。
+- 只有项目级出库后才能创建 1..N 个正式任务。
+- 任务物资累计不超过项目物资；项目物资不能缩到任务占用以下。
+- 供应、实施、结算分别使用独立版本，允许不同顺序推进。
+- `arrived <= shipped <= reported <= required`，相同 supply version 并发只有一个成功。
+- 部分实施/结算保留数量进度；结算可以先于实施。
+- 最终结算必须覆盖完整任务范围。
+- 四状态由所有任务事实回投原始需求，而不是人工标签。
+- 私有 R2 附件按项目范围重新鉴权。
 
-## 5. P4 已建立的测试基线
+`p5-delivery.test.mjs` 中旧 release-batch/legacy implementation 测试只保证历史兼容，不定义新业务主路径。
 
-P4 先建立资金事实与核算失败测试，再实现 schema/API/UI；后续 P5 不得删除或弱化以下约束：
+## 10. 分析、预警、通知和备份
 
-- 框架和执行协议修改保存不可变历史版本；并发同一 `expectedVersion` 只能一个成功。
-- 预算草稿允许不完整，但确认时协议分配合计必须精确等于预算总额、协议必须同框架且在确认日有效；确认预算不得产生任何 `financial_entries`。
-- 已确认预算再次调整后重新确认生成新 `budget_version`；框架当前预算合计只计最新确认版本，旧版本保留但不重复求和。
-- `budget_occurrence` 与 `actual_cost` 分表述同表存储但按 `entry_type` 独立统计；一个协议可服务多项目，一个项目可分配多个协议，分配合计必须精确等于流水金额。
-- 资金流水业务日期必须落在协议有效期且协议状态为 active；跨框架、无协议、到期/暂停协议均拒绝。
-- 协议使用率真实比例达到 90%、框架预算发生真实比例达到 80% 才预警；79.9999% 等显示后可四舍五入到边界的值也不得提前触发。预算合计=框架总额不预警，超 1 分才预警；0 分母显示未配置。
-- 冲销通过独立负数流水保留原记录，同一原流水最多冲销一次；同一 Idempotency-Key + 同 payload 重放返回原响应，不因首次成功后的版本推进/已冲销状态误报 409，也不得重复生成版本或流水。
-- P3→P4 迁移必须保留储备项目、需求分配和储备确认版本；`0004_p4_finance.sql` 纳入 checksum 锁。
-- `/finance` 必须连接真实懒加载页面；预算确认占用、预算发生、实际发生必须独立展示，不能在 UI 中混成一个“总费用”。
+主要测试：`p6-analysis.test.mjs`。
 
-P4 当前完整门禁结果为 70/70 Node/workerd+D1 + 38/38 Vue/Vitest，共 108 项 PASS；资金流水 105+ 条跨页无重复/遗漏、非法游标拒绝、单页协议分摊完整，资金汇总使用按协议分组聚合而不是 N+1 查询。真实框架/协议/预算资料和真实云资源性能仍留 P7。
+覆盖：
 
-## 6. P5 历史兼容测试基线
+- 月计划、季度边界、年度目标 0、两类滞后规则精确判定。
+- 历史月报保留 rule version、规则 JSON 和完整 snapshot。
+- 当前储备分析只读未项目级出库项目的当前项目物资；施工/其他费不进入项目物资类别，缺价单列。
+- 年度事项 `month/day/unknown` 精度，不补造日期。
+- crossing、daily summary、recovery、recross 生命周期。
+- outbox 租约、超时回收、失败退避和 `unknown` 结果。
+- 定时任务关闭浏览器后仍可执行。
+- 备份分片 SHA-256/manifest、断点续跑、独立 D1 实际恢复对账；`auth_sessions` 不恢复。
 
-本节记录 2026-09-12 旧 P5 模型的历史回归要求，用于保证已有表和历史数据仍可读取/备份；**它不再定义最终业务主模型**。2026-09-13 最终业务链已经改为“项目级出库 → 多执行任务 → 供应/实施/结算三线并行”，见下方“最终业务基线重构门禁”。旧 P5 测试继续保留，确保结构性重构没有破坏历史兼容。
+## 11. 前端行为合同
 
-- 分批出库累计不得超过项目当前需求物资分配；两个并发出库请求使用同一项目版本时只能一个成功，不得超出范围或留下半笔出库。
-- 正常实施必须引用已出库行，累计实施完成量不能超过已出库数量；60/100 只能表示部分完成，不能把需求或项目误标为已实施。
-- 历史实施允许先没有项目/出库；后续显式关联项目和需求物资，不补造出库，幂等重放和重复关联不得重复增加实施量。
-- P3 修改项目需求分配时不能低于已出库、已实施或有效结算形成的保护下限；P3/P5 共用 `projects.version`，并发修改不能绕过保护。
-- 实施与结算互相独立，先结算后实施必须可表达；四种 `implemented_settled / implemented_unsettled / unimplemented_settled / unimplemented_unsettled` 状态均由有效明细投影，不靠人工标签。
-- “已结算”必须同时满足全部项目范围覆盖完整和存在有效最终结算。非最终结算覆盖 100% 仍不能标记为已结算；若既有非最终覆盖已经完整，允许 0 元、空新增覆盖的最终确认收口；覆盖不完整时最终结算必须拒绝。
-- 实施全部完成且未最终结算完成时生成默认 30 天结算待办；最终结算关闭待办，撤销后恢复，并保持实施完成日和到期日可重算。
-- 结算登记不自动生成 `financial_entries`，避免把结算和 P4 实际发生混为同一事实。
-- 私有附件上传/下载必须按项目范围鉴权；跨项目 403。单文件最大 10 MiB；R2 已写而 D1 元数据事务失败时必须清理 R2 残留。
-- P4→P5 迁移必须保留框架、预算版本与资金流水历史；`0005_p5_delivery_implementation_settlement.sql` 纳入 checksum 锁。
-- `/delivery` 必须连接真实懒加载页面；项目管理、实施、财务、只读角色各自只显示/触发其允许的操作，数量以 `quantity_scaled`、金额以整数分提交。
+`apps/web/tests/*.test.ts` 优先验证“用户操作 → 请求 payload → 成功/错误状态”，不做低价值像素快照。
 
-P5 完整门禁结果为 80/80 Node/workerd+D1 + 43/43 Vue/Vitest，共 123 项 PASS；TypeScript、Vite 生产构建和 Worker dry-run 同时通过。主入口约 459.00 kB，`DeliveryView` 约 19.83 kB。真实出库/实施/结算历史、附件规模和真实云资源性能仍留 P7。
+重点：
 
-## 7. P6 已建立的测试基线
+- 登录/改密/成员管理不向服务端发送明文密码；
+- 各角色不会发出越权写请求；
+- 数量、金额转换使用正确定点/整数单位；
+- 需求手工创建与导入流程、父子级联和错误阻断；
+- `/master-data` 桌面三级关系和移动逐级导航；
+- 重业务页面保持路由懒加载；
+- 全局中文 locale，禁止默认英文 placeholder。
 
-P6 已完成分析、提醒、通知和备份收口，后续 P7 不得删除或弱化以下约束：
+真实浏览器布局仍应在重大 UI 改动后补充人工/浏览器验收；组件测试不能证明所有设备像素效果。
 
-- 同期计划达成率默认 80%，以及“落后年度目标若干百分点”两种规则都使用整数精确边界；年度目标为 0 时返回未配置，不产生 Infinity 或伪进度。
-- 季度状态按 Asia/Shanghai 真实年份/日期判断，跨年后过去季度必须是 ended；月计划 GET/PUT 使用当前版本，历史月报保存规则版本、规则 JSON 和完整 snapshot，规则修改不能覆盖旧修订。
-- 储备类别金额以尚未发生项目级出库的当前 `project_material_requirements` 为口径；已项目级出库项目整体退出储备分析，施工/其他费不进入项目物资类别，缺价物资单独计数。旧 `release_lines` 按数量比例折算逻辑不得恢复。
-- 年度事项保存 `month/day/unknown` 精度；只知道月份时不得捏造具体日期，完成事项停止提醒。
-- 预警生命周期覆盖首次 crossing、持续期间每日摘要、recovery、同周期 recross；同一事件/收件人通过唯一键和幂等防重复。
-- 通知 outbox claim 使用租约，租约超时可回收；failed 指数退避，provider 结果不确定记 `unknown`，不能无限重复发送。未配置真实投递 URL 时 cron 不领取 outbox。
-- Worker `scheduled()` 每 5 分钟执行后台 tick，关闭浏览器不影响提醒或备份；03:00 Asia/Shanghai 对应 tick 创建 daily，月末同时创建 monthly。
-- D1→R2 备份必须按表/分片可续跑、每块保存 SHA-256、完成后生成 manifest；恢复测试必须从 manifest/chunk 回灌到第二个独立 D1 并对账核心事实，不能只做 checksum verify；`auth_sessions` 不恢复。
-- `/analysis` 与 Dashboard 必须使用真实 API 数据；月计划更新不得猜 `expectedVersion`。ECharts 运行时代码按需注册并动态拆包，避免把整套图表库塞进页面主 chunk。
+## 12. P7 真实环境验收
 
-P6 最终分段完整门禁为 93/93 Node/workerd+D1 + 48/48 Vue/Vitest，共 141 项 PASS；TypeScript、Vite 生产构建、Worker dry-run 同时通过。`AnalysisView` 约 19.48 kB（gzip 6.25 kB），独立 `echarts` chunk 约 488.44 kB（gzip 164.84 kB），Worker dry-run 上传约 411.87 KiB（gzip 78.17 KiB）。当前工具单次调用上限 300 秒，因此 Node 测试按全部 `tests/*.test.mjs` 文件组分段跑完；这是完整覆盖，不是跳过测试。
+以下不能用本地模拟替代：
 
-## 8. 缺陷处理规则
+- 真实业务模板数据抽检；
+- 真实 Workers CPU/错误率和 D1/R2 配额；
+- 正式域名、HTTPS/Cookie；
+- 低性能手机 Argon2id 体验；
+- 目标用户所在地网络；
+- 真实通知投递；
+- 正式停写备份、隔离恢复、回退；
+- Cloudflare/GitHub 运维移交和 CI/CD 服务身份。
 
-任何线上、验收或人工测试发现的问题：
-
-1. 先把问题最小化为自动回归测试；
-2. 确认旧实现测试失败；
-3. 修复代码；
-4. 确认新增测试和完整 `npm run check` 都通过；
-5. 在提交说明中写明根因，而不是只写“fix bug”。
-
-同类问题若来自架构约束缺失，应增加守卫测试或数据库约束，避免只修单个表现路径。
-
-## 9. 真实环境留到 P7 的测试
-
-以下项目不能用本地模拟结果替代：
-
-- 真实 D1/R2 资源、Workers CPU/配额；
-- 自定义域名、HTTPS/Cookie 实际行为、account-owned CI Token；
-- 客户端 Argon2id 在低性能手机/浏览器上的真实耗时和交互体验；
-- 目标地区网络；
-- 真实邮件投递；
-- 正式备份恢复与运维移交。
-
-P7 必须使用测试/生产资源进行端到端验收，并保留结果记录。
-
-## 10. P7 本地准备门禁
-
-`tests/p7-preflight.test.mjs` 覆盖：生产占位配置拒绝、Secret/旧认证/错误绑定/公开路由拒绝、13 项唯一证据与真实环境标记、备份 hash/行数/连续索引/附件与安全路径、文件哈希与 .xls 边界、普通 CI/手工预检无云变更、未启用生产部署模板必须手工触发且绑定 main SHA/Environment。运行 `npm run p7:preflight` 可快速复核，全部测试也自动纳入 `npm run check`。
-
-`import-parser.test.ts` 新增表内空行和 XLSX used-range 起始行回归。旧解析将实际 4 行误记为 3、实际 5/6 行误记为 2/3，测试先失败后修复；现在保留物理位置且不导入空白行。旧批次不会自动改写。
-
-`demand-template.test.ts` 锁定系统标准需求模板：只包含一个可导入工作表，固定列为序号、电压等级、线路名称、杆段、物资型号、物资数量、单位、年度、类别、负责人；用户填报第 2 行后必须能通过现有解析器回导并保持物理来源行。`DemandsView.test.ts` 同时约束有写权限角色可以直接下载模板。自定义字段映射继续保留，但不再作为 P7-01 主验收路径。
-
-`npm run p7 -- ...` 的退出码和边界见 P7_RUNBOOK.md。备份完整性不等于恢复/快照一致性，验收 JSON 结构通过不证明证据真实。正式 5 万行、5 并发、Cloudflare CPU/用量、低性能手机/地区网络与真实投递仍必须另验。
-
-## 11. 最终业务基线重构门禁 · 2026-09-13
-
-最终业务模型采用测试先行，新增 `tests/final-business-flow.test.mjs`，并同步重写 `DemandsView`、`ReservesView`、`DeliveryView` 的页面合同。必须保持：抽象需求可无物资并后补 0..N 子明细；同一 Excel 需求的多行物资归并到同一需求且保留全部来源行；项目需求来源与项目物资独立；项目物资修订有原因/历史且不能缩到任务占用以下；项目只做一次项目级出库且不生成新 `release_lines`；出库后可建多个任务；任务供应/实施/结算分别用独立版本推进；供应满足 `到货<=发货<=上报<=需求量`；相同 supply version 并发只有一个成功；实施/结算允许任意先后；四状态从任务范围回投原始需求；P6 储备分析只读未出库项目的当前项目物资。
-
-`0008_final_business_flow.sql` 已纳入迁移 checksum 锁，空库重复迁移和 P1.2→P6 历史升级门禁继续通过。新最终业务 API/UI 不再读写旧 `demand_allocations` / `release_lines`；旧表只保留历史兼容、旧回归和备份恢复。
-
-本轮完整等价门禁：全部 14 个 Node/workerd+D1 测试文件分 3 组执行，**114/114 PASS**；全部 15 个 Vue/Vitest 文件 **60/60 PASS**，合计 **174 项 PASS**；`npm run typecheck` PASS；Vite production build PASS；Worker `wrangler deploy --dry-run` PASS（上传约 511.11 KiB / gzip 93.81 KiB）。单次 `npm run test:node` 因工具 300 秒上限被截断，随后按文件组完整覆盖全部 14 个 Node 测试文件，没有 `.skip/.only/todo` 或漏跑。P7 仍必须使用真实业务数据、Cloudflare/D1/R2/邮件和目标地区网络做正式验收，本地门禁不能冒充上线验收。
-
-## 12. UI 与 schema readiness 加固 · 2026-09-13
-
-针对本地开发服务器热更新后出现“新代码 + 旧 D1 schema”的真实缺陷，新增双层门禁：`apps/api/src/schema.ts` 把最新 migration 作为运行时要求，`/api/health` 返回 `schema.ready/currentMigration/requiredMigration`；已认证业务 API 在 schema 落后时统一返回 `503 SCHEMA_OUTDATED`，不得继续执行到缺表 SQL 后才报普通 500。`tests/schema-readiness.test.mjs` 使用只到 `0007` 的真实 workerd+D1 环境验证该 fail-closed 行为；`scaffold.test.mjs` 同时验证完整迁移后 `schema.ready=true`。
-
-本地 `npm run dev` 的 API 入口改为 `scripts/dev/api-dev.mjs`：启动 Worker 前先应用全部本地 D1 migration，并监听 `apps/api/migrations/*.sql` 变化自动再次执行 migration apply。仓库守卫强制 `REQUIRED_MIGRATION` 始终等于最新 committed migration，避免新增 `0009` 后忘记同步代码门禁。该启动器已在本机实际运行验证，日志确认“启动前迁移 → No migrations to apply → schema 已就绪 → Worker Ready”。
-
-UI 门禁同时固定 Naive UI `zhCN/dateZhCN`；默认输入框/下拉占位分别为“请输入/请选择”，仓库守卫禁止生产前端源码出现 `Please Input / Please Select / Please Upload / Please Choose`。项目需求页的手工新增已改成按钮触发模态框，表单不再常驻主页面；全局应用壳、导航、卡片、表格、总览和需求页统一新的视觉层级，正常业务界面不再暴露 P2/P6 等开发阶段文字。
-
-本轮最新完整门禁：Node/workerd+D1 **119/119 PASS**，Vue/Vitest **60/60 PASS**，合计 **179 项 PASS**；TypeScript PASS；Vite production build PASS；Worker dry-run PASS（约 512.73 KiB / gzip 94.24 KiB）。
+详细证据要求见 `P7_ACCEPTANCE.md`，操作步骤见 `P7_RUNBOOK.md`。

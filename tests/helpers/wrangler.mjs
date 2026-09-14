@@ -1,9 +1,10 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { DatabaseSync } from 'node:sqlite';
 import { setTimeout as delay } from 'node:timers/promises';
 
 const require = createRequire(new URL('../../apps/api/package.json', import.meta.url));
@@ -19,6 +20,46 @@ export function cleanupStateDir(path) {
   rmSync(path, { recursive: true, force: true });
 }
 
+export function findLocalD1Database(stateDir) {
+  const databaseDir = join(stateDir, 'v3', 'd1', 'miniflare-D1DatabaseObject');
+  let names;
+  try {
+    names = readdirSync(databaseDir).filter((entry) => entry.endsWith('.sqlite') && entry !== 'metadata.sqlite');
+  } catch {
+    return null;
+  }
+  if (names.length !== 1) return null;
+  return join(databaseDir, names[0]);
+}
+
+function withLocalD1(stateDir, fn) {
+  const databasePath = findLocalD1Database(stateDir);
+  if (!databasePath) return null;
+  const db = new DatabaseSync(databasePath);
+  try {
+    db.exec('PRAGMA busy_timeout = 5000;');
+    return fn(db);
+  } finally {
+    db.close();
+  }
+}
+
+export function readLocalR2Object(stateDir, bucketName, key) {
+  const metadataDir = join(stateDir, 'v3', 'r2', 'miniflare-R2BucketObject');
+  for (const name of readdirSync(metadataDir).filter((entry) => entry.endsWith('.sqlite') && entry !== 'metadata.sqlite')) {
+    const db = new DatabaseSync(join(metadataDir, name), { readOnly: true });
+    try {
+      const row = db.prepare('SELECT blob_id FROM _mf_objects WHERE key = ? LIMIT 1').get(key);
+      if (row?.blob_id) return readFileSync(join(stateDir, 'v3', 'r2', bucketName, 'blobs', row.blob_id));
+    } catch (error) {
+      if (!String(error).includes('no such table: _mf_objects')) throw error;
+    } finally {
+      db.close();
+    }
+  }
+  throw new Error(`Local R2 object not found: ${bucketName}/${key}`);
+}
+
 export function runWrangler(args, { cwd = apiDir, timeout = 60000 } = {}) {
   const result = spawnSync(process.execPath, [wranglerCli, ...args], {
     cwd,
@@ -32,7 +73,46 @@ export function runWrangler(args, { cwd = apiDir, timeout = 60000 } = {}) {
   return result.stdout;
 }
 
+export function runWranglerAsync(args, { cwd = apiDir, timeout = 60000 } = {}) {
+  return new Promise((resolveRun, rejectRun) => {
+    const child = spawn(process.execPath, [wranglerCli, ...args], {
+      cwd,
+      env: { ...process.env, CI: 'true', WRANGLER_SEND_METRICS: 'false' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL');
+      rejectRun(new Error(`Wrangler timed out: ${args.join(' ')}`));
+    }, timeout);
+    child.stdout.on('data', (chunk) => { stdout += chunk; });
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    child.once('error', (error) => {
+      clearTimeout(timer);
+      rejectRun(error);
+    });
+    child.once('close', (code) => {
+      clearTimeout(timer);
+      if (code !== 0) {
+        rejectRun(new Error(`Wrangler failed: ${args.join(' ')}\nSTDOUT:\n${stdout}\nSTDERR:\n${stderr}`));
+        return;
+      }
+      resolveRun(stdout);
+    });
+  });
+}
+
 export function executeLocalD1(stateDir, { file, command, json = false }) {
+  if (!file && command) {
+    const direct = withLocalD1(stateDir, (db) => {
+      if (json) return JSON.stringify([{ results: db.prepare(command).all().map((row) => ({ ...row })) }]);
+      db.exec(command);
+      return '';
+    });
+    if (direct !== null) return direct;
+  }
+
   const args = [
     'd1', 'execute', 'transmission-project-manager-local', '--local', '--persist-to', stateDir, '--yes',
   ];
@@ -65,6 +145,7 @@ export async function startWranglerServer({
   const args = [
     wranglerCli,
     'dev', '--local', '--persist-to', stateDir, '--ip', '127.0.0.1', '--port', String(port),
+    '--inspector-port', String(port + 10000),
     '--show-interactive-dev-session=false',
   ];
   for (const variable of vars) args.push('--var', variable);

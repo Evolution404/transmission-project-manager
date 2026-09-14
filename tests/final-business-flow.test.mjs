@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
-import { cleanupStateDir, makeStateDir, queryLocalD1, startWranglerServer } from './helpers/wrangler.mjs';
+import { cleanupStateDir, executeLocalD1, makeStateDir, queryLocalD1, startWranglerServer } from './helpers/wrangler.mjs';
 import { bootstrapAdmin, cookiePair } from './helpers/auth.mjs';
 
 const stateDir = makeStateDir('tpm-final-business-flow-');
@@ -42,6 +42,19 @@ before(async () => {
   const bootstrap = await bootstrapAdmin(runtime, { token: 'final-flow-bootstrap' });
   assert.equal(bootstrap.response.status, 201);
   adminCookie = cookiePair(bootstrap.response.headers.get('set-cookie'));
+
+  const line = await jsonRequest('/api/master/lines', mutation('POST', 'master-line', {
+    voltageLevelId: 'vl-ac-220', lineName: '220kV测试线', lineCode: 'TEST-220', enabled: true,
+  }));
+  assert.equal(line.response.status, 201);
+  globalThis.__finalLineId = line.body.data.id;
+  for (const [towerNo, sortIndex] of [['#10', 10], ['#20', 20]]) {
+    const tower = await jsonRequest('/api/master/towers', mutation('POST', `master-tower-${sortIndex}`, {
+      lineId: line.body.data.id, towerNo, sortIndex, towerType: '测试塔', enabled: true,
+    }));
+    assert.equal(tower.response.status, 201);
+    globalThis[`__finalTower${sortIndex}`] = tower.body.data.id;
+  }
 }, { timeout: 80000 });
 
 after(async () => {
@@ -53,9 +66,11 @@ test('abstract demand can exist without materials and later receive multiple chi
   const created = await jsonRequest('/api/demands', mutation('POST', 'demand-empty-materials', {
     sequenceNo: 'D001',
     year: 2026,
-    voltage: '220kV',
-    lineName: '220kV测试线',
-    section: '#10-#20',
+    voltageLevelId: 'vl-ac-220',
+    lineId: globalThis.__finalLineId,
+    locationType: 'tower_range',
+    startTowerId: globalThis.__finalTower10,
+    endTowerId: globalThis.__finalTower20,
     category: '防鸟治理',
     owner: '测试负责人',
     materials: [],
@@ -157,22 +172,37 @@ test('reserve project keeps demand links separate from mutable project material 
 test('project release is one project-level immutable snapshot and enables multiple execution tasks', async () => {
   const projectId = globalThis.__finalProjectId;
   const demandId = globalThis.__finalDemandId;
-  const released = await jsonRequest('/api/project-releases', mutation('POST', 'project-release', {
+  const releaseKey = idem('project-release');
+  const releaseBody = {
     projectId,
     expectedProjectVersion: globalThis.__finalProjectVersion,
     releaseDate: '2026-09-13',
     note: '正式进入执行阶段',
-  }));
+  };
+  const released = await jsonRequest('/api/project-releases', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Idempotency-Key': releaseKey },
+    body: JSON.stringify(releaseBody),
+  });
   assert.equal(released.response.status, 201);
   assert.equal(released.body.data.projectId, projectId);
   assert.equal(released.body.data.snapshot.materialRequirements.length, 2);
   assert.equal(released.body.data.snapshot.demandLinks.length, 1);
   assert.equal('lines' in released.body.data, false);
   assert.equal(dbRows(`SELECT COUNT(*) AS count FROM release_lines WHERE project_id='${projectId}'`)[0].count, 0);
+  const replay = await jsonRequest('/api/project-releases', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Idempotency-Key': releaseKey },
+    body: JSON.stringify(releaseBody),
+  });
+  assert.equal(replay.response.status, 201);
+  assert.equal(replay.body.data.id, released.body.data.id);
+  assert.equal(dbRows(`SELECT COUNT(*) AS count FROM project_releases WHERE project_id='${projectId}'`)[0].count, 1);
   globalThis.__projectReleaseId = released.body.data.id;
   globalThis.__finalProjectVersion = released.body.data.projectVersion;
 
-  const t1 = await jsonRequest('/api/project-tasks', mutation('POST', 'task-t1', {
+  const t1Key = idem('task-t1');
+  const t1Body = {
     projectId,
     expectedProjectVersion: globalThis.__finalProjectVersion,
     name: 'T1 第一执行任务',
@@ -184,8 +214,21 @@ test('project release is one project-level immutable snapshot and enables multip
     unit: '项',
     demandScopes: [{ demandId, quantityScaled: 600000 }],
     materials: [{ projectMaterialRequirementId: globalThis.__materialAId, quantityScaled: 600000 }],
-  }));
+  };
+  const t1 = await jsonRequest('/api/project-tasks', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Idempotency-Key': t1Key },
+    body: JSON.stringify(t1Body),
+  });
   assert.equal(t1.response.status, 201);
+  const t1Replay = await jsonRequest('/api/project-tasks', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Idempotency-Key': t1Key },
+    body: JSON.stringify(t1Body),
+  });
+  assert.equal(t1Replay.response.status, 201);
+  assert.equal(t1Replay.body.data.id, t1.body.data.id);
+  assert.equal(dbRows(`SELECT COUNT(*) AS count FROM project_tasks WHERE id='${t1.body.data.id}'`)[0].count, 1);
   globalThis.__t1 = t1.body.data;
   globalThis.__finalProjectVersion = t1.body.data.projectVersion;
 
@@ -231,18 +274,32 @@ test('task supply, implementation and settlement advance independently and enfor
   assert.equal(reported.response.status, 201);
   assert.deepEqual(reported.body.data.totals, { reportedQuantityScaled: 600000, shippedQuantityScaled: 0, arrivedQuantityScaled: 0 });
 
-  const implementation = await jsonRequest('/api/task-implementations', mutation('POST', 'task-implementation', {
+  const implementationKey = idem('task-implementation');
+  const implementationBody = {
     taskId: t1.id,
     expectedImplementationVersion: 1,
     recordDate: '2026-09-15',
     scopeLines: [{ taskDemandScopeId: t1.demandScopes[0].id, completedQuantityScaled: 150000 }],
     materialUsages: [{ taskMaterialRequirementId: taskMaterial.id, quantityScaled: 150000 }],
     note: '已完成部分现场工作',
-  }));
+  };
+  const implementation = await jsonRequest('/api/task-implementations', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Idempotency-Key': implementationKey },
+    body: JSON.stringify(implementationBody),
+  });
   assert.equal(implementation.response.status, 201);
   assert.equal(implementation.body.data.implementationVersion, 2);
+  const implementationReplay = await jsonRequest('/api/task-implementations', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Idempotency-Key': implementationKey },
+    body: JSON.stringify(implementationBody),
+  });
+  assert.equal(implementationReplay.response.status, 201);
+  assert.equal(implementationReplay.body.data.id, implementation.body.data.id);
 
-  const settlement = await jsonRequest('/api/task-settlements', mutation('POST', 'task-settlement', {
+  const settlementKey = idem('task-settlement');
+  const settlementBody = {
     taskId: t1.id,
     expectedSettlementVersion: 1,
     settlementDate: '2026-09-16',
@@ -251,9 +308,21 @@ test('task supply, implementation and settlement advance independently and enfor
     note: '部分结算',
     coverage: [{ taskDemandScopeId: t1.demandScopes[0].id, quantityScaled: 100000 }],
     agreementAllocations: [],
-  }));
+  };
+  const settlement = await jsonRequest('/api/task-settlements', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Idempotency-Key': settlementKey },
+    body: JSON.stringify(settlementBody),
+  });
   assert.equal(settlement.response.status, 201);
   assert.equal(settlement.body.data.settlementVersion, 2);
+  const settlementReplay = await jsonRequest('/api/task-settlements', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Idempotency-Key': settlementKey },
+    body: JSON.stringify(settlementBody),
+  });
+  assert.equal(settlementReplay.response.status, 201);
+  assert.equal(settlementReplay.body.data.id, settlement.body.data.id);
 
   const shipped = await jsonRequest('/api/task-material-supply-events', mutation('POST', 'supply-shipped', {
     taskMaterialRequirementId: taskMaterial.id,
@@ -404,6 +473,22 @@ test('four-state feedback is projected back to the original demand from task fac
   assert.equal(complete.body.data.settlementComplete, true);
 });
 
+test('project demand links already used by tasks cannot be removed', async () => {
+  const projectId = globalThis.__finalProjectId;
+  const detail = await jsonRequest(`/api/reserve-projects/${projectId}`);
+  assert.equal(detail.response.status, 200);
+  const protectedDemandId = globalThis.__finalDemandId;
+  assert.ok(detail.body.data.demandLinks.some((item) => item.demandId === protectedDemandId));
+
+  const result = await jsonRequest(`/api/reserve-projects/${projectId}/demands`, mutation('PUT', 'remove-protected-demand', {
+    expectedVersion: detail.body.data.version,
+    demandIds: [],
+  }));
+  assert.equal(result.response.status, 422);
+  assert.equal(result.body.error.code, 'PROJECT_DEMAND_PROTECTED');
+  assert.equal(result.body.error.details.demandId, protectedDemandId);
+});
+
 test('project material cannot be shrunk below task assignments after execution facts exist', async () => {
   const projectId = globalThis.__finalProjectId;
   const detail = await jsonRequest(`/api/reserve-projects/${projectId}`);
@@ -420,4 +505,82 @@ test('project material cannot be shrunk below task assignments after execution f
   }));
   assert.equal(shrink.response.status, 422);
   assert.equal(shrink.body.error.code, 'PROJECT_MATERIAL_PROTECTED');
+});
+
+test('project execution detail stays within the D1 query budget as task count grows', async () => {
+  const projectId = globalThis.__finalProjectId;
+  const releaseId = globalThis.__projectReleaseId;
+  const demandId = globalThis.__finalDemandId;
+  const adminId = dbRows("SELECT id FROM members WHERE role='admin' ORDER BY created_at LIMIT 1;")[0].id;
+  const now = '2026-09-24T00:00:00.000Z';
+  const statements = [];
+  for (let index = 3; index <= 8; index += 1) {
+    const taskId = `query-budget-task-${index}`;
+    statements.push(
+      `INSERT INTO project_tasks (id,project_id,project_release_id,name,description,scope_text,owner,planned_date,planned_quantity_scaled,unit,version,implementation_version,settlement_version,created_by,created_at,updated_at) VALUES ('${taskId}','${projectId}','${releaseId}','查询预算任务${index}',NULL,NULL,NULL,NULL,1000,'项',1,1,1,'${adminId}','${now}','${now}');`,
+      `INSERT INTO task_demand_scopes (id,task_id,demand_id,planned_quantity_scaled,created_at) VALUES ('query-budget-scope-${index}','${taskId}','${demandId}',1000,'${now}');`,
+      `INSERT INTO task_material_requirements (id,task_id,project_material_requirement_id,material_id,model,unit,required_quantity_scaled,supply_version,created_at,updated_at) VALUES ('query-budget-material-${index}','${taskId}',NULL,NULL,'QB-${index}','件',1000,1,'${now}','${now}');`,
+    );
+  }
+  executeLocalD1(stateDir, { command: statements.join('\n') });
+
+  const detail = await jsonRequest(`/api/projects/${projectId}/execution`);
+  assert.equal(detail.response.status, 200);
+  assert.equal(detail.body.data.tasks.length, 8);
+  assert.equal(detail.body.data.demands.length, 1);
+  assert.equal(detail.body.data.tasks.filter((task) => task.name.startsWith('查询预算任务')).length, 6);
+});
+
+test('large reserve project creation stays within the D1 validation query budget', async () => {
+  const adminId = dbRows("SELECT id FROM members WHERE role='admin' ORDER BY created_at LIMIT 1;")[0].id;
+  const now = '2026-09-26T00:00:00.000Z';
+  const statements = [
+    `INSERT INTO materials (id,code,name,model,unit,enabled,version,created_by,created_at,updated_at) VALUES ('bulk-project-material','BULK-PROJECT','批量项目物资','BULK-MODEL','件',1,1,'${adminId}','${now}','${now}');`,
+    `INSERT INTO reserve_categories (id,category_key,label,enabled,version,created_by,created_at,updated_at) VALUES ('bulk-project-category','bulk-project','批量项目分类',1,1,'${adminId}','${now}','${now}');`,
+  ];
+  for (let index = 1; index <= 60; index += 1) {
+    statements.push(`INSERT INTO demands (id,source_type,source_key,source_batch_id,source_file_sha256,source_file_name,source_sheet,source_row_number,sequence_no,business_year,voltage_raw,voltage_verified,line_name,section_text,category_key,owner,business_signature,raw_json,extra_json,version,created_by,created_at,updated_at) VALUES ('bulk-demand-${index}','manual','bulk-source-${index}',NULL,NULL,NULL,NULL,NULL,'BULK-${index}',2026,'220kV','220kV','批量线路','批量区段',NULL,NULL,'bulk-signature-${index}','{}','{}',1,'${adminId}','${now}','${now}');`);
+  }
+  executeLocalD1(stateDir, { command: statements.join('\n') });
+
+  const created = await jsonRequest('/api/reserve-projects', mutation('POST', 'large-project-validation', {
+    name: '批量校验项目',
+    year: 2026,
+    owner: null,
+    demandIds: Array.from({ length: 60 }, (_, index) => `bulk-demand-${index + 1}`),
+    materials: Array.from({ length: 60 }, () => ({
+      materialId: 'bulk-project-material',
+      model: '',
+      unit: '',
+      requiredQuantityScaled: 10000,
+      unitPriceScaled: 1000000,
+      reserveCategoryId: 'bulk-project-category',
+    })),
+  }));
+  assert.equal(created.response.status, 201);
+  assert.equal(created.body.data.demandLinks.length, 60);
+  assert.equal(created.body.data.materialRequirements.length, 60);
+});
+
+test('reserve project list remains complete with many hydrated projects', async () => {
+  const demandId = globalThis.__finalDemandId;
+  const adminId = dbRows("SELECT id FROM members WHERE role='admin' ORDER BY created_at LIMIT 1;")[0].id;
+  const now = '2026-09-25T00:00:00.000Z';
+  const statements = [];
+  for (let index = 1; index <= 60; index += 1) {
+    const projectId = `list-project-${String(index).padStart(2, '0')}`;
+    statements.push(
+      `INSERT INTO projects (id,name,business_year,owner,status,reserve_version,framework_id,version,created_by,created_at,updated_at) VALUES ('${projectId}','批量列表项目${index}',2026,NULL,'draft',0,NULL,1,'${adminId}','${now}','${now}');`,
+      `INSERT INTO project_demand_links (id,project_id,demand_id,created_by,created_at) VALUES ('list-link-${index}','${projectId}','${demandId}','${adminId}','${now}');`,
+      `INSERT INTO project_material_requirements (id,project_id,material_id,model,unit,required_quantity_scaled,unit_price_scaled,amount_fen,reserve_category_id,active,version,created_by,created_at,updated_at) VALUES ('list-material-${index}','${projectId}',NULL,'LIST-${index}','件',10000,1000000,10000,NULL,1,1,'${adminId}','${now}','${now}');`,
+    );
+  }
+  executeLocalD1(stateDir, { command: statements.join('\n') });
+
+  const list = await jsonRequest('/api/reserve-projects?limit=100');
+  assert.equal(list.response.status, 200);
+  const bulk = list.body.data.items.filter((item) => item.id.startsWith('list-project-'));
+  assert.equal(bulk.length, 60);
+  assert.ok(bulk.every((item) => item.demandLinks.length === 1));
+  assert.ok(bulk.every((item) => item.materialRequirements.length === 1));
 });

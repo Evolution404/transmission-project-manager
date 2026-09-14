@@ -59,6 +59,7 @@ const menuOptions: MenuOption[] = [
   { label: '实施结算', key: '/delivery' },
   { label: '框架费用', key: '/finance' },
   { label: '储备分析', key: '/analysis' },
+  { label: '基础台账', key: '/master-data' },
   { label: '规则与成员', key: '/administration' },
 ];
 

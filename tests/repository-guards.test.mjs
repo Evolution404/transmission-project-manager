@@ -78,11 +78,117 @@ test('P1.2 runtime authentication does not depend on Cloudflare Access or email 
   assert.doesNotMatch(source, /from ['\"]jose['\"]|\"jose\"\s*:/);
 });
 
+test('portable backend core cannot depend on Cloudflare runtime types', () => {
+  const requiredPorts = ['database.ts', 'object-store.ts', 'job-queue.ts', 'scheduler.ts', 'clock.ts', 'attachment-repository.ts'];
+  for (const name of requiredPorts) {
+    assert.equal(existsSync(resolve(root, 'apps/api/src/ports', name)), true, `缺少可移植后端端口 ${name}`);
+  }
+  const portableRoots = ['domain', 'application', 'ports', 'repositories']
+    .map((name) => resolve(root, 'apps/api/src', name))
+    .filter((directory) => existsSync(directory));
+  const forbidden = /\b(?:D1Database|D1PreparedStatement|R2Bucket|Fetcher|ExecutionContext)\b|@cloudflare\/workers-types|\bwrangler\b|cloudflare:/i;
+  for (const directory of portableRoots) {
+    for (const file of collectSourceFiles(directory)) {
+      const source = readFileSync(file, 'utf8');
+      assert.doesNotMatch(source, forbidden, `${file} 将可移植核心重新绑定到 Cloudflare runtime`);
+    }
+  }
+});
+
+test('HTTP business and authentication modules resolve persistence without importing Cloudflare adapters', () => {
+  const files = ['app.ts','auth.ts','session.ts','p2.ts','p3.ts','p4.ts','p5.ts','p6.ts','p8.ts','p9.ts'];
+  for (const name of files) {
+    const source = readFileSync(resolve(root, 'apps/api/src', name), 'utf8');
+    assert.doesNotMatch(source, /runtime\/cloudflare\/persistence/, `${name} must resolve runtime-neutral persistence`);
+  }
+  const appSource = readFileSync(resolve(root, 'apps/api/src/app.ts'), 'utf8');
+  assert.doesNotMatch(appSource, /c\.env\.DB|\bD1(?:Database|PreparedStatement)\b|\.prepare\(/, 'top-level HTTP app must not reach D1 directly');
+});
+
+test('P5 attachment content no longer reaches the R2 binding directly', () => {
+  const source = readFileSync(resolve(root, 'apps/api/src/p5.ts'), 'utf8');
+  assert.doesNotMatch(source, /c\.env\.FILES/, 'P5 attachment content must use ObjectStorePort instead of the R2 binding directly');
+});
+
+test('P5 attachment metadata goes through AttachmentRepository instead of inline SQL', () => {
+  const source = readFileSync(resolve(root, 'apps/api/src/p5.ts'), 'utf8');
+  assert.match(source, /SqlAttachmentRepository/, 'P5 attachments must use the shared repository contract');
+  assert.doesNotMatch(source, /\b(?:FROM|INTO)\s+attachments\b/i, 'P5 must not inline attachment metadata SQL');
+});
+
+test('P9 master data and structured demand flows do not reach D1 directly', () => {
+  const source = readFileSync(resolve(root, 'apps/api/src/p9.ts'), 'utf8');
+  assert.doesNotMatch(source, /c\.env\.DB|\bD1(?:Database|PreparedStatement)\b/, 'P9 must use portable repositories instead of D1 APIs directly');
+});
+
+test('P2 import and demand flows do not reach D1 directly', () => {
+  const source = readFileSync(resolve(root, 'apps/api/src/p2.ts'), 'utf8');
+  assert.doesNotMatch(source, /c\.env\.DB|\bD1(?:Database|PreparedStatement)\b/, 'P2 must use portable repositories instead of D1 APIs directly');
+});
+
+test('P3 reserve project flows do not reach D1 directly', () => {
+  const source = readFileSync(resolve(root, 'apps/api/src/p3.ts'), 'utf8');
+  assert.doesNotMatch(source, /c\.env\.DB|\bD1(?:Database|PreparedStatement)\b/, 'P3 must use portable repositories instead of D1 APIs directly');
+});
+
+test('P4 finance flows do not reach D1 directly', () => {
+  const source = readFileSync(resolve(root, 'apps/api/src/p4.ts'), 'utf8');
+  assert.match(source, /SqlFinance(?:Budget|Entry|Query|Summary|Write)Repository/, 'P4 must use portable finance repositories');
+  assert.doesNotMatch(source, /c\.env\.DB|\bD1(?:Database|PreparedStatement)\b/, 'P4 must use portable repositories instead of D1 APIs directly');
+});
+
+test('P5 legacy delivery flows do not reach D1 directly', () => {
+  const source = readFileSync(resolve(root, 'apps/api/src/p5.ts'), 'utf8');
+  assert.match(source, /SqlLegacyExecutionRepository/, 'P5 legacy delivery flows must use the portable compatibility repository');
+  assert.doesNotMatch(source, /c\.env\.DB|\bD1(?:Database|PreparedStatement)\b|\.prepare\(/, 'P5 must use portable repositories instead of D1 APIs directly');
+});
+
+test('P6 analysis, notification, and backup flows do not reach Cloudflare persistence directly', () => {
+  const source = readFileSync(resolve(root, 'apps/api/src/p6.ts'), 'utf8');
+  assert.match(source, /SqlAnalysisRepository/, 'P6 analysis flows must use AnalysisRepository');
+  assert.match(source, /SqlNotificationRepository/, 'P6 notification flows must use NotificationRepository');
+  assert.match(source, /SqlBackupRepository/, 'P6 backup flows must use BackupRepository');
+  assert.doesNotMatch(source, /c\.env\.DB|env\.DB|env\.FILES|\bD1(?:Database|PreparedStatement)\b|\.prepare\(/, 'P6 must use portable persistence ports instead of Cloudflare bindings directly');
+});
+
+test('P8 final business flows do not reach D1 directly', () => {
+  const source = readFileSync(resolve(root, 'apps/api/src/p8.ts'), 'utf8');
+  assert.match(source, /Sql(?:ReserveProject|ProjectRelease|ProjectTask|TaskSupply|TaskImplementation|TaskSettlement|ExecutionQuery)Repository/, 'P8 must use portable business repositories');
+  assert.doesNotMatch(source, /c\.env\.DB|\bD1(?:Database|PreparedStatement)\b|\.prepare\(/, 'P8 must use portable repositories instead of D1 APIs directly');
+});
+
+test('authentication middleware uses portable session and member repositories', () => {
+  const source = readFileSync(resolve(root, 'apps/api/src/auth.ts'), 'utf8');
+  assert.match(source, /SqlSessionRepository/);
+  assert.match(source, /SqlMemberRepository/);
+  assert.doesNotMatch(source, /c\.env\.DB|\bD1Database\b/, 'auth middleware must not depend directly on D1');
+});
+
+test('session lifecycle helpers use SessionRepository instead of auth_sessions SQL', () => {
+  const source = readFileSync(resolve(root, 'apps/api/src/session.ts'), 'utf8');
+  assert.match(source, /SqlSessionRepository/);
+  assert.doesNotMatch(source, /\bD1Database\b|\b(?:FROM|INTO|UPDATE)\s+auth_sessions\b/i, 'session helpers must not inline auth session persistence');
+});
+
+test('Cloudflare infrastructure adapters depend inward on portable ports', () => {
+  const adapters = [
+    ['d1-database.ts', /implements\s+DatabasePort/, /ports\/database/],
+    ['r2-object-store.ts', /implements\s+ObjectStorePort/, /ports\/object-store/],
+  ];
+  for (const [name, contract, portImport] of adapters) {
+    const file = resolve(root, 'apps/api/src/adapters/cloudflare', name);
+    assert.equal(existsSync(file), true, `缺少 Cloudflare adapter ${name}`);
+    const source = readFileSync(file, 'utf8');
+    assert.match(source, contract);
+    assert.match(source, portImport);
+  }
+});
+
 test('business batch import is never the only creation path for demand data', () => {
   const apiSource = readFileSync(resolve(root, 'apps/api/src/p2.ts'), 'utf8');
   const webSource = readFileSync(resolve(root, 'apps/web/src/views/DemandsView.vue'), 'utf8');
   assert.match(apiSource, /post\('\/imports'/, '需求存在批量导入时必须保留导入接口');
-  assert.match(apiSource, /post\('\/demands'/, '需求支持批量导入时必须同时支持服务端手工新增');
+  assert.match(readFileSync(resolve(root, 'apps/api/src/p9.ts'), 'utf8'), /post\('\/demands'/, '需求支持批量导入时必须同时支持服务端手工新增');
   assert.match(webSource, /data-test="manual-demand-form"/, '需求支持批量导入时必须同时支持服务端手工新增入口');
   assert.match(webSource, /data-test="open-manual-demand"/, '手工新增需求必须由明确操作打开，不能把整张新增表单常驻主页面');
 });
@@ -154,5 +260,48 @@ test('committed tests cannot silently bypass the quality gate', () => {
     const source = readFileSync(file, 'utf8');
     assert.doesNotMatch(source, /\b(?:test|it|describe)\.(?:skip|only|todo)\s*\(/, `${file} contains a skipped/isolated test`);
     assert.doesNotMatch(source, /\b(?:test|it)\.todo\s*\(/, `${file} contains test.todo`);
+  }
+});
+
+test('Node runtime gate exercises the real app, SQLite, Filesystem, and migration rehearsal', () => {
+  const nodeConfig = readFileSync(resolve(root, 'apps/api/tsconfig.node-runtime.json'), 'utf8');
+  assert.match(nodeConfig, /"src\/app\.ts"/, 'Node typecheck must include the real HTTP app');
+  assert.doesNotMatch(nodeConfig, /adapters\/cloudflare|runtime\/cloudflare|src\/index\.ts/, 'Node typecheck must stay outside Cloudflare infrastructure');
+
+  const appTest = resolve(root, 'tests/node-runtime-app.test.mjs');
+  const migrationTest = resolve(root, 'tests/node-runtime-migration-rehearsal.test.mjs');
+  assert.equal(existsSync(appTest), true, 'missing Node application runtime E2E');
+  assert.equal(existsSync(migrationTest), true, 'missing Node migration rehearsal');
+  const appSource = readFileSync(appTest, 'utf8');
+  assert.match(appSource, /createNodePersistence/);
+  assert.match(appSource, /PERSISTENCE/);
+  assert.doesNotMatch(appSource, /\bDB\s*:|\bFILES\s*:/, 'Node E2E must not fall back to Cloudflare bindings');
+  const migrationSource = readFileSync(migrationTest, 'utf8');
+  assert.match(migrationSource, /0007_p7_flexible_demand_sources\.sql/);
+  assert.match(migrationSource, /0012_master_data_write_guards\.sql/);
+});
+
+test('Node integration suite is safe for file-level parallelism', () => {
+  const packageJson = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8'));
+  const match = packageJson.scripts?.['test:node']?.match(/--test-concurrency=(\d+)/);
+  assert.ok(match, 'test:node must declare explicit file-level concurrency');
+  assert.ok(Number(match[1]) >= 5, 'test:node should run at least five test files in parallel');
+
+  const wranglerHelper = readFileSync(resolve(root, 'tests/helpers/wrangler.mjs'), 'utf8');
+  assert.match(wranglerHelper, /'--inspector-port'/, 'parallel Wrangler runtimes need isolated inspector ports');
+
+  const migrationTests = readFileSync(resolve(root, 'tests/migrations.test.mjs'), 'utf8');
+  assert.match(migrationTests, /node:sqlite/, 'migration data-preservation tests should avoid one Wrangler process per SQL statement');
+  assert.match(migrationTests, /applyWranglerMigrations/, 'migration tests must retain a real Wrangler migration smoke path');
+
+  const ports = new Map();
+  for (const file of collectTestFiles(resolve(root, 'tests'))) {
+    const source = readFileSync(file, 'utf8');
+    for (const portMatch of source.matchAll(/\bport:\s*(\d+)\b/g)) {
+      const port = Number(portMatch[1]);
+      const previous = ports.get(port);
+      assert.equal(previous, undefined, `integration test port ${port} is reused by ${previous} and ${file}`);
+      ports.set(port, file);
+    }
   }
 });

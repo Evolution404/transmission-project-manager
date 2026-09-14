@@ -1,27 +1,21 @@
 # Cloudflare 运行、成本与部署说明
 
-核对日期：2026-09-12。**P0–P6 已完成本地/合成数据验收；P7 已进入真实数据与正式环境验收阶段。尚未创建或部署任何正式 Cloudflare 资源。**
+核对日期：2026-09-14。**P0–P6、最终业务模型、基础台账对象化和本轮后端可移植化代码施工均已完成。Cloudflare Workers Free + D1 + R2 仍是当前部署基线；同一 Hono 应用已通过 `PersistencePorts` 注入在 Node + SQLite + Filesystem 第二运行时完成应用级 E2E 和旧库升级演练。P7 真实数据与正式环境验收仍未完成；本轮未升级远端 D1、未合并 `main`、未正式发布。生产环境实际版本必须以部署记录和 `/api/health` 实测为准。**
 
-## 1. 本地开发
+## 1. 云上开发与发布工作流
 
-建议 Node.js 24、npm 11，执行：
+后续默认工作流以 **GitHub + Cloudflare** 为唯一必需环境，用户 Mac 和任何本地电脑都不应成为开发、测试、合并或发布前置条件。
 
-```sh
-npm ci
-npm run dev
-```
+- 代码阅读、修改、分支、PR、合并均在 GitHub 远端完成。
+- `npm run check` 等完整自动门禁应由 GitHub Actions 执行；后续验收以远端 CI 结果为准。
+- Cloudflare Workers / D1 / R2 发布优先由 GitHub Actions、Cloudflare Git integration 或其他受保护的云端发布 workflow 触发。
+- Cloudflare API Token、Account ID、D1/R2 标识及生产 Secrets 只能存于 GitHub Environment/Secrets 或 Cloudflare Secrets，不写入仓库、PR、前端和日志。
+- 若 GitHub 当前没有完整的 Cloudflare 发布 workflow，先补齐 CI/CD、Environment protection 和最小权限服务身份，再做正式发布；不要退回依赖个人电脑 Wrangler 登录态的流程。
+- GitHub CI 仍应覆盖 Cloudflare 与 Node 两套类型边界、前端产物、Worker dry-run、认证/权限/并发/原子性测试、Node + SQLite + Filesystem E2E 和 P7-era → 0012 migration rehearsal。
 
-`npm run dev`先构建前端静态资源，再同时启动Vite（5173）和Wrangler（8787）。Vite代理 `/api` 到本地Workers，Wrangler用本地workerd模拟D1/R2，状态写在忽略目录 `.wrangler/`。
+仓库中保留的本地开发脚本和 Node 第二运行时仍可用于故障复现或未来普通服务器迁移，但只是**可选能力**，不是后续 AI 或正式运维的依赖。业务/认证层继续只接收 `RuntimeBindings.PERSISTENCE`；Cloudflare D1/R2 adapter 仅在 Worker `index.ts` 基础设施入口组装。
 
-本地配置 `apps/api/wrangler.jsonc` 的数据库ID为全零占位符，桶名也只是本地标识。其目的仅是本地开发与dry-run，不是可直接使用的生产配置。
-
-```sh
-npm run check
-```
-
-检查包括三个工作区的类型检查、前端产物、Worker dry-run 打包，以及真实 workerd + 本地 D1 的认证、权限、并发和原子性测试。测试使用独立临时 D1，通过一次性 bootstrap 创建合成测试账号，不需要 Cloudflare 账号或真实 Secret，也不会污染日常本地开发库。健康接口成功只表示 Worker 存活。
-
-## 2. 计划中的部署拓扑
+## 2. 部署拓扑
 
 ```text
 电脑/手机浏览器
@@ -80,7 +74,7 @@ CPU是执行代码的时间，网络/数据库等待不计入。JS解析大JSON�
 
 以下步骤在 P7 执行；逐项状态和证据要求见 [P7_ACCEPTANCE.md](P7_ACCEPTANCE.md)：
 
-1. 完成 P1.2–P6、本地检查和主要业务验收，准备正式账号与自定义域名；显式确定首个真实应用管理员 username，并生成一次性 bootstrap secret。
+1. 以当前已验证功能基线完成本地检查和主要业务验收，准备正式账号与自定义域名；显式确定首个真实应用管理员 username，并生成一次性 bootstrap secret。
 2. 由已授权的受托技术运维身份创建/配置 D1、R2 和 Workers；提供 `apac` 位置提示。提示不能锁定具体机房，也不承诺香港路由。采用全球网络，不接入中国大陆网络。
 3. 将 `apps/api/wrangler.production.example.json` 复制为被Git忽略的 `apps/api/wrangler.production.jsonc`，写入真实D1/R2绑定、`APP_ENV=production`、自定义域名和正式Worker名称；移除占位符。配置使用严格 JSON 子集，运行 `npm run p7 -- config apps/api/wrangler.production.jsonc` 检查；模板不含 Secret。
 4. 保持 `workers_dev=false`、`preview_urls=false`。生产认证只接受系统会话 Cookie；不得启用 `X-Dev-User-*`、Cloudflare Access JWT 或其他请求头身份兜底。
@@ -98,7 +92,7 @@ npm run check
 npm exec --workspace @tpm/api -- wrangler deploy --config wrangler.production.jsonc
 ```
 
-当前普通 push CI 只有检查；新增手工 production preflight 只校验非敏感配置并 dry-run，没有云凭据。生产部署 workflow 模板位于 `docs/templates/production-deploy.yml.example`，尚未启用；必须先获得授权并验证 Environment 分支/审批规则和 account-owned API token。完整操作顺序、证据与回退边界见 [P7_RUNBOOK.md](P7_RUNBOOK.md)。
+仓库默认普通 push CI 只做检查；手工 production preflight 只校验非敏感配置并 dry-run，不应携带云凭据。`docs/templates/production-deploy.yml.example` 是未激活模板；实际生产是否已经存在其他受控发布流程必须读取当前 GitHub/Cloudflare 配置确认，不能仅根据模板状态推断。任何启用/修改生产发布流程都必须先获得授权并验证 Environment 分支/审批规则和 account-owned API token。完整操作顺序、证据与回退边界见 [P7_RUNBOOK.md](P7_RUNBOOK.md)。
 
 ## 5. 数据备份和回退
 

@@ -62,8 +62,8 @@ test('API health reports P6 after analysis, reminders, notifications, and backup
       stage: 'p6',
       schema: {
         ready: true,
-        currentMigration: '0008_final_business_flow.sql',
-        requiredMigration: '0008_final_business_flow.sql',
+        currentMigration: '0012_master_data_write_guards.sql',
+        requiredMigration: '0012_master_data_write_guards.sql',
       },
     },
   });

@@ -1,19 +1,52 @@
 import assert from 'node:assert/strict';
+import { readFileSync, readdirSync } from 'node:fs';
+import { DatabaseSync } from 'node:sqlite';
+import { resolve } from 'node:path';
 import { afterEach, test } from 'node:test';
 import {
-  applyLocalMigrations,
+  applyLocalMigrations as applyWranglerMigrations,
   cleanupStateDir,
-  executeLocalD1,
   makeStateDir,
-  queryLocalD1,
+  queryLocalD1 as queryWranglerD1,
 } from './helpers/wrangler.mjs';
 
+const apiDir = resolve(import.meta.dirname, '../apps/api');
+const migrationsDir = resolve(apiDir, 'migrations');
+const migrationFiles = readdirSync(migrationsDir).filter((name) => /^\d{4}_.+\.sql$/.test(name)).sort();
+const databases = new Set();
 const stateDirs = new Set();
 
-function tempState(prefix) {
-  const dir = makeStateDir(prefix);
-  stateDirs.add(dir);
-  return dir;
+function tempState() {
+  const db = new DatabaseSync(':memory:');
+  db.exec('PRAGMA foreign_keys = ON;');
+  databases.add(db);
+  return db;
+}
+
+function executeLocalD1(db, { file, command }) {
+  const sql = file ? readFileSync(resolve(apiDir, file), 'utf8') : command;
+  if (sql) db.exec(sql);
+}
+
+function queryLocalD1(db, command) {
+  return [{ results: db.prepare(command).all().map((row) => ({ ...row })) }];
+}
+
+function applyLocalMigrations(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS d1_migrations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL UNIQUE,
+      applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+  const applied = new Set(db.prepare('SELECT name FROM d1_migrations;').all().map((row) => row.name));
+  const record = db.prepare('INSERT INTO d1_migrations (name) VALUES (?);');
+  for (const name of migrationFiles) {
+    if (applied.has(name)) continue;
+    db.exec(readFileSync(resolve(migrationsDir, name), 'utf8'));
+    record.run(name);
+  }
 }
 
 function rows(result) {
@@ -21,6 +54,8 @@ function rows(result) {
 }
 
 afterEach(() => {
+  for (const db of databases) db.close();
+  databases.clear();
   for (const dir of stateDirs) cleanupStateDir(dir);
   stateDirs.clear();
 });
@@ -371,6 +406,10 @@ test('clean database applies the current development schema and remains repeatab
     '0006_p6_analysis_notifications_backups.sql',
     '0007_p7_flexible_demand_sources.sql',
     '0008_final_business_flow.sql',
+    '0009_master_grid_assets.sql',
+    '0010_master_grid_relations.sql',
+    '0011_master_data_integrity.sql',
+    '0012_master_data_write_guards.sql',
   ]);
 
   const tables = rows(queryLocalD1(state,
@@ -393,6 +432,15 @@ test('clean database applies the current development schema and remains repeatab
     'task_implementation_records', 'task_implementation_scope_lines', 'task_material_usage_lines',
     'task_settlements', 'task_settlement_scope_lines', 'task_settlement_agreement_allocations', 'task_settlement_reminders',
   ]) assert.ok(tables.includes(table), `missing table ${table}`);
+});
+
+test('Wrangler applies the current migration baseline to a real local D1 state', () => {
+  const state = makeStateDir('tpm-migration-wrangler-smoke-');
+  stateDirs.add(state);
+  applyWranglerMigrations(state);
+  const migrations = rows(queryWranglerD1(state, 'SELECT name FROM d1_migrations ORDER BY id;')).map((row) => row.name);
+  assert.equal(migrations.length, migrationFiles.length);
+  assert.equal(migrations.at(-1), migrationFiles.at(-1));
 });
 
 test('demand schema supports real import and manual sources without fabricating file provenance', () => {

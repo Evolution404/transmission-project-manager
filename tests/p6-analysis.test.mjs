@@ -1,9 +1,8 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { after, before, test } from 'node:test';
-import { applyLocalMigrations, cleanupStateDir, executeLocalD1, makeStateDir, queryLocalD1, runWrangler, startWranglerServer } from './helpers/wrangler.mjs';
+import { applyLocalMigrations, cleanupStateDir, executeLocalD1, makeStateDir, queryLocalD1, readLocalR2Object, startWranglerServer } from './helpers/wrangler.mjs';
 import { bootstrapAdmin, cookiePair } from './helpers/auth.mjs';
 
 const stateDir = makeStateDir('tpm-p6-analysis-');
@@ -41,6 +40,7 @@ function rows(command) {
 
 const restoreTableOrder = [
   'members', 'member_scopes', 'settings_versions', 'dictionary_items', 'audit_events', 'idempotency_records',
+  'voltage_levels', 'transmission_lines', 'transmission_towers',
   'materials', 'import_mapping_templates', 'import_batches', 'import_rows', 'demands', 'demand_source_rows', 'demand_materials', 'field_definitions',
   'projects', 'project_versions', 'demand_allocations', 'project_cost_lines', 'reserve_categories', 'category_mappings', 'category_cost_allocations',
   'project_demand_links', 'project_material_requirements', 'project_material_revisions',
@@ -70,10 +70,8 @@ function insertSql(table, inputRows) {
   const values = inputRows.map((row) => `(${columns.map((column) => sqlLiteral(row[column])).join(',')})`).join(',');
   return `INSERT INTO "${table}" (${columns.map((column) => `"${column}"`).join(',')}) VALUES ${values};`;
 }
-function getLocalR2Json(sourceStateDir, key, artifactsDir) {
-  const output = join(artifactsDir, `${crypto.randomUUID()}.json`);
-  runWrangler(['r2', 'object', 'get', `transmission-project-manager-local/${key}`, '--local', '--persist-to', sourceStateDir, '--file', output]);
-  return JSON.parse(readFileSync(output, 'utf8'));
+function getLocalR2Json(sourceStateDir, key) {
+  return JSON.parse(readLocalR2Object(sourceStateDir, 'transmission-project-manager-local', key).toString('utf8'));
 }
 
 function seedFinanceFacts() {
@@ -463,6 +461,7 @@ test('logical D1 backup is resumable in R2, integrity verified, and restorable i
       VALUES ('p6-restore-settlement-line','p6-restore-settlement','p6-reserve','p6-reserve-dm',100000,'${factTime}');
     `,
   });
+  executeLocalD1(stateDir, { command: `INSERT INTO transmission_lines VALUES ('backup-line','vl-ac-220',NULL,'备份线路',1,1,'2026-09-13','2026-09-13'); INSERT INTO transmission_towers VALUES ('backup-tower','backup-line','#20+1',20,NULL,0,1,'2026-09-13','2026-09-13'); UPDATE demands SET voltage_level_id='vl-ac-220',line_id='backup-line',location_type='tower',start_tower_id='backup-tower',end_tower_id='backup-tower' WHERE id='p6-reserve-demand';` });
   const sourceFacts = {
     project: rows("SELECT id,name,framework_id,reserve_version FROM projects WHERE id='p6-reserve';")[0],
     finance: rows("SELECT COALESCE(SUM(amount_fen),0) AS total FROM financial_entries WHERE framework_id='p6-fw';")[0],
@@ -489,14 +488,13 @@ test('logical D1 backup is resumable in R2, integrity verified, and restorable i
   assert.equal(verified.body.data.missingObjects.length, 0);
 
   const restoreState = makeStateDir('tpm-p6-restored-db-');
-  const artifactsDir = makeStateDir('tpm-p6-restore-artifacts-');
   try {
-    const manifest = getLocalR2Json(stateDir, backup.manifestKey, artifactsDir);
+    const manifest = getLocalR2Json(stateDir, backup.manifestKey);
     assert.equal(manifest.backupId, backup.id);
     assert.equal(manifest.chunks.length, backup.chunkCount);
     const chunksByTable = new Map();
     for (const chunk of manifest.chunks) {
-      const payload = getLocalR2Json(stateDir, chunk.key, artifactsDir);
+      const payload = getLocalR2Json(stateDir, chunk.key);
       assert.equal(payload.table, chunk.table);
       const current = chunksByTable.get(chunk.table) ?? [];
       current.push({ index: chunk.index, rows: payload.rows });
@@ -522,10 +520,11 @@ test('logical D1 backup is resumable in R2, integrity verified, and restorable i
     assert.deepEqual(restoredRows("SELECT project_id,demand_material_id,completed_quantity_scaled,actual_used_quantity_scaled FROM implementation_lines WHERE id='p6-restore-impl-line';")[0], sourceFacts.implementation);
     assert.deepEqual(restoredRows("SELECT project_id,demand_material_id,quantity_scaled FROM settlement_coverage WHERE id='p6-restore-settlement-line';")[0], sourceFacts.settlement);
     assert.deepEqual(restoredRows("SELECT version,mode,threshold_basis_points FROM analysis_rules ORDER BY version DESC LIMIT 1;")[0], sourceFacts.rule);
+    assert.equal(restoredRows("SELECT tower_no FROM transmission_towers WHERE id='backup-tower';")[0].tower_no, '#20+1');
+    assert.equal(restoredRows("SELECT COUNT(*) AS count FROM voltage_levels;")[0].count, 8);
     assert.equal(restoredRows("SELECT COUNT(*) AS count FROM auth_sessions;")[0].count, 0, 'backup restore deliberately does not revive login sessions');
   } finally {
     cleanupStateDir(restoreState);
-    cleanupStateDir(artifactsDir);
   }
 });
 

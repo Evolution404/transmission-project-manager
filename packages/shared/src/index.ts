@@ -180,8 +180,13 @@ export interface NormalizedImportRow {
   sequenceNo: string;
   voltageRaw: string;
   voltageVerified: string | null;
+  voltageLevelId: string | null;
   lineName: string;
+  lineId: string | null;
   section: string;
+  locationType: DemandLocationType | null;
+  startTowerId: string | null;
+  endTowerId: string | null;
   materialModel: string;
   quantityScaled: number | null;
   unit: string | null;
@@ -268,7 +273,64 @@ export interface MaterialSummary {
   version: number;
 }
 
+export type VoltageSystemType = 'AC' | 'DC';
+export type DemandLocationType = 'whole_line' | 'tower' | 'tower_range';
+
+export interface VoltageLevelSummary {
+  id: string;
+  code: string;
+  displayName: string;
+  systemType: VoltageSystemType;
+  nominalKv: number;
+  sortOrder: number;
+  enabled: boolean;
+  version: number;
+}
+
+export interface TransmissionLineSummary {
+  id: string;
+  voltageLevelId: string;
+  voltageLevelName: string;
+  lineCode: string | null;
+  lineName: string;
+  enabled: boolean;
+  version: number;
+  towerCount?: number;
+}
+
+export interface TransmissionTowerSummary {
+  id: string;
+  lineId: string;
+  lineName: string;
+  towerNo: string;
+  sortIndex: number;
+  towerType: string | null;
+  enabled: boolean;
+  version: number;
+}
+
+export interface StructuredDemandLocationInput {
+  voltageLevelId: string;
+  lineId: string;
+  locationType: DemandLocationType;
+  startTowerId?: string | null;
+  endTowerId?: string | null;
+}
+
+export interface CreateStructuredDemandRequest extends StructuredDemandLocationInput {
+  sequenceNo: string;
+  materials?: DemandMaterialInput[];
+  year?: number | null;
+  category?: string | null;
+  owner?: string | null;
+}
+
 export interface DemandSummary {
+  voltageLevelId: string | null;
+  lineId: string | null;
+  locationType: DemandLocationType | null;
+  startTowerId: string | null;
+  endTowerId: string | null;
   id: string;
   sequenceNo: string;
   year: number | null;
@@ -289,19 +351,7 @@ export interface DemandMaterialInput {
   unit?: string | null;
 }
 
-export interface CreateDemandRequest {
-  sequenceNo: string;
-  voltage: string;
-  lineName: string;
-  section: string;
-  materials?: DemandMaterialInput[];
-  materialModel?: string;
-  materialQuantity?: string | number;
-  unit?: string | null;
-  year?: number | string | null;
-  category?: string | null;
-  owner?: string | null;
-}
+export type CreateDemandRequest = CreateStructuredDemandRequest;
 
 export type DemandSourceSummary =
   | {

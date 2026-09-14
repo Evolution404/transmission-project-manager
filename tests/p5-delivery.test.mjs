@@ -124,7 +124,7 @@ async function createSettlement({ projectId, expectedProjectVersion, quantitySca
 before(async () => {
   runtime = await startWranglerServer({
     stateDir,
-    port: 8806,
+    port: 8815,
     migrate: true,
     vars: ['AUTH_CREDENTIAL_PEPPER:p5-pepper', 'BOOTSTRAP_TOKEN:p5-bootstrap'],
   });
@@ -362,6 +362,39 @@ test('attachments are private to the owning project scope and round-trip through
 
   const denied = await runtime.request(`/api/attachments/${uploaded.data.id}/content`, { headers: { Cookie: scopedReadonlyCookie } });
   assert.equal(denied.status, 403);
+});
+
+test('legacy implementation and settlement lists remain complete at the 100-row page limit', async () => {
+  const now = '2026-09-13T00:00:00.000Z';
+  const implementationRows = [];
+  const implementationLines = [];
+  const settlementRows = [];
+  const coverageRows = [];
+  for (let index = 0; index < 100; index += 1) {
+    const suffix = String(index).padStart(3, '0');
+    implementationRows.push(`('p5-bulk-impl-${suffix}','p5-project-empty',0,'2026-09-13','批量测试',NULL,1,'${adminId}','${now}','${now}')`);
+    implementationLines.push(`('p5-bulk-impl-line-${suffix}','p5-bulk-impl-${suffix}','p5-project-empty',NULL,'p5-dm-empty','批量实施','套',1,1,'${now}')`);
+    settlementRows.push(`('p5-bulk-settlement-${suffix}','p5-project-empty','2026-09-13',1,0,NULL,1,NULL,NULL,NULL,'${adminId}','${now}','${now}')`);
+    coverageRows.push(`('p5-bulk-coverage-${suffix}','p5-bulk-settlement-${suffix}','p5-project-empty','p5-dm-empty',1,'${now}')`);
+  }
+  executeLocalD1(stateDir, {
+    command: `
+      INSERT INTO implementation_records (id,project_id,historical,record_date,personnel,note,version,created_by,created_at,updated_at) VALUES ${implementationRows.join(',')};
+      INSERT INTO implementation_lines (id,implementation_id,project_id,release_line_id,demand_material_id,description,unit,completed_quantity_scaled,actual_used_quantity_scaled,created_at) VALUES ${implementationLines.join(',')};
+      INSERT INTO settlements (id,project_id,settlement_date,amount_fen,final,note,version,voided_at,voided_by,void_reason,created_by,created_at,updated_at) VALUES ${settlementRows.join(',')};
+      INSERT INTO settlement_coverage (id,settlement_id,project_id,demand_material_id,quantity_scaled,created_at) VALUES ${coverageRows.join(',')};
+    `,
+  });
+
+  const implementations = await jsonRequest('/api/implementations?projectId=p5-project-empty');
+  assert.equal(implementations.response.status, 200);
+  assert.equal(implementations.body.data.items.length, 100);
+  assert.ok(implementations.body.data.items.every((item) => item.lines.length === 1 && item.projectVersion === 1));
+
+  const settlements = await jsonRequest('/api/settlements?projectId=p5-project-empty');
+  assert.equal(settlements.response.status, 200);
+  assert.equal(settlements.body.data.items.length, 100);
+  assert.ok(settlements.body.data.items.every((item) => item.coverage.length === 1 && item.agreementAllocations.length === 0));
 });
 
 test('role boundaries keep implementation and settlement writes separate', async () => {

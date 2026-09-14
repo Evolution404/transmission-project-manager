@@ -136,6 +136,12 @@ describe('DemandsView P2 behavior', () => {
       } }), { status: 201, headers: { 'Content-Type': 'application/json' } });
       if (url.startsWith('/api/demands')) return ok({ items: [{ id: 'd1', sequenceNo: '1', lineName: '龙城线', section: '#1', voltageRaw: '220kV', year: 2026, category: '防断线', owner: null, createdAt: '2026-09-12T00:00:00.000Z' }], nextCursor: null });
       if (url === '/api/import-mappings') return ok({ items: [] });
+      if (url === '/api/master/voltage-levels') return ok({ items: [{ id: 'vl-ac-220', code: 'AC_220KV', displayName: '220kV', systemType: 'AC', nominalKv: 220, sortOrder: 30, enabled: true, version: 1 }] });
+      if (url.startsWith('/api/master/lines?voltageLevelId=')) return ok({ items: [{ id: 'line-1', voltageLevelId: 'vl-ac-220', voltageLevelName: '220kV', lineCode: null, lineName: '手工需求线', enabled: true, version: 1, towerCount: 2 }] });
+      if (url.startsWith('/api/master/towers?lineId=')) return ok({ items: [
+        { id: 'tower-1', lineId: 'line-1', lineName: '手工需求线', towerNo: '#1', sortIndex: 1, towerType: null, enabled: true, version: 1 },
+        { id: 'tower-2', lineId: 'line-1', lineName: '手工需求线', towerNo: '#2', sortIndex: 2, towerType: null, enabled: true, version: 1 },
+      ] });
       if (url === '/api/materials' && init?.method === 'POST') return new Response(JSON.stringify({ ok: true, data: { id: 'm1', code: null, name: '线夹', model: 'JX-01', unit: '套', enabled: true, version: 1 } }), { status: 201, headers: { 'Content-Type': 'application/json' } });
       if (url.startsWith('/api/materials')) return ok({ items: [] });
       throw new Error(`unexpected request ${url}`);
@@ -166,9 +172,11 @@ describe('DemandsView P2 behavior', () => {
     await flushPromises();
     expect(wrapper.find('[data-test="manual-demand-form"]').exists()).toBe(true);
     await wrapper.get('[data-test="manual-sequence"]').setValue('M-001');
-    await wrapper.get('[data-test="manual-voltage"]').setValue('220kV');
-    await wrapper.get('[data-test="manual-line"]').setValue('手工需求线');
-    await wrapper.get('[data-test="manual-section"]').setValue('#1-#2');
+    await wrapper.get('[data-test="manual-voltage"]').setValue('vl-ac-220'); await flushPromises();
+    await wrapper.get('[data-test="manual-line"]').setValue('line-1'); await flushPromises();
+    await wrapper.get('[data-test="manual-location-type"]').setValue('tower_range');
+    await wrapper.get('[data-test="manual-start-tower"]').setValue('tower-1');
+    await wrapper.get('[data-test="manual-end-tower"]').setValue('tower-2');
     await wrapper.get('[data-test="manual-year"]').setValue('2026');
     await wrapper.get('[data-test="manual-category"]').setValue('临时补充');
     await wrapper.get('[data-test="manual-owner"]').setValue('张三');
@@ -189,7 +197,7 @@ describe('DemandsView P2 behavior', () => {
     const call = fetchMock.mock.calls.find(([url, init]) => String(url) === '/api/demands' && init?.method === 'POST');
     expect(call).toBeTruthy();
     expect(JSON.parse(String(call![1]!.body))).toEqual({
-      sequenceNo: 'M-001', voltage: '220kV', lineName: '手工需求线', section: '#1-#2',
+      sequenceNo: 'M-001', voltageLevelId: 'vl-ac-220', lineId: 'line-1', locationType: 'tower_range', startTowerId: 'tower-1', endTowerId: 'tower-2',
       materials: [
         { rawModel: 'JX-01', quantityScaled: 25000, unit: '套' },
         { rawModel: 'JX-02', quantityScaled: 120000, unit: '只' },
@@ -197,6 +205,21 @@ describe('DemandsView P2 behavior', () => {
       year: 2026, category: '临时补充', owner: '张三',
     });
     expect(wrapper.find('[data-test="manual-demand-form"]').exists()).toBe(false);
+  });
+
+  it('loads the selected hierarchy on demand and clears downstream fields when a parent changes', async () => {
+    const wrapper = mount(DemandsView, { props: { currentUser: admin } }); await flushPromises();
+    expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).startsWith('/api/master/towers'))).toBe(false);
+    await wrapper.get('[data-test="open-manual-demand"]').trigger('click');
+    expect(wrapper.get('[data-test="manual-location-type"]').attributes('disabled')).toBeDefined();
+    await wrapper.get('[data-test="manual-voltage"]').setValue('vl-ac-220'); await flushPromises(); await flushPromises();
+    await wrapper.get('[data-test="manual-line"]').setValue('line-1'); await flushPromises(); await flushPromises();
+    await wrapper.get('[data-test="manual-start-tower"]').setValue('tower-1');
+    await wrapper.get('[data-test="manual-end-tower"]').setValue('tower-2');
+    await wrapper.get('[data-test="manual-voltage"]').setValue(''); await flushPromises();
+    expect((wrapper.get('[data-test="manual-line"]').element as HTMLSelectElement).value).toBe('');
+    expect(wrapper.get('[data-test="manual-start-tower"]').findAll('option')).toHaveLength(0);
+    expect(wrapper.get('[data-test="manual-location-type"]').attributes('disabled')).toBeDefined();
   });
 
   it('lets write roles download the canonical import template before selecting a file', async () => {
