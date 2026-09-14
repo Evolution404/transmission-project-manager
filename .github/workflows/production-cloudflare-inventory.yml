@@ -31,6 +31,25 @@ jobs:
           [[ "$ACCOUNT_ID" =~ ^[0-9a-fA-F]{32}$ ]]
           test -n "$CLOUDFLARE_API_TOKEN"
 
+      - name: Verify Cloudflare token for account
+        env:
+          ACCOUNT_ID: ${{ inputs.account_id }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          response="$RUNNER_TEMP/cloudflare-token-verify.json"
+          status="$(curl --silent --show-error \
+            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+            -H 'Accept: application/json' \
+            -o "$response" -w '%{http_code}' \
+            "https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/tokens/verify")"
+          if [[ "$status" != "200" ]] || ! jq -e '.success == true and .result.status == "active"' "$response" >/dev/null 2>&1; then
+            errors="$(jq -r '[.errors[]? | ((.code // "unknown")|tostring) + ": " + (.message // "unknown error")] | join("; ")' "$response" 2>/dev/null || true)"
+            echo "::error title=Cloudflare token verification failed::HTTP ${status}; ${errors:-Cloudflare returned no JSON error detail}"
+            exit 1
+          fi
+          echo 'Cloudflare account token is active for the requested account.'
+
       - name: Read Cloudflare production inventory
         env:
           ACCOUNT_ID: ${{ inputs.account_id }}
@@ -41,30 +60,37 @@ jobs:
           mkdir -p "$INVENTORY_DIR/d1"
 
           cf_get() {
-            local path="$1"
-            local output="$2"
-            curl --fail --silent --show-error \
+            local label="$1"
+            local path="$2"
+            local output="$3"
+            local status errors
+            status="$(curl --silent --show-error \
               -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
               -H 'Accept: application/json' \
-              "https://api.cloudflare.com/client/v4${path}" \
-              -o "$output"
-            jq -e '.success == true' "$output" >/dev/null
+              -o "$output" -w '%{http_code}' \
+              "https://api.cloudflare.com/client/v4${path}")"
+            if [[ "$status" != "200" ]] || ! jq -e '.success == true' "$output" >/dev/null 2>&1; then
+              errors="$(jq -r '[.errors[]? | ((.code // "unknown")|tostring) + ": " + (.message // "unknown error")] | join("; ")' "$output" 2>/dev/null || true)"
+              echo "::error title=Cloudflare ${label} read failed::HTTP ${status}; ${errors:-Cloudflare returned no JSON error detail}"
+              return 1
+            fi
           }
 
-          cf_get "/accounts/${ACCOUNT_ID}/workers/scripts" "$INVENTORY_DIR/workers.json"
-          cf_get "/accounts/${ACCOUNT_ID}/d1/database?per_page=100" "$INVENTORY_DIR/d1-list.json"
-          cf_get "/accounts/${ACCOUNT_ID}/r2/buckets?per_page=100" "$INVENTORY_DIR/r2.json"
-          cf_get "/accounts/${ACCOUNT_ID}/workers/domains" "$INVENTORY_DIR/domains.json"
-          cf_get "/zones?account.id=${ACCOUNT_ID}&per_page=50" "$INVENTORY_DIR/zones.json"
+          cf_get workers "/accounts/${ACCOUNT_ID}/workers/scripts" "$INVENTORY_DIR/workers.json"
+          cf_get d1 "/accounts/${ACCOUNT_ID}/d1/database?per_page=100" "$INVENTORY_DIR/d1-list.json"
+          cf_get r2 "/accounts/${ACCOUNT_ID}/r2/buckets?per_page=100" "$INVENTORY_DIR/r2.json"
+          cf_get domains "/accounts/${ACCOUNT_ID}/workers/domains" "$INVENTORY_DIR/domains.json"
+          cf_get zones "/zones?account.id=${ACCOUNT_ID}&per_page=50" "$INVENTORY_DIR/zones.json"
 
           while IFS= read -r database_id; do
             [[ "$database_id" =~ ^[0-9a-fA-F-]{36}$ ]] || exit 1
-            cf_get "/accounts/${ACCOUNT_ID}/d1/database/${database_id}" "$INVENTORY_DIR/d1/${database_id}.json"
+            cf_get "d1-${database_id}" "/accounts/${ACCOUNT_ID}/d1/database/${database_id}" "$INVENTORY_DIR/d1/${database_id}.json"
           done < <(jq -r '.result[]?.uuid // empty' "$INVENTORY_DIR/d1-list.json")
 
           {
             echo '### Cloudflare production inventory (read-only)'
             printf -- '- Account ID: `%s`\n' "$ACCOUNT_ID"
+            echo '- Token verification: `active`'
             echo
             echo '#### Workers'
             if jq -e '.result | length > 0' "$INVENTORY_DIR/workers.json" >/dev/null; then
@@ -106,4 +132,4 @@ jobs:
 
       - name: Remove temporary inventory responses
         if: always()
-        run: rm -rf "$RUNNER_TEMP/cloudflare-production-inventory"
+        run: rm -rf "$RUNNER_TEMP/cloudflare-production-inventory" "$RUNNER_TEMP/cloudflare-token-verify.json"
