@@ -1,4 +1,9 @@
-import type { CredentialRepository, MemberCredentialRecord } from '../ports/credential-repository.ts';
+import type {
+  CredentialMutationInput,
+  CredentialRepository,
+  MemberCredentialRecord,
+  ResetCredentialInput,
+} from '../ports/credential-repository.ts';
 import type { DatabasePort } from '../ports/database.ts';
 
 type CredentialRow = {
@@ -59,6 +64,64 @@ export class SqlCredentialRepository implements CredentialRepository {
       params: [memberId],
     });
     return row ? toRecord(row) : null;
+  }
+
+  async changeOwnCredential(input: CredentialMutationInput): Promise<void> {
+    await this.database.batch([
+      {
+        sql: `UPDATE members
+              SET credential_salt=?,credential_verifier=?,credential_algorithm='argon2id-v1',credential_params_json=?,
+                  must_change_password=0,session_version=?,failed_login_count=0,locked_until=NULL,last_failed_login_at=NULL,
+                  credential_changed_at=?,updated_at=? WHERE id=?`,
+        params: [input.salt, input.verifier, input.paramsJson, input.nextSessionVersion, input.nowIso, input.nowIso, input.memberId],
+      },
+      {
+        sql: 'UPDATE auth_sessions SET revoked_at=COALESCE(revoked_at,?) WHERE member_id=? AND revoked_at IS NULL',
+        params: [input.nowIso, input.memberId],
+      },
+      {
+        sql: `INSERT INTO audit_events
+              (id,actor_member_id,action,object_type,object_id,before_json,after_json,created_at)
+              VALUES (?,?,'auth.credential_change','member',?,NULL,?,?)`,
+        params: [input.auditEventId, input.memberId, input.memberId, JSON.stringify({ sessionVersion: input.nextSessionVersion }), input.nowIso],
+      },
+    ]);
+  }
+
+  async resetCredential(input: ResetCredentialInput): Promise<void> {
+    await this.database.batch([
+      {
+        sql: `UPDATE members
+              SET credential_salt=?,credential_verifier=?,credential_algorithm='argon2id-v1',credential_params_json=?,
+                  must_change_password=1,session_version=?,failed_login_count=0,locked_until=NULL,last_failed_login_at=NULL,
+                  credential_changed_at=?,updated_at=? WHERE id=?`,
+        params: [input.salt, input.verifier, input.paramsJson, input.nextSessionVersion, input.nowIso, input.nowIso, input.memberId],
+      },
+      {
+        sql: 'UPDATE auth_sessions SET revoked_at=COALESCE(revoked_at,?) WHERE member_id=? AND revoked_at IS NULL',
+        params: [input.nowIso, input.memberId],
+      },
+      {
+        sql: `INSERT INTO audit_events
+              (id,actor_member_id,action,object_type,object_id,before_json,after_json,created_at)
+              VALUES (?,?,'auth.credential_reset','member',?,NULL,?,?)`,
+        params: [input.auditEventId, input.actorId, input.memberId, JSON.stringify({ mustChangePassword: true }), input.nowIso],
+      },
+      {
+        sql: `INSERT INTO idempotency_records
+              (idempotency_key,actor_member_id,operation,request_hash,response_json,status_code,created_at)
+              VALUES (?,?,?,?,?,?,?)`,
+        params: [
+          input.idempotency.key,
+          input.actorId,
+          input.idempotency.operation,
+          input.idempotency.requestHash,
+          input.idempotency.responseJson,
+          input.idempotency.statusCode,
+          input.nowIso,
+        ],
+      },
+    ]);
   }
 
   async recordLoginFailure(input: {

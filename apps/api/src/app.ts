@@ -384,22 +384,15 @@ app.post('/api/auth/change-password', async (c) => {
   const nextVerifier = await credentialVerifier(body.next.credential, pepper);
   const now = new Date().toISOString();
   const nextSessionVersion = record.sessionVersion + 1;
-  await c.env.DB.batch([
-    c.env.DB.prepare(
-      `UPDATE members
-       SET credential_salt=?,credential_verifier=?,credential_algorithm='argon2id-v1',credential_params_json=?,
-           must_change_password=0,session_version=?,failed_login_count=0,locked_until=NULL,last_failed_login_at=NULL,
-           credential_changed_at=?,updated_at=? WHERE id=?`,
-    ).bind(body.next.salt, nextVerifier, credentialParamsJson, nextSessionVersion, now, now, user.id),
-    c.env.DB.prepare(
-      `UPDATE auth_sessions SET revoked_at=COALESCE(revoked_at,?) WHERE member_id=? AND revoked_at IS NULL`,
-    ).bind(now, user.id),
-    c.env.DB.prepare(
-      `INSERT INTO audit_events
-       (id,actor_member_id,action,object_type,object_id,before_json,after_json,created_at)
-       VALUES (?,?,'auth.credential_change','member',?,NULL,?,?)`,
-    ).bind(crypto.randomUUID(), user.id, user.id, JSON.stringify({ sessionVersion: nextSessionVersion }), now),
-  ]);
+  await credentials.changeOwnCredential({
+    memberId: user.id,
+    salt: body.next.salt,
+    verifier: nextVerifier,
+    paramsJson: credentialParamsJson,
+    nextSessionVersion,
+    nowIso: now,
+    auditEventId: crypto.randomUUID(),
+  });
   await createSession(c, user.id, nextSessionVersion);
   const refreshed = await members.findById(user.id);
   if (!refreshed) return c.json(apiError('MEMBER_NOT_FOUND', '成员不存在'), 404);
@@ -519,26 +512,23 @@ app.post('/api/members/:id/reset-password', requireRoles('admin'), async (c) => 
   const nextSessionVersion = record.sessionVersion + 1;
   const data = { ...before, mustChangePassword: true };
   const response = { ok: true as const, data };
-  await c.env.DB.batch([
-    c.env.DB.prepare(
-      `UPDATE members
-       SET credential_salt=?,credential_verifier=?,credential_algorithm='argon2id-v1',credential_params_json=?,
-           must_change_password=1,session_version=?,failed_login_count=0,locked_until=NULL,last_failed_login_at=NULL,
-           credential_changed_at=?,updated_at=? WHERE id=?`,
-    ).bind(body.salt, verifier, credentialParamsJson, nextSessionVersion, now, now, before.id),
-    c.env.DB.prepare(`UPDATE auth_sessions SET revoked_at=COALESCE(revoked_at,?) WHERE member_id=? AND revoked_at IS NULL`)
-      .bind(now, before.id),
-    c.env.DB.prepare(
-      `INSERT INTO audit_events
-       (id,actor_member_id,action,object_type,object_id,before_json,after_json,created_at)
-       VALUES (?,?,'auth.credential_reset','member',?,NULL,?,?)`,
-    ).bind(crypto.randomUUID(), actor.id, before.id, JSON.stringify({ mustChangePassword: true }), now),
-    c.env.DB.prepare(
-      `INSERT INTO idempotency_records
-       (idempotency_key,actor_member_id,operation,request_hash,response_json,status_code,created_at)
-       VALUES (?,?,?,?,?,200,?)`,
-    ).bind(idempotency, actor.id, operation, hash, JSON.stringify(response), now),
-  ]);
+  await credentials.resetCredential({
+    memberId: before.id,
+    actorId: actor.id,
+    salt: body.salt,
+    verifier,
+    paramsJson: credentialParamsJson,
+    nextSessionVersion,
+    nowIso: now,
+    auditEventId: crypto.randomUUID(),
+    idempotency: {
+      key: idempotency,
+      operation,
+      requestHash: hash,
+      responseJson: JSON.stringify(response),
+      statusCode: 200,
+    },
+  });
   return c.json(response);
 });
 
