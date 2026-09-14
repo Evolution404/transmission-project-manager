@@ -3,47 +3,132 @@
 ## 当前状态
 
 仓库：`Evolution404/transmission-project-manager`
-施工分支：`refactor/backend-runtime-portability-20260913`
-前一 merge-ready 基线：`cae0004 docs: mark backend portability merge ready`；接手时以 GitHub 上该分支最新远端 HEAD 为准。
+默认分支：`main`
+当前云端发布施工分支：`ops/cloudflare-github-deploy-20260914`
 
-本轮后端可移植化已经完成，当前分支为 **merge-ready**。最近一次完整门禁结果：Node **254/254 PASS**、Web/Vitest **64/64 PASS**、Cloudflare/Node TypeScript PASS、Web build PASS、Worker `wrangler deploy --dry-run` PASS。
+后端可移植化已经通过 GitHub PR #1 合入 `main`：
 
-最近一次与 `origin/main` 对比为 `0 / 93`：`main` 没有当前分支缺失的新提交，当前分支领先 93 个提交，因此具备 fast-forward 合并条件。
+- 原施工分支：`refactor/backend-runtime-portability-20260913`
+- 合并前 HEAD：`1db5c1efea62a1e16be02c1107ed2820ebfa9f0a`
+- PR #1 CI：PASS
+- `main` merge commit：`7a49b44275038dddd3803cb17de9b7e4fe06ba33`
+- 合并后的 `main` CI #31：PASS
 
-## 下一位 AI 的最高优先级约束：只做云上开发
+因此“后端可移植化是否已经合入 main”已经不是待办，答案是**已完成**。
 
-用户已经明确要求：**下一位 AI 不要连接 Mac，也不要依赖任何本地电脑。**
+当前正在通过 PR #2 建立正式 Cloudflare 云端发布能力。PR #2：`ops: add protected Cloudflare production workflows`，分支 `ops/cloudflare-github-deploy-20260914`。接手时必须以 GitHub 上该 PR 最新 HEAD 和 CI 为准。
 
-从本交接开始：
+## 最高优先级约束：只做云上开发
 
-- 不连接 `/Users/zhangyuxi/Desktop/项目管理`，不要调用 Mac、本地 shell、本地文件系统、本地 Wrangler、本地 SQLite 或任何用户电脑能力。
-- 只以 GitHub 远端仓库为代码事实来源；代码阅读、修改、分支、PR、合并、CI、发布记录均在 GitHub 完成。
-- 自动测试和质量门禁只认 GitHub Actions / 远端 CI 结果，不再把“某台 Mac 本地通过”作为后续开发或发布前提。
-- Cloudflare 发布优先通过 GitHub Actions / Cloudflare Git 集成 / GitHub 中已配置的 Cloudflare 凭据完成，不依赖用户电脑上的 Wrangler 登录态。
-- 后续所有开发继续走远端分支 + PR + CI；不要因为缺少 Mac 而要求用户恢复本地环境。
-- 如果现有 GitHub Actions 尚未具备 Cloudflare 正式发布能力，第一项云上工作就是完善/启用受保护的发布 workflow 和所需 GitHub Environment/Secrets，而不是回到本地发布。
+用户已经明确要求：**禁止连接 Mac，禁止依赖任何本地电脑、本地 shell、本地 Wrangler、本地 SQLite 或本地测试环境。**
+
+从现在起：
+
+- 代码阅读、修改、分支、PR、合并、CI、发布记录只以 GitHub 远端为准。
+- 自动测试和质量门禁只认 GitHub Actions。
+- Cloudflare 发布只走 GitHub Actions / Cloudflare Git 集成或其他受保护的云端发布流程。
+- 不得因为缺少本地环境要求用户恢复 Mac。
 - 不得把 Secret 写入仓库、PR、Actions 日志或前端代码。
+- 后续开发固定采用：`远端分支 → PR → GitHub CI → 合并 main → Cloudflare 云端验证`。
 
-Mac 只代表历史施工环境，**从现在起不是开发、测试、发布或故障处理依赖**。
+Mac 仅是历史施工环境，不再是开发、测试、发布或故障处理依赖。
 
-## 下一步任务：GitHub 合并并发布 Cloudflare
+## PR #2：云端发布流程
 
-用户已要求下一位 AI 接手后直接从 GitHub 继续，并发布 Cloudflare。建议按以下顺序执行：
+当前施工已新增两个**手工触发、production Environment 绑定、fail-closed** 的 workflow：
 
-1. 仅通过 GitHub 检查 `refactor/backend-runtime-portability-20260913` 的最新远端 HEAD、CI 状态和 `main` 差异。
-2. 确认最新 GitHub CI 全绿；若 CI 尚未覆盖 `npm run check`，先在 GitHub Actions 补齐对应门禁。
-3. 通过 GitHub PR / merge 操作将该 merge-ready 分支合入 `main`。不要在本地 merge/rebase。
-4. 检查 GitHub 中 Cloudflare 发布 workflow、Environment protection、Secrets 和目标资源配置。
-5. 在 GitHub 触发 Cloudflare 发布；生产部署仍以 Cloudflare Workers Free + D1 + R2 为当前基线。
-6. 若生产 D1 需要 migration，只通过受控 GitHub/Cloudflare 发布流程执行，并先完成远端备份/预检；不得修改已冻结的 `0009`–`0012`，只能追加新 migration。
-7. 发布后以真实 `/api/health`、登录、核心业务 smoke、静态资源、自定义域名和 Cloudflare 日志/指标验收。
-8. 把实际部署 commit SHA、Worker version、D1 migration 状态、R2/域名/Secrets 配置状态和验收结果写回 GitHub 文档或 release/PR 记录。
+### `.github/workflows/production-deploy.yml`
 
-注意：本轮之前没有正式发布、没有远端 D1 升级。不要把本地/合成测试误写成生产验收。
+用途：发布 Worker 代码、静态资源和已经审核的 D1/R2/自定义域名绑定。
 
-## 已完成的可移植化
+门禁：
 
-基础设施与运行时边界：
+- 仅 `workflow_dispatch`，普通 push/PR 不允许生产发布；
+- 只能从 `main` 运行；
+- 必须输入精确 40 位 `release_sha`，且 checkout HEAD 与最新 `origin/main` 都必须等于该 SHA；
+- 必须提供非敏感 `release_record`；
+- GitHub `production` Environment Variable `PRODUCTION_DEPLOY_ENABLED` 必须显式为 `true`；
+- `PRODUCTION_CONFIG_JSON` 必须存在并通过 `npm run p7 -- config`；
+- `CLOUDFLARE_API_TOKEN` 必须存在；
+- 发布前重新运行完整 `npm run check` 和 Wrangler dry-run；
+- Worker 正式部署与 D1 migration 严格分离；
+- 发布后直接请求生产自定义域名 `/api/health`，要求 `ok=true`、服务名正确且 `schema.ready=true`。
+
+### `.github/workflows/production-migrate.yml`
+
+用途：只执行正式 D1 migration，不发布 Worker。
+
+门禁：
+
+- 仅 `workflow_dispatch`，普通 push/PR 不允许迁移；
+- 只能从 `main` 运行；
+- 精确绑定 `release_sha`；
+- `PRODUCTION_MIGRATION_ENABLED` 必须显式为 `true`；
+- 必须输入目标正式 D1 的 UUID，并与 `PRODUCTION_CONFIG_JSON` 中 `database_id` 完全一致；
+- 迁移前后都执行 `wrangler d1 migrations list DB --remote`；
+- migration 与代码 deploy 不互相隐式触发。
+
+测试 `tests/p7-preflight.test.mjs` 已增加静态门禁，防止未来把生产流程改回自动 push 部署、把 migration 混入 deploy，或移除精确版本绑定。
+
+## Wrangler Secret 约束
+
+生产配置使用 Cloudflare Wrangler 当前官方 `secrets.required` 机制，只长期声明：
+
+```json
+"secrets": { "required": ["AUTH_CREDENTIAL_PEPPER"] }
+```
+
+这样 `wrangler deploy` 会在永久认证 pepper 缺失时 fail-closed。
+
+`BOOTSTRAP_TOKEN` 是**一次性 Secret**：只在首次建立管理员时临时配置，首管理员创建并确认 bootstrap 已关闭后删除。禁止把它放入永久 `secrets.required`，否则首次初始化后删除 Token 会导致以后正常发布永久失败。
+
+## GitHub / Cloudflare 设置仍未完成的部分
+
+当前 GitHub 连接可以读写仓库、PR、Actions 结果，但**没有 GitHub Administration / Environment / Secrets 管理接口权限**：
+
+- `main` 当前 GitHub branch endpoint 显示 `protected: false`；
+- 读取 branch-protection 详情返回 integration 403；
+- 当前连接无法创建/修改 GitHub Environment、Environment protection、Variables 或 Secrets；
+- 当前连接也没有 Actions `workflow_dispatch` 的写操作能力。
+
+因此不能把“workflow 代码已经存在”误写为“production Environment/Secrets 已经配置”或“已经正式发布”。
+
+正式触发前，GitHub `production` Environment 至少需要实际确认：
+
+- 部署分支限制：只允许 `main`；
+- Required reviewer / 禁止自批 / 管理员绕过策略：按当前 GitHub 套餐实际可用能力启用并验证；
+- Variable `PRODUCTION_DEPLOY_ENABLED`：平时建议 `false`，批准代码发布窗口时才设 `true`；
+- Variable `PRODUCTION_MIGRATION_ENABLED`：平时必须 `false`，批准 migration 窗口时才临时设 `true`；
+- Variable `PRODUCTION_CONFIG_JSON`：经过 P7 validator 验证的真实非敏感严格 JSON；
+- Secret `CLOUDFLARE_API_TOKEN`：account-owned、最小权限、不得使用 Global API Key 或个人长期 Token。
+
+Cloudflare Worker 侧必须真实存在永久 `AUTH_CREDENTIAL_PEPPER`。首次初始化管理员时再临时配置 `BOOTSTRAP_TOKEN`，完成后删除。
+
+## 生产资源现状：不要猜
+
+仓库里存在 `apps/api/wrangler.acceptance.jsonc`，其中记录过：
+
+- Worker：`transmission-project-manager`
+- account id：`642d30520d6c494dd418b1f4b3853aa6`
+- 自定义域名：`project.980923.xyz`
+- acceptance D1：`transmission-project-manager-acceptance`
+- acceptance D1 id：`c1dbd68e-8626-4cb1-a7a8-f9fe07df705b`
+
+但该文件明确属于 acceptance 配置，且没有 R2 绑定，不能直接当成新的正式生产配置。生产 Worker、D1、R2、域名、Secrets、migration 状态必须通过真实云端配置和发布证据确认。
+
+## 下一步顺序
+
+1. 等 PR #2 最新 GitHub CI 全绿；若失败，只在远端施工分支修复并重新由 Actions 验证。
+2. PR #2 全绿后通过 GitHub 合入 `main`，再确认合并后的 `main` CI 全绿。
+3. 在 GitHub UI/管理员接口实际建立并保护 `production` Environment，配置上述 Variables/Secret；不要把值提交进 Git。
+4. 核对真实 Cloudflare Worker、D1、R2、自定义域名归属和资源 ID；空库也要留下空库证据。
+5. 若正式 D1 需要 `0001`–`0012` migration，先完成备份/停写/目标 ID 核对，再手工运行 `Production D1 migration`；不得修改已冻结 migration。
+6. 配置永久 `AUTH_CREDENTIAL_PEPPER`；首次初始化时临时配置 `BOOTSTRAP_TOKEN`。
+7. 手工运行 `Production release`，输入准确的当前 `main` SHA 和发布记录引用；workflow 会自动验证真实 `/api/health`。
+8. 发布后继续做登录、首管理员/bootstrap 关闭、核心业务 smoke、静态资源/附件、R2、Cron、D1 状态、自定义域名和 Cloudflare Logs/Workers Analytics/CPU 指标验收。
+9. 把实际部署 SHA、Worker version/deployment ID、D1 migration 状态、R2/域名/Secrets 状态和真实验收结果写回 GitHub 文档或 release/PR 记录。
+
+## 已完成的后端可移植化
 
 - `DatabasePort` / `TransactionPort`
 - `ObjectStorePort`
@@ -52,75 +137,20 @@ Mac 只代表历史施工环境，**从现在起不是开发、测试、发布�
 - Node SQLite / Filesystem adapters
 - `RuntimeBindings.PERSISTENCE` 作为 Hono 应用唯一持久化注入边界
 - Cloudflare adapter 只在 `src/index.ts` Worker 基础设施入口组装
-- Node runtime typecheck 已覆盖真实 `app.ts`、认证和 P2/P3/P4/P5/P6/P8/P9
+- Auth / Session / Credential / Member admin portable
+- P2/P3/P4/P5/P6/P8/P9 业务层 0 直接 D1/R2
+- repository/static guards 防止业务层重新绑定 Cloudflare persistence
+- Node + SQLite + Filesystem 应用级 E2E 和 P7-era → 0012 migration rehearsal
 
-业务/API 层：
-
-- Auth / Session / Credential / Member admin：portable
-- 顶层 schema readiness / settings / dictionary：portable；旧 `src/db.ts` 已删除
-- P2：0 直接 D1
-- P3：0 直接 D1
-- P4：0 直接 D1
-- P5：历史兼容执行链路 + 附件，0 直接 D1/R2
-- P6：分析、报告、里程碑、预警、outbox、逻辑备份，0 直接 D1/R2
-- P8：项目级出库 → 任务 → 供应 → 实施 → 结算 → 四状态反馈，0 直接 D1
-- P9：基础台账与结构化需求，0 直接 D1
-- repository/static guards 已防止业务层重新绑定 Cloudflare persistence
-
-## 第二运行时已验证
-
-`tests/node-runtime-app.test.mjs` 已验证真实 Hono app 在仅注入 `Node + SQLite + Filesystem` 时可以完成：
-
-- `0001`–`0012` migrations；
-- health/schema readiness；
-- bootstrap / HttpOnly session；
-- settings 幂等；
-- 基础台账 HTTP 写入/读取；
-- P6 backup 写入 Filesystem；
-- SQLite 文件重开后的会话和业务数据持久化。
-
-`tests/node-runtime-migration-rehearsal.test.mjs` 已验证 P7-era（0001–0007）SQLite 顺序升级 0008–0012 后仍能由 Node app 启动，并保留历史来源、旧 `demand_allocations`、setting 和 P5 lifecycle 事实。
-
-Node 第二运行时的意义是保留未来迁往普通服务器的能力；当前正式发布仍以 Cloudflare 为基线。
-
-## 最新完整门禁
-
-最近一次完整 `npm run check`：
-
-- Node：**254/254 PASS**
-- Web/Vitest：**64/64 PASS**
-- Cloudflare TypeScript：PASS
-- Node 完整 app TypeScript：PASS
-- Web production build：PASS
-- Worker dry-run：PASS
-- Node SQLite + Filesystem application E2E：PASS
-- P7-era → 0012 migration rehearsal：PASS
-- `git diff --check`：PASS
-
-后续不再要求下一位 AI 在 Mac 上重跑这些测试；应由 GitHub CI 复现并作为唯一持续门禁。
-
-## 关键提交
-
-- `be92c60 refactor: remove direct d1 from p8 business flows`
-- `c09a35d refactor: port p5 legacy execution flows`
-- `932da02 refactor: port p6 operation journal`
-- `38fdba3 refactor: port p6 analysis persistence`
-- `b4ee403 refactor: port p6 notification persistence`
-- `f2b6699 refactor: port p6 backup persistence`
-- `c5d3185 refactor: remove direct cloudflare persistence from p6`
-- `637b8cc refactor: inject portable api persistence`
-- `2c5a6ba test: exercise node application runtime`
-- `cae0004 docs: mark backend portability merge ready`
+最近已经被 GitHub Actions 在 PR #1 和合并后 `main` 两次复现的完整门禁包括 Cloudflare/Node TypeScript、Web build、Worker dry-run、Node/Web tests、Node 第二运行时 E2E 和 migration rehearsal。
 
 ## 继续保持的业务与技术约束
 
-- 系统认证保持 username/password；浏览器 Web Worker 做 Argon2id，服务端不得执行慢 KDF。
+- 系统认证保持 username/password；浏览器 Web Worker 做 Argon2id，服务端只做 HMAC verifier。
 - Excel 解析继续在浏览器 Web Worker。
 - 普通同步 API D1 query 目标 `<=5`、硬目标 `<=10`；禁止 N+1。
 - 单 SQL 按 D1 100 个绑定参数上限设计。
-- Cloudflare Free 的 10ms CPU 必须用真实云端指标判断，不使用本地 wall-clock 替代。
-- Cloudflare 与 Node 基础设施 adapter 必须留在外层，业务/API 不得重新绑定 D1/R2。
-- 已冻结 migration `0009`–`0012` 不得修改，只能追加后续 migration。
-- 后续任何改动都应在 GitHub 分支/PR 中小步提交，由 GitHub CI 验证后再合并和发布。
-
-业务事实仍以 `BUSINESS_BASELINE.md`、`DESIGN.md`、`DATA_MODEL.md` 为准；生产操作与验收见 `DEPLOYMENT.md`、`P7_RUNBOOK.md`、`P7_ACCEPTANCE.md`。
+- Cloudflare Free 的 CPU/配额只能用真实云端指标判断。
+- Cloudflare 与 Node infrastructure adapter 必须留在外层，业务/API 不得重新绑定 D1/R2。
+- migration `0009`–`0012` 已冻结，不得修改，只能追加。
+- 业务事实仍以 `BUSINESS_BASELINE.md`、`DESIGN.md`、`DATA_MODEL.md` 为准；生产操作与验收见 `DEPLOYMENT.md`、`P7_RUNBOOK.md`、`P7_ACCEPTANCE.md`。
