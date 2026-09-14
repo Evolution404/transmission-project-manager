@@ -9,6 +9,7 @@ export type { CreateProjectTaskRecord, CreatedProjectTaskSummary, ProjectTaskMat
 export type { CreateSupplyEventRecord, CreatedSupplyEvent, SupplyTotals, TaskMaterialSupplyState, TaskSupplyRepository } from './task-supply-repository';
 export type { CreateTaskImplementationRecord, TaskImplementationEvent, TaskImplementationHeader, TaskImplementationMaterialState, TaskImplementationRepository, TaskImplementationScopeState, TaskImplementationValidationState } from './task-implementation-repository';
 export type { CreateTaskSettlementRecord, TaskSettlementEvent, TaskSettlementHeader, TaskSettlementRepository, TaskSettlementScopeState, TaskSettlementValidationState, TaskSettlementVoidState, VoidTaskSettlementRecord } from './task-settlement-repository';
+export type { DemandExecutionAccess, ExecutionProjectHeader, ExecutionQueryRepository } from './execution-query-repository';
 export type { AllocationFailure, ConfirmProjectRecord, CreateProjectRecord, ProjectAllocationWrite, ProjectCategoryAllocationWrite, ProjectCostLineWrite, ProjectWriteRepository, ProjectWriteState, ProtectedProjectScopeItem, ReplaceProjectAllocationsRecord, ReplaceProjectCategoryAllocationsRecord, ReplaceProjectCostsRecord } from './project-write-repository';
 export type { CreateReserveCategoryRecord, ReserveCategoryWriteRepository, UpsertCategoryMappingRecord } from './reserve-category-write-repository';
 export type { BudgetAllocationWrite, ConfirmBudgetRecord, CreateBudgetRecord, FinanceBudgetRepository, UpdateBudgetRecord } from './finance-budget-repository';

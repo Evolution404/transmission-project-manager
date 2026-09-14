@@ -8,6 +8,7 @@ import { SqlTaskSupplyRepository } from './repositories/sql-task-supply-reposito
 import { SqlTaskImplementationRepository } from './repositories/sql-task-implementation-repository';
 import { SqlTaskSettlementRepository } from './repositories/sql-task-settlement-repository';
 import { SqlFinanceQueryRepository } from './repositories/sql-finance-query-repository';
+import { SqlExecutionQueryRepository } from './repositories/sql-execution-query-repository';
 import { createCloudflarePersistence } from './runtime/cloudflare/persistence';
 
 const MAX_ITEMS = 100;
@@ -1347,9 +1348,11 @@ p8App.post('/project-tasks', requireRoles('admin', 'project_manager', 'implement
 p8App.get('/project-tasks', async (c) => {
   const projectId = cleanText(c.req.query('projectId'));
   if (!projectId) return c.json(apiError('PROJECT_REQUIRED', 'projectId 不能为空'), 400);
-  if (!await canProject(c, projectId)) return c.json(apiError('SCOPE_FORBIDDEN', '无权查看该项目任务'), 403);
-  const items = await loadProjectTaskExecutionSummaries(c.env.DB, projectId);
-  return c.json({ ok: true as const, data: { items } });
+  const { database } = createCloudflarePersistence(c.env);
+  const repository = new SqlExecutionQueryRepository(database);
+  const project = await repository.findProjectHeader(projectId);
+  if (!hasProjectAccess(c, projectId, project?.frameworkId ?? null)) return c.json(apiError('SCOPE_FORBIDDEN', '无权查看该项目任务'), 403);
+  return c.json({ ok: true as const, data: { items: await repository.listProjectTasks(projectId) } });
 });
 
 p8App.post('/task-material-supply-events', requireRoles('admin', 'project_manager', 'implementation'), async (c) => {
@@ -1610,32 +1613,33 @@ p8App.post('/task-settlements/:id/void', requireRoles('admin', 'project_manager'
 });
 
 p8App.get('/demands/:id/execution', async (c) => {
-  const summary = await demandExecutionSummary(c.env.DB, c.req.param('id'));
-  if (!summary) return c.json(apiError('DEMAND_NOT_FOUND', '需求不存在'), 404);
-  const projects = await c.env.DB.prepare(`SELECT project_id FROM project_demand_links WHERE demand_id=?`).bind(c.req.param('id')).all<{ project_id: string }>();
+  const { database } = createCloudflarePersistence(c.env);
+  const repository = new SqlExecutionQueryRepository(database);
+  const result = await repository.findDemandExecution(c.req.param('id'));
+  if (!result) return c.json(apiError('DEMAND_NOT_FOUND', '需求不存在'), 404);
   if (c.get('currentUser').role !== 'admin' && !c.get('currentUser').scopes.some((scope) => scope.type === 'all')) {
-    let allowed = false;
-    for (const project of projects.results ?? []) if (await canProject(c, project.project_id)) { allowed = true; break; }
-    if (!allowed && (projects.results ?? []).length) return c.json(apiError('SCOPE_FORBIDDEN', '无权查看该需求执行反馈'), 403);
+    const allowed = result.projects.some((project) => hasProjectAccess(c, project.id, project.frameworkId));
+    if (!allowed && result.projects.length) return c.json(apiError('SCOPE_FORBIDDEN', '无权查看该需求执行反馈'), 403);
   }
-  return c.json({ ok: true as const, data: summary });
+  return c.json({ ok: true as const, data: result.summary });
 });
 
 p8App.get('/projects/:id/execution', async (c) => {
-  const project = await findProject(c.env.DB, c.req.param('id'));
+  const { database } = createCloudflarePersistence(c.env);
+  const repository = new SqlExecutionQueryRepository(database);
+  const project = await repository.findProjectHeader(c.req.param('id'));
   if (!project) return c.json(apiError('PROJECT_NOT_FOUND', '项目不存在'), 404);
-  if (!await canProject(c, project.id)) return c.json(apiError('SCOPE_FORBIDDEN', '无权查看该项目执行状态'), 403);
-  const [tasks, demands, release] = await Promise.all([
-    loadProjectTaskExecutionSummaries(c.env.DB, project.id),
-    loadProjectDemandExecutionSummaries(c.env.DB, project.id),
-    c.env.DB.prepare(`SELECT id FROM project_releases WHERE project_id=? LIMIT 1`).bind(project.id).first<{ id: string }>(),
+  if (!hasProjectAccess(c, project.id, project.frameworkId)) return c.json(apiError('SCOPE_FORBIDDEN', '无权查看该项目执行状态'), 403);
+  const [tasks, demands] = await Promise.all([
+    repository.listProjectTasks(project.id),
+    repository.listProjectDemands(project.id),
   ]);
   const implementationComplete = demands.length > 0 && demands.every((item) => item.implementationComplete);
   const settlementComplete = demands.length > 0 && demands.every((item) => item.settlementComplete);
   return c.json({ ok: true as const, data: {
     projectId: project.id,
     projectVersion: project.version,
-    released: Boolean(release),
+    released: project.released,
     tasks,
     demands,
     implementationComplete,
