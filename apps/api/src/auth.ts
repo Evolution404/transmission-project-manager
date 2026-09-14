@@ -1,20 +1,13 @@
 import type { Context, MiddlewareHandler } from 'hono';
 import type { CurrentUser, MemberRole, MemberScope } from '@tpm/shared';
-import { findMemberById } from './db';
 import type { WorkerBindings } from './env';
+import { SqlMemberRepository } from './repositories/sql-member-repository';
+import { SqlSessionRepository } from './repositories/sql-session-repository';
+import { createCloudflarePersistence } from './runtime/cloudflare/persistence';
 import { clearSessionCookie, getSessionToken, hashSessionToken } from './session';
 
 type AppVariables = { currentUser: CurrentUser };
 type AppEnv = { Bindings: WorkerBindings; Variables: AppVariables };
-
-interface SessionRow {
-  member_id: string;
-  session_version: number;
-  member_session_version: number;
-  last_seen_at: string;
-  expires_at: string;
-  revoked_at: string | null;
-}
 
 function authError(c: Context<AppEnv>, code: string, message: string, status: 401 | 403 | 503 = 401) {
   return c.json({ ok: false as const, error: { code, message } }, status);
@@ -31,21 +24,18 @@ export const requireAuthentication: MiddlewareHandler<AppEnv> = async (c, next) 
   if (!token) return authError(c, 'UNAUTHENTICATED', '请先登录');
 
   const tokenHash = await hashSessionToken(token);
-  const session = await c.env.DB.prepare(
-    `SELECT s.member_id, s.session_version, s.last_seen_at, s.expires_at, s.revoked_at,
-            m.session_version AS member_session_version
-     FROM auth_sessions s
-     INNER JOIN members m ON m.id = s.member_id
-     WHERE s.token_hash = ? LIMIT 1`,
-  ).bind(tokenHash).first<SessionRow>();
+  const { database } = createCloudflarePersistence(c.env);
+  const sessions = new SqlSessionRepository(database);
+  const members = new SqlMemberRepository(database);
+  const session = await sessions.findByTokenHash(tokenHash);
 
   const now = new Date();
-  if (!session || session.revoked_at || session.expires_at <= now.toISOString() || session.session_version !== session.member_session_version) {
+  if (!session || session.revokedAt || session.expiresAt <= now.toISOString() || session.sessionVersion !== session.memberSessionVersion) {
     clearSessionCookie(c);
     return authError(c, 'UNAUTHENTICATED', '登录状态已失效，请重新登录');
   }
 
-  const member = await findMemberById(c.env.DB, session.member_id);
+  const member = await members.findById(session.memberId);
   if (!member) {
     clearSessionCookie(c);
     return authError(c, 'UNAUTHENTICATED', '登录状态已失效，请重新登录');
@@ -53,10 +43,8 @@ export const requireAuthentication: MiddlewareHandler<AppEnv> = async (c, next) 
   if (!member.enabled) return authError(c, 'MEMBER_DISABLED', '当前账号已停用', 403);
 
   const staleBefore = new Date(now.getTime() - 60 * 60 * 1000).toISOString();
-  if (session.last_seen_at < staleBefore) {
-    await c.env.DB.prepare(
-      `UPDATE auth_sessions SET last_seen_at = ? WHERE token_hash = ? AND last_seen_at < ? AND revoked_at IS NULL`,
-    ).bind(now.toISOString(), tokenHash, staleBefore).run();
+  if (session.lastSeenAt < staleBefore) {
+    await sessions.touchLastSeen(tokenHash, now.toISOString(), staleBefore);
   }
 
   const currentUser: CurrentUser = { ...member, authSource: 'session' };

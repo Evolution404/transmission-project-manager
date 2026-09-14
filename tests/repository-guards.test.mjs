@@ -106,6 +106,13 @@ test('P5 attachment metadata goes through AttachmentRepository instead of inline
   assert.doesNotMatch(source, /\b(?:FROM|INTO)\s+attachments\b/i, 'P5 must not inline attachment metadata SQL');
 });
 
+test('authentication middleware uses portable session and member repositories', () => {
+  const source = readFileSync(resolve(root, 'apps/api/src/auth.ts'), 'utf8');
+  assert.match(source, /SqlSessionRepository/);
+  assert.match(source, /SqlMemberRepository/);
+  assert.doesNotMatch(source, /c\.env\.DB|\bD1Database\b/, 'auth middleware must not depend directly on D1');
+});
+
 test('Cloudflare infrastructure adapters depend inward on portable ports', () => {
   const adapters = [
     ['d1-database.ts', /implements\s+DatabasePort/, /ports\/database/],
