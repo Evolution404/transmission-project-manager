@@ -175,7 +175,7 @@ P7 重点是证明当前系统在真实环境可正式使用：
 
 具体数据规则、交互和验收项以 `MASTER_DATA_REDESIGN_PLAN.md` 为准。每一里程碑必须测试先行、小提交、及时 push，并同步本文件和 `AI_HANDOFF.md`。
 
-当前进度（2026-09-14）：**M1–M5 已完成，本地完整门禁全绿。** M1 已完成编号规范化与单基线 schema；M2 已完成专用更名、历史追踪和歧义搜索；M3 已完成按杆塔编号自动初始插位、专用移动/完整重排、稀疏排序与 `tower_order_version`；M4 已完成 Excel/CSV/粘贴全量预检、用户侧不限行、内部幂等分片/断点继续，以及“完整清单才允许按文件顺序原子重排”；M5 已彻底移除三栏 UI，改为线路中心首页和全宽线路详情，显式呈现线路/杆塔更名、历史、导入及拖拽/目标前后调序。最终 `npm run check`：Node **264/264 PASS**、Web **102/102 PASS**，TypeScript、Web production build、Worker dry-run、Node+SQLite+Filesystem 第二运行时均 PASS。下一门禁为远端 GitHub CI。
+当前进度（2026-09-14）：**M1–M5 已完成，本地与远端门禁均全绿。** M1 已完成编号规范化与单基线 schema；M2 已完成专用更名、历史追踪和歧义搜索；M3 已完成按杆塔编号自动初始插位、专用移动/完整重排、稀疏排序与 `tower_order_version`；M4 已完成 Excel/CSV/粘贴全量预检、用户侧不限行、内部幂等分片/断点继续，以及“完整清单才允许按文件顺序原子重排”；M5 已彻底移除三栏 UI，改为线路中心首页和全宽线路详情，显式呈现线路/杆塔更名、历史、导入及拖拽/目标前后调序。最终本地 `npm run check`：Node **264/264 PASS**、Web **102/102 PASS**，TypeScript、Web production build、Worker dry-run、Node+SQLite+Filesystem 第二运行时均 PASS。PR #10 首轮 CI run `34856165305` 的完整 `npm run check` 也 PASS。
 
 ## 7. 完成标准
 
