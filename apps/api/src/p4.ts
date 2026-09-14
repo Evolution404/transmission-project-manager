@@ -20,14 +20,14 @@ import type {
   ProjectBudgetSummary,
   UpdateBudgetRequest,
 } from '@tpm/shared';
-import { hasScope, requireRoles, type AppEnv } from './auth';
-import { SqlFinanceBudgetRepository } from './repositories/sql-finance-budget-repository';
-import { SqlFinanceEntryRepository } from './repositories/sql-finance-entry-repository';
-import { SqlFinanceQueryRepository } from './repositories/sql-finance-query-repository';
-import { SqlFinanceSummaryRepository } from './repositories/sql-finance-summary-repository';
-import { SqlFinanceWriteRepository } from './repositories/sql-finance-write-repository';
-import { SqlIdempotencyRepository } from './repositories/sql-idempotency-repository';
-import { createCloudflarePersistence } from './runtime/cloudflare/persistence';
+import { hasScope, requireRoles, type AppEnv } from './auth.ts';
+import { SqlFinanceBudgetRepository } from './repositories/sql-finance-budget-repository.ts';
+import { SqlFinanceEntryRepository } from './repositories/sql-finance-entry-repository.ts';
+import { SqlFinanceQueryRepository } from './repositories/sql-finance-query-repository.ts';
+import { SqlFinanceSummaryRepository } from './repositories/sql-finance-summary-repository.ts';
+import { SqlFinanceWriteRepository } from './repositories/sql-finance-write-repository.ts';
+import { SqlIdempotencyRepository } from './repositories/sql-idempotency-repository.ts';
+import { resolvePersistence as createCloudflarePersistence } from './runtime/persistence.ts';
 
 const MAX_PAGE_SIZE = 100;
 

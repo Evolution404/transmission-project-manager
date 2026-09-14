@@ -1,8 +1,7 @@
 import type { Context } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
-import type { WorkerBindings } from './env';
-import { SqlSessionRepository } from './repositories/sql-session-repository';
-import { createCloudflarePersistence } from './runtime/cloudflare/persistence';
+import { SqlSessionRepository } from './repositories/sql-session-repository.ts';
+import { resolvePersistence as createCloudflarePersistence } from './runtime/persistence.ts';
 
 const encoder = new TextEncoder();
 export const SESSION_COOKIE = 'tpm_session';

@@ -95,6 +95,16 @@ test('portable backend core cannot depend on Cloudflare runtime types', () => {
   }
 });
 
+test('HTTP business and authentication modules resolve persistence without importing Cloudflare adapters', () => {
+  const files = ['app.ts','auth.ts','session.ts','p2.ts','p3.ts','p4.ts','p5.ts','p6.ts','p8.ts','p9.ts'];
+  for (const name of files) {
+    const source = readFileSync(resolve(root, 'apps/api/src', name), 'utf8');
+    assert.doesNotMatch(source, /runtime\/cloudflare\/persistence/, `${name} must resolve runtime-neutral persistence`);
+  }
+  const appSource = readFileSync(resolve(root, 'apps/api/src/app.ts'), 'utf8');
+  assert.doesNotMatch(appSource, /c\.env\.DB|\bD1(?:Database|PreparedStatement)\b|\.prepare\(/, 'top-level HTTP app must not reach D1 directly');
+});
+
 test('P5 attachment content no longer reaches the R2 binding directly', () => {
   const source = readFileSync(resolve(root, 'apps/api/src/p5.ts'), 'utf8');
   assert.doesNotMatch(source, /c\.env\.FILES/, 'P5 attachment content must use ObjectStorePort instead of the R2 binding directly');

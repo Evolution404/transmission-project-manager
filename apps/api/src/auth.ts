@@ -1,13 +1,13 @@
 import type { Context, MiddlewareHandler } from 'hono';
 import type { CurrentUser, MemberRole, MemberScope } from '@tpm/shared';
-import type { WorkerBindings } from './env';
-import { SqlMemberRepository } from './repositories/sql-member-repository';
-import { SqlSessionRepository } from './repositories/sql-session-repository';
-import { createCloudflarePersistence } from './runtime/cloudflare/persistence';
-import { clearSessionCookie, getSessionToken, hashSessionToken } from './session';
+import type { RuntimeBindings } from './runtime-env';
+import { SqlMemberRepository } from './repositories/sql-member-repository.ts';
+import { SqlSessionRepository } from './repositories/sql-session-repository.ts';
+import { resolvePersistence as createCloudflarePersistence } from './runtime/persistence.ts';
+import { clearSessionCookie, getSessionToken, hashSessionToken } from './session.ts';
 
 type AppVariables = { currentUser: CurrentUser };
-type AppEnv = { Bindings: WorkerBindings; Variables: AppVariables };
+type AppEnv = { Bindings: RuntimeBindings; Variables: AppVariables };
 
 function authError(c: Context<AppEnv>, code: string, message: string, status: 401 | 403 | 503 = 401) {
   return c.json({ ok: false as const, error: { code, message } }, status);

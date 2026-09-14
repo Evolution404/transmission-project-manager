@@ -21,16 +21,16 @@ import type {
   QuarterProgressSummary,
   ReserveRemainingSummary,
 } from '@tpm/shared';
-import { hasScope, requireRoles, type AppEnv } from './auth';
-import type { WorkerBindings } from './env';
-import { createCloudflarePersistence } from './runtime/cloudflare/persistence';
-import { SqlIdempotencyRepository } from './repositories/sql-idempotency-repository';
-import { SqlOperationJournalRepository } from './repositories/sql-operation-journal-repository';
-import { SqlAnalysisRepository } from './repositories/sql-analysis-repository';
+import { hasScope, requireRoles, type AppEnv } from './auth.ts';
+import type { RuntimeBindings } from './runtime-env';
+import { resolvePersistence as createCloudflarePersistence } from './runtime/persistence.ts';
+import { SqlIdempotencyRepository } from './repositories/sql-idempotency-repository.ts';
+import { SqlOperationJournalRepository } from './repositories/sql-operation-journal-repository.ts';
+import { SqlAnalysisRepository } from './repositories/sql-analysis-repository.ts';
 import type { AnalysisRepository } from './ports/analysis-repository';
-import { SqlNotificationRepository } from './repositories/sql-notification-repository';
-import { SqlBackupRepository } from './repositories/sql-backup-repository';
-import { BACKUP_TABLES } from './ports/backup-repository';
+import { SqlNotificationRepository } from './repositories/sql-notification-repository.ts';
+import { SqlBackupRepository } from './repositories/sql-backup-repository.ts';
+import { BACKUP_TABLES } from './ports/backup-repository.ts';
 
 const DEFAULT_RULE_MODE: AnalysisLagMode = 'ratio';
 const DEFAULT_RULE_THRESHOLD_BP = 8000;
@@ -184,7 +184,7 @@ function milestoneDue(base: MilestoneSummary, asOf: string): MilestoneDueSummary
   const leadDays = base.leadDays.find((item) => item === diff) ?? null;
   return { ...base, dueMonth, dueDate, needsDate: false, reminderDue: diff < 0 || leadDays !== null, reminderLeadDays: leadDays, overdue: diff < 0 };
 }
-export async function evaluateAlerts(env: WorkerBindings, asOf: string) {
+export async function evaluateAlerts(env: RuntimeBindings, asOf: string) {
   const { database } = createCloudflarePersistence(env);
   const analysis = new SqlAnalysisRepository(database);
   const notifications = new SqlNotificationRepository(database);
@@ -221,7 +221,7 @@ function retryAt(now: string, attemptCount: number) {
   return new Date(Date.parse(now) + minutes * 60_000).toISOString();
 }
 
-async function deliverNotificationBatch(env: WorkerBindings, now: string) {
+async function deliverNotificationBatch(env: RuntimeBindings, now: string) {
   const url = env.NOTIFICATION_DELIVERY_URL?.trim();
   if (!url) return { configured: false, processed: 0, sent: 0, failed: 0, unknown: 0 };
   const { database } = createCloudflarePersistence(env);
@@ -265,12 +265,12 @@ async function deliverNotificationBatch(env: WorkerBindings, now: string) {
   return { configured: true, processed: items.length, sent, failed, unknown };
 }
 
-async function ensureBackup(env: WorkerBindings, backupDate: string, kind: BackupKind) {
+async function ensureBackup(env: RuntimeBindings, backupDate: string, kind: BackupKind) {
   const { database } = createCloudflarePersistence(env);
   return new SqlBackupRepository(database).ensure(backupDate, kind, new Date().toISOString());
 }
 
-async function cleanupBackupRetention(env: WorkerBindings, kind: BackupKind) {
+async function cleanupBackupRetention(env: RuntimeBindings, kind: BackupKind) {
   const { database, objectStore } = createCloudflarePersistence(env);
   const repository = new SqlBackupRepository(database);
   const keep = kind === 'daily' ? 7 : 3;
@@ -280,7 +280,7 @@ async function cleanupBackupRetention(env: WorkerBindings, kind: BackupKind) {
     await repository.deleteRun(run.id);
   }
 }
-export async function processBackupStep(env: WorkerBindings, backupId: string): Promise<BackupSummary | null> {
+export async function processBackupStep(env: RuntimeBindings, backupId: string): Promise<BackupSummary | null> {
   const { database, objectStore } = createCloudflarePersistence(env);
   const repository = new SqlBackupRepository(database);
   const run = await repository.find(backupId);
@@ -337,7 +337,7 @@ export async function processBackupStep(env: WorkerBindings, backupId: string): 
     return repository.find(run.id);
   }
 }
-async function verifyBackup(env: WorkerBindings, backupId: string): Promise<BackupVerificationSummary | null> {
+async function verifyBackup(env: RuntimeBindings, backupId: string): Promise<BackupVerificationSummary | null> {
   const { database, objectStore } = createCloudflarePersistence(env);
   const repository = new SqlBackupRepository(database);
   const run = await repository.find(backupId);
@@ -362,7 +362,7 @@ function shanghaiParts(nowIso: string) {
   return { businessDate: `${get('year')}-${get('month')}-${get('day')}`, hour: Number(get('hour')), minute: Number(get('minute')) };
 }
 function isMonthEnd(date: string) { return date === monthEnd(date.slice(0, 7)); }
-export async function runP6Tick(env: WorkerBindings, nowIso: string) {
+export async function runP6Tick(env: RuntimeBindings, nowIso: string) {
   const normalized = validIso(nowIso);
   if (!normalized) throw new Error('invalid scheduled time');
   const local = shanghaiParts(normalized);

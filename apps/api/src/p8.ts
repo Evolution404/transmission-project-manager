@@ -1,20 +1,20 @@
 import { Hono, type Context } from 'hono';
 import type { ApiError, LifecycleState } from '@tpm/shared';
-import { hasScope, requireRoles, type AppEnv } from './auth';
-import { SqlIdempotencyRepository } from './repositories/sql-idempotency-repository';
-import { SqlProjectReleaseRepository } from './repositories/sql-project-release-repository';
-import { SqlProjectTaskRepository } from './repositories/sql-project-task-repository';
-import { SqlTaskSupplyRepository } from './repositories/sql-task-supply-repository';
-import { SqlTaskImplementationRepository } from './repositories/sql-task-implementation-repository';
-import { SqlTaskSettlementRepository } from './repositories/sql-task-settlement-repository';
-import { SqlFinanceQueryRepository } from './repositories/sql-finance-query-repository';
-import { SqlExecutionQueryRepository } from './repositories/sql-execution-query-repository';
-import { SqlDemandRepository } from './repositories/sql-demand-repository';
-import { SqlDemandQueryRepository } from './repositories/sql-demand-query-repository';
-import { SqlDemandMaterialWriteRepository } from './repositories/sql-demand-material-write-repository';
-import { SqlReserveProjectQueryRepository } from './repositories/sql-reserve-project-query-repository';
-import { SqlReserveProjectWriteRepository } from './repositories/sql-reserve-project-write-repository';
-import { createCloudflarePersistence } from './runtime/cloudflare/persistence';
+import { hasScope, requireRoles, type AppEnv } from './auth.ts';
+import { SqlIdempotencyRepository } from './repositories/sql-idempotency-repository.ts';
+import { SqlProjectReleaseRepository } from './repositories/sql-project-release-repository.ts';
+import { SqlProjectTaskRepository } from './repositories/sql-project-task-repository.ts';
+import { SqlTaskSupplyRepository } from './repositories/sql-task-supply-repository.ts';
+import { SqlTaskImplementationRepository } from './repositories/sql-task-implementation-repository.ts';
+import { SqlTaskSettlementRepository } from './repositories/sql-task-settlement-repository.ts';
+import { SqlFinanceQueryRepository } from './repositories/sql-finance-query-repository.ts';
+import { SqlExecutionQueryRepository } from './repositories/sql-execution-query-repository.ts';
+import { SqlDemandRepository } from './repositories/sql-demand-repository.ts';
+import { SqlDemandQueryRepository } from './repositories/sql-demand-query-repository.ts';
+import { SqlDemandMaterialWriteRepository } from './repositories/sql-demand-material-write-repository.ts';
+import { SqlReserveProjectQueryRepository } from './repositories/sql-reserve-project-query-repository.ts';
+import { SqlReserveProjectWriteRepository } from './repositories/sql-reserve-project-write-repository.ts';
+import { resolvePersistence as createCloudflarePersistence } from './runtime/persistence.ts';
 
 const MAX_ITEMS = 100;
 

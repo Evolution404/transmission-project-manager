@@ -15,7 +15,7 @@ export type { CreateTaskSettlementRecord, TaskSettlementEvent, TaskSettlementHea
 export type { DemandExecutionAccess, ExecutionProjectHeader, ExecutionQueryRepository } from './execution-query-repository';
 export type { AllocationFailure, ConfirmProjectRecord, CreateProjectRecord, ProjectAllocationWrite, ProjectCategoryAllocationWrite, ProjectCostLineWrite, ProjectWriteRepository, ProjectWriteState, ProtectedProjectScopeItem, ReplaceProjectAllocationsRecord, ReplaceProjectCategoryAllocationsRecord, ReplaceProjectCostsRecord } from './project-write-repository';
 export type { CreateReserveCategoryRecord, ReserveCategoryWriteRepository, UpsertCategoryMappingRecord } from './reserve-category-write-repository';
-export { BACKUP_TABLES } from './backup-repository';
+export { BACKUP_TABLES } from './backup-repository.ts';
 export type { BackupChunkState, BackupRepository, BackupRetentionCandidate, BackupTableName, BackupTableRow } from './backup-repository';
 export type { BudgetAllocationWrite, ConfirmBudgetRecord, CreateBudgetRecord, FinanceBudgetRepository, UpdateBudgetRecord } from './finance-budget-repository';
 export type { CreateFinancialEntryRecord, FinanceEntryRepository, FinancialEntryAllocationWrite, FinancialEntryCursor, FinancialEntryListInput, ReverseFinancialEntryRecord } from './finance-entry-repository';
@@ -41,4 +41,5 @@ export type { ObjectMetadata, ObjectStorePort, ObjectStorePutOptions, StoredObje
 export type { OperationJournalRecord, OperationJournalRepository } from './operation-journal-repository';
 export type { ScheduledTaskInvocation, SchedulerPort } from './scheduler';
 export type { AuthSessionRecord, CreateSessionRecord, SessionRepository } from './session-repository';
+export type { SettingWriteMetadata, SettingWriteRecord, SystemConfigRepository } from './system-config-repository';
 export type { PersistencePorts } from './runtime';

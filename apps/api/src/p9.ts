@@ -9,13 +9,13 @@ import type {
   TransmissionTowerSummary,
   VoltageLevelSummary,
 } from '@tpm/shared';
-import { requireRoles, type AppEnv } from './auth';
+import { requireRoles, type AppEnv } from './auth.ts';
 import type { CommitSingleMasterDataInput, MasterDataWriteKind } from './ports/master-data-write-repository';
-import { SqlDemandRepository } from './repositories/sql-demand-repository';
-import { SqlIdempotencyRepository } from './repositories/sql-idempotency-repository';
-import { SqlMasterDataRepository } from './repositories/sql-master-data-repository';
-import { SqlMasterDataWriteRepository } from './repositories/sql-master-data-write-repository';
-import { createCloudflarePersistence } from './runtime/cloudflare/persistence';
+import { SqlDemandRepository } from './repositories/sql-demand-repository.ts';
+import { SqlIdempotencyRepository } from './repositories/sql-idempotency-repository.ts';
+import { SqlMasterDataRepository } from './repositories/sql-master-data-repository.ts';
+import { SqlMasterDataWriteRepository } from './repositories/sql-master-data-write-repository.ts';
+import { resolvePersistence as createCloudflarePersistence } from './runtime/persistence.ts';
 
 export const p9App = new Hono<AppEnv>();
 

@@ -15,12 +15,12 @@ import type {
   ReplaceProjectCostsRequest,
   ReserveCategorySummary,
 } from '@tpm/shared';
-import { hasScope, requireRoles, type AppEnv } from './auth';
-import { SqlIdempotencyRepository } from './repositories/sql-idempotency-repository';
-import { SqlProjectQueryRepository } from './repositories/sql-project-query-repository';
-import { SqlProjectWriteRepository } from './repositories/sql-project-write-repository';
-import { SqlReserveCategoryWriteRepository } from './repositories/sql-reserve-category-write-repository';
-import { createCloudflarePersistence } from './runtime/cloudflare/persistence';
+import { hasScope, requireRoles, type AppEnv } from './auth.ts';
+import { SqlIdempotencyRepository } from './repositories/sql-idempotency-repository.ts';
+import { SqlProjectQueryRepository } from './repositories/sql-project-query-repository.ts';
+import { SqlProjectWriteRepository } from './repositories/sql-project-write-repository.ts';
+import { SqlReserveCategoryWriteRepository } from './repositories/sql-reserve-category-write-repository.ts';
+import { resolvePersistence as createCloudflarePersistence } from './runtime/persistence.ts';
 
 const MAX_PROJECT_ALLOCATIONS = 100;
 const MAX_PAGE_SIZE = 100;

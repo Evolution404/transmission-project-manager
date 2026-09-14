@@ -14,12 +14,7 @@ import {
   type UpdateMemberRequest,
   type UpdateSettingRequest,
 } from '@tpm/shared';
-import { hasScope, requireAuthentication, requireRoles, type AppEnv } from './auth';
-import {
-  getSettingHistory,
-  listCurrentSettings,
-  listDictionary,
-} from './db';
+import { hasScope, requireAuthentication, requireRoles, type AppEnv } from './auth.ts';
 import {
   constantTimeEqualText,
   credentialDescriptor,
@@ -30,25 +25,27 @@ import {
   normalizeUsername,
   validateCredentialValue,
   validateDerivedCredential,
-} from './credential';
+} from './credential.ts';
 import {
   clearSessionCookie,
   createSession,
   getSessionToken,
   revokeSessionToken,
-} from './session';
-import { p9App } from './p9';
-import { p8App } from './p8';
-import { p2App } from './p2';
-import { p3App } from './p3';
-import { p4App } from './p4';
-import { p5App } from './p5';
-import { p6App } from './p6';
-import { SqlCredentialRepository } from './repositories/sql-credential-repository';
-import { SqlMemberAdminRepository } from './repositories/sql-member-admin-repository';
-import { SqlMemberRepository } from './repositories/sql-member-repository';
-import { createCloudflarePersistence } from './runtime/cloudflare/persistence';
-import { schemaReadiness } from './schema';
+} from './session.ts';
+import { p9App } from './p9.ts';
+import { p8App } from './p8.ts';
+import { p2App } from './p2.ts';
+import { p3App } from './p3.ts';
+import { p4App } from './p4.ts';
+import { p5App } from './p5.ts';
+import { p6App } from './p6.ts';
+import { SqlCredentialRepository } from './repositories/sql-credential-repository.ts';
+import { SqlMemberAdminRepository } from './repositories/sql-member-admin-repository.ts';
+import { SqlMemberRepository } from './repositories/sql-member-repository.ts';
+import { SqlIdempotencyRepository } from './repositories/sql-idempotency-repository.ts';
+import { SqlSystemConfigRepository } from './repositories/sql-system-config-repository.ts';
+import { resolvePersistence as createCloudflarePersistence } from './runtime/persistence.ts';
+import { schemaReadiness } from './schema.ts';
 
 export const app = new Hono<AppEnv>();
 
@@ -100,21 +97,13 @@ function requireCredentialPepper(c: Context<AppEnv>): string | Response {
 
 async function replayIdempotentResponse(c: Context<AppEnv>, key: string, operation: string, hash: string) {
   const user = c.get('currentUser');
-  const row = await c.env.DB.prepare(
-    `SELECT actor_member_id, operation, request_hash, response_json, status_code
-     FROM idempotency_records WHERE idempotency_key = ? LIMIT 1`,
-  ).bind(key).first<{
-    actor_member_id: string;
-    operation: string;
-    request_hash: string;
-    response_json: string;
-    status_code: number;
-  }>();
+  const { database } = createCloudflarePersistence(c.env);
+  const row = await new SqlIdempotencyRepository(database).findByKey(key);
   if (!row) return null;
-  if (row.actor_member_id !== user.id || row.operation !== operation || row.request_hash !== hash) {
+  if (row.actorMemberId !== user.id || row.operation !== operation || row.requestHash !== hash) {
     return c.json(apiError('IDEMPOTENCY_CONFLICT', '该 Idempotency-Key 已用于不同请求'), 409);
   }
-  return new Response(row.response_json, { status: row.status_code, headers: jsonHeaders });
+  return new Response(row.responseJson, { status: row.statusCode, headers: jsonHeaders });
 }
 
 function requireIdempotencyKey(c: Context<AppEnv>): string | Response {
@@ -138,13 +127,19 @@ function authRepositories(c: Context<AppEnv>) {
   };
 }
 
+function systemConfigRepository(c: Context<AppEnv>) {
+  const { database } = createCloudflarePersistence(c.env);
+  return new SqlSystemConfigRepository(database);
+}
+
 app.get('/api/health', async (c) => {
+  const { database } = createCloudflarePersistence(c.env);
   const body: HealthResponse = {
     ok: true,
     data: {
       service: 'transmission-project-manager',
       stage: 'p6',
-      schema: await schemaReadiness(c.env.DB),
+      schema: await schemaReadiness(database),
     },
   };
   c.header('Cache-Control', 'no-store');
@@ -296,7 +291,8 @@ app.use('/api/*', async (c, next) => {
     '/api/me',
   ]);
   if (schemaExemptPaths.has(c.req.path)) return next();
-  const schema = await schemaReadiness(c.env.DB);
+  const { database } = createCloudflarePersistence(c.env);
+  const schema = await schemaReadiness(database);
   if (!schema.ready) {
     return c.json(apiError(
       'SCHEMA_OUTDATED',
@@ -571,12 +567,12 @@ app.patch('/api/members/:id', requireRoles('admin'), async (c) => {
 
 app.get('/api/settings', async (c) => {
   c.header('Cache-Control', 'no-store');
-  return c.json({ ok: true as const, data: { items: await listCurrentSettings(c.env.DB) } });
+  return c.json({ ok: true as const, data: { items: await systemConfigRepository(c).listCurrentSettings() } });
 });
 
 app.get('/api/settings/:key/history', requireRoles('admin'), async (c) => {
   c.header('Cache-Control', 'no-store');
-  return c.json({ ok: true as const, data: { items: await getSettingHistory(c.env.DB, c.req.param('key')) } });
+  return c.json({ ok: true as const, data: { items: await systemConfigRepository(c).getSettingHistory(c.req.param('key')) } });
 });
 
 app.put('/api/settings/:key', requireRoles('admin'), async (c) => {
@@ -604,10 +600,8 @@ app.put('/api/settings/:key', requireRoles('admin'), async (c) => {
   const operation = `settings.put:${key}`;
   const replay = await replayIdempotentResponse(c, idempotency, operation, hash);
   if (replay) return replay;
-  const current = await c.env.DB.prepare(
-    `SELECT version FROM settings_versions WHERE setting_key=? ORDER BY version DESC LIMIT 1`,
-  ).bind(key).first<{ version: number }>();
-  const currentVersion = current?.version ?? null;
+  const repository = systemConfigRepository(c);
+  const currentVersion = await repository.currentSettingVersion(key);
   if (currentVersion !== body.expectedVersion) {
     return c.json(apiError('VERSION_CONFLICT', '配置版本已变化，请刷新后重试', { currentVersion }), 409);
   }
@@ -621,22 +615,20 @@ app.put('/api/settings/:key', requireRoles('admin'), async (c) => {
   const data = { id, key, version: nextVersion, value: body.value, effectiveFrom, createdBy: actor.id, createdAt: now };
   const response = { ok: true as const, data };
   try {
-    await c.env.DB.batch([
-      c.env.DB.prepare(
-        `INSERT INTO settings_versions
-         (id,setting_key,version,value_json,effective_from,created_by,created_at) VALUES (?,?,?,?,?,?,?)`,
-      ).bind(id, key, nextVersion, valueJson, effectiveFrom, actor.id, now),
-      c.env.DB.prepare(
-        `INSERT INTO audit_events
-         (id,actor_member_id,action,object_type,object_id,before_json,after_json,created_at)
-         VALUES (?,?,'setting.version.create','setting',?,?,?,?)`,
-      ).bind(crypto.randomUUID(), actor.id, key, JSON.stringify({ version: currentVersion }), JSON.stringify(data), now),
-      c.env.DB.prepare(
-        `INSERT INTO idempotency_records
-         (idempotency_key,actor_member_id,operation,request_hash,response_json,status_code,created_at)
-         VALUES (?,?,?,?,?,200,?)`,
-      ).bind(idempotency, actor.id, operation, hash, JSON.stringify(response), now),
-    ]);
+    await repository.createSettingVersion(
+      { id, key, version: nextVersion, valueJson, effectiveFrom, createdBy: actor.id, createdAt: now },
+      {
+        auditId: crypto.randomUUID(),
+        actorId: actor.id,
+        beforeJson: JSON.stringify({ version: currentVersion }),
+        afterJson: JSON.stringify(data),
+        idempotencyKey: idempotency,
+        operation,
+        requestHash: hash,
+        responseJson: JSON.stringify(response),
+        statusCode: 200,
+      },
+    );
   } catch {
     return c.json(apiError('VERSION_CONFLICT', '配置已被并发修改，请刷新后重试'), 409);
   }
@@ -646,7 +638,7 @@ app.put('/api/settings/:key', requireRoles('admin'), async (c) => {
 app.get('/api/dictionaries', async (c) => {
   const key = c.req.query('key')?.trim();
   c.header('Cache-Control', 'no-store');
-  return c.json({ ok: true as const, data: { items: await listDictionary(c.env.DB, key || undefined) } });
+  return c.json({ ok: true as const, data: { items: await systemConfigRepository(c).listDictionary(key || undefined) } });
 });
 
 app.get('/api/scopes/:scopeType/:scopeId/check', async (c) => {

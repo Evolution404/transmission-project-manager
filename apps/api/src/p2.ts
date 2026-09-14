@@ -14,16 +14,16 @@ import type {
   NormalizedImportRow,
   ParsedImportRow,
 } from '@tpm/shared';
-import { requireRoles, type AppEnv } from './auth';
-import { SqlDemandQueryRepository } from './repositories/sql-demand-query-repository';
-import { SqlIdempotencyRepository } from './repositories/sql-idempotency-repository';
-import { SqlImportMappingRepository } from './repositories/sql-import-mapping-repository';
-import { SqlImportRepository } from './repositories/sql-import-repository';
-import { SqlImportPublishRepository } from './repositories/sql-import-publish-repository';
-import { SqlImportValidationRepository } from './repositories/sql-import-validation-repository';
+import { requireRoles, type AppEnv } from './auth.ts';
+import { SqlDemandQueryRepository } from './repositories/sql-demand-query-repository.ts';
+import { SqlIdempotencyRepository } from './repositories/sql-idempotency-repository.ts';
+import { SqlImportMappingRepository } from './repositories/sql-import-mapping-repository.ts';
+import { SqlImportRepository } from './repositories/sql-import-repository.ts';
+import { SqlImportPublishRepository } from './repositories/sql-import-publish-repository.ts';
+import { SqlImportValidationRepository } from './repositories/sql-import-validation-repository.ts';
 import type { ImportValidationRepository, ImportValidationRow } from './ports/import-validation-repository';
-import { SqlMaterialRepository } from './repositories/sql-material-repository';
-import { createCloudflarePersistence } from './runtime/cloudflare/persistence';
+import { SqlMaterialRepository } from './repositories/sql-material-repository.ts';
+import { resolvePersistence as createCloudflarePersistence } from './runtime/persistence.ts';
 
 const REQUIRED_MAPPING_KEYS = [
   'sequenceNo', 'voltage', 'lineName', 'section', 'materialModel', 'materialQuantity',

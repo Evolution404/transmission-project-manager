@@ -21,14 +21,14 @@ import type {
   SettlementSummary,
   VoidSettlementRequest,
 } from '@tpm/shared';
-import { deleteAttachmentContent, loadAttachmentContent, saveAttachmentContent } from './application/attachment-content';
-import { hasScope, requireRoles, type AppEnv } from './auth';
+import { deleteAttachmentContent, loadAttachmentContent, saveAttachmentContent } from './application/attachment-content.ts';
+import { hasScope, requireRoles, type AppEnv } from './auth.ts';
 import type { AttachmentRecord } from './ports/attachment-repository';
-import { SqlAttachmentRepository } from './repositories/sql-attachment-repository';
-import { SqlIdempotencyRepository } from './repositories/sql-idempotency-repository';
-import { SqlLegacyExecutionRepository } from './repositories/sql-legacy-execution-repository';
-import { SqlFinanceQueryRepository } from './repositories/sql-finance-query-repository';
-import { createCloudflarePersistence } from './runtime/cloudflare/persistence';
+import { SqlAttachmentRepository } from './repositories/sql-attachment-repository.ts';
+import { SqlIdempotencyRepository } from './repositories/sql-idempotency-repository.ts';
+import { SqlLegacyExecutionRepository } from './repositories/sql-legacy-execution-repository.ts';
+import { SqlFinanceQueryRepository } from './repositories/sql-finance-query-repository.ts';
+import { resolvePersistence as createCloudflarePersistence } from './runtime/persistence.ts';
 
 const MAX_LINES = 100;
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
