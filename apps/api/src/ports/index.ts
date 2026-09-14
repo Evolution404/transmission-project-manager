@@ -11,6 +11,7 @@ export type { DemandRepository, ResolvedDemandLine, ResolvedDemandTower } from '
 export type { DemandPage, DemandPageCursor, DemandQueryRepository } from './demand-query-repository';
 export type { IdempotencyReplayRecord, IdempotencyRepository } from './idempotency-repository';
 export type { CreateImportMappingRecord, ImportMappingRepository } from './import-mapping-repository';
+export type { CreateImportBatchRecord, ImportRepository, RecordImportReuseInput } from './import-repository';
 export type { JobMessage, JobPayload, JobQueuePort } from './job-queue';
 export type { ObjectMetadata, ObjectStorePort, ObjectStorePutOptions, StoredObject } from './object-store';
 export type { ScheduledTaskInvocation, SchedulerPort } from './scheduler';

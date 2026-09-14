@@ -20,6 +20,7 @@ import { requireRoles, type AppEnv } from './auth';
 import { SqlDemandQueryRepository } from './repositories/sql-demand-query-repository';
 import { SqlIdempotencyRepository } from './repositories/sql-idempotency-repository';
 import { SqlImportMappingRepository } from './repositories/sql-import-mapping-repository';
+import { SqlImportRepository } from './repositories/sql-import-repository';
 import { SqlMaterialRepository } from './repositories/sql-material-repository';
 import { createCloudflarePersistence } from './runtime/cloudflare/persistence';
 
@@ -556,44 +557,32 @@ p2App.post('/imports', requireRoles('admin', 'project_manager'), async (c) => {
   const replay = await replayIdempotentResponse(c, key, operation, hash);
   if (replay) return replay;
   const actor = c.get('currentUser');
-  const existing = await c.env.DB.prepare(
-    `SELECT id,file_name,file_sha256,file_type,mapping_json,status,uploaded_rows,valid_rows,error_rows,warning_rows,published_rows,version,created_at,updated_at,published_at
-     FROM import_batches WHERE file_sha256=? LIMIT 1`,
-  ).bind(fileSha256).first<ImportBatchRow>();
   const now = new Date().toISOString();
+  const { database } = createCloudflarePersistence(c.env);
+  const repository = new SqlImportRepository(database);
+  const existing = await repository.findByFileHash(fileSha256);
   if (existing) {
-    const response = { ok: true as const, data: batchSummary(existing, true) };
-    await c.env.DB.prepare(
-      `INSERT INTO idempotency_records (idempotency_key,actor_member_id,operation,request_hash,response_json,status_code,created_at)
-       VALUES (?,?,?,?,?,200,?)`,
-    ).bind(key, actor.id, operation, hash, JSON.stringify(response), now).run();
+    const response = { ok: true as const, data: { ...existing, reused: true as const } };
+    await repository.recordReuse({ idempotencyKey: key, actorId: actor.id, operation, requestHash: hash, responseJson: JSON.stringify(response), now });
     return c.json(response);
   }
 
-  const id = crypto.randomUUID();
-  const mappingJson = JSON.stringify(body.mapping);
-  const row: ImportBatchRow = {
-    id, file_name: fileName, file_sha256: fileSha256, file_type: fileType,
-    mapping_json: mappingJson, status: 'draft', uploaded_rows: 0, valid_rows: 0, error_rows: 0,
-    warning_rows: 0, published_rows: 0, version: 1, created_at: now, updated_at: now, published_at: null,
+  const data: ImportBatchSummary = {
+    id: crypto.randomUUID(), fileName, fileSha256, fileType, mapping: body.mapping,
+    status: 'draft', uploadedRows: 0, validRows: 0, errorRows: 0, warningRows: 0, publishedRows: 0,
+    version: 1, createdAt: now, updatedAt: now, publishedAt: null,
   };
-  const response = { ok: true as const, data: batchSummary(row) };
+  const response = { ok: true as const, data };
   try {
-    await c.env.DB.batch([
-      c.env.DB.prepare(
-        `INSERT INTO import_batches
-         (id,file_name,file_sha256,file_type,mapping_json,status,uploaded_rows,valid_rows,error_rows,warning_rows,published_rows,version,created_by,created_at,updated_at,published_at)
-         VALUES (?,?,?,?,?,'draft',0,0,0,0,0,1,?,?,?,NULL)`,
-      ).bind(id, fileName, fileSha256, fileType, mappingJson, actor.id, now, now),
-      c.env.DB.prepare(
-        `INSERT INTO audit_events (id,actor_member_id,action,object_type,object_id,before_json,after_json,created_at)
-         VALUES (?,?, 'import.create','import_batch',?,NULL,?,?)`,
-      ).bind(crypto.randomUUID(), actor.id, id, JSON.stringify(response.data), now),
-      c.env.DB.prepare(
-        `INSERT INTO idempotency_records (idempotency_key,actor_member_id,operation,request_hash,response_json,status_code,created_at)
-         VALUES (?,?,?,?,?,201,?)`,
-      ).bind(key, actor.id, operation, hash, JSON.stringify(response), now),
-    ]);
+    await repository.create({
+      batch: data,
+      actorId: actor.id,
+      auditId: crypto.randomUUID(),
+      idempotencyKey: key,
+      operation,
+      requestHash: hash,
+      responseJson: JSON.stringify(response),
+    });
   } catch {
     return c.json(apiError('IMPORT_CREATE_CONFLICT', '导入批次创建冲突，请刷新后重试'), 409);
   }
