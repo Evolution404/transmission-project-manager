@@ -298,7 +298,8 @@ test('task supply, implementation and settlement advance independently and enfor
   assert.equal(implementationReplay.response.status, 201);
   assert.equal(implementationReplay.body.data.id, implementation.body.data.id);
 
-  const settlement = await jsonRequest('/api/task-settlements', mutation('POST', 'task-settlement', {
+  const settlementKey = idem('task-settlement');
+  const settlementBody = {
     taskId: t1.id,
     expectedSettlementVersion: 1,
     settlementDate: '2026-09-16',
@@ -307,9 +308,21 @@ test('task supply, implementation and settlement advance independently and enfor
     note: '部分结算',
     coverage: [{ taskDemandScopeId: t1.demandScopes[0].id, quantityScaled: 100000 }],
     agreementAllocations: [],
-  }));
+  };
+  const settlement = await jsonRequest('/api/task-settlements', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Idempotency-Key': settlementKey },
+    body: JSON.stringify(settlementBody),
+  });
   assert.equal(settlement.response.status, 201);
   assert.equal(settlement.body.data.settlementVersion, 2);
+  const settlementReplay = await jsonRequest('/api/task-settlements', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Idempotency-Key': settlementKey },
+    body: JSON.stringify(settlementBody),
+  });
+  assert.equal(settlementReplay.response.status, 201);
+  assert.equal(settlementReplay.body.data.id, settlement.body.data.id);
 
   const shipped = await jsonRequest('/api/task-material-supply-events', mutation('POST', 'supply-shipped', {
     taskMaterialRequirementId: taskMaterial.id,

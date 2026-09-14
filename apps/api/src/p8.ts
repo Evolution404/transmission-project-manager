@@ -6,6 +6,8 @@ import { SqlProjectReleaseRepository } from './repositories/sql-project-release-
 import { SqlProjectTaskRepository } from './repositories/sql-project-task-repository';
 import { SqlTaskSupplyRepository } from './repositories/sql-task-supply-repository';
 import { SqlTaskImplementationRepository } from './repositories/sql-task-implementation-repository';
+import { SqlTaskSettlementRepository } from './repositories/sql-task-settlement-repository';
+import { SqlFinanceQueryRepository } from './repositories/sql-finance-query-repository';
 import { createCloudflarePersistence } from './runtime/cloudflare/persistence';
 
 const MAX_ITEMS = 100;
@@ -1483,74 +1485,82 @@ p8App.post('/task-settlements', requireRoles('admin', 'project_manager', 'financ
   let body: Record<string, unknown>; try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
   const taskId = cleanText(body.taskId), version = expectedVersion(body.expectedSettlementVersion), settlementDate = validDate(body.settlementDate), amountFen = nonNegativeInteger(body.amountFen), final = body.final === true, note = nullableText(body.note, 1000);
   if (!taskId || version === null || !settlementDate || amountFen === null || note === undefined || !Array.isArray(body.coverage) || body.coverage.length > MAX_ITEMS || !Array.isArray(body.agreementAllocations) || body.agreementAllocations.length > MAX_ITEMS) return c.json(apiError('INVALID_TASK_SETTLEMENT', '任务结算参数无效'), 422);
-  const task = await findTask(c.env.DB, taskId);
+
+  const { database } = createCloudflarePersistence(c.env);
+  const repository = new SqlTaskSettlementRepository(database);
+  const task = await repository.findTaskHeader(taskId);
   if (!task) return c.json(apiError('TASK_NOT_FOUND', '执行任务不存在'), 404);
-  if (!await canProject(c, task.project_id)) return c.json(apiError('SCOPE_FORBIDDEN', '无权登记该任务结算'), 403);
-  if (task.settlement_version !== version) return c.json(apiError('VERSION_CONFLICT', '任务结算状态已变化，请刷新后重试'), 409);
-  const scopes = await loadTaskDemandScopes(c.env.DB, taskId), scopeMap = new Map(scopes.map((item) => [item.id, item]));
+  if (!hasProjectAccess(c, task.projectId, task.frameworkId)) return c.json(apiError('SCOPE_FORBIDDEN', '无权登记该任务结算'), 403);
+
   const coverage: Array<{ taskDemandScopeId: string; quantityScaled: number }> = [], coverageSeen = new Set<string>();
   let scopedCoverage = 0;
   for (const raw of body.coverage) {
     if (!raw || typeof raw !== 'object') return c.json(apiError('INVALID_SETTLEMENT_COVERAGE', '结算需求范围无效'), 422);
     const item = raw as Record<string, unknown>, scopeId = cleanText(item.taskDemandScopeId), quantity = positiveInteger(item.quantityScaled);
-    if (!scopeMap.has(scopeId) || quantity === null || coverageSeen.has(scopeId)) return c.json(apiError('INVALID_SETTLEMENT_COVERAGE', '结算需求范围不属于任务或存在重复'), 422);
+    if (!scopeId || quantity === null || coverageSeen.has(scopeId)) return c.json(apiError('INVALID_SETTLEMENT_COVERAGE', '结算需求范围无效或存在重复'), 422);
     coverageSeen.add(scopeId); coverage.push({ taskDemandScopeId: scopeId, quantityScaled: quantity }); scopedCoverage += quantity;
   }
   const coverageQuantity = body.coverageQuantityScaled === undefined ? scopedCoverage : positiveInteger(body.coverageQuantityScaled);
   if (coverageQuantity === null || coverageQuantity <= 0 || scopedCoverage > coverageQuantity) return c.json(apiError('INVALID_SETTLEMENT_QUANTITY', '结算覆盖量必须为正且不小于需求范围覆盖量'), 422);
-  const plannedLinked = scopes.reduce((sum, scope) => sum + scope.planned_quantity_scaled, 0);
-  if (plannedLinked === task.planned_quantity_scaled && scopedCoverage !== coverageQuantity) return c.json(apiError('SETTLEMENT_SCOPE_MISMATCH', '任务范围已全部关联需求时，结算覆盖量必须与需求范围明细合计一致'), 422);
-  const previousTotal = await c.env.DB.prepare(`SELECT COALESCE(SUM(coverage_quantity_scaled),0) AS total FROM task_settlements WHERE task_id=? AND voided_at IS NULL`).bind(taskId).first<{ total: number }>();
-  const afterTotal = Number(previousTotal?.total ?? 0) + coverageQuantity;
-  if (afterTotal > task.planned_quantity_scaled) return c.json(apiError('SETTLEMENT_EXCEEDS_TASK', '累计结算覆盖量超过任务计划量'), 422);
-  for (const line of coverage) {
-    const used = await c.env.DB.prepare(
-      `SELECT COALESCE(SUM(tsl.quantity_scaled),0) AS total FROM task_settlement_scope_lines tsl INNER JOIN task_settlements ts ON ts.id=tsl.settlement_id WHERE tsl.task_demand_scope_id=? AND ts.voided_at IS NULL`,
-    ).bind(line.taskDemandScopeId).first<{ total: number }>();
-    if (Number(used?.total ?? 0) + line.quantityScaled > scopeMap.get(line.taskDemandScopeId)!.planned_quantity_scaled) return c.json(apiError('SETTLEMENT_EXCEEDS_DEMAND_SCOPE', '结算覆盖量超过任务需求范围'), 422);
-  }
-  if (final) {
-    if (afterTotal !== task.planned_quantity_scaled) return c.json(apiError('FINAL_SETTLEMENT_INCOMPLETE', '最终结算必须覆盖任务全部计划范围'), 422);
-    for (const scope of scopes) {
-      const current = await c.env.DB.prepare(
-        `SELECT COALESCE(SUM(tsl.quantity_scaled),0) AS total FROM task_settlement_scope_lines tsl INNER JOIN task_settlements ts ON ts.id=tsl.settlement_id WHERE tsl.task_demand_scope_id=? AND ts.voided_at IS NULL`,
-      ).bind(scope.id).first<{ total: number }>();
-      const added = coverage.find((item) => item.taskDemandScopeId === scope.id)?.quantityScaled ?? 0;
-      if (Number(current?.total ?? 0) + added !== scope.planned_quantity_scaled) return c.json(apiError('FINAL_SETTLEMENT_INCOMPLETE', '最终结算必须完整覆盖全部已关联需求范围', { taskDemandScopeId: scope.id }), 422);
-    }
-  }
+
   const allocations: Array<{ agreementId: string; amountFen: number }> = [], agreementSeen = new Set<string>();
   let allocationTotal = 0;
-  const project = await findProject(c.env.DB, task.project_id);
   for (const raw of body.agreementAllocations) {
     if (!raw || typeof raw !== 'object') return c.json(apiError('INVALID_SETTLEMENT_AGREEMENT', '结算协议分摊无效'), 422);
     const item = raw as Record<string, unknown>, agreementId = cleanText(item.agreementId), amount = nonNegativeInteger(item.amountFen);
     if (!agreementId || amount === null || agreementSeen.has(agreementId)) return c.json(apiError('INVALID_SETTLEMENT_AGREEMENT', '结算协议分摊无效或重复'), 422);
-    if (!project?.framework_id) return c.json(apiError('PROJECT_FRAMEWORK_REQUIRED', '项目未归属框架，不能填写结算协议分摊'), 422);
-    const agreement = await c.env.DB.prepare(`SELECT framework_id,status,valid_from,valid_to FROM agreements WHERE id=? LIMIT 1`).bind(agreementId).first<{ framework_id: string; status: string; valid_from: string; valid_to: string }>();
-    if (!agreement || agreement.framework_id !== project.framework_id) return c.json(apiError('AGREEMENT_FRAMEWORK_MISMATCH', '结算协议与项目不属于同一框架'), 422);
-    if (agreement.status !== 'active' || settlementDate < agreement.valid_from || settlementDate > agreement.valid_to) return c.json(apiError('AGREEMENT_NOT_EFFECTIVE', '结算协议在结算日期无效'), 422);
     agreementSeen.add(agreementId); allocations.push({ agreementId, amountFen: amount }); allocationTotal += amount;
   }
   if (allocations.length && allocationTotal !== amountFen) return c.json(apiError('SETTLEMENT_AGREEMENT_MISMATCH', '结算协议分摊金额必须精确等于结算金额'), 422);
+
   const request = { taskId, expectedSettlementVersion: version, settlementDate, coverageQuantityScaled: coverageQuantity, amountFen, final, note, coverage, agreementAllocations: allocations };
   const hash = await requestHash(request), operation = 'task-settlements.create'; const replay = await replayIdempotentResponse(c, key, operation, hash); if (replay) return replay;
+  if (task.settlementVersion !== version) return c.json(apiError('VERSION_CONFLICT', '任务结算状态已变化，请刷新后重试'), 409);
+
+  const state = await repository.loadValidationState(taskId);
+  const scopeMap = new Map(state.scopes.map((item) => [item.id, item]));
+  for (const line of coverage) {
+    const scope = scopeMap.get(line.taskDemandScopeId);
+    if (!scope) return c.json(apiError('INVALID_SETTLEMENT_COVERAGE', '结算需求范围不属于任务或存在重复'), 422);
+    if (scope.settledQuantityScaled + line.quantityScaled > scope.plannedQuantityScaled) return c.json(apiError('SETTLEMENT_EXCEEDS_DEMAND_SCOPE', '结算覆盖量超过任务需求范围'), 422);
+  }
+  const plannedLinked = state.scopes.reduce((sum, scope) => sum + scope.plannedQuantityScaled, 0);
+  if (plannedLinked === task.plannedQuantityScaled && scopedCoverage !== coverageQuantity) return c.json(apiError('SETTLEMENT_SCOPE_MISMATCH', '任务范围已全部关联需求时，结算覆盖量必须与需求范围明细合计一致'), 422);
+  const afterTotal = state.previousCoverageQuantityScaled + coverageQuantity;
+  if (afterTotal > task.plannedQuantityScaled) return c.json(apiError('SETTLEMENT_EXCEEDS_TASK', '累计结算覆盖量超过任务计划量'), 422);
+  if (final) {
+    if (afterTotal !== task.plannedQuantityScaled) return c.json(apiError('FINAL_SETTLEMENT_INCOMPLETE', '最终结算必须覆盖任务全部计划范围'), 422);
+    for (const scope of state.scopes) {
+      const added = coverage.find((item) => item.taskDemandScopeId === scope.id)?.quantityScaled ?? 0;
+      if (scope.settledQuantityScaled + added !== scope.plannedQuantityScaled) return c.json(apiError('FINAL_SETTLEMENT_INCOMPLETE', '最终结算必须完整覆盖全部已关联需求范围', { taskDemandScopeId: scope.id }), 422);
+    }
+  }
+
+  if (allocations.length) {
+    if (!task.frameworkId) return c.json(apiError('PROJECT_FRAMEWORK_REQUIRED', '项目未归属框架，不能填写结算协议分摊'), 422);
+    const checked = await new SqlFinanceQueryRepository(database).validateAgreementAllocations(task.frameworkId, allocations, settlementDate, true);
+    if (!checked.ok) {
+      if (checked.reason === 'not_effective') return c.json(apiError('AGREEMENT_NOT_EFFECTIVE', '结算协议在结算日期无效'), 422);
+      return c.json(apiError('AGREEMENT_FRAMEWORK_MISMATCH', '结算协议与项目不属于同一框架'), 422);
+    }
+  }
+
   const actor = c.get('currentUser'), now = new Date().toISOString(), id = crypto.randomUUID();
   const data = { id, taskId, settlementDate, coverageQuantityScaled: coverageQuantity, amountFen, final, note, coverage, agreementAllocations: allocations, version: 1, settlementVersion: version + 1, voidedAt: null, voidReason: null, createdAt: now, updatedAt: now };
   const response = { ok: true as const, data };
   try {
-    const statements: D1PreparedStatement[] = [
-      taskSettlementVersionGuard(c.env.DB, taskId, version, now),
-      c.env.DB.prepare(`INSERT INTO task_settlements (id,task_id,settlement_date,coverage_quantity_scaled,amount_fen,final,note,version,voided_at,voided_by,void_reason,created_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,1,NULL,NULL,NULL,?,?,?)`).bind(id, taskId, settlementDate, coverageQuantity, amountFen, final ? 1 : 0, note, actor.id, now, now),
-      ...coverage.map((line) => c.env.DB.prepare(`INSERT INTO task_settlement_scope_lines (id,settlement_id,task_demand_scope_id,quantity_scaled,created_at) VALUES (?,?,?,?,?)`).bind(crypto.randomUUID(), id, line.taskDemandScopeId, line.quantityScaled, now)),
-      ...allocations.map((line) => c.env.DB.prepare(`INSERT INTO task_settlement_agreement_allocations (id,settlement_id,agreement_id,amount_fen,created_at) VALUES (?,?,?,?,?)`).bind(crypto.randomUUID(), id, line.agreementId, line.amountFen, now)),
-    ];
-    if (final) statements.push(c.env.DB.prepare(`UPDATE task_settlement_reminders SET status='closed',final_settlement_id=?,updated_at=? WHERE task_id=?`).bind(id, now, taskId));
-    statements.push(
-      auditStatement(c.env.DB, actor.id, 'project_task.settlement', 'project_task', taskId, { settlementVersion: version }, { settlementVersion: version + 1, coverageQuantityScaled: coverageQuantity, final }, now),
-      idempotencyStatement(c.env.DB, key, actor.id, operation, hash, response, 201, now),
-    );
-    await c.env.DB.batch(statements);
+    await repository.createSettlement({
+      event: data,
+      expectedSettlementVersion: version,
+      coverageWrites: coverage.map((line) => ({ id: crypto.randomUUID(), ...line })),
+      allocationWrites: allocations.map((line) => ({ id: crypto.randomUUID(), ...line })),
+      actorId: actor.id,
+      auditId: crypto.randomUUID(),
+      idempotencyKey: key,
+      operation,
+      requestHash: hash,
+      responseJson: JSON.stringify(response),
+    });
   } catch {
     const race = await replayIdempotentResponse(c, key, operation, hash); if (race) return race;
     return c.json(apiError('VERSION_CONFLICT', '任务结算状态已被并发修改，请刷新后重试'), 409);
@@ -1563,30 +1573,35 @@ p8App.post('/task-settlements/:id/void', requireRoles('admin', 'project_manager'
   let body: Record<string, unknown>; try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
   const expectedSettlementVersion = expectedVersion(body.expectedSettlementVersion), recordVersion = expectedVersion(body.expectedVersion), reason = cleanText(body.reason);
   if (expectedSettlementVersion === null || recordVersion === null || !reason || reason.length > 1000) return c.json(apiError('INVALID_SETTLEMENT_VOID', '撤销版本或原因无效'), 422);
-  const row = await c.env.DB.prepare(`SELECT id,task_id,version,voided_at,final FROM task_settlements WHERE id=? LIMIT 1`).bind(c.req.param('id')).first<{ id: string; task_id: string; version: number; voided_at: string | null; final: number }>();
+  const { database } = createCloudflarePersistence(c.env);
+  const repository = new SqlTaskSettlementRepository(database);
+  const row = await repository.findVoidState(c.req.param('id'));
   if (!row) return c.json(apiError('TASK_SETTLEMENT_NOT_FOUND', '任务结算不存在'), 404);
-  const task = await findTask(c.env.DB, row.task_id);
-  if (!task || !await canProject(c, task.project_id)) return c.json(apiError('SCOPE_FORBIDDEN', '无权撤销该任务结算'), 403);
-  if (row.voided_at) return c.json(apiError('SETTLEMENT_ALREADY_VOIDED', '该任务结算已撤销'), 409);
-  if (row.version !== recordVersion || task.settlement_version !== expectedSettlementVersion) return c.json(apiError('VERSION_CONFLICT', '任务结算状态已变化，请刷新后重试'), 409);
+  if (!hasProjectAccess(c, row.projectId, row.frameworkId)) return c.json(apiError('SCOPE_FORBIDDEN', '无权撤销该任务结算'), 403);
   const request = { expectedSettlementVersion, expectedVersion: recordVersion, reason }, hash = await requestHash(request), operation = `task-settlements.void:${row.id}`;
   const replay = await replayIdempotentResponse(c, key, operation, hash); if (replay) return replay;
-  const actor = c.get('currentUser'), now = new Date().toISOString(), response = { ok: true as const, data: { id: row.id, taskId: row.task_id, version: recordVersion + 1, settlementVersion: expectedSettlementVersion + 1, voidedAt: now, voidReason: reason } };
-  const firstImplementation = await c.env.DB.prepare(`SELECT MIN(record_date) AS first_date FROM task_implementation_records WHERE task_id=?`).bind(row.task_id).first<{ first_date: string | null }>();
+  if (row.voidedAt) return c.json(apiError('SETTLEMENT_ALREADY_VOIDED', '该任务结算已撤销'), 409);
+  if (row.recordVersion !== recordVersion || row.settlementVersion !== expectedSettlementVersion) return c.json(apiError('VERSION_CONFLICT', '任务结算状态已变化，请刷新后重试'), 409);
+  const actor = c.get('currentUser'), now = new Date().toISOString(), response = { ok: true as const, data: { id: row.id, taskId: row.taskId, version: recordVersion + 1, settlementVersion: expectedSettlementVersion + 1, voidedAt: now, voidReason: reason } };
   try {
-    const statements: D1PreparedStatement[] = [
-      taskSettlementVersionGuard(c.env.DB, row.task_id, expectedSettlementVersion, now),
-      c.env.DB.prepare(`UPDATE task_settlements SET voided_at=?,voided_by=?,void_reason=?,version=version+1,updated_at=CASE WHEN version=? THEN ? ELSE NULL END WHERE id=? AND voided_at IS NULL`).bind(now, actor.id, reason, recordVersion, now, row.id),
-    ];
-    if (row.final === 1 && firstImplementation?.first_date) {
-      const replacementFinal = await c.env.DB.prepare(`SELECT id FROM task_settlements WHERE task_id=? AND final=1 AND voided_at IS NULL AND id<>? LIMIT 1`).bind(row.task_id, row.id).first<{ id: string }>();
-      statements.push(c.env.DB.prepare(`UPDATE task_settlement_reminders SET status=?,final_settlement_id=?,updated_at=? WHERE task_id=?`).bind(replacementFinal ? 'closed' : 'open', replacementFinal?.id ?? null, now, row.task_id));
-    }
-    statements.push(
-      auditStatement(c.env.DB, actor.id, 'project_task.settlement.void', 'task_settlement', row.id, { voidedAt: null }, response.data, now),
-      idempotencyStatement(c.env.DB, key, actor.id, operation, hash, response, 200, now),
-    );
-    await c.env.DB.batch(statements);
+    await repository.voidSettlement({
+      settlementId: row.id,
+      taskId: row.taskId,
+      expectedRecordVersion: recordVersion,
+      expectedSettlementVersion,
+      final: row.final,
+      firstImplementationDate: row.firstImplementationDate,
+      replacementFinalId: row.replacementFinalId,
+      reason,
+      now,
+      actorId: actor.id,
+      auditId: crypto.randomUUID(),
+      idempotencyKey: key,
+      operation,
+      requestHash: hash,
+      responseJson: JSON.stringify(response),
+      responseData: response.data,
+    });
   } catch {
     const race = await replayIdempotentResponse(c, key, operation, hash); if (race) return race;
     return c.json(apiError('VERSION_CONFLICT', '任务结算已被并发修改，请刷新后重试'), 409);
