@@ -4,7 +4,7 @@
 
 仓库：`Evolution404/transmission-project-manager`
 默认分支：`main`
-当前云端发布施工分支：`ops/cloudflare-github-deploy-20260914`
+当前云端配置记录分支：`ops/production-environment-handoff-20260914`
 
 后端可移植化已经通过 GitHub PR #1 合入 `main`：
 
@@ -16,7 +16,7 @@
 
 因此“后端可移植化是否已经合入 main”已经不是待办，答案是**已完成**。
 
-当前正在通过 PR #2 建立正式 Cloudflare 云端发布能力。PR #2：`ops: add protected Cloudflare production workflows`，分支 `ops/cloudflare-github-deploy-20260914`。接手时必须以 GitHub 上该 PR 最新 HEAD 和 CI 为准。
+生产 workflow 已通过 PR #2 合入 `main@bc4774767c159068d59e16d6726444c5c1525dd6`；[合并后的 CI #37](https://github.com/Evolution404/transmission-project-manager/actions/runs/34811093528) 的 `check` job 和 `npm run check` 均 PASS。此处仅说明代码流水线合入，并不代表生产资源/Secrets/发布已完成。
 
 ## 最高优先级约束：只做云上开发
 
@@ -82,27 +82,24 @@ Mac 仅是历史施工环境，不再是开发、测试、发布或故障处理�
 
 `BOOTSTRAP_TOKEN` 是**一次性 Secret**：只在首次建立管理员时临时配置，首管理员创建并确认 bootstrap 已关闭后删除。禁止把它放入永久 `secrets.required`，否则首次初始化后删除 Token 会导致以后正常发布永久失败。
 
-## GitHub / Cloudflare 设置仍未完成的部分
+## 2026-09-14 云端配置实测
 
-当前 GitHub 连接可以读写仓库、PR、Actions 结果，但**没有 GitHub Administration / Environment / Secrets 管理接口权限**：
+- GitHub production Environment 已在仓库 Settings → Environments 创建（Environment ID `21869294751`）。
+- Deployment branches/tags 限制为仅 `main`（1 branch、0 tags）。
+- Environment Variables `PRODUCTION_DEPLOY_ENABLED=false`、`PRODUCTION_MIGRATION_ENABLED=false` 已在 GitHub UI 确认；两个开关保持关闭。
+- 尚无 `PRODUCTION_CONFIG_JSON`，Environment Secret 列表仍为空，`CLOUDFLARE_API_TOKEN` 未配置。
+- 仓库目前 0 collaborators，只有所有者可贡献。Required reviewers / Prevent self-review 未设成；页面仍显示管理员绕过选项已勾选，不能声称审核保护完成。
+- main 的 Branch protection 页面显示尚无 classic rule；新规则表单未保存，因此 main 保护尚未建立。Actions 默认 `GITHUB_TOKEN` 为只读，且 Actions 创建或批准 PR 未启用。
+- Cloudflare Dashboard `dash.cloudflare.com` 在本次云端浏览器中持续显示安全验证，刷新后仍无法进入；尚未核实正式 Worker/D1/R2/Zone/Secrets/migrations。公开自定义域名健康接口也未得到可验证响应。不得从历史 acceptance 文件推断生产资源。
+- 本轮未创建/修改 Cloudflare 资源，未配置任何 Token/pepper，未运行 preflight、migration 或 production release，也未声称生产验收通过。
 
-- `main` 当前 GitHub branch endpoint 显示 `protected: false`；
-- 读取 branch-protection 详情返回 integration 403；
-- 当前连接无法创建/修改 GitHub Environment、Environment protection、Variables 或 Secrets；
-- 当前连接也没有 Actions `workflow_dispatch` 的写操作能力。
+## 后续云端接续
 
-因此不能把“workflow 代码已经存在”误写为“production Environment/Secrets 已经配置”或“已经正式发布”。
-
-正式触发前，GitHub `production` Environment 至少需要实际确认：
-
-- 部署分支限制：只允许 `main`；
-- Required reviewer / 禁止自批 / 管理员绕过策略：按当前 GitHub 套餐实际可用能力启用并验证；
-- Variable `PRODUCTION_DEPLOY_ENABLED`：平时建议 `false`，批准代码发布窗口时才设 `true`；
-- Variable `PRODUCTION_MIGRATION_ENABLED`：平时必须 `false`，批准 migration 窗口时才临时设 `true`；
-- Variable `PRODUCTION_CONFIG_JSON`：经过 P7 validator 验证的真实非敏感严格 JSON；
-- Secret `CLOUDFLARE_API_TOKEN`：account-owned、最小权限、不得使用 Global API Key 或个人长期 Token。
-
-Cloudflare Worker 侧必须真实存在永久 `AUTH_CREDENTIAL_PEPPER`。首次初始化管理员时再临时配置 `BOOTSTRAP_TOKEN`，完成后删除。
+1. 恢复 Cloudflare Dashboard 的受信访问，核对正式生产 Worker/D1/R2/Zone、数据和 migration；与 acceptance 环境严格区分。
+2. 明确独立的生产审核者或可执行的审核安排，完成 Environment 审核保护和 main 分支保护；保持两个生产开关 `false`。
+3. 根据真实资源填写 `PRODUCTION_CONFIG_JSON`，配置专用最小权限 Cloudflare CI Secret 和不变的生产认证 pepper；不得在仓库或日志暴露值。
+4. 依现有 `production-preflight.yml` 做无变更预检，再根据正式 D1 备份/数据状态决定是否运行独立 migration；schema ready 后才运行 release。
+5. 发布后做真实健康、登录、核心业务/R2/Cron、域名与 Cloudflare 指标验收，并将非敏感证据回填。
 
 ## 生产资源现状：不要猜
 
