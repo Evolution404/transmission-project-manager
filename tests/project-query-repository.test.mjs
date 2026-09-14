@@ -1,0 +1,69 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { DatabaseSync } from 'node:sqlite';
+import { SqliteDatabaseAdapter } from '../apps/api/src/adapters/node/sqlite-database.ts';
+import { SqlProjectQueryRepository } from '../apps/api/src/repositories/sql-project-query-repository.ts';
+
+function setup() {
+  const db = new DatabaseSync(':memory:');
+  db.exec(`
+    CREATE TABLE demands (
+      id TEXT PRIMARY KEY, sequence_no TEXT NOT NULL, business_year INTEGER, category_key TEXT,
+      voltage_raw TEXT NOT NULL, voltage_verified TEXT, line_name TEXT NOT NULL, section_text TEXT NOT NULL,
+      source_type TEXT NOT NULL, source_file_name TEXT, source_sheet TEXT, source_row_number INTEGER
+    );
+    CREATE TABLE materials (
+      id TEXT PRIMARY KEY, code TEXT, name TEXT NOT NULL, model TEXT NOT NULL, unit TEXT NOT NULL,
+      enabled INTEGER NOT NULL, version INTEGER NOT NULL
+    );
+    CREATE TABLE demand_materials (
+      id TEXT PRIMARY KEY, demand_id TEXT NOT NULL, raw_model TEXT NOT NULL, material_id TEXT,
+      quantity_scaled INTEGER NOT NULL, unit TEXT
+    );
+    CREATE TABLE demand_allocations (
+      id TEXT PRIMARY KEY, project_id TEXT NOT NULL, demand_material_id TEXT NOT NULL,
+      quantity_scaled INTEGER NOT NULL, created_at TEXT NOT NULL
+    );
+    INSERT INTO demands VALUES
+      ('d1','001',2026,'防断线','220kV','220kV','龙城线','#1—#2','import','a.xlsx','S',2),
+      ('d2','002',2026,'防断线','220kV','220kV','龙城线','#3','manual',NULL,NULL,NULL),
+      ('d3','003',2025,'防鸟','110kV','110kV','江北线','#5','manual',NULL,NULL,NULL);
+    INSERT INTO materials VALUES
+      ('m1','M1','金具','Model-A','套',1,2),
+      ('m2','M2','线夹','Model-B','只',1,1);
+    INSERT INTO demand_materials VALUES
+      ('dm1','d1','Model-A','m1',100000,'套'),
+      ('dm2','d2','Model-A','m1',50000,'套'),
+      ('dm3','d3','Model-B','m2',30000,'只');
+    INSERT INTO demand_allocations VALUES
+      ('a1','p1','dm1',40000,'t'),
+      ('a2','p1','dm3',30000,'t');
+  `);
+  return { db, repo: new SqlProjectQueryRepository(new SqliteDatabaseAdapter(db)) };
+}
+
+test('project query repository pages only remaining reserve candidates', async () => {
+  const { db, repo } = setup();
+  try {
+    const first = await repo.listCandidates({ limit: 1, cursor: null });
+    assert.deepEqual(first.items.map((item) => item.demandMaterialId), ['dm1']);
+    assert.equal(first.items[0].allocatedQuantityScaled, 40000);
+    assert.equal(first.items[0].remainingQuantityScaled, 60000);
+    assert.equal(first.items[0].material?.id, 'm1');
+    assert.deepEqual(first.items[0].source, { type: 'import', fileName: 'a.xlsx', sheetName: 'S', rowNumber: 2 });
+    assert.equal(first.nextCursor, 'dm1');
+
+    const second = await repo.listCandidates({ limit: 1, cursor: first.nextCursor });
+    assert.deepEqual(second.items.map((item) => item.demandMaterialId), ['dm2']);
+    assert.deepEqual(second.items[0].source, { type: 'manual' });
+    assert.equal(second.nextCursor, null);
+  } finally { db.close(); }
+});
+
+test('project suggestions aggregate the complete remaining pool rather than a candidate page', async () => {
+  const { db, repo } = setup();
+  try {
+    const groups = await repo.listSuggestions(50);
+    assert.deepEqual(groups, [{ year: 2026, category: '防断线', voltage: '220kV', lineName: '龙城线', itemCount: 2 }]);
+  } finally { db.close(); }
+});
