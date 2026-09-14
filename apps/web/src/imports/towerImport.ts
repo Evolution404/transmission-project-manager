@@ -128,3 +128,27 @@ export function towerImportChunks(rows: readonly TowerImportPreviewRow[], size =
   for (let index = 0; index < actionable.length; index += size) chunks.push(actionable.slice(index, index + size));
   return chunks;
 }
+
+export function completeTowerCoverageErrors(preview: TowerImportPreview, existing: readonly TransmissionTowerSummary[]): string[] {
+  const matched = new Set(preview.rows.filter((row) => row.id && row.action !== 'error').map((row) => row.id!));
+  const missing = existing.filter((tower) => !matched.has(tower.id));
+  if (!missing.length) return [];
+  const sample = missing.slice(0, 5).map((tower) => tower.towerNo).join('、');
+  return [`完整清单缺少当前线路 ${missing.length} 个杆塔对象${sample ? `（如 ${sample}）` : ''}，不能整体重排`];
+}
+
+export function towerIdsInSourceOrder(preview: TowerImportPreview, current: readonly TransmissionTowerSummary[]): string[] | null {
+  const byNo = new Map<string, TransmissionTowerSummary[]>();
+  for (const tower of current) {
+    const group = byNo.get(tower.towerNo) ?? [];
+    group.push(tower); byNo.set(tower.towerNo, group);
+  }
+  const result: string[] = [];
+  for (const row of preview.rows) {
+    if (!row.towerNo || row.action === 'error') return null;
+    const matches = byNo.get(row.towerNo) ?? [];
+    if (matches.length !== 1) return null;
+    result.push(matches[0]!.id);
+  }
+  return new Set(result).size === current.length && result.length === current.length ? result : null;
+}

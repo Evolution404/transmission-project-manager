@@ -5,6 +5,7 @@ import type {
   CommitTowerBatchInput,
   CommitTowerImportChunkInput,
   CommitTowerMoveInput,
+  CommitTowerReorderInput,
   CommitTowerRenameInput,
   MasterDataWriteKind,
   MasterDataWriteRepository,
@@ -389,6 +390,68 @@ export class SqlMasterDataWriteRepository implements MasterDataWriteRepository {
         input.mutation.now,
       ],
     });
+    await this.database.batch(statements);
+  }
+
+  async commitTowerReorder(input: CommitTowerReorderInput): Promise<void> {
+    const idsJson = JSON.stringify(input.towerIds);
+    const statements: DatabaseStatement[] = [{
+      sql: `INSERT INTO idempotency_records
+            (idempotency_key,actor_member_id,operation,request_hash,response_json,status_code,created_at)
+            VALUES (?,?,?,CASE WHEN EXISTS(
+              SELECT 1 FROM transmission_lines WHERE id=? AND tower_order_version=?
+            ) AND (SELECT COUNT(*) FROM transmission_towers WHERE line_id=?)=?
+              AND NOT EXISTS(
+                SELECT 1 FROM transmission_towers t
+                WHERE t.line_id=? AND t.id NOT IN (SELECT value FROM json_each(?))
+              )
+            THEN ? ELSE NULL END,?,?,?)`,
+      params: [
+        input.mutation.key,
+        input.mutation.actorId,
+        input.mutation.operation,
+        input.lineId,
+        input.expectedTowerOrderVersion,
+        input.lineId,
+        input.towerIds.length,
+        input.lineId,
+        idsJson,
+        input.mutation.hash,
+        input.mutation.responseJson,
+        input.mutation.statusCode,
+        input.mutation.now,
+      ],
+    }, {
+      sql: `WITH desired(id,new_rank) AS MATERIALIZED (
+              SELECT value,-(CAST(key AS INTEGER)+1)*1000 FROM json_each(?)
+            )
+            UPDATE transmission_towers
+            SET sort_rank=(SELECT new_rank FROM desired WHERE desired.id=transmission_towers.id)
+            WHERE line_id=?`,
+      params: [idsJson, input.lineId],
+    }, {
+      sql: 'UPDATE transmission_towers SET sort_rank=-sort_rank WHERE line_id=?',
+      params: [input.lineId],
+    }, {
+      sql: `UPDATE transmission_lines
+            SET tower_order_version=tower_order_version+1,updated_at=?
+            WHERE id=? AND tower_order_version=?`,
+      params: [input.mutation.now, input.lineId, input.expectedTowerOrderVersion],
+    }, {
+      sql: `INSERT INTO audit_events
+            (id,actor_member_id,action,object_type,object_id,before_json,after_json,created_at)
+            VALUES (?,?,?,?,?,?,?,?)`,
+      params: [
+        input.mutation.auditId,
+        input.mutation.actorId,
+        input.audit.action,
+        input.audit.objectType,
+        input.lineId,
+        json(input.audit.before),
+        json(input.audit.after),
+        input.mutation.now,
+      ],
+    }];
     await this.database.batch(statements);
   }
 

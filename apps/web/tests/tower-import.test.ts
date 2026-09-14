@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import type { TransmissionTowerSummary } from '@tpm/shared';
 import {
   buildTowerImportPreview,
+  completeTowerCoverageErrors,
   parseTowerPaste,
+  towerIdsInSourceOrder,
   towerImportChunks,
   towerRowsFromSpreadsheet,
 } from '../src/imports/towerImport';
@@ -74,5 +76,16 @@ describe('tower import parsing and preview', () => {
     const preview = buildTowerImportPreview(rows, []);
     expect(preview.counts).toEqual({ total: 65, create: 65, update: 0, unchanged: 0, error: 0 });
     expect(towerImportChunks(preview.rows).map((chunk) => chunk.length)).toEqual([20, 20, 20, 5]);
+  });
+
+  it('requires complete stable-object coverage before file order can become line order', () => {
+    const current = [existing({ id: 'a', towerNo: '#001' }), existing({ id: 'b', towerNo: '#002', sortRank: 2000 })];
+    const complete = buildTowerImportPreview(parseTowerPaste('2\t角钢塔\t启用\n1\t角钢塔\t启用'), current);
+    expect(completeTowerCoverageErrors(complete, current)).toEqual([]);
+    expect(towerIdsInSourceOrder(complete, current)).toEqual(['b', 'a']);
+
+    const incomplete = buildTowerImportPreview(parseTowerPaste('1\t角钢塔\t启用'), current);
+    expect(completeTowerCoverageErrors(incomplete, current)[0]).toContain('缺少');
+    expect(towerIdsInSourceOrder(incomplete, current)).toBeNull();
   });
 });

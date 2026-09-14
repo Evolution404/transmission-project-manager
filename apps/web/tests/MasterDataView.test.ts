@@ -21,6 +21,7 @@ const admin = { id: 'a', role: 'admin' } as CurrentUser;
 const voltages = [{ id: 'v1', displayName: '110kV', enabled: true, version: 1 }, { id: 'v2', displayName: '220kV', enabled: true, version: 1 }];
 const line = { id: 'l1', voltageLevelId: 'v1', voltageLevelName: '110kV', lineName: '甲线', enabled: true, version: 1, towerOrderVersion: 1 };
 const tower = { id: 't1', lineId: 'l1', lineName: '甲线', towerNo: '#020-1', sortRank: 2000, towerType: null, enabled: true, version: 3 };
+const tower2 = { id: 't2', lineId: 'l1', lineName: '甲线', towerNo: '#030', sortRank: 3000, towerType: null, enabled: true, version: 1 };
 const ok = (items: unknown[]) => new Response(JSON.stringify({ ok: true, data: { items } }), { headers: { 'Content-Type': 'application/json' } });
 const data = (value: unknown) => new Response(JSON.stringify({ ok: true, data: value }), { headers: { 'Content-Type': 'application/json' } });
 let importOrderVersion = 1;
@@ -33,11 +34,15 @@ beforeEach(() => {
     if (created) importOrderVersion += 1;
     return data({ created, updated: body.items.length - created, towerOrderVersion: importOrderVersion, items: [] });
   }
+  if (init?.method && url.endsWith('/towers/reorder')) {
+    importOrderVersion += 1;
+    return data({ changed: true, towerOrderVersion: importOrderVersion, towerIds: JSON.parse(String(init.body)).towerIds });
+  }
   if (init?.method) return ok([]);
   if (url === '/api/master/voltage-levels') return ok(voltages);
   if (url.startsWith('/api/master/lines?voltageLevelId=v1')) return ok([line]);
   if (url.startsWith('/api/master/lines?voltageLevelId=v2')) return ok([]);
-  if (url.startsWith('/api/master/towers?lineId=l1')) return ok([tower]);
+  if (url.startsWith('/api/master/towers?lineId=l1')) return ok([tower, tower2]);
   throw new Error(`unexpected ${url}`);
   }));
 });
@@ -112,6 +117,20 @@ it('resumes from the failed chunk and reuses its idempotency key without resendi
   expect(new Headers(calls[2]![1]!.headers).get('Idempotency-Key')).toBe(failedKey);
 });
 
+it('full-list mode requires coverage and submits the source row order as stable tower ids', async () => {
+  const w = mount(MasterDataView, { props: { currentUser: admin } }); await flushPromises();
+  await w.get('[data-test="select-line-l1"]').trigger('click'); await flushPromises();
+  await w.get('[data-test="open-bulk-towers"]').trigger('click');
+  await w.get('[data-test="tower-import-mode"]').setValue('full-order');
+  await w.get('[data-test="bulk-tower-text"]').setValue('30\t\t启用\n20-1\t\t启用');
+  await w.get('[data-test="preview-bulk-towers"]').trigger('click'); await flushPromises();
+  expect(w.get('[data-test="tower-import-preview"]').text()).toContain('完整清单校验通过');
+  await w.get('[data-test="save-bulk-towers"]').trigger('click'); await flushPromises();
+  const reorder = vi.mocked(fetch).mock.calls.find(([u, init]) => String(u).endsWith('/towers/reorder') && init?.method === 'POST');
+  expect(reorder).toBeTruthy();
+  expect(JSON.parse(String(reorder![1]!.body)).towerIds).toEqual(['t2', 't1']);
+});
+
 it('single tower creation sends no manual order and explains automatic numeric placement', async () => {
   const w = mount(MasterDataView, { props: { currentUser: admin } }); await flushPromises();
   await w.get('[data-test="select-line-l1"]').trigger('click'); await flushPromises();
@@ -131,5 +150,5 @@ it('readonly users navigate the same hierarchy without mutation controls', async
   const w = mount(MasterDataView, { props: { currentUser: { ...admin, role: 'readonly' } } }); await flushPromises();
   await w.get('[data-test="select-line-l1"]').trigger('click'); await flushPromises();
   expect(w.text()).toContain('#020-1');
-  for (const label of ['新增电压等级', '新增线路', '新增杆塔', '编辑', '删除', '批量维护']) expect(w.text()).not.toContain(label);
+  for (const label of ['新增电压等级', '新增线路', '新增杆塔', '编辑', '删除', '导入杆塔']) expect(w.text()).not.toContain(label);
 });

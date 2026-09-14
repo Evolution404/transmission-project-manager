@@ -9,8 +9,10 @@ import { parseApiResponse } from '../api/response';
 import { parseFileInWorker } from '../imports/workerClient';
 import {
   buildTowerImportPreview,
+  completeTowerCoverageErrors,
   parseTowerPaste,
   towerImportChunks,
+  towerIdsInSourceOrder,
   towerRowsFromSpreadsheet,
   type TowerImportPreview,
   type TowerImportPreviewRow,
@@ -34,12 +36,19 @@ let lineRequest = 0, towerRequest = 0;
 const bulkModal = ref(false), bulkText = ref('');
 const bulkPreview = ref<TowerImportPreview | null>(null);
 const bulkSourceLabel = ref('');
+const bulkMode = ref<'merge' | 'full-order'>('merge');
+const bulkModeOptions = [
+  { label: '新增 / 更新（新增杆塔按编号自动插入）', value: 'merge' },
+  { label: '完整清单重排（文件顺序就是线路顺序）', value: 'full-order' },
+];
+const bulkGlobalErrors = ref<string[]>([]);
 const bulkPreparing = ref(false);
 const bulkChunks = ref<TowerImportPreviewRow[][]>([]);
 const bulkChunkKeys = ref<string[]>([]);
 const bulkNextChunk = ref(0);
 const bulkProcessed = ref(0);
 const bulkOrderVersion = ref<number | null>(null);
+const bulkReorderKey = ref('');
 const selectedVoltage = computed(() => voltageLevels.value.find((v) => v.id === selectedVoltageId.value));
 const selectedLine = computed(() => lines.value.find((l) => l.id === selectedLineId.value));
 
@@ -115,12 +124,27 @@ async function openBulk() {
   bulkText.value = '';
   bulkPreview.value = null;
   bulkSourceLabel.value = '';
+  bulkMode.value = 'merge';
+  bulkGlobalErrors.value = [];
   bulkChunks.value = [];
   bulkChunkKeys.value = [];
   bulkNextChunk.value = 0;
   bulkProcessed.value = 0;
   bulkOrderVersion.value = null;
+  bulkReorderKey.value = crypto.randomUUID();
   bulkModal.value = true;
+}
+
+function setBulkMode(value: 'merge' | 'full-order') {
+  bulkMode.value = value;
+  bulkPreview.value = null;
+  bulkGlobalErrors.value = [];
+  bulkChunks.value = [];
+  bulkChunkKeys.value = [];
+  bulkNextChunk.value = 0;
+  bulkProcessed.value = 0;
+  bulkOrderVersion.value = null;
+  bulkReorderKey.value = crypto.randomUUID();
 }
 
 async function loadCompleteTowers(lineId: string): Promise<TransmissionTowerSummary[]> {
@@ -142,12 +166,14 @@ async function prepareBulkPreview(sourceRows: TowerImportSourceRow[], label: str
   try {
     const existing = await loadCompleteTowers(line.id);
     bulkPreview.value = buildTowerImportPreview(sourceRows, existing);
+    bulkGlobalErrors.value = bulkMode.value === 'full-order' ? completeTowerCoverageErrors(bulkPreview.value, existing) : [];
     bulkSourceLabel.value = label;
     bulkChunks.value = towerImportChunks(bulkPreview.value.rows);
     bulkChunkKeys.value = bulkChunks.value.map(() => crypto.randomUUID());
     bulkNextChunk.value = 0;
     bulkProcessed.value = 0;
     bulkOrderVersion.value = line.towerOrderVersion;
+    bulkReorderKey.value = crypto.randomUUID();
   } catch (cause) { message.error(cause instanceof Error ? cause.message : '杆塔导入预览失败'); }
   finally { bulkPreparing.value = false; }
 }
@@ -173,8 +199,8 @@ async function onBulkFile(event: Event) {
 async function saveBulk() {
   const preview = bulkPreview.value, lineId = selectedLineId.value;
   if (!preview || !lineId || bulkOrderVersion.value === null) return;
-  if (preview.counts.error) { message.warning('请先修正预览中的错误'); return; }
-  if (!bulkChunks.value.length) { message.success('导入内容没有需要写入的变化'); return; }
+  if (preview.counts.error || bulkGlobalErrors.value.length) { message.warning('请先修正预览中的错误'); return; }
+  if (!bulkChunks.value.length && bulkMode.value === 'merge') { message.success('导入内容没有需要写入的变化'); return; }
   saving.value = true;
   try {
     while (bulkNextChunk.value < bulkChunks.value.length) {
@@ -195,9 +221,19 @@ async function saveBulk() {
       bulkProcessed.value += chunk.length;
       bulkNextChunk.value += 1;
     }
+    if (bulkMode.value === 'full-order') {
+      const current = await loadCompleteTowers(lineId);
+      const towerIds = towerIdsInSourceOrder(preview, current);
+      if (!towerIds) throw new Error('完整清单与当前线路对象无法唯一对应，请重新生成预览');
+      const reordered: { towerOrderVersion: number } = await apiRequest(
+        `/api/master/lines/${lineId}/towers/reorder`,
+        jsonInit('POST', { expectedTowerOrderVersion: bulkOrderVersion.value, towerIds }, bulkReorderKey.value),
+      );
+      bulkOrderVersion.value = reordered.towerOrderVersion;
+    }
     bulkModal.value = false;
     await loadAll();
-    message.success(`杆塔导入完成：新增 ${preview.counts.create}，更新 ${preview.counts.update}，无变化 ${preview.counts.unchanged}`);
+    message.success(`杆塔导入完成：新增 ${preview.counts.create}，更新 ${preview.counts.update}，无变化 ${preview.counts.unchanged}${bulkMode.value === 'full-order' ? '；已按完整清单重排' : ''}`);
   } catch (cause) {
     message.error(`${cause instanceof Error ? cause.message : '杆塔导入失败'}；已完成部分不会重复写入，可直接继续`);
   } finally { saving.value = false; }
@@ -322,6 +358,10 @@ onMounted(loadAll);
     </div>
     <n-modal v-model:show="bulkModal" preset="card" title="导入杆塔" style="width:min(780px,calc(100vw - 32px))">
       <p>当前线路：{{ selectedLine?.lineName }}。可选择 .xlsx / .csv，或直接从表格粘贴“杆塔编号、杆塔类型、状态”。系统会先规范编号并与完整线路台账对比，再一次确认导入。</p>
+      <n-form-item label="导入模式">
+        <n-select data-test="tower-import-mode" :value="bulkMode" :options="bulkModeOptions" @update:value="setBulkMode" />
+      </n-form-item>
+      <n-alert v-if="bulkMode==='full-order'" type="warning" :bordered="false">完整清单模式要求当前线路每个杆塔对象都在文件中唯一出现；不会把缺失行当作删除。导入完成后，文件行顺序将成为线路顺序。</n-alert>
       <div class="tower-import-source">
         <input data-test="tower-import-file" type="file" accept=".xlsx,.csv" :disabled="bulkPreparing || saving" @change="onBulkFile" />
         <span>或</span>
@@ -330,14 +370,17 @@ onMounted(loadAll);
       <n-input v-model:value="bulkText" data-test="bulk-tower-text" type="textarea" :rows="8" placeholder="杆塔编号[TAB]杆塔类型[TAB]状态，例如：10-1    角钢塔    启用。第一行也可以带表头。" />
       <div v-if="bulkPreview" class="tower-import-preview" data-test="tower-import-preview">
         <p><strong>{{ bulkSourceLabel }}</strong>：共 {{ bulkPreview.counts.total }} 行；新增 {{ bulkPreview.counts.create }}，更新 {{ bulkPreview.counts.update }}，无变化 {{ bulkPreview.counts.unchanged }}，错误 {{ bulkPreview.counts.error }}。</p>
-        <p v-if="!bulkPreview.counts.error">系统将自动分批写入；新增杆塔按规范编号自动插入合适位置，不改变已有杆塔的人工顺序。</p>
+        <p v-if="!bulkPreview.counts.error && !bulkGlobalErrors.length">{{ bulkMode==='full-order' ? '完整清单校验通过；属性变化会先自动分批写入，随后按文件顺序原子重排。' : '系统将自动分批写入；新增杆塔按规范编号自动插入合适位置，不改变已有杆塔的人工顺序。' }}</p>
         <div v-if="bulkPreview.counts.error" class="tower-import-errors">
           <p v-for="row in bulkPreview.rows.filter(item => item.action === 'error').slice(0,20)" :key="`${row.source}-${row.rowNumber}`">{{ row.source }}第 {{ row.rowNumber }} 行：{{ row.message }}</p>
           <p v-if="bulkPreview.counts.error > 20">另有 {{ bulkPreview.counts.error - 20 }} 条错误，请修正后重新预览。</p>
         </div>
+        <div v-if="bulkGlobalErrors.length" class="tower-import-errors">
+          <p v-for="issue in bulkGlobalErrors" :key="issue">{{ issue }}</p>
+        </div>
         <p v-if="bulkChunks.length">进度：{{ bulkProcessed }} / {{ bulkChunks.reduce((total, chunk) => total + chunk.length, 0) }} 条需要写入的数据。</p>
       </div>
-      <template #footer><div class="actions"><n-button @click="bulkModal=false">取消</n-button><n-button data-test="save-bulk-towers" type="primary" :loading="saving" :disabled="!bulkPreview || bulkPreview.counts.error>0" @click="saveBulk">{{ bulkNextChunk > 0 ? '继续导入' : '开始导入' }}</n-button></div></template>
+      <template #footer><div class="actions"><n-button @click="bulkModal=false">取消</n-button><n-button data-test="save-bulk-towers" type="primary" :loading="saving" :disabled="!bulkPreview || bulkPreview.counts.error>0 || bulkGlobalErrors.length>0" @click="saveBulk">{{ bulkNextChunk > 0 ? '继续导入' : '开始导入' }}</n-button></div></template>
     </n-modal>
 
     <n-modal v-model:show="voltageModal" preset="card" title="电压等级" style="width:min(560px,calc(100vw - 32px))">

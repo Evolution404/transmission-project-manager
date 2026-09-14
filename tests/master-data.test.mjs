@@ -665,3 +665,61 @@ test('tower import chunk is internal bounded protocol and never permits rename t
   assert.equal(rename.response.status, 422);
   assert.equal(rename.body.error.code, 'RENAME_REQUIRED');
 });
+
+test('complete tower order atomically follows the explicit full stable-id list without changing tower identities', async () => {
+  const line = (await jsonRequest('/api/master/lines', mutation('POST', idem('full-order-line'), {
+    voltageLevelId: 'vl-ac-110', lineName: '完整清单重排线', enabled: true,
+  }))).body.data;
+  const made = [];
+  for (const no of ['1', '2', '3', '4']) {
+    const tower = await jsonRequest('/api/master/towers', mutation('POST', idem(`full-order-${no}`), { lineId: line.id, towerNo: no }));
+    assert.equal(tower.response.status, 201);
+    made.push(tower.body.data);
+  }
+  const before = await jsonRequest(`/api/master/towers?lineId=${line.id}`);
+  assert.deepEqual(before.body.data.items.map((item) => item.towerNo), ['#001', '#002', '#003', '#004']);
+
+  const desired = [made[2].id, made[0].id, made[3].id, made[1].id];
+  const key = idem('full-order-commit');
+  const result = await jsonRequest(`/api/master/lines/${line.id}/towers/reorder`, mutation('POST', key, {
+    expectedTowerOrderVersion: 5,
+    towerIds: desired,
+  }));
+  assert.equal(result.response.status, 200);
+  assert.equal(result.body.data.towerOrderVersion, 6);
+  assert.deepEqual(result.body.data.towerIds, desired);
+
+  const after = await jsonRequest(`/api/master/towers?lineId=${line.id}`);
+  assert.deepEqual(after.body.data.items.map((item) => item.id), desired);
+  assert.deepEqual(after.body.data.items.map((item) => item.towerNo), ['#003', '#001', '#004', '#002']);
+  assert.deepEqual(after.body.data.items.map((item) => item.sortRank), [1000, 2000, 3000, 4000]);
+  assert.deepEqual((await jsonRequest(`/api/master/lines/${line.id}/towers/reorder`, mutation('POST', key, {
+    expectedTowerOrderVersion: 5,
+    towerIds: desired,
+  }))).body, result.body);
+});
+
+test('complete tower reorder rejects incomplete, duplicate and stale lists instead of guessing', async () => {
+  const line = (await jsonRequest('/api/master/lines', mutation('POST', idem('full-order-guard-line'), {
+    voltageLevelId: 'vl-ac-110', lineName: '完整重排门禁线', enabled: true,
+  }))).body.data;
+  const one = (await jsonRequest('/api/master/towers', mutation('POST', idem('full-order-guard-1'), { lineId: line.id, towerNo: '1' }))).body.data;
+  const two = (await jsonRequest('/api/master/towers', mutation('POST', idem('full-order-guard-2'), { lineId: line.id, towerNo: '2' }))).body.data;
+  const path = `/api/master/lines/${line.id}/towers/reorder`;
+
+  const incomplete = await jsonRequest(path, mutation('POST', idem('full-order-incomplete'), { expectedTowerOrderVersion: 3, towerIds: [one.id] }));
+  assert.equal(incomplete.response.status, 422);
+  assert.equal(incomplete.body.error.code, 'INCOMPLETE_TOWER_ORDER');
+  const duplicate = await jsonRequest(path, mutation('POST', idem('full-order-duplicate'), { expectedTowerOrderVersion: 3, towerIds: [one.id, one.id] }));
+  assert.equal(duplicate.response.status, 422);
+  assert.equal(duplicate.body.error.code, 'INVALID_TOWER_ORDER');
+  const foreign = await jsonRequest(path, mutation('POST', idem('full-order-foreign'), { expectedTowerOrderVersion: 3, towerIds: [one.id, towerA10.id] }));
+  assert.equal(foreign.response.status, 422);
+  assert.equal(foreign.body.error.code, 'INCOMPLETE_TOWER_ORDER');
+
+  const ok = await jsonRequest(path, mutation('POST', idem('full-order-ok'), { expectedTowerOrderVersion: 3, towerIds: [two.id, one.id] }));
+  assert.equal(ok.response.status, 200);
+  const stale = await jsonRequest(path, mutation('POST', idem('full-order-stale'), { expectedTowerOrderVersion: 3, towerIds: [one.id, two.id] }));
+  assert.equal(stale.response.status, 409);
+  assert.equal(stale.body.error.code, 'ORDER_VERSION_CONFLICT');
+});

@@ -610,6 +610,64 @@ p9App.post('/master/lines/:id/towers/import-chunk', requireRoles('admin'), async
   return c.json(response, 201);
 });
 
+p9App.post('/master/lines/:id/towers/reorder', requireRoles('admin'), async (c) => {
+  let body: Record<string, unknown>;
+  try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
+  const mutation = await beginMutation(c, body); if (mutation instanceof Response) return mutation;
+  const expectedTowerOrderVersion = intValue(body.expectedTowerOrderVersion, 1, Number.MAX_SAFE_INTEGER);
+  if (expectedTowerOrderVersion === null || !Array.isArray(body.towerIds) || !body.towerIds.length || body.towerIds.length > 50000) {
+    return c.json(apiError('INVALID_TOWER_ORDER', '完整杆塔顺序清单无效'), 422);
+  }
+  const towerIds = body.towerIds.map((value) => cleanText(value, 120));
+  if (towerIds.some((id) => !id) || new Set(towerIds).size !== towerIds.length) return c.json(apiError('INVALID_TOWER_ORDER', '完整杆塔顺序清单存在空值或重复对象'), 422);
+
+  const lineId = c.req.param('id'), repository = masterDataWriteRepository(c);
+  const parent = await repository.findTowerParent(lineId);
+  if (!parent) return c.json(apiError('MASTER_DATA_NOT_FOUND', '线路不存在'), 404);
+  if (parent.towerOrderVersion !== expectedTowerOrderVersion) return c.json(apiError('ORDER_VERSION_CONFLICT', '杆塔顺序已变化，请刷新后重试'), 409);
+  const current = await repository.listTowerOrder(lineId);
+  const currentIds = current.map((item) => item.id);
+  const currentSet = new Set(currentIds);
+  if (currentIds.length !== towerIds.length || towerIds.some((id) => !currentSet.has(id))) {
+    return c.json(apiError('INCOMPLETE_TOWER_ORDER', '完整清单必须且只能包含当前线路的全部杆塔对象'), 422);
+  }
+  if (towerIds.every((id, index) => id === currentIds[index])) {
+    return c.json({ ok: true as const, data: { changed: false, lineId, towerIds, towerOrderVersion: expectedTowerOrderVersion } }, 200);
+  }
+
+  const response = { ok: true as const, data: { changed: true, lineId, towerIds, towerOrderVersion: expectedTowerOrderVersion + 1 } };
+  const now = new Date().toISOString();
+  try {
+    await repository.commitTowerReorder({
+      lineId,
+      expectedTowerOrderVersion,
+      towerIds,
+      mutation: {
+        key: mutation.key,
+        actorId: c.get('currentUser').id,
+        operation: mutation.operation,
+        hash: mutation.hash,
+        responseJson: JSON.stringify(response),
+        statusCode: 200,
+        now,
+        auditId: crypto.randomUUID(),
+      },
+      audit: {
+        action: 'master.towers.reorder',
+        objectType: 'transmission_line',
+        before: { towerIds: currentIds },
+        after: { towerIds },
+      },
+    });
+  } catch (cause) {
+    const raced = await replay(c, mutation); if (raced) return raced;
+    const error = String(cause);
+    if (error.includes('idempotency_records.request_hash') || error.includes('UNIQUE constraint')) return c.json(apiError('ORDER_VERSION_CONFLICT', '杆塔顺序已变化，请刷新后重试'), 409);
+    throw cause;
+  }
+  return c.json(response, 200);
+});
+
 p9App.post('/master/lines/:id/towers/batch', requireRoles('admin'), async (c) => {
   let body: Record<string, unknown>; try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
   const mutation = await beginMutation(c, body); if (mutation instanceof Response) return mutation;
