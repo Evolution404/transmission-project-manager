@@ -1,22 +1,16 @@
 # 下一位 AI
 
-继续 `/Users/zhangyuxi/Desktop/项目管理`，先以当前 checkout 为准执行：
+继续 `/Users/zhangyuxi/Desktop/项目管理`，分支 `refactor/backend-runtime-portability-20260913`。
+
+先读 `AGENTS.md`、`docs/AI_HANDOFF.md`、`docs/BUSINESS_BASELINE.md`，然后执行：
 
 ```sh
 git status --short --branch
-git log --oneline -5
+git log --oneline -8
 ```
 
-然后阅读：
+当前有已验证但未提交的附件内容迁移：`p5.ts`、`tests/repository-guards.test.mjs`、`apps/api/src/application/attachment-content.ts`。先复核专项测试，单独 commit + push；不要覆盖、reset、clean。
 
-1. `AGENTS.md`
-2. `docs/README.md`
-3. `docs/BUSINESS_BASELINE.md`
-4. `docs/AI_HANDOFF.md`
-5. `docs/TESTING.md`
+随后按小 commit 继续后端可移植性重构：先 `AttachmentRepository`，再逐块迁移业务数据访问；保持 Cloudflare Free 为当前基线，同时保留 Node + SQLite + Filesystem 第二运行时。禁止把业务核心重新绑定 D1/R2/Queue。
 
-当前已验证的基础台账功能基线在 `wip/master-data-refactor-20260913`，提交 `484cbaf`；不要回退“电压等级 → 线路 → 杆塔 → 需求定位”对象模型，也不要修改已应用的 `0009`–`0012` migration。
-
-如果继续功能验收：先基于用户反馈补回归测试，再修改代码，完整门禁全绿后才提交/推送；未经当次授权不要部署、升级远端 D1 或合并 `main`。
-
-如果当前 checkout 是 `chore/docs-audit-20260913`：本轮文档审核已经完成，除非用户提出新的文档问题，否则不要继续扩大清理范围，也不要混入业务代码。历史 WIP 和恢复记录已由 Git 历史承载，不要重新创建重复的 dated handoff。
+未经明确授权不要部署、升级远端 D1 或合并 `main`。
