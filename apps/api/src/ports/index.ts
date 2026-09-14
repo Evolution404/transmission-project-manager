@@ -2,6 +2,7 @@ export type { AttachmentIdempotencyRecord, AttachmentObjectType, AttachmentRecor
 export type { ClockPort } from './clock';
 export type { CredentialMutationInput, CredentialRepository, MemberCredentialRecord, ResetCredentialInput } from './credential-repository';
 export type { BootstrapAdminRecord, CreateManagedMemberRecord, ManagedMemberScopeRecord, MemberAdminRepository, UpdateManagedMemberRecord, UpdateManagedMemberResult } from './member-admin-repository';
+export type { LinePageCursor, MasterDataRepository, TowerPageCursor } from './master-data-repository';
 export type { MemberRepository } from './member-repository';
 export type { DatabasePort, DatabaseRunResult, DatabaseStatement, DatabaseValue, TransactionPort } from './database';
 export type { JobMessage, JobPayload, JobQueuePort } from './job-queue';

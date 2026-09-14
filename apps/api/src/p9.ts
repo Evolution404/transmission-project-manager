@@ -8,10 +8,11 @@ import type {
   TransmissionLineSummary,
   TransmissionTowerSummary,
   VoltageLevelSummary,
-  VoltageSystemType,
 } from '@tpm/shared';
 import { requireRoles, type AppEnv } from './auth';
 import { gridLocationGuard } from './grid-location';
+import { SqlMasterDataRepository } from './repositories/sql-master-data-repository';
+import { createCloudflarePersistence } from './runtime/cloudflare/persistence';
 
 export const p9App = new Hono<AppEnv>();
 
@@ -55,34 +56,13 @@ function parseMaterials(value: unknown): DemandMaterialInput[] | null {
   return result;
 }
 
-interface VoltageRow {
-  id: string; code: string; display_name: string; system_type: VoltageSystemType; nominal_kv: number;
-  sort_order: number; enabled: number; version: number;
-}
-interface LineRow {
-  id: string; voltage_level_id: string; voltage_level_name: string; line_code: string | null; line_name: string;
-  enabled: number; version: number; tower_count: number;
-}
-interface TowerRow {
-  id: string; line_id: string; line_name: string; tower_no: string; sort_index: number; tower_type: string | null;
-  enabled: number; version: number;
-}
-
-function voltageSummary(row: VoltageRow): VoltageLevelSummary {
-  return { id: row.id, code: row.code, displayName: row.display_name, systemType: row.system_type, nominalKv: row.nominal_kv, sortOrder: row.sort_order, enabled: Boolean(row.enabled), version: row.version };
-}
-function lineSummary(row: LineRow): TransmissionLineSummary {
-  return { id: row.id, voltageLevelId: row.voltage_level_id, voltageLevelName: row.voltage_level_name, lineCode: row.line_code, lineName: row.line_name, enabled: Boolean(row.enabled), version: row.version, towerCount: row.tower_count };
-}
-function towerSummary(row: TowerRow): TransmissionTowerSummary {
-  return { id: row.id, lineId: row.line_id, lineName: row.line_name, towerNo: row.tower_no, sortIndex: row.sort_index, towerType: row.tower_type, enabled: Boolean(row.enabled), version: row.version };
+function masterDataRepository(c: Context<AppEnv>) {
+  const { database } = createCloudflarePersistence(c.env);
+  return new SqlMasterDataRepository(database);
 }
 
 p9App.get('/master/voltage-levels', async (c) => {
-  const rows = await c.env.DB.prepare(
-    `SELECT id,code,display_name,system_type,nominal_kv,sort_order,enabled,version FROM voltage_levels ORDER BY sort_order,nominal_kv,display_name`,
-  ).all<VoltageRow>();
-  return c.json({ ok: true as const, data: { items: (rows.results ?? []).map(voltageSummary) } });
+  return c.json({ ok: true as const, data: { items: await masterDataRepository(c).listVoltageLevels() } });
 });
 function listPage(c: Context<AppEnv>): { limit: number; cursor: [string, string] | null } | Response {
   const limit = Number(c.req.query('limit') ?? '100');
@@ -96,24 +76,26 @@ function listPage(c: Context<AppEnv>): { limit: number; cursor: [string, string]
 function pageCursor(first: string, id: string) { return btoa(encodeURIComponent(JSON.stringify([first, id]))); }
 p9App.get('/master/lines', async (c) => {
   const page = listPage(c); if (page instanceof Response) return page;
-  const voltageLevelId = cleanText(c.req.query('voltageLevelId'), 120), conditions = [], args: (string | number)[] = [];
-  if (voltageLevelId) { conditions.push('l.voltage_level_id=?'); args.push(voltageLevelId); }
-  if (page.cursor) { conditions.push('(l.line_name COLLATE NOCASE > ? OR (l.line_name=? COLLATE NOCASE AND l.id>?))'); args.push(page.cursor[0],page.cursor[0],page.cursor[1]); }
-  const rows = await c.env.DB.prepare(`SELECT l.*,v.display_name AS voltage_level_name,(SELECT COUNT(*) FROM transmission_towers t WHERE t.line_id=l.id) AS tower_count FROM transmission_lines l JOIN voltage_levels v ON v.id=l.voltage_level_id ${conditions.length ? 'WHERE '+conditions.join(' AND ') : ''} ORDER BY l.line_name COLLATE NOCASE,l.id LIMIT ?`).bind(...args, page.limit + 1).all<LineRow>();
-  const selected = (rows.results ?? []).slice(0, page.limit), last = selected.at(-1);
-  return c.json({ ok: true as const, data: { items: selected.map(lineSummary), nextCursor: (rows.results?.length ?? 0) > page.limit && last ? pageCursor(last.line_name,last.id) : null } });
+  const voltageLevelId = cleanText(c.req.query('voltageLevelId'), 120) || null;
+  const rows = await masterDataRepository(c).listLines({
+    voltageLevelId,
+    cursor: page.cursor ? { lineName: page.cursor[0], id: page.cursor[1] } : null,
+    limit: page.limit,
+  });
+  const selected = rows.slice(0, page.limit), last = selected.at(-1);
+  return c.json({ ok: true as const, data: { items: selected, nextCursor: rows.length > page.limit && last ? pageCursor(last.lineName,last.id) : null } });
 });
 p9App.get('/master/towers', async (c) => {
   const page = listPage(c); if (page instanceof Response) return page;
-  const lineId = cleanText(c.req.query('lineId'), 120), conditions = [], args: (string | number)[] = [];
-  if (lineId) { conditions.push('t.line_id=?'); args.push(lineId); }
-  if (page.cursor) {
-    if (!Number.isSafeInteger(Number(page.cursor[0]))) return c.json(apiError('INVALID_CURSOR', '分页游标无效'), 400);
-    conditions.push('(t.sort_index > ? OR (t.sort_index=? AND t.id>?))'); args.push(Number(page.cursor[0]),Number(page.cursor[0]),page.cursor[1]);
-  }
-  const rows = await c.env.DB.prepare(`SELECT t.*,l.line_name FROM transmission_towers t JOIN transmission_lines l ON l.id=t.line_id ${conditions.length ? 'WHERE '+conditions.join(' AND ') : ''} ORDER BY t.sort_index,t.id LIMIT ?`).bind(...args,page.limit + 1).all<TowerRow>();
-  const selected = (rows.results ?? []).slice(0,page.limit), last = selected.at(-1);
-  return c.json({ ok: true as const, data: { items: selected.map(towerSummary), nextCursor: (rows.results?.length ?? 0) > page.limit && last ? pageCursor(String(last.sort_index),last.id) : null } });
+  const lineId = cleanText(c.req.query('lineId'), 120) || null;
+  if (page.cursor && !Number.isSafeInteger(Number(page.cursor[0]))) return c.json(apiError('INVALID_CURSOR', '分页游标无效'), 400);
+  const rows = await masterDataRepository(c).listTowers({
+    lineId,
+    cursor: page.cursor ? { sortIndex: Number(page.cursor[0]), id: page.cursor[1] } : null,
+    limit: page.limit,
+  });
+  const selected = rows.slice(0,page.limit), last = selected.at(-1);
+  return c.json({ ok: true as const, data: { items: selected, nextCursor: rows.length > page.limit && last ? pageCursor(String(last.sortIndex),last.id) : null } });
 });
 
 // The idempotency record is the first statement in the same atomic D1 batch.
