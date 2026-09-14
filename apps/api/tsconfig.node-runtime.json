@@ -7,6 +7,7 @@
   },
   "include": [
     "src/ports/**/*.ts",
+    "src/repositories/**/*.ts",
     "src/adapters/node/**/*.ts",
     "src/runtime/node/**/*.ts"
   ]

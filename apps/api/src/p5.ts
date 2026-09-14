@@ -23,6 +23,8 @@ import type {
 } from '@tpm/shared';
 import { deleteAttachmentContent, loadAttachmentContent, saveAttachmentContent } from './application/attachment-content';
 import { hasScope, requireRoles, type AppEnv } from './auth';
+import type { AttachmentRecord } from './ports/attachment-repository';
+import { SqlAttachmentRepository } from './repositories/sql-attachment-repository';
 import { createCloudflarePersistence } from './runtime/cloudflare/persistence';
 
 const MAX_LINES = 100;
@@ -106,18 +108,6 @@ type SettlementRow = {
   void_reason: string | null;
   created_at: string;
   updated_at: string;
-};
-
-type AttachmentRow = {
-  id: string;
-  project_id: string;
-  object_type: AttachmentSummary['objectType'];
-  object_id: string;
-  r2_key: string;
-  file_name: string;
-  content_type: string;
-  size_bytes: number;
-  created_at: string;
 };
 
 function apiError(code: string, message: string, details?: unknown): ApiError {
@@ -551,23 +541,16 @@ async function findSettlement(db: D1Database, id: string) {
   ).bind(id).first<SettlementRow>();
 }
 
-async function resolveObjectProject(db: D1Database, objectType: AttachmentSummary['objectType'], objectId: string): Promise<string | null> {
-  if (objectType === 'project') return (await findProject(db, objectId))?.id ?? null;
-  if (objectType === 'release') return (await db.prepare('SELECT project_id FROM release_batches WHERE id=? LIMIT 1').bind(objectId).first<{ project_id: string }>())?.project_id ?? null;
-  if (objectType === 'implementation') return (await db.prepare('SELECT project_id FROM implementation_records WHERE id=? AND project_id IS NOT NULL LIMIT 1').bind(objectId).first<{ project_id: string }>())?.project_id ?? null;
-  return (await db.prepare('SELECT project_id FROM settlements WHERE id=? LIMIT 1').bind(objectId).first<{ project_id: string }>())?.project_id ?? null;
-}
-
-function attachmentSummary(row: AttachmentRow): AttachmentSummary {
+function attachmentSummary(record: AttachmentRecord): AttachmentSummary {
   return {
-    id: row.id,
-    projectId: row.project_id,
-    objectType: row.object_type,
-    objectId: row.object_id,
-    fileName: row.file_name,
-    contentType: row.content_type,
-    sizeBytes: row.size_bytes,
-    createdAt: row.created_at,
+    id: record.id,
+    projectId: record.projectId,
+    objectType: record.objectType,
+    objectId: record.objectId,
+    fileName: record.fileName,
+    contentType: record.contentType,
+    sizeBytes: record.sizeBytes,
+    createdAt: record.createdAt,
   };
 }
 
@@ -1053,7 +1036,9 @@ p5App.post('/attachments', requireRoles('admin', 'project_manager', 'implementat
   const objectId = cleanText(c.req.query('objectId'));
   const fileName = cleanText(c.req.query('fileName'));
   if (!['project', 'release', 'implementation', 'settlement'].includes(objectType) || !objectId || !fileName || fileName.length > 255) return c.json(apiError('INVALID_ATTACHMENT', '附件归属或文件名无效'), 422);
-  const projectId = await resolveObjectProject(c.env.DB, objectType, objectId);
+  const { database, objectStore } = createCloudflarePersistence(c.env);
+  const attachments = new SqlAttachmentRepository(database);
+  const projectId = await attachments.resolveObjectProject(objectType, objectId);
   if (!projectId) return c.json(apiError('ATTACHMENT_OBJECT_NOT_FOUND', '附件归属对象不存在或尚未关联项目'), 404);
   if (!canProject(c, projectId)) return c.json(apiError('SCOPE_FORBIDDEN', '无权向该项目上传附件'), 403);
   const contentType = cleanText(c.req.header('Content-Type')) || 'application/octet-stream';
@@ -1065,16 +1050,25 @@ p5App.post('/attachments', requireRoles('admin', 'project_manager', 'implementat
   const hash = await requestHash(request), operation = 'attachments.create';
   const replay = await replayIdempotentResponse(c, key, operation, hash); if (replay) return replay;
   const actor = c.get('currentUser'), id = crypto.randomUUID(), now = new Date().toISOString(), r2Key = `attachments/${projectId}/${id}`;
-  const data: AttachmentSummary = { id, projectId, objectType, objectId, fileName, contentType, sizeBytes: bytes.byteLength, createdAt: now };
+  const record: AttachmentRecord = { id, projectId, objectType, objectId, storageKey: r2Key, fileName, contentType, sizeBytes: bytes.byteLength, createdAt: now };
+  const data = attachmentSummary(record);
   const response = { ok: true as const, data };
-  const { objectStore } = createCloudflarePersistence(c.env);
   await saveAttachmentContent(objectStore, r2Key, new Uint8Array(bytes), contentType);
   try {
-    await c.env.DB.batch([
-      c.env.DB.prepare(`INSERT INTO attachments (id,project_id,object_type,object_id,r2_key,file_name,content_type,size_bytes,uploaded_by,created_at,deleted_at) VALUES (?,?,?,?,?,?,?,?,?,?,NULL)`).bind(id, projectId, objectType, objectId, r2Key, fileName, contentType, bytes.byteLength, actor.id, now),
-      auditStatement(c.env.DB, actor.id, 'attachment.create', 'attachment', id, null, data, now),
-      idempotencyStatement(c.env.DB, key, actor.id, operation, hash, response, 201, now),
-    ]);
+    await attachments.create({
+      record,
+      uploadedBy: actor.id,
+      auditEventId: crypto.randomUUID(),
+      idempotency: {
+        key,
+        actorId: actor.id,
+        operation,
+        requestHash: hash,
+        responseJson: JSON.stringify(response),
+        statusCode: 201,
+        createdAt: now,
+      },
+    });
   } catch {
     await deleteAttachmentContent(objectStore, r2Key);
     const raceReplay = await replayIdempotentResponse(c, key, operation, hash); if (raceReplay) return raceReplay;
@@ -1087,24 +1081,27 @@ p5App.get('/attachments', async (c) => {
   const objectType = cleanText(c.req.query('objectType')) as AttachmentSummary['objectType'];
   const objectId = cleanText(c.req.query('objectId'));
   if (!['project', 'release', 'implementation', 'settlement'].includes(objectType) || !objectId) return c.json(apiError('INVALID_ATTACHMENT_QUERY', '附件查询参数无效'), 400);
-  const projectId = await resolveObjectProject(c.env.DB, objectType, objectId);
+  const { database } = createCloudflarePersistence(c.env);
+  const attachments = new SqlAttachmentRepository(database);
+  const projectId = await attachments.resolveObjectProject(objectType, objectId);
   if (!projectId) return c.json(apiError('ATTACHMENT_OBJECT_NOT_FOUND', '附件归属对象不存在或尚未关联项目'), 404);
   if (!canProject(c, projectId)) return c.json(apiError('SCOPE_FORBIDDEN', '无权查看该项目附件'), 403);
-  const result = await c.env.DB.prepare(`SELECT id,project_id,object_type,object_id,r2_key,file_name,content_type,size_bytes,created_at FROM attachments WHERE object_type=? AND object_id=? AND deleted_at IS NULL ORDER BY created_at DESC,id DESC LIMIT 100`).bind(objectType, objectId).all<AttachmentRow>();
-  return c.json({ ok: true as const, data: { items: (result.results ?? []).map(attachmentSummary) } });
+  const records = await attachments.listByObject(objectType, objectId, 100);
+  return c.json({ ok: true as const, data: { items: records.map(attachmentSummary) } });
 });
 
 p5App.get('/attachments/:id/content', async (c) => {
-  const attachment = await c.env.DB.prepare(`SELECT id,project_id,object_type,object_id,r2_key,file_name,content_type,size_bytes,created_at FROM attachments WHERE id=? AND deleted_at IS NULL LIMIT 1`).bind(c.req.param('id')).first<AttachmentRow>();
+  const { database, objectStore } = createCloudflarePersistence(c.env);
+  const attachments = new SqlAttachmentRepository(database);
+  const attachment = await attachments.findById(c.req.param('id'));
   if (!attachment) return c.json(apiError('NOT_FOUND', '附件不存在'), 404);
-  if (!canProject(c, attachment.project_id)) return c.json(apiError('SCOPE_FORBIDDEN', '无权下载该项目附件'), 403);
-  const { objectStore } = createCloudflarePersistence(c.env);
-  const object = await loadAttachmentContent(objectStore, attachment.r2_key);
+  if (!canProject(c, attachment.projectId)) return c.json(apiError('SCOPE_FORBIDDEN', '无权下载该项目附件'), 403);
+  const object = await loadAttachmentContent(objectStore, attachment.storageKey);
   if (!object) return c.json(apiError('ATTACHMENT_CONTENT_MISSING', '附件内容不存在'), 404);
   const headers = new Headers();
-  headers.set('Content-Type', attachment.content_type);
-  headers.set('Content-Length', String(attachment.size_bytes));
-  headers.set('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(attachment.file_name)}`);
+  headers.set('Content-Type', attachment.contentType);
+  headers.set('Content-Length', String(attachment.sizeBytes));
+  headers.set('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(attachment.fileName)}`);
   headers.set('Cache-Control', 'private, no-store');
   return new Response(object.bytes, { status: 200, headers });
 });

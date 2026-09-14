@@ -79,11 +79,11 @@ test('P1.2 runtime authentication does not depend on Cloudflare Access or email 
 });
 
 test('portable backend core cannot depend on Cloudflare runtime types', () => {
-  const requiredPorts = ['database.ts', 'object-store.ts', 'job-queue.ts', 'scheduler.ts', 'clock.ts'];
+  const requiredPorts = ['database.ts', 'object-store.ts', 'job-queue.ts', 'scheduler.ts', 'clock.ts', 'attachment-repository.ts'];
   for (const name of requiredPorts) {
     assert.equal(existsSync(resolve(root, 'apps/api/src/ports', name)), true, `缺少可移植后端端口 ${name}`);
   }
-  const portableRoots = ['domain', 'application', 'ports']
+  const portableRoots = ['domain', 'application', 'ports', 'repositories']
     .map((name) => resolve(root, 'apps/api/src', name))
     .filter((directory) => existsSync(directory));
   const forbidden = /\b(?:D1Database|D1PreparedStatement|R2Bucket|Fetcher|ExecutionContext)\b|@cloudflare\/workers-types|\bwrangler\b|cloudflare:/i;
@@ -98,6 +98,12 @@ test('portable backend core cannot depend on Cloudflare runtime types', () => {
 test('P5 attachment content no longer reaches the R2 binding directly', () => {
   const source = readFileSync(resolve(root, 'apps/api/src/p5.ts'), 'utf8');
   assert.doesNotMatch(source, /c\.env\.FILES/, 'P5 attachment content must use ObjectStorePort instead of the R2 binding directly');
+});
+
+test('P5 attachment metadata goes through AttachmentRepository instead of inline SQL', () => {
+  const source = readFileSync(resolve(root, 'apps/api/src/p5.ts'), 'utf8');
+  assert.match(source, /SqlAttachmentRepository/, 'P5 attachments must use the shared repository contract');
+  assert.doesNotMatch(source, /\b(?:FROM|INTO)\s+attachments\b/i, 'P5 must not inline attachment metadata SQL');
 });
 
 test('Cloudflare infrastructure adapters depend inward on portable ports', () => {
