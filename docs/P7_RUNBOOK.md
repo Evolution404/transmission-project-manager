@@ -177,11 +177,24 @@ preflight 通过只证明配置结构和构建，不证明真实资源/Secret �
 8. 再次 fetch `origin/main` 并要求仍等于批准 SHA；
 9. `wrangler deploy --config wrangler.production.jsonc --secrets-file <runner-temp>`，代码、bindings 与 Worker Secrets 同一版本发布；
 10. 从 production config 提取真实自定义域名；
-11. GitHub runner 请求 `https://<domain>/api/health`；
-12. 只有 `ok=true`、service=`transmission-project-manager`、`schema.ready=true` 才通过基础发布验收；
+11. GitHub runner 请求 `https://<domain>/api/health`；Cloudflare 新 deployment 可能存在短暂传播窗口，因此不能只对网络错误做 `curl --retry`，必须在有限窗口内重复执行“HTTP 请求 + JSON 语义校验”；
+12. 只有实际响应满足 `ok=true`、service=`transmission-project-manager`、`schema.ready=true` 才通过基础发布验收；如果首次 HTTP 200 仍返回旧 deployment 的业务语义，应继续等待并重试，而不是立即把已经成功的 Worker 发布误判为失败；
 13. 无论成功失败都删除 runner 临时 secret 文件。
 
 代码发布不会自动执行 migration。
+
+### 2026-09-14 首次正式 release 记录
+
+`main@9102a17f7795ef85254845c6dea0b156a2d2b05b` 的 `Production release`
+run `34843761479` 中，完整检查、配置校验、dry-run、精确 SHA 二次绑定和正式
+Wrangler publish 均 PASS；唯一失败步骤是紧随发布后的 health 验证。约 2 分钟后人工从公网复核
+`https://project.980923.xyz/api/health` 已为 HTTP 200，且满足 `ok=true`、
+`service=transmission-project-manager`、`schema.ready=true`、
+`currentMigration=requiredMigration=0001_initial_schema.sql`。
+
+因此该 run 应记录为“**Worker 发布成功，自动 health 验收因传播窗口误判失败**”，不能记录为
+“Worker 发布失败”。后续 workflow 已在施工分支改为最多 30 次 `curl + JSON 语义校验`；
+修复合入 `main` 后必须再跑一次精确 SHA 绑定的 `Production release`，以取得最终全绿的发布证据。
 
 ## 6. 首次管理员和认证验收
 

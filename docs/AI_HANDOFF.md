@@ -4,8 +4,14 @@
 
 仓库：`Evolution404/transmission-project-manager`
 默认分支：`main`
-当前施工分支：`feat/notion-object-storage`
-当前 `origin/main`：`fa9076e16d2a550478db9825829e1b2153b956b3`
+当前施工分支：`fix/production-health-propagation-20260914`
+当前 `origin/main`：`9102a17f7795ef85254845c6dea0b156a2d2b05b`
+
+2026-09-14 20:32（UTC+8）续接核对：本机 `main` 与 `origin/main` 均为
+`9102a17f7795ef85254845c6dea0b156a2d2b05b`，工作区在开始施工前为 clean；
+`apps/api/migrations/` 仍只有唯一 `0001_initial_schema.sql`（另有说明文档），未新增 `0002+`。
+PR #8 已合并；该 SHA 的 CI run `34840904099` 与 Production preflight run
+`34841056465` 均 PASS。
 
 后端可移植化已经通过 GitHub PR #1 合入 `main`：
 
@@ -77,22 +83,44 @@
 
 ## 2026-09-14 最新生产实测
 
+- 正式 `Production release` run `34843761479` 针对
+  `main@9102a17f7795ef85254845c6dea0b156a2d2b05b` 执行。完整 `npm run check`、
+  production config 校验、临时 Worker secret 文件生成、dry-run、main SHA 二次绑定、
+  Worker/bindings/secrets 发布步骤全部 PASS；run 最终标记为 failure 的唯一原因是紧随部署后的
+  `Verify custom domain and health` 步骤立即返回 exit 1。
+- 该失败不是 Worker 发布失败。约 2 分钟后从公网再次请求
+  `https://project.980923.xyz/api/health` 已返回 HTTP 200，正文满足
+  `ok=true`、`service=transmission-project-manager`、`schema.ready=true`，并报告
+  `currentMigration=requiredMigration=0001_initial_schema.sql`。根页面 HTTPS 同样返回 200。
+- 已复现并定位发布流水线误判边界：旧 workflow 的 `curl --retry` 只重试传输/HTTP 错误，
+  不会在 Cloudflare 部署传播期间对“HTTP 200 但仍是旧版本/旧语义”的 health body 重试。
+  当前施工分支已按测试先行增加语义重试门禁：先证明旧 workflow 测试失败，再改为最多 30 次
+  `curl + JSON 语义校验`，目标 `tests/p7-preflight.test.mjs` 11/11 PASS，`git diff --check` PASS；
+  随后的完整 `npm run check` 也 PASS（Node 254/254、Web 64/64，含 typecheck、build、Worker dry-run）。
+- 当前生产公开认证状态 `GET /api/auth/status` 返回 `initialized=false`，说明正式 production D1
+  仍处于“未创建首管理员”的预期空账号状态。
+- 本机根 `.env` 只包含 `AUTH_CREDENTIAL_PEPPER`、`BOOTSTRAP_TOKEN`、
+  `CLOUDFLARE_API_TOKEN`、`NOTION_API_TOKEN` 四个键；未发现第二套 dotenv。
+- 尝试由当前 Mac/Codex 执行面把本地 `BOOTSTRAP_TOKEN` 直接写入 Cloudflare Worker Secret 时，
+  被 DevSpace/OpenAI 本机安全层拒绝执行“读取本地 Secret 并写入远端”的命令。未打印、复制或
+  外传 Secret 值，也没有绕过该安全边界。首管理员因此仍待通过受控一次性 Secret 路径完成。
+
 - GitHub `production` Environment 已存在并仅允许 `main`；旧的 `PRODUCTION_DEPLOY_ENABLED`、`PRODUCTION_MIGRATION_ENABLED`、`PRODUCTION_CONFIG_JSON` 已全部删除，当前 Environment Variables=0。
-- 长期 Secrets 目标为 3 个：`CLOUDFLARE_API_TOKEN`、`AUTH_CREDENTIAL_PEPPER`、`NOTION_API_TOKEN`。当前实际只有 `CLOUDFLARE_API_TOKEN` 已配置并实测有效；后两项仍需由用户在 GitHub `production` Environment 中录入，禁止从本机 Secret 文件自动外传。
+- GitHub `production` 当前长期 Secrets 已为且只为 3 个：`CLOUDFLARE_API_TOKEN`、`AUTH_CREDENTIAL_PEPPER`、`NOTION_API_TOKEN`。run `34843761479` 的“Bind approval to exact main revision and required secrets”步骤 PASS，证明三项在该次正式发布时均存在且非空。`BOOTSTRAP_TOKEN` 仍不属于长期 GitHub Environment Secret。
 - Cloudflare Account：`642d30520d6c494dd418b1f4b3853aa6`；Zone `980923.xyz` 为 active；`project.980923.xyz` 已绑定 Worker `transmission-project-manager`。
-- 当前 Worker 实际仍绑定 acceptance D1 `transmission-project-manager-acceptance`（UUID `c1dbd68e-8626-4cb1-a7a8-f9fe07df705b`），不能冒充新的正式 production D1。
-- 当前公网 `https://project.980923.xyz` 仍由旧 acceptance D1 承载，属于 schema squash 前的开发环境，不再执行历史升级；后续发布直接切换到新的单基线 production D1。
+- run `34843761479` 的正式 Wrangler publish 已使用受审 `apps/api/wrangler.production.jsonc`，因此当前正式 deployment 的 D1 binding 是 `transmission-project-manager-production`（UUID `32ab1d29-e720-41a1-a83f-11b579734a0e`），对象存储 provider=`notion`。旧 acceptance D1 `transmission-project-manager-acceptance`（UUID `c1dbd68e-8626-4cb1-a7a8-f9fe07df705b`）只保留为历史 acceptance 资源，不再是本次 production release 的绑定目标。
+- 当前公网 `https://project.980923.xyz` 已由 production config 发布；health 已确认唯一 `0001_initial_schema.sql` ready。Cloudflare Git Build 已断开，生产发布入口保持为受控 GitHub Actions `workflow_dispatch`。
 - Cloudflare R2 API 返回 `403 / 10042 Please enable R2 through the Cloudflare Dashboard`。用户决定当前生产不启用 R2，改用已有付费 Notion Workspace；R2 保留为未来可替换后端，因此 R2 未开通不再是当前发布硬阻塞。
 - Notion Internal Integration 已创建并授权给唯一根页面 `Transmission Project Manager Storage`。Token 只允许存在于本机根 `.env` 或 GitHub `production` Secret，不得提交或打印；Notion 非敏感资源 ID 归入受审 production config。
 - 本分支已新增 `NotionObjectStoreAdapter`、Notion/R2/Filesystem provider 选择、P7 双 provider 校验、`npm run notion:init` 与 `npm run notion:smoke`。真实 Notion `TPM Object Store` 已初始化，真实 `put → get → delete → get=null` smoke 已 PASS；生产 Data Source ID 已纳入受审 `wrangler.production.jsonc`。
 
 ## 下一步
 
-1. 本分支最新完整 `npm run check` 已 PASS（Node 254/254、Web 64/64）；继续拆小提交并 push，由 GitHub CI 复现后再考虑合并。
-2. 统一 Secret 配置代码已完成：本地目标仅保留一个 `.env`；GitHub production 已清空旧 Variables；正式 deploy 使用 `--secrets-file` 将 Worker Secrets 与代码同版本发布。由于安全边界阻止自动搬运真实 Secret，本机仍需用户自行执行一次 `npm run config:local-env:migrate`，GitHub 仍需补 `AUTH_CREDENTIAL_PEPPER` 与 `NOTION_API_TOKEN` 两个 Secret。
-3. 独立正式 production D1 已重建为开发期单基线数据库，只应用 `0001_initial_schema.sql`；后续发布直接绑定该库，不复用或升级旧 acceptance D1。
-4. 查清/关闭意外的 main→Cloudflare 自动部署链路后，再按受控 migration/release workflow 合并和发布。
-5. 发布后真实验收 health、登录、核心业务、Notion 附件/备份、Cron、域名和 Cloudflare/Notion 错误指标。
+1. 将当前 health 传播窗口修复跑完整 `npm run check`，提交、push、走 PR/CI 合入 `main`；不要直接改生产数据库，也不要新增 migration。
+2. 合入后用新的精确 `main` SHA 再跑一次 `Production release`，确认 workflow 最终状态为 PASS，避免把“发布成功但即时 health 误判”留成长期噪声。
+3. 首管理员仍未创建。需要临时把 `BOOTSTRAP_TOKEN` 配置为 Worker Secret，完成 HTTPS bootstrap 后验证第二次 bootstrap 返回关闭状态，再立即删除该 Worker Secret。当前自动执行面不能从本机 `.env` 写远端 Secret，因此此步骤必须走允许 Secret 写入的受控执行面，且绝不能把 Token 放入 Git/PR/日志。
+4. 首管理员完成后继续真实登录、Secure/HttpOnly/SameSite Cookie、匿名 API、角色/范围和核心业务 smoke；再覆盖 Notion 附件、Cron/outbox/backup、手机/桌面和目标地区网络验收。
+5. P7 最终证据仍以 `P7_ACCEPTANCE.md` 为准。当前可以确认 health/schema/domain 已通过人工复核，但完整 P7-01～13 尚未全部完成。
 
 ## 生产资源现状：不要猜
 

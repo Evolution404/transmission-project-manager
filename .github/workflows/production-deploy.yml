@@ -92,8 +92,17 @@ jobs:
           DOMAIN="$(node --input-type=module -e 'import {readFileSync} from "node:fs"; const c=JSON.parse(readFileSync("apps/api/wrangler.production.jsonc","utf8")); process.stdout.write(c.routes[0].pattern);')"
           test -n "$DOMAIN"
           HEALTH_FILE="$(mktemp)"
-          curl --fail --silent --show-error --retry 6 --retry-all-errors --retry-delay 2 "https://${DOMAIN}/api/health" -o "$HEALTH_FILE"
-          HEALTH_FILE="$HEALTH_FILE" node --input-type=module -e 'import {readFileSync} from "node:fs"; const body=JSON.parse(readFileSync(process.env.HEALTH_FILE,"utf8")); if (body?.ok !== true || body?.data?.service !== "transmission-project-manager" || body?.data?.schema?.ready !== true) process.exit(1);'
+          trap 'rm -f "$HEALTH_FILE"' EXIT
+          HEALTH_OK=0
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --show-error --connect-timeout 10 --max-time 20 "https://${DOMAIN}/api/health" -o "$HEALTH_FILE" \
+              && HEALTH_FILE="$HEALTH_FILE" node --input-type=module -e 'import {readFileSync} from "node:fs"; const body=JSON.parse(readFileSync(process.env.HEALTH_FILE,"utf8")); if (body?.ok !== true || body?.data?.service !== "transmission-project-manager" || body?.data?.schema?.ready !== true) process.exit(1);'; then
+              HEALTH_OK=1
+              break
+            fi
+            sleep 2
+          done
+          test "$HEALTH_OK" = 1
           printf '### Production release\n- Commit: `%s`\n- Domain: `%s`\n- `/api/health`: PASS\n' "${{ inputs.release_sha }}" "$DOMAIN" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Remove ephemeral Worker secret file

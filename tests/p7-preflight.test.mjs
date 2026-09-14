@@ -142,6 +142,10 @@ test('production deploy is manual, environment-bound, version-bound and publishe
   assert.match(source, /--secrets-file/);
   assert.match(source, /npm run check/);
   assert.match(source, /wrangler deploy --config wrangler\.production\.jsonc/);
+  assert.match(source, /for attempt in \$\(seq 1 30\)/);
+  assert.match(source, /HEALTH_OK=0/);
+  assert.match(source, /HEALTH_OK=1/);
+  assert.match(source, /sleep 2/);
   assert.doesNotMatch(source, /PRODUCTION_DEPLOY_ENABLED|PRODUCTION_CONFIG_JSON|vars\./);
   assert.doesNotMatch(source, /\n  (push|pull_request|schedule|workflow_run):|d1 migrations apply|d1 execute/);
 });
