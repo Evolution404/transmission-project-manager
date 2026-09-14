@@ -33,19 +33,17 @@ PR #2 合入后使用以下 Actions：
 
 ### Variables
 
-`PRODUCTION_CONFIG_JSON`
-: 非敏感严格 JSON。必须来自 `apps/api/wrangler.production.example.json` 的真实生产版本，并通过 P7 config validator。
+长期数量：**0**。生产非敏感配置直接受 Git 管理于 `apps/api/wrangler.production.jsonc`，不得再复制到 GitHub Environment Variables。
 
-`PRODUCTION_DEPLOY_ENABLED`
-: 平时 `false`；批准准确代码发布窗口时才设 `true`。
+### Secrets
 
-`PRODUCTION_MIGRATION_ENABLED`
-: 平时 `false`；完成数据库备份、停写和目标 ID 复核后，批准 migration 窗口才临时设 `true`。
+长期数量：**3**：
 
-### Secret
+- `CLOUDFLARE_API_TOKEN`：account-owned、最小权限，仅供 Wrangler/API 自动化认证；
+- `AUTH_CREDENTIAL_PEPPER`：认证 verifier 的长期 Worker Secret；
+- `NOTION_API_TOKEN`：当前 Notion 对象存储的长期 Worker Secret。
 
-`CLOUDFLARE_API_TOKEN`
-: account-owned、最小权限。禁止 Global API Key、个人浏览器登录态或个人长期 Token。
+禁止 Global API Key、个人浏览器登录态或个人长期 Token。`BOOTSTRAP_TOKEN` 只在首次初始化期间临时存在，用完删除。
 
 ## 3. Cloudflare 正式资源和 Worker Secrets
 
@@ -141,7 +139,7 @@ P7-01～05 必须使用真实业务资料或明确的真实环境抽样：
 
 - `npm ci`；
 - `npm run check`；
-- materialize `PRODUCTION_CONFIG_JSON`；
+- 直接读取并校验受审的 `apps/api/wrangler.production.jsonc`；
 - `npm run p7 -- config`；
 - production Wrangler dry-run；
 - 不加载 `CLOUDFLARE_API_TOKEN`；
@@ -153,37 +151,35 @@ preflight 通过只证明配置结构和构建，不证明真实资源/Secret �
 
 仅在 schema 不满足当前代码要求时执行：
 
-1. `PRODUCTION_MIGRATION_ENABLED=true`；
-2. 手工触发 `Production D1 migration`；
-3. 输入准确 `release_sha`；
-4. 输入 migration/backup evidence reference；
-5. 人工再次输入目标 D1 UUID；
-6. workflow 校验输入 UUID 与 `PRODUCTION_CONFIG_JSON` 中 `database_id` 完全一致；
-7. 执行迁移前 `wrangler d1 migrations list DB --remote`；
-8. 执行 `wrangler d1 migrations apply DB --remote`；
-9. 再次 `list`；
-10. 核对关键表、金额、数量、状态和错误；
-11. 迁移窗口结束后立刻把 `PRODUCTION_MIGRATION_ENABLED` 恢复 `false`。
+1. 手工触发 `Production D1 migration`；
+2. 输入准确 `release_sha`；
+3. 输入 migration/backup evidence reference；
+4. 人工再次输入目标 D1 UUID；
+5. workflow 校验输入 UUID 与受审 `apps/api/wrangler.production.jsonc` 中 `database_id` 完全一致；
+6. 执行迁移前 `wrangler d1 migrations list DB --remote`；
+7. 执行 `wrangler d1 migrations apply DB --remote`；
+8. 再次 `list`；
+9. 核对关键表、金额、数量、状态和错误。
 
-任何 migration 失败都立即停止；不得盲目重跑，不得修改已冻结的 `0009`–`0012` 绕过问题。
+任何 migration 失败都立即停止；不得盲目重跑。当前仍处开发阶段，只允许单一 `0001_initial_schema.sql` 基线；除非用户明确要求兼容已有数据/保留升级路径，否则不得新增补丁 migration。
 
 ### 5.4 Production release
 
 确认 schema ready 后：
 
-1. `PRODUCTION_DEPLOY_ENABLED=true`；
-2. 手工触发 `Production release`；
-3. 输入准确当前 `main` SHA；
-4. 输入 release/backup/schema evidence reference；
-5. workflow 重新执行完整 `npm run check`；
-6. production config validator；
-7. Wrangler dry-run；
+1. 手工触发 `Production release`；
+2. 输入准确当前 `main` SHA；
+3. 输入 release/backup/schema evidence reference；
+4. workflow 重新执行完整 `npm run check`；
+5. production config validator；
+6. runner 从 GitHub Environment Secrets 生成 0600 的临时 `worker-secrets.json`；
+7. Wrangler dry-run 使用同一 `--secrets-file`；
 8. 再次 fetch `origin/main` 并要求仍等于批准 SHA；
-9. Wrangler 正式 deploy；
+9. `wrangler deploy --config wrangler.production.jsonc --secrets-file <runner-temp>`，代码、bindings 与 Worker Secrets 同一版本发布；
 10. 从 production config 提取真实自定义域名；
 11. GitHub runner 请求 `https://<domain>/api/health`；
 12. 只有 `ok=true`、service=`transmission-project-manager`、`schema.ready=true` 才通过基础发布验收；
-13. 发布窗口结束后把 `PRODUCTION_DEPLOY_ENABLED` 恢复 `false`。
+13. 无论成功失败都删除 runner 临时 secret 文件。
 
 代码发布不会自动执行 migration。
 

@@ -17,7 +17,7 @@ PR #1 合并前 CI 与合并后的 `main` CI #31 均通过。Cloudflare Workers 
 - `Production D1 migration`：手工、`production` Environment 绑定，只执行正式 D1 migration；
 - `Production release`：手工、`production` Environment 绑定，只发布 Worker/Static Assets/已审核绑定，并在发布后验证真实 `/api/health`。
 
-**代码中存在 workflow 不等于生产已经配置或发布。** 2026-09-14 已在 GitHub UI 创建 `production` Environment，限制仅 `main` 部署，并设置两个生产开关为 `false`；Environment 审核者和 main branch protection 尚未配置。`PRODUCTION_CONFIG_JSON`、Cloudflare CI Token、生产 Worker Secret 和正式资源均未核实/配置。Cloudflare Dashboard 在云端浏览器持续显示安全验证，正式 migration、release 和验收未执行。
+**代码中存在 workflow 不等于生产已经发布。** 2026-09-14 已建立 GitHub `production` Environment，并限制生产 workflow 仅从 `main` 运行。生产非敏感配置现在直接受 Git 管理于 `apps/api/wrangler.production.jsonc`；GitHub 不再保存重复的 production Variables。正式发布长期只依赖 3 个 Environment Secrets：`CLOUDFLARE_API_TOKEN`、`AUTH_CREDENTIAL_PEPPER`、`NOTION_API_TOKEN`。`BOOTSTRAP_TOKEN` 仅在首次管理员初始化时临时使用，不属于长期配置。
 
 ## 2. 云上开发与发布原则
 
@@ -62,23 +62,23 @@ YAML 中写 `environment: production` 不能替代真实 Environment protection 
 
 ### Environment Variables
 
-`PRODUCTION_CONFIG_JSON`
-: 真实、非敏感、经过 `npm run p7 -- config` 验证的严格 JSON。包含 Worker 名称、Account ID、自定义域名、D1 名称/ID、对象存储 provider 的非敏感配置、静态资源和 Cron；不包含任何 Secret 值。当前 Notion 模式只保存 `NOTION_API_VERSION` 与 `NOTION_STORAGE_DATA_SOURCE_ID`，不得保存 `NOTION_API_TOKEN`。
+**长期数量：0。**
 
-`PRODUCTION_DEPLOY_ENABLED`
-: 平时建议 `false`。只有批准准确 commit 的发布窗口才改为 `true`。
+生产非敏感配置直接提交到 `apps/api/wrangler.production.jsonc`，由 PR/CI 审核并通过 `npm run p7 -- config` 校验。不要在 GitHub Environment 再维护 `PRODUCTION_CONFIG_JSON`、部署开关或迁移开关，避免同一配置出现两份来源。
 
-`PRODUCTION_MIGRATION_ENABLED`
-: 平时必须 `false`。只有完成备份、停写和目标 D1 核对后，批准 migration 窗口才临时设为 `true`。
+### Environment Secrets
 
-### Environment Secret
+长期只保留 3 个：
 
-`CLOUDFLARE_API_TOKEN`
-: 使用 Cloudflare account-owned API token，按 Worker/D1/路由以及实际启用的 R2 能力配置最小权限。当前 Notion 模式不要求 R2 已开通。禁止使用 Global API Key、个人浏览器登录态或个人长期 Token 作为 CI/CD 依赖。
+- `CLOUDFLARE_API_TOKEN`：Cloudflare account-owned API token，仅供 Wrangler/API 自动化认证；
+- `AUTH_CREDENTIAL_PEPPER`：服务端 HMAC verifier 的长期认证 pepper；
+- `NOTION_API_TOKEN`：当前 production=`notion` 时的对象存储 Integration Token。
+
+`BOOTSTRAP_TOKEN` 不属于长期 Secret。首次管理员初始化时如需要，可临时增加，完成 bootstrap 并确认再次调用被拒绝后立即删除。
 
 ## 5. Wrangler production config
 
-模板：`apps/api/wrangler.production.example.json`。
+唯一正式非敏感配置文件：`apps/api/wrangler.production.jsonc`。该文件受 Git、PR 和 CI 审核，是 production bindings/vars/resource IDs 的唯一来源。
 
 生产配置必须保持：
 
@@ -137,7 +137,7 @@ YAML 中写 `environment: production` 不能替代真实 Environment protection 
 运行 GitHub Actions `Production preflight (no deployment)`：
 
 - 完整 `npm run check`；
-- materialize `PRODUCTION_CONFIG_JSON`；
+- 直接校验仓库中的 `apps/api/wrangler.production.jsonc`；
 - `npm run p7 -- config`；
 - Wrangler production dry-run；
 - 不携带 Cloudflare Token，不产生云端变更。
@@ -150,7 +150,7 @@ YAML 中写 `environment: production` 不能替代真实 Environment protection 
 2. 已有正式数据时先停写、暂停会写库的 Cron/任务并完成可恢复备份；空库也记录“空库无业务数据”证据；
 3. 手工触发 `Production D1 migration`；
 4. 输入准确 `main` SHA、migration evidence reference、目标正式 D1 UUID；
-5. workflow 会要求输入 UUID 与 `PRODUCTION_CONFIG_JSON` 的 `database_id` 完全相同；
+5. workflow 会要求输入 UUID 与受审 `apps/api/wrangler.production.jsonc` 中的 `database_id` 完全相同；
 6. 执行前后分别 `wrangler d1 migrations list DB --remote`；
 7. 执行 `wrangler d1 migrations apply DB --remote`；
 8. migration 失败立即停止，不继续 Worker 发布，也不修改历史 migration 规避失败。
@@ -163,11 +163,13 @@ migration/schema ready 后手工触发 `Production release`：
 2. 输入已审核的发布/备份/schema 证据引用；
 3. workflow 再执行完整 `npm run check`；
 4. validation + dry-run；
-5. 再次确认 `origin/main` 仍等于批准 SHA；
-6. `wrangler deploy --config wrangler.production.jsonc`；
-7. GitHub runner 从 production config 提取真实自定义域名；
-8. 请求 `https://<domain>/api/health`；
-9. 只有 `ok=true`、service 正确、`schema.ready=true` 才判定发布后的基础健康检查通过。
+5. runner 将 `AUTH_CREDENTIAL_PEPPER` 与 `NOTION_API_TOKEN` 写入仅存在于 `$RUNNER_TEMP` 的 0600 临时 secret 文件；
+6. 再次确认 `origin/main` 仍等于批准 SHA；
+7. `wrangler deploy --config wrangler.production.jsonc --secrets-file <runner-temp>`，代码、bindings 与 Worker Secrets 同一版本发布；
+8. GitHub runner 从 production config 提取真实自定义域名；
+9. 请求 `https://<domain>/api/health`；
+10. 只有 `ok=true`、service 正确、`schema.ready=true` 才判定发布后的基础健康检查通过；
+11. 无论成功失败都删除 runner 临时 secret 文件。
 
 代码 deploy **不自动执行 migration**。
 

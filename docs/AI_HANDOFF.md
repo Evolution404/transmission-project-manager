@@ -24,7 +24,7 @@
 用户在 2026-09-14 最新指令中明确要求**直接连接 Mac 本地调试**，因此此前“禁止连接 Mac”的阶段性约束已被当前指令覆盖。本地开发/排障可以使用 `/Users/zhangyuxi/Desktop/项目管理`，但生产运行不能依赖个人电脑；所有代码仍必须进入施工分支/PR，并由 GitHub CI 复现完整门禁后才能考虑合入 `main`。
 
 - 不得把 Cloudflare/Notion API Token、认证 Secret、Cookie 或密码写入 Git、PR、Actions 日志或前端代码。
-- 本地 `.env` / `.env.notion` 已由 `.gitignore` 排除；只允许保存本机 Secret，不得提交。
+- 本地只允许根目录 `.env` 作为 Secret 入口；`.env.notion` 与 `apps/api/.dev.vars` 属于已废弃旧入口。仓库提供 `.env.example`，真实 `.env` 仍由 `.gitignore` 排除。
 - 生产 migration/release 仍使用受保护的 GitHub Actions/Cloudflare 流程。
 - 当前发现合并 `main` 后 Cloudflare 侧会出现新的 Worker deployment，自动部署来源尚未彻底关闭/解释，因此本分支**不得直接合并 main**，先保持 PR 全绿并核对部署链路。
 
@@ -42,9 +42,8 @@
 - 只能从 `main` 运行；
 - 必须输入精确 40 位 `release_sha`，且 checkout HEAD 与最新 `origin/main` 都必须等于该 SHA；
 - 必须提供非敏感 `release_record`；
-- GitHub `production` Environment Variable `PRODUCTION_DEPLOY_ENABLED` 必须显式为 `true`；
-- `PRODUCTION_CONFIG_JSON` 必须存在并通过 `npm run p7 -- config`；
-- `CLOUDFLARE_API_TOKEN` 必须存在；
+- production 非敏感配置只来自受审的 `apps/api/wrangler.production.jsonc`，GitHub 不再维护重复 Variables；
+- GitHub `production` Environment 长期只需 3 个 Secrets：`CLOUDFLARE_API_TOKEN`、`AUTH_CREDENTIAL_PEPPER`、`NOTION_API_TOKEN`；
 - 发布前重新运行完整 `npm run check` 和 Wrangler dry-run；
 - Worker 正式部署与 D1 migration 严格分离；
 - 发布后直接请求生产自定义域名 `/api/health`，要求 `ok=true`、服务名正确且 `schema.ready=true`。
@@ -58,8 +57,7 @@
 - 仅 `workflow_dispatch`，普通 push/PR 不允许迁移；
 - 只能从 `main` 运行；
 - 精确绑定 `release_sha`；
-- `PRODUCTION_MIGRATION_ENABLED` 必须显式为 `true`；
-- 必须输入目标正式 D1 的 UUID，并与 `PRODUCTION_CONFIG_JSON` 中 `database_id` 完全一致；
+- 必须输入目标正式 D1 的 UUID，并与受审 `apps/api/wrangler.production.jsonc` 中 `database_id` 完全一致；
 - 迁移前后都执行 `wrangler d1 migrations list DB --remote`；
 - migration 与代码 deploy 不互相隐式触发。
 
@@ -79,19 +77,19 @@
 
 ## 2026-09-14 最新生产实测
 
-- GitHub `production` Environment 已存在并仅允许 `main`；`PRODUCTION_DEPLOY_ENABLED=false`、`PRODUCTION_MIGRATION_ENABLED=false` 保持关闭。
-- `CLOUDFLARE_API_TOKEN` 已配置并实测有效；account-owned token verify、Workers Scripts、D1、Worker Domains、Zones API 均可访问。
+- GitHub `production` Environment 已存在并仅允许 `main`；旧的 `PRODUCTION_DEPLOY_ENABLED`、`PRODUCTION_MIGRATION_ENABLED`、`PRODUCTION_CONFIG_JSON` 已全部删除，当前 Environment Variables=0。
+- 长期 Secrets 目标为 3 个：`CLOUDFLARE_API_TOKEN`、`AUTH_CREDENTIAL_PEPPER`、`NOTION_API_TOKEN`。当前实际只有 `CLOUDFLARE_API_TOKEN` 已配置并实测有效；后两项仍需由用户在 GitHub `production` Environment 中录入，禁止从本机 Secret 文件自动外传。
 - Cloudflare Account：`642d30520d6c494dd418b1f4b3853aa6`；Zone `980923.xyz` 为 active；`project.980923.xyz` 已绑定 Worker `transmission-project-manager`。
 - 当前 Worker 实际仍绑定 acceptance D1 `transmission-project-manager-acceptance`（UUID `c1dbd68e-8626-4cb1-a7a8-f9fe07df705b`），不能冒充新的正式 production D1。
 - 当前公网 `https://project.980923.xyz` 仍由旧 acceptance D1 承载，属于 schema squash 前的开发环境，不再执行历史升级；后续发布直接切换到新的单基线 production D1。
 - Cloudflare R2 API 返回 `403 / 10042 Please enable R2 through the Cloudflare Dashboard`。用户决定当前生产不启用 R2，改用已有付费 Notion Workspace；R2 保留为未来可替换后端，因此 R2 未开通不再是当前发布硬阻塞。
-- Notion Internal Integration 已创建并授权给唯一根页面 `Transmission Project Manager Storage`，根 Page ID `3db9afbc-cb69-80c4-ab94-fbb4a8f6b1b5`；Token 仅保存在本机 `.env.notion`，不得提交或打印。
-- 本分支已新增 `NotionObjectStoreAdapter`、Notion/R2/Filesystem provider 选择、P7 双 provider 校验、`npm run notion:init` 与 `npm run notion:smoke`。真实 Notion `TPM Object Store` 已初始化：Database ID `71dc9aae-5e92-458d-91b0-e1118b76df69`，Data Source ID `33a70b5a-c477-409f-ba61-78679279ce7e`；真实 `put → get → delete → get=null` smoke 已 PASS。Token 仍只保存在被 Git 忽略的本机 `.env.notion`。
+- Notion Internal Integration 已创建并授权给唯一根页面 `Transmission Project Manager Storage`。Token 只允许存在于本机根 `.env` 或 GitHub `production` Secret，不得提交或打印；Notion 非敏感资源 ID 归入受审 production config。
+- 本分支已新增 `NotionObjectStoreAdapter`、Notion/R2/Filesystem provider 选择、P7 双 provider 校验、`npm run notion:init` 与 `npm run notion:smoke`。真实 Notion `TPM Object Store` 已初始化，真实 `put → get → delete → get=null` smoke 已 PASS；生产 Data Source ID 已纳入受审 `wrangler.production.jsonc`。
 
 ## 下一步
 
-1. 本分支本地完整 `npm run check` 已 PASS（Node 260/260、Web 64/64）；继续拆小提交并 push，建立 PR，由 GitHub CI 复现后再考虑合并。
-2. 用已初始化的 `NOTION_STORAGE_DATA_SOURCE_ID` 生成真实 `PRODUCTION_CONFIG_JSON`，并把 `NOTION_API_TOKEN` 安全配置为 Worker Secret；当前 production config 不包含 `r2_buckets`。
+1. 本分支最新完整 `npm run check` 已 PASS（Node 254/254、Web 64/64）；继续拆小提交并 push，由 GitHub CI 复现后再考虑合并。
+2. 统一 Secret 配置代码已完成：本地目标仅保留一个 `.env`；GitHub production 已清空旧 Variables；正式 deploy 使用 `--secrets-file` 将 Worker Secrets 与代码同版本发布。由于安全边界阻止自动搬运真实 Secret，本机仍需用户自行执行一次 `npm run config:local-env:migrate`，GitHub 仍需补 `AUTH_CREDENTIAL_PEPPER` 与 `NOTION_API_TOKEN` 两个 Secret。
 3. 独立正式 production D1 已重建为开发期单基线数据库，只应用 `0001_initial_schema.sql`；后续发布直接绑定该库，不复用或升级旧 acceptance D1。
 4. 查清/关闭意外的 main→Cloudflare 自动部署链路后，再按受控 migration/release workflow 合并和发布。
 5. 发布后真实验收 health、登录、核心业务、Notion 附件/备份、Cron、域名和 Cloudflare/Notion 错误指标。

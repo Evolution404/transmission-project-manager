@@ -121,23 +121,21 @@ PR #1 合并前 GitHub CI 全绿；合并后的 `main@7a49b44275038dddd3803cb17d
 
 PR #2 已合并；当前云端配置记录分支为 `ops/production-environment-handoff-20260914`。
 
-PR #2 建立：
+PR #2 建立了独立 production workflows；当前分支进一步收敛配置来源：
 
 - `.github/workflows/production-deploy.yml`：代码发布，发布后真实 `/api/health` 校验；
 - `.github/workflows/production-migrate.yml`：独立 D1 migration，并要求人工再次确认目标 D1 UUID；
-- `PRODUCTION_DEPLOY_ENABLED` 与 `PRODUCTION_MIGRATION_ENABLED` 两个独立开关；
-- `PRODUCTION_CONFIG_JSON` 非敏感配置变量；
-- `CLOUDFLARE_API_TOKEN` GitHub Environment Secret；
-- 永久 Worker Secret `AUTH_CREDENTIAL_PEPPER` 缺失时 deploy fail-closed。
+- 非敏感 production 配置唯一来源为受审 `apps/api/wrangler.production.jsonc`；
+- GitHub `production` Environment 长期 **0 个 Variables、3 个 Secrets**：`CLOUDFLARE_API_TOKEN`、`AUTH_CREDENTIAL_PEPPER`、`NOTION_API_TOKEN`；
+- deploy 使用 `--secrets-file` 将 Worker Secrets 与代码、bindings 同一版本发布，缺失任一 required secret 都 fail-closed。
 
 一次性 `BOOTSTRAP_TOKEN` 不属于永久 `secrets.required`；首次管理员初始化完成后应删除。
 
-2026-09-14 GitHub 云端 UI 已建立 `production` Environment，只允许 `main` 部署，两个 enable variable 均为 `false`。仓库 0 collaborators，尚未配置 required reviewer、阻止自审或禁管理员绕过；main branch protection 尚未保存。Cloudflare Dashboard 在云端浏览器持续安全验证，以下事项**尚未完成且不得伪造已完成状态**：
+2026-09-14 GitHub 云端 UI 已建立 `production` Environment，只允许 `main` 部署。旧的 enable/config Variables 已被架构废弃；仓库后续只维护 3 个长期 Secrets。以下事项仍需真实核对，不能伪造完成状态：
 
 - GitHub `production` Environment 的审核策略；
-- `PRODUCTION_CONFIG_JSON` 的真实配置；
-- `CLOUDFLARE_API_TOKEN` 的真实配置；
-- Cloudflare 永久/一次性 Worker Secrets 的真实配置；
+- 3 个长期 GitHub Secrets 是否齐全；
+- Cloudflare 永久/一次性 Worker Secrets 的真实发布结果；
 - 正式 D1/Worker/对象存储资源核对或创建；当前对象存储为 Notion data source，R2 未启用不构成当前生产阻塞；
 - 正式 migration；
 - 正式 Worker 发布。
@@ -149,7 +147,7 @@ PR #2 建立：
 P7 重点是证明当前系统在真实环境可正式使用：
 
 - PR #2 与合并后的 main CI #37 已全绿；继续以实际最新 main SHA 为发布输入；
-- 在 GitHub 实际配置受保护 `production` Environment、Variables、account-owned Cloudflare token；
+- 在 GitHub 实际配置受保护 `production` Environment 和 3 个长期 Secrets；不再维护 production Variables；
 - 核对/建立正式 Worker、D1、自定义域名和当前对象存储；Notion 模式配置 `NOTION_STORAGE_DATA_SOURCE_ID` 与 `NOTION_API_TOKEN`，R2 保留为可选替换方案；
 - 对正式 D1 做备份/停写/目标 ID 核对后，通过独立 workflow 执行 migration；
 - 通过 `Production release` 发布准确 `main` SHA；
