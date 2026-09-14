@@ -1,5 +1,5 @@
 import type { DatabasePort, DatabaseStatement } from '../ports/database.ts';
-import type { AllocationFailure, CreateProjectRecord, ProjectAllocationWrite, ProjectWriteRepository, ProjectWriteState, ProtectedProjectScopeItem, ReplaceProjectAllocationsRecord, ReplaceProjectCategoryAllocationsRecord, ReplaceProjectCostsRecord } from '../ports/project-write-repository.ts';
+import type { AllocationFailure, ConfirmProjectRecord, CreateProjectRecord, ProjectAllocationWrite, ProjectWriteRepository, ProjectWriteState, ProtectedProjectScopeItem, ReplaceProjectAllocationsRecord, ReplaceProjectCategoryAllocationsRecord, ReplaceProjectCostsRecord } from '../ports/project-write-repository.ts';
 
 export class SqlProjectWriteRepository implements ProjectWriteRepository {
   private readonly database: DatabasePort;
@@ -199,6 +199,52 @@ export class SqlProjectWriteRepository implements ProjectWriteRepository {
       params: [input.idempotencyKey, input.actorId, input.operation, input.requestHash, input.responseJson, input.now],
     });
     await this.database.batch(statements);
+  }
+
+  async confirm(input: ConfirmProjectRecord): Promise<void> {
+    await this.database.batch([
+      {
+        sql: `UPDATE projects
+              SET status='confirmed',reserve_version=reserve_version+1,version=version+1,
+                  updated_at=CASE WHEN version=? THEN ? ELSE NULL END
+              WHERE id=?`,
+        params: [input.expectedVersion, input.now, input.projectId],
+      },
+      {
+        sql: `INSERT INTO project_versions
+              (id,project_id,reserve_version,snapshot_json,known_amount_fen,missing_price_count,completeness_basis_points,reason,confirmed_by,confirmed_at)
+              VALUES (?,?,?,?,?,?,?,?,?,?)`,
+        params: [
+          input.versionId,
+          input.projectId,
+          input.reserveVersion,
+          JSON.stringify(input.snapshot),
+          input.knownAmountFen,
+          input.missingPriceCount,
+          input.completenessBasisPoints,
+          input.reason,
+          input.actorId,
+          input.now,
+        ],
+      },
+      {
+        sql: `INSERT INTO audit_events (id,actor_member_id,action,object_type,object_id,before_json,after_json,created_at)
+              VALUES (?,?,'project.confirm','project',?,?,?,?)`,
+        params: [
+          input.auditId,
+          input.actorId,
+          input.projectId,
+          JSON.stringify({ version: input.expectedVersion, reserveVersion: input.reserveVersion - 1 }),
+          JSON.stringify(input.auditAfter),
+          input.now,
+        ],
+      },
+      {
+        sql: `INSERT INTO idempotency_records (idempotency_key,actor_member_id,operation,request_hash,response_json,status_code,created_at)
+              VALUES (?,?,?,?,?,200,?)`,
+        params: [input.idempotencyKey, input.actorId, input.operation, input.requestHash, input.responseJson, input.now],
+      },
+    ]);
   }
 
   async findAllocationFailure(allocations: readonly Pick<ProjectAllocationWrite, 'demandMaterialId' | 'quantityScaled'>[]): Promise<AllocationFailure | null> {

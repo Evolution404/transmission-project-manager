@@ -40,6 +40,11 @@ function createRepository() {
       id TEXT PRIMARY KEY,project_id TEXT NOT NULL,cost_line_id TEXT NOT NULL,reserve_category_id TEXT NOT NULL,
       amount_fen INTEGER NOT NULL,created_at TEXT NOT NULL
     );
+    CREATE TABLE project_versions (
+      id TEXT PRIMARY KEY,project_id TEXT NOT NULL,reserve_version INTEGER NOT NULL,snapshot_json TEXT NOT NULL,
+      known_amount_fen INTEGER NOT NULL,missing_price_count INTEGER NOT NULL,completeness_basis_points INTEGER NOT NULL,
+      reason TEXT,confirmed_by TEXT NOT NULL,confirmed_at TEXT NOT NULL
+    );
     INSERT INTO demand_materials VALUES ('dm-1',100),('dm-2',50);
   `);
   return { sqlite, repository: new SqlProjectWriteRepository(new SqliteDatabaseAdapter(sqlite)) };
@@ -199,5 +204,29 @@ test('category allocation replacement is atomic on stale versions and success', 
     ]);
     assert.equal(sqlite.prepare("SELECT version FROM projects WHERE id='p1'").get().version, 5);
     assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM audit_events WHERE id='ca-audit'").get().count, 1);
+  } finally { sqlite.close(); }
+});
+
+test('project confirmation writes immutable snapshot and rolls back completely on stale version', async () => {
+  const { sqlite, repository } = createRepository();
+  try {
+    sqlite.prepare("INSERT INTO projects VALUES ('p1','Reserve',2026,NULL,'draft',1,NULL,5,'admin-1','created','updated')").run();
+    const snapshot = { id: 'p1', allocations: [{ id: 'a1' }], knownAmountFen: 100, missingPriceCount: 0, completenessBasisPoints: 10000 };
+    const base = {
+      projectId: 'p1', expectedVersion: 5, reserveVersion: 2, versionId: 'pv-2', now: '2026-09-14T02:40:00.000Z',
+      snapshot, knownAmountFen: 100, missingPriceCount: 0, completenessBasisPoints: 10000, reason: 'confirm',
+      actorId: 'admin-1', auditId: 'confirm-audit', idempotencyKey: 'confirm-idem', operation: 'projects.confirm:p1', requestHash: 'confirm-hash', responseJson: '{"ok":true}',
+      auditAfter: { id: 'p1', status: 'confirmed', version: 6, reserveVersion: 2 },
+    };
+    await assert.rejects(repository.confirm({ ...base, expectedVersion: 4 }));
+    assert.equal(sqlite.prepare("SELECT status FROM projects WHERE id='p1'").get().status, 'draft');
+    assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM project_versions").get().count, 0);
+    assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM audit_events WHERE id='confirm-audit'").get().count, 0);
+    assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM idempotency_records WHERE idempotency_key='confirm-idem'").get().count, 0);
+
+    await repository.confirm(base);
+    assert.deepEqual({ ...sqlite.prepare("SELECT status,reserve_version,version FROM projects WHERE id='p1'").get() }, { status: 'confirmed', reserve_version: 2, version: 6 });
+    assert.equal(sqlite.prepare("SELECT snapshot_json FROM project_versions WHERE id='pv-2'").get().snapshot_json, JSON.stringify(snapshot));
+    assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM audit_events WHERE id='confirm-audit'").get().count, 1);
   } finally { sqlite.close(); }
 });

@@ -116,6 +116,11 @@ test('P2 import and demand flows do not reach D1 directly', () => {
   assert.doesNotMatch(source, /c\.env\.DB|\bD1(?:Database|PreparedStatement)\b/, 'P2 must use portable repositories instead of D1 APIs directly');
 });
 
+test('P3 reserve project flows do not reach D1 directly', () => {
+  const source = readFileSync(resolve(root, 'apps/api/src/p3.ts'), 'utf8');
+  assert.doesNotMatch(source, /c\.env\.DB|\bD1(?:Database|PreparedStatement)\b/, 'P3 must use portable repositories instead of D1 APIs directly');
+});
+
 test('authentication middleware uses portable session and member repositories', () => {
   const source = readFileSync(resolve(root, 'apps/api/src/auth.ts'), 'utf8');
   assert.match(source, /SqlSessionRepository/);

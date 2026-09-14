@@ -6,13 +6,9 @@ import type {
   CreateProjectRequest,
   FixedCostInput,
   MaterialPriceInput,
-  MaterialSummary,
   ProjectAllocationDetail,
   ProjectCategorySummary,
-  ProjectCostLine,
   ProjectCostSummary,
-  ProjectDetail,
-  ProjectMaterialSummary,
   ProjectSummary,
   ReplaceCategoryAllocationsRequest,
   ReplaceProjectAllocationsRequest,
@@ -28,62 +24,6 @@ import { createCloudflarePersistence } from './runtime/cloudflare/persistence';
 
 const MAX_PROJECT_ALLOCATIONS = 100;
 const MAX_PAGE_SIZE = 100;
-
-interface ProjectRow {
-  id: string;
-  name: string;
-  business_year: number | null;
-  owner: string | null;
-  status: 'draft' | 'confirmed';
-  reserve_version: number;
-  framework_id: string | null;
-  version: number;
-  created_by: string;
-  created_at: string;
-  updated_at: string;
-}
-
-interface AllocationRow {
-  id: string;
-  project_id: string;
-  demand_material_id: string;
-  quantity_scaled: number;
-  raw_model: string;
-  unit: string | null;
-  material_id: string | null;
-  material_code: string | null;
-  material_name: string | null;
-  material_model: string | null;
-  material_unit: string | null;
-  material_enabled: number | null;
-  material_version: number | null;
-  demand_id: string;
-  sequence_no: string;
-  business_year: number | null;
-  category_key: string | null;
-  voltage_raw: string;
-  voltage_verified: string | null;
-  line_name: string;
-  section_text: string;
-  source_type: 'import' | 'manual';
-  source_file_name: string | null;
-  source_sheet: string | null;
-  source_row_number: number | null;
-}
-
-interface CostLineRow {
-  id: string;
-  project_id: string;
-  kind: 'material' | 'construction' | 'other';
-  demand_allocation_id: string | null;
-  label: string;
-  unit_price_scaled: number | null;
-  amount_fen: number | null;
-  price_source: string | null;
-  price_date: string | null;
-  tax_inclusive: number | null;
-  suggested_reserve_category_id: string | null;
-}
 
 function apiError(code: string, message: string, details?: unknown): ApiError {
   return { ok: false, error: { code, message, ...(details === undefined ? {} : { details }) } };
@@ -149,56 +89,6 @@ function safePositiveInteger(value: unknown): number | null {
   return Number.isSafeInteger(number) && number > 0 ? number : null;
 }
 
-function materialSummary(row: {
-  material_id: string | null;
-  material_code: string | null;
-  material_name: string | null;
-  material_model: string | null;
-  material_unit: string | null;
-  material_enabled: number | null;
-  material_version: number | null;
-}): MaterialSummary | null {
-  if (!row.material_id || !row.material_name || !row.material_model || !row.material_unit || row.material_version === null) return null;
-  return {
-    id: row.material_id,
-    code: row.material_code,
-    name: row.material_name,
-    model: row.material_model,
-    unit: row.material_unit,
-    enabled: row.material_enabled === 1,
-    version: row.material_version,
-  };
-}
-
-function costSummary(costLines: CostLineRow[], allocationCount: number): ProjectCostSummary {
-  let knownAmountFen = 0;
-  let pricedMaterialCount = 0;
-  for (const line of costLines) {
-    if (line.amount_fen !== null) knownAmountFen += line.amount_fen;
-    if (line.kind === 'material' && line.unit_price_scaled !== null) pricedMaterialCount += 1;
-  }
-  const missingPriceCount = Math.max(0, allocationCount - pricedMaterialCount);
-  const completenessBasisPoints = allocationCount === 0
-    ? 0
-    : Math.floor(((allocationCount - missingPriceCount) * 10000) / allocationCount);
-  return { knownAmountFen, missingPriceCount, completenessBasisPoints };
-}
-
-function projectSummary(row: ProjectRow, summary: ProjectCostSummary): ProjectSummary {
-  return {
-    id: row.id,
-    name: row.name,
-    year: row.business_year,
-    owner: row.owner,
-    status: row.status,
-    reserveVersion: row.reserve_version,
-    version: row.version,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    ...summary,
-  };
-}
-
 function parseCursor(value: string | undefined): { createdAt: string; id: string } | null {
   if (!value) return null;
   try {
@@ -228,152 +118,9 @@ function makeCandidateCursor(id: string) {
   return btoa(JSON.stringify({ id })).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-async function findProject(db: D1Database, id: string) {
-  return db.prepare(
-    `SELECT id,name,business_year,owner,status,reserve_version,framework_id,version,created_by,created_at,updated_at
-     FROM projects WHERE id=? LIMIT 1`,
-  ).bind(id).first<ProjectRow>();
-}
-
 function canAccessProject(c: Context<AppEnv>, projectId: string) {
   const user = c.get('currentUser');
   return user.role === 'admin' || hasScope(user.scopes, 'project', projectId);
-}
-
-async function loadAllocationRows(db: D1Database, projectId: string) {
-  const result = await db.prepare(
-    `SELECT da.id,da.project_id,da.demand_material_id,da.quantity_scaled,
-            dm.raw_model,dm.unit,
-            m.id AS material_id,m.code AS material_code,m.name AS material_name,m.model AS material_model,
-            m.unit AS material_unit,m.enabled AS material_enabled,m.version AS material_version,
-            d.id AS demand_id,d.sequence_no,d.business_year,d.category_key,d.voltage_raw,d.voltage_verified,
-            d.line_name,d.section_text,d.source_type,d.source_file_name,d.source_sheet,d.source_row_number
-     FROM demand_allocations da
-     INNER JOIN demand_materials dm ON dm.id=da.demand_material_id
-     INNER JOIN demands d ON d.id=dm.demand_id
-     LEFT JOIN materials m ON m.id=dm.material_id
-     WHERE da.project_id=?
-     ORDER BY d.source_file_name,d.source_sheet,d.source_row_number,da.id`,
-  ).bind(projectId).all<AllocationRow>();
-  return result.results ?? [];
-}
-
-async function loadCostRows(db: D1Database, projectId: string) {
-  const result = await db.prepare(
-    `SELECT pcl.id,pcl.project_id,pcl.kind,pcl.demand_allocation_id,pcl.label,pcl.unit_price_scaled,pcl.amount_fen,
-            pcl.price_source,pcl.price_date,pcl.tax_inclusive,
-            cm.reserve_category_id AS suggested_reserve_category_id
-     FROM project_cost_lines pcl
-     LEFT JOIN demand_allocations da ON da.id=pcl.demand_allocation_id
-     LEFT JOIN demand_materials dm ON dm.id=da.demand_material_id
-     LEFT JOIN demands d ON d.id=dm.demand_id
-     LEFT JOIN category_mappings cm ON cm.demand_category_key=d.category_key COLLATE NOCASE
-     WHERE pcl.project_id=?
-     ORDER BY CASE pcl.kind WHEN 'material' THEN 1 WHEN 'construction' THEN 2 ELSE 3 END,pcl.id`,
-  ).bind(projectId).all<CostLineRow>();
-  return result.results ?? [];
-}
-
-function allocationDetail(row: AllocationRow): ProjectAllocationDetail {
-  return {
-    id: row.id,
-    demandMaterialId: row.demand_material_id,
-    quantityScaled: row.quantity_scaled,
-    rawModel: row.raw_model,
-    unit: row.unit,
-    material: materialSummary(row),
-    demand: {
-      id: row.demand_id,
-      sequenceNo: row.sequence_no,
-      year: row.business_year,
-      category: row.category_key,
-      voltage: row.voltage_verified ?? row.voltage_raw,
-      lineName: row.line_name,
-      section: row.section_text,
-    },
-    source: row.source_type === 'manual'
-      ? { type: 'manual' }
-      : { type: 'import', fileName: row.source_file_name!, sheetName: row.source_sheet!, rowNumber: row.source_row_number! },
-  };
-}
-
-function materialSummaryForAllocations(rows: AllocationRow[]): ProjectMaterialSummary[] {
-  const groups = new Map<string, ProjectMaterialSummary>();
-  for (const row of rows) {
-    const material = materialSummary(row);
-    const model = material?.model ?? row.raw_model;
-    const unit = material?.unit ?? row.unit;
-    const key = `${material?.id ?? `raw:${model.toLowerCase()}`}\u0000${(unit ?? '').toLowerCase()}`;
-    const current = groups.get(key);
-    if (current) current.quantityScaled += row.quantity_scaled;
-    else groups.set(key, {
-      materialId: material?.id ?? null,
-      rawModel: row.raw_model,
-      model,
-      name: material?.name ?? null,
-      unit,
-      quantityScaled: row.quantity_scaled,
-    });
-  }
-  return [...groups.values()].sort((a, b) => `${a.model}\u0000${a.unit ?? ''}`.localeCompare(`${b.model}\u0000${b.unit ?? ''}`, 'zh-CN'));
-}
-
-function costLineSummary(row: CostLineRow): ProjectCostLine {
-  return {
-    id: row.id,
-    kind: row.kind,
-    demandAllocationId: row.demand_allocation_id,
-    label: row.label,
-    unitPriceScaled: row.unit_price_scaled,
-    amountFen: row.amount_fen,
-    source: row.price_source,
-    priceDate: row.price_date,
-    taxInclusive: row.tax_inclusive === null ? null : row.tax_inclusive === 1,
-    suggestedReserveCategoryId: row.suggested_reserve_category_id,
-  };
-}
-
-async function fetchProjectDetail(db: D1Database, id: string): Promise<ProjectDetail | null> {
-  const project = await findProject(db, id);
-  if (!project) return null;
-  const allocations = await loadAllocationRows(db, id);
-  const costs = await loadCostRows(db, id);
-  const summary = costSummary(costs, allocations.length);
-  const categoryAllocationResult = await db.prepare(
-    `SELECT id,cost_line_id,reserve_category_id,amount_fen
-     FROM category_cost_allocations WHERE project_id=? ORDER BY cost_line_id,reserve_category_id`,
-  ).bind(id).all<{ id: string; cost_line_id: string; reserve_category_id: string; amount_fen: number }>();
-  const categoryAllocations = (categoryAllocationResult.results ?? []).map((row) => ({
-    id: row.id,
-    costLineId: row.cost_line_id,
-    reserveCategoryId: row.reserve_category_id,
-    amountFen: row.amount_fen,
-  }));
-  const categoryResult = await db.prepare(
-    `SELECT rc.id AS reserve_category_id,rc.category_key,rc.label,COALESCE(SUM(cca.amount_fen),0) AS amount_fen
-     FROM category_cost_allocations cca
-     INNER JOIN reserve_categories rc ON rc.id=cca.reserve_category_id
-     WHERE cca.project_id=?
-     GROUP BY rc.id,rc.category_key,rc.label
-     ORDER BY rc.label COLLATE NOCASE,rc.id`,
-  ).bind(id).all<{ reserve_category_id: string; category_key: string; label: string; amount_fen: number }>();
-  const categories: ProjectCategorySummary[] = (categoryResult.results ?? []).map((row) => ({
-    reserveCategoryId: row.reserve_category_id,
-    key: row.category_key,
-    label: row.label,
-    amountFen: Number(row.amount_fen),
-  }));
-  const classifiedAmountFen = categories.reduce((sum, item) => sum + item.amountFen, 0);
-  return {
-    ...projectSummary(project, summary),
-    allocations: allocations.map(allocationDetail),
-    materialSummary: materialSummaryForAllocations(allocations),
-    costLines: costs.map(costLineSummary),
-    categoryAllocations,
-    categories,
-    classifiedAmountFen,
-    unclassifiedAmountFen: Math.max(0, summary.knownAmountFen - classifiedAmountFen),
-  };
 }
 
 function validateAllocationInput(value: unknown): CreateProjectRequest['allocations'] | null {
@@ -397,54 +144,6 @@ function calculateAmountFen(quantityScaled: number, unitPriceScaled: number): nu
   const rounded = (product + 500_000n) / 1_000_000n;
   if (rounded > BigInt(Number.MAX_SAFE_INTEGER)) return null;
   return Number(rounded);
-}
-
-function projectVersionGuard(db: D1Database, projectId: string, expectedVersion: number, now: string, status: 'draft' | 'confirmed', reserveIncrement = false) {
-  return db.prepare(
-    `UPDATE projects
-     SET status=?,
-         reserve_version=reserve_version+?,
-         version=version+1,
-         updated_at=CASE WHEN version=? THEN ? ELSE NULL END
-     WHERE id=?`,
-  ).bind(status, reserveIncrement ? 1 : 0, expectedVersion, now, projectId);
-}
-
-function idempotencyStatement(
-  db: D1Database,
-  key: string,
-  actorId: string,
-  operation: string,
-  hash: string,
-  response: unknown,
-  statusCode: number,
-  now: string,
-) {
-  return db.prepare(
-    `INSERT INTO idempotency_records (idempotency_key,actor_member_id,operation,request_hash,response_json,status_code,created_at)
-     VALUES (?,?,?,?,?,?,?)`,
-  ).bind(key, actorId, operation, hash, JSON.stringify(response), statusCode, now);
-}
-
-function auditStatement(
-  db: D1Database,
-  actorId: string,
-  action: string,
-  objectType: string,
-  objectId: string,
-  before: unknown,
-  after: unknown,
-  now: string,
-) {
-  return db.prepare(
-    `INSERT INTO audit_events (id,actor_member_id,action,object_type,object_id,before_json,after_json,created_at)
-     VALUES (?,?,?,?,?,?,?,?)`,
-  ).bind(
-    crypto.randomUUID(), actorId, action, objectType, objectId,
-    before === null ? null : JSON.stringify(before),
-    after === null ? null : JSON.stringify(after),
-    now,
-  );
 }
 
 export const p3App = new Hono<AppEnv>();
@@ -1007,22 +706,24 @@ p3App.post('/projects/:id/confirm', requireRoles('admin', 'project_manager'), as
   const hash = await requestHash(requestBody);
   const replay = await replayIdempotentResponse(c, key, operation, hash);
   if (replay) return replay;
-  const project = await findProject(c.env.DB, c.req.param('id'));
-  if (!project) return c.json(apiError('PROJECT_NOT_FOUND', '储备项目不存在'), 404);
-  if (!canAccessProject(c, project.id)) return c.json(apiError('SCOPE_FORBIDDEN', '当前成员无权确认该项目'), 403);
-  if (project.version !== expectedVersion) return c.json(apiError('VERSION_CONFLICT', '项目已被修改，请刷新后重试'), 409);
-  const detail = await fetchProjectDetail(c.env.DB, project.id);
-  if (!detail || detail.allocations.length === 0) return c.json(apiError('PROJECT_EMPTY', '项目没有需求物资分配，不能确认'), 422);
+  const { database } = createCloudflarePersistence(c.env);
+  const queryRepository = new SqlProjectQueryRepository(database);
+  const writeRepository = new SqlProjectWriteRepository(database);
+  const detail = await queryRepository.getProjectDetail(c.req.param('id'));
+  if (!detail) return c.json(apiError('PROJECT_NOT_FOUND', '储备项目不存在'), 404);
+  if (!canAccessProject(c, detail.id)) return c.json(apiError('SCOPE_FORBIDDEN', '当前成员无权确认该项目'), 403);
+  if (detail.version !== expectedVersion) return c.json(apiError('VERSION_CONFLICT', '项目已被修改，请刷新后重试'), 409);
+  if (detail.allocations.length === 0) return c.json(apiError('PROJECT_EMPTY', '项目没有需求物资分配，不能确认'), 422);
 
   const actor = c.get('currentUser');
   const now = new Date().toISOString();
-  const reserveVersion = project.reserve_version + 1;
+  const reserveVersion = detail.reserveVersion + 1;
   const nextVersion = expectedVersion + 1;
   const versionId = crypto.randomUUID();
   const response = {
     ok: true as const,
     data: {
-      id: project.id,
+      id: detail.id,
       status: 'confirmed' as const,
       version: nextVersion,
       reserveVersion,
@@ -1032,23 +733,29 @@ p3App.post('/projects/:id/confirm', requireRoles('admin', 'project_manager'), as
     },
   };
   try {
-    await c.env.DB.batch([
-      projectVersionGuard(c.env.DB, project.id, expectedVersion, now, 'confirmed', true),
-      c.env.DB.prepare(
-        `INSERT INTO project_versions
-         (id,project_id,reserve_version,snapshot_json,known_amount_fen,missing_price_count,completeness_basis_points,reason,confirmed_by,confirmed_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?)`,
-      ).bind(
-        versionId, project.id, reserveVersion, JSON.stringify(detail), detail.knownAmountFen,
-        detail.missingPriceCount, detail.completenessBasisPoints, reason, actor.id, now,
-      ),
-      auditStatement(c.env.DB, actor.id, 'project.confirm', 'project', project.id, { version: expectedVersion, reserveVersion: project.reserve_version }, response.data, now),
-      idempotencyStatement(c.env.DB, key, actor.id, operation, hash, response, 200, now),
-    ]);
+    await writeRepository.confirm({
+      projectId: detail.id,
+      expectedVersion,
+      reserveVersion,
+      versionId,
+      now,
+      snapshot: detail,
+      knownAmountFen: detail.knownAmountFen,
+      missingPriceCount: detail.missingPriceCount,
+      completenessBasisPoints: detail.completenessBasisPoints,
+      reason,
+      actorId: actor.id,
+      auditId: crypto.randomUUID(),
+      idempotencyKey: key,
+      operation,
+      requestHash: hash,
+      responseJson: JSON.stringify(response),
+      auditAfter: response.data,
+    });
   } catch {
     const replayAfterRace = await replayIdempotentResponse(c, key, operation, hash);
     if (replayAfterRace) return replayAfterRace;
-    const current = await findProject(c.env.DB, project.id);
+    const current = await writeRepository.findProject(detail.id);
     if (current && current.version !== expectedVersion) return c.json(apiError('VERSION_CONFLICT', '项目已被并发修改，请刷新后重试'), 409);
     return c.json(apiError('PROJECT_CONFIRM_CONFLICT', '储备确认发生冲突，请刷新后重试'), 409);
   }

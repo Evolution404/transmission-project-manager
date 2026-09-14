@@ -103,11 +103,32 @@ export interface ReplaceProjectCategoryAllocationsRecord {
   auditAfter: unknown;
 }
 
+export interface ConfirmProjectRecord {
+  projectId: string;
+  expectedVersion: number;
+  reserveVersion: number;
+  versionId: string;
+  now: string;
+  snapshot: unknown;
+  knownAmountFen: number;
+  missingPriceCount: number;
+  completenessBasisPoints: number;
+  reason: string | null;
+  actorId: string;
+  auditId: string;
+  idempotencyKey: string;
+  operation: string;
+  requestHash: string;
+  responseJson: string;
+  auditAfter: unknown;
+}
+
 export interface ProjectWriteRepository {
   create(input: CreateProjectRecord): Promise<void>;
   replaceAllocations(input: ReplaceProjectAllocationsRecord): Promise<void>;
   replaceCosts(input: ReplaceProjectCostsRecord): Promise<void>;
   replaceCategoryAllocations(input: ReplaceProjectCategoryAllocationsRecord): Promise<void>;
+  confirm(input: ConfirmProjectRecord): Promise<void>;
   findProject(id: string): Promise<ProjectWriteState | null>;
   getProtectedScope(projectId: string): Promise<readonly ProtectedProjectScopeItem[]>;
   findAllocationFailure(allocations: readonly Pick<ProjectAllocationWrite, 'demandMaterialId' | 'quantityScaled'>[]): Promise<AllocationFailure | null>;
