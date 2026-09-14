@@ -12,6 +12,7 @@ import { SqlExecutionQueryRepository } from './repositories/sql-execution-query-
 import { SqlDemandRepository } from './repositories/sql-demand-repository';
 import { SqlDemandQueryRepository } from './repositories/sql-demand-query-repository';
 import { SqlDemandMaterialWriteRepository } from './repositories/sql-demand-material-write-repository';
+import { SqlReserveProjectQueryRepository } from './repositories/sql-reserve-project-query-repository';
 import { createCloudflarePersistence } from './runtime/cloudflare/persistence';
 
 const MAX_ITEMS = 100;
@@ -1026,24 +1027,22 @@ p8App.post('/reserve-projects', requireRoles('admin', 'project_manager'), async 
 p8App.get('/reserve-projects', async (c) => {
   const user = c.get('currentUser');
   const limit = Math.min(100, Math.max(1, Number(c.req.query('limit') ?? '50')));
-  const rows = await c.env.DB.prepare(
-    `SELECT id,name,business_year,owner,status,reserve_version,framework_id,version,created_at,updated_at FROM projects ORDER BY created_at DESC,id DESC LIMIT ?`,
-  ).bind(limit).all<ProjectRow>();
-  const allowedProjects = (rows.results ?? []).filter((row) => (
+  const { database } = createCloudflarePersistence(c.env);
+  const items = (await new SqlReserveProjectQueryRepository(database).list(limit)).filter((project) => (
     user.role === 'admin'
     || user.scopes.some((scope) => scope.type === 'all')
-    || hasScope(user.scopes, 'project', row.id)
-    || Boolean(row.framework_id && hasScope(user.scopes, 'framework', row.framework_id))
+    || hasScope(user.scopes, 'project', project.id)
+    || Boolean(project.frameworkId && hasScope(user.scopes, 'framework', project.frameworkId))
   ));
-  const items = await hydrateReserveProjects(c.env.DB, allowedProjects);
   return c.json({ ok: true as const, data: { items, nextCursor: null } });
 });
 
 p8App.get('/reserve-projects/:id', async (c) => {
-  const project = await findProject(c.env.DB, c.req.param('id'));
+  const { database } = createCloudflarePersistence(c.env);
+  const project = await new SqlReserveProjectQueryRepository(database).find(c.req.param('id'));
   if (!project) return c.json(apiError('PROJECT_NOT_FOUND', '储备项目不存在'), 404);
-  if (!await canProject(c, project.id)) return c.json(apiError('SCOPE_FORBIDDEN', '无权查看该项目'), 403);
-  return c.json({ ok: true as const, data: (await fetchReserveProject(c.env.DB, project.id))! });
+  if (!hasProjectAccess(c, project.id, project.frameworkId)) return c.json(apiError('SCOPE_FORBIDDEN', '无权查看该项目'), 403);
+  return c.json({ ok: true as const, data: project });
 });
 
 p8App.put('/reserve-projects/:id/demands', requireRoles('admin', 'project_manager'), async (c) => {
@@ -1171,16 +1170,12 @@ p8App.put('/reserve-projects/:id/materials', requireRoles('admin', 'project_mana
 });
 
 p8App.get('/reserve-projects/:id/material-revisions', async (c) => {
-  const project = await findProject(c.env.DB, c.req.param('id'));
+  const { database } = createCloudflarePersistence(c.env);
+  const repository = new SqlReserveProjectQueryRepository(database);
+  const project = await repository.findState(c.req.param('id'));
   if (!project) return c.json(apiError('PROJECT_NOT_FOUND', '储备项目不存在'), 404);
-  if (!await canProject(c, project.id)) return c.json(apiError('SCOPE_FORBIDDEN', '无权查看该项目'), 403);
-  const rows = await c.env.DB.prepare(
-    `SELECT id,project_version,reason,before_json,after_json,created_at FROM project_material_revisions WHERE project_id=? ORDER BY created_at DESC,id DESC`,
-  ).bind(project.id).all<{ id: string; project_version: number; reason: string; before_json: string; after_json: string; created_at: string }>();
-  return c.json({ ok: true as const, data: { items: (rows.results ?? []).map((row) => ({
-    id: row.id, projectId: project.id, projectVersion: row.project_version, reason: row.reason,
-    before: JSON.parse(row.before_json), after: JSON.parse(row.after_json), createdAt: row.created_at,
-  })) } });
+  if (!hasProjectAccess(c, project.id, project.frameworkId)) return c.json(apiError('SCOPE_FORBIDDEN', '无权查看该项目'), 403);
+  return c.json({ ok: true as const, data: { items: await repository.listMaterialRevisions(project.id) } });
 });
 
 p8App.post('/reserve-projects/:id/confirm', requireRoles('admin', 'project_manager'), async (c) => {

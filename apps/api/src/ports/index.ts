@@ -4,6 +4,7 @@ export type { CredentialMutationInput, CredentialRepository, MemberCredentialRec
 export type { BootstrapAdminRecord, CreateManagedMemberRecord, ManagedMemberScopeRecord, MemberAdminRepository, UpdateManagedMemberRecord, UpdateManagedMemberResult } from './member-admin-repository';
 export type { LinePageCursor, MasterDataRepository, TowerPageCursor } from './master-data-repository';
 export type { ProjectPage, ProjectPageCursor, ProjectQueryRepository, ProjectSuggestionGroup, ReserveCandidatePage } from './project-query-repository';
+export type { ProjectMaterialInputCandidate, ProjectMaterialRevisionSummary, ReserveProjectQueryRepository, ReserveProjectState, ResolvedProjectMaterialInput } from './reserve-project-query-repository';
 export type { CreateProjectReleaseRecord, ExecutionProjectState, ProjectReleaseRepository, ProjectReleaseSnapshot } from './project-release-repository';
 export type { CreateProjectTaskRecord, CreatedProjectTaskSummary, ProjectTaskMaterialAvailability, ProjectTaskRepository } from './project-task-repository';
 export type { CreateSupplyEventRecord, CreatedSupplyEvent, SupplyTotals, TaskMaterialSupplyState, TaskSupplyRepository } from './task-supply-repository';
