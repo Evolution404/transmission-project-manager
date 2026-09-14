@@ -2,7 +2,6 @@ import { Hono, type Context } from 'hono';
 import type {
   AgreementStatus,
   AgreementSummary,
-  AgreementVersionSummary,
   ApiError,
   BindProjectFrameworkRequest,
   BudgetAllocationInput,
@@ -19,11 +18,12 @@ import type {
   FinancialEntryType,
   FrameworkFinanceSummary,
   FrameworkSummary,
-  FrameworkVersionSummary,
   ProjectBudgetSummary,
   UpdateBudgetRequest,
 } from '@tpm/shared';
 import { hasScope, requireRoles, type AppEnv } from './auth';
+import { SqlFinanceQueryRepository } from './repositories/sql-finance-query-repository';
+import { createCloudflarePersistence } from './runtime/cloudflare/persistence';
 
 const MAX_PAGE_SIZE = 100;
 
@@ -259,18 +259,15 @@ function parseEntryCursor(value: string | undefined): { businessDate: string; cr
 export const p4App = new Hono<AppEnv>();
 
 p4App.get('/finance/projects', async (c) => {
-  const result = await c.env.DB.prepare(
-    `SELECT id,name,business_year,status,framework_id,version FROM projects ORDER BY updated_at DESC,id DESC LIMIT 100`,
-  ).all<{ id: string; name: string; business_year: number | null; status: 'draft' | 'confirmed'; framework_id: string | null; version: number }>();
-  const items: FinanceProjectSummary[] = (result.results ?? [])
-    .filter((row) => canProject(c, row.id) || (row.framework_id !== null && canFramework(c, row.framework_id)))
-    .map((row) => ({ id: row.id, name: row.name, year: row.business_year, status: row.status, frameworkId: row.framework_id, version: row.version }));
+  const { database } = createCloudflarePersistence(c.env);
+  const items: FinanceProjectSummary[] = (await new SqlFinanceQueryRepository(database).listProjects())
+    .filter((row) => canProject(c, row.id) || (row.frameworkId !== null && canFramework(c, row.frameworkId)));
   return c.json({ ok: true as const, data: { items } });
 });
 
 p4App.get('/frameworks', async (c) => {
-  const result = await c.env.DB.prepare(`SELECT id,code,name,total_amount_fen,annual_target_fen,start_date,end_date,version,created_at,updated_at FROM frameworks ORDER BY code COLLATE NOCASE,id LIMIT 100`).all<FrameworkRow>();
-  const items = (result.results ?? []).filter((row) => canFramework(c, row.id)).map(frameworkSummary);
+  const { database } = createCloudflarePersistence(c.env);
+  const items = (await new SqlFinanceQueryRepository(database).listFrameworks()).filter((row) => canFramework(c, row.id));
   return c.json({ ok: true as const, data: { items } });
 });
 
@@ -331,20 +328,21 @@ p4App.put('/frameworks/:id', requireRoles('admin', 'project_manager'), async (c)
 });
 
 p4App.get('/frameworks/:id/history', async (c) => {
-  const current = await findFramework(c.env.DB, c.req.param('id')); if (!current) return c.json(apiError('NOT_FOUND', '框架不存在'), 404);
+  const { database } = createCloudflarePersistence(c.env);
+  const repository = new SqlFinanceQueryRepository(database);
+  const current = await repository.findFramework(c.req.param('id')); if (!current) return c.json(apiError('NOT_FOUND', '框架不存在'), 404);
   if (!canFramework(c, current.id)) return c.json(apiError('SCOPE_FORBIDDEN', '无权查看该框架'), 403);
-  const result = await c.env.DB.prepare(`SELECT id,framework_id,version,code,name,total_amount_fen,annual_target_fen,start_date,end_date,reason,created_at FROM framework_versions WHERE framework_id=? ORDER BY version DESC`).bind(current.id).all<any>();
-  const items: FrameworkVersionSummary[] = (result.results ?? []).map((row) => ({ id: row.id, frameworkId: row.framework_id, version: row.version, code: row.code, name: row.name, totalAmountFen: row.total_amount_fen, annualTargetFen: row.annual_target_fen, startDate: row.start_date, endDate: row.end_date, reason: row.reason, createdAt: row.created_at }));
-  return c.json({ ok: true as const, data: { items } });
+  const items = await repository.getFrameworkHistory(current.id);
+  return c.json({ ok: true as const, data: { items: items ?? [] } });
 });
 
 p4App.get('/agreements', async (c) => {
   const frameworkId = cleanText(c.req.query('frameworkId'));
   if (frameworkId && !canFramework(c, frameworkId)) return c.json(apiError('SCOPE_FORBIDDEN', '无权查看该框架协议'), 403);
-  const result = frameworkId
-    ? await c.env.DB.prepare(`SELECT id,framework_id,code,name,amount_fen,valid_from,valid_to,status,version,created_at,updated_at FROM agreements WHERE framework_id=? ORDER BY code COLLATE NOCASE,id LIMIT 100`).bind(frameworkId).all<AgreementRow>()
-    : await c.env.DB.prepare(`SELECT id,framework_id,code,name,amount_fen,valid_from,valid_to,status,version,created_at,updated_at FROM agreements ORDER BY code COLLATE NOCASE,id LIMIT 100`).all<AgreementRow>();
-  return c.json({ ok: true as const, data: { items: (result.results ?? []).filter((row) => canFramework(c, row.framework_id)).map(agreementSummary) } });
+  const { database } = createCloudflarePersistence(c.env);
+  const items = (await new SqlFinanceQueryRepository(database).listAgreements(frameworkId || null))
+    .filter((row) => canFramework(c, row.frameworkId));
+  return c.json({ ok: true as const, data: { items } });
 });
 
 p4App.post('/agreements', requireRoles('admin', 'project_manager'), async (c) => {
@@ -401,11 +399,12 @@ p4App.put('/agreements/:id', requireRoles('admin', 'project_manager'), async (c)
 });
 
 p4App.get('/agreements/:id/history', async (c) => {
-  const current = await findAgreement(c.env.DB, c.req.param('id')); if (!current) return c.json(apiError('NOT_FOUND', '协议不存在'), 404);
-  if (!canFramework(c, current.framework_id)) return c.json(apiError('SCOPE_FORBIDDEN', '无权查看该协议'), 403);
-  const result = await c.env.DB.prepare(`SELECT id,agreement_id,version,framework_id,code,name,amount_fen,valid_from,valid_to,status,reason,created_at FROM agreement_versions WHERE agreement_id=? ORDER BY version DESC`).bind(current.id).all<any>();
-  const items: AgreementVersionSummary[] = (result.results ?? []).map((row) => ({ id: row.id, agreementId: row.agreement_id, version: row.version, frameworkId: row.framework_id, code: row.code, name: row.name, amountFen: row.amount_fen, validFrom: row.valid_from, validTo: row.valid_to, status: row.status, reason: row.reason, createdAt: row.created_at }));
-  return c.json({ ok: true as const, data: { items } });
+  const { database } = createCloudflarePersistence(c.env);
+  const repository = new SqlFinanceQueryRepository(database);
+  const current = await repository.findAgreement(c.req.param('id')); if (!current) return c.json(apiError('NOT_FOUND', '协议不存在'), 404);
+  if (!canFramework(c, current.frameworkId)) return c.json(apiError('SCOPE_FORBIDDEN', '无权查看该协议'), 403);
+  const items = await repository.getAgreementHistory(current.id);
+  return c.json({ ok: true as const, data: { items: items ?? [] } });
 });
 
 p4App.put('/projects/:id/framework', requireRoles('admin', 'project_manager'), async (c) => {

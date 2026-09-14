@@ -6,6 +6,7 @@ export type { LinePageCursor, MasterDataRepository, TowerPageCursor } from './ma
 export type { ProjectPage, ProjectPageCursor, ProjectQueryRepository, ProjectSuggestionGroup, ReserveCandidatePage } from './project-query-repository';
 export type { AllocationFailure, ConfirmProjectRecord, CreateProjectRecord, ProjectAllocationWrite, ProjectCategoryAllocationWrite, ProjectCostLineWrite, ProjectWriteRepository, ProjectWriteState, ProtectedProjectScopeItem, ReplaceProjectAllocationsRecord, ReplaceProjectCategoryAllocationsRecord, ReplaceProjectCostsRecord } from './project-write-repository';
 export type { CreateReserveCategoryRecord, ReserveCategoryWriteRepository, UpsertCategoryMappingRecord } from './reserve-category-write-repository';
+export type { FinanceQueryRepository } from './finance-query-repository';
 export type { CreateMaterialRecord, MaterialRepository } from './material-repository';
 export type { CommitSingleMasterDataInput, MasterDataWriteKind, MasterDataWriteRepository } from './master-data-write-repository';
 export type { MemberRepository } from './member-repository';
