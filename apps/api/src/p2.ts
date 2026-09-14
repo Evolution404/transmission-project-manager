@@ -1,4 +1,3 @@
-import { gridLocationGuard } from './grid-location';
 import { Hono, type Context } from 'hono';
 import type {
   ApiError,
@@ -21,6 +20,7 @@ import { SqlDemandQueryRepository } from './repositories/sql-demand-query-reposi
 import { SqlIdempotencyRepository } from './repositories/sql-idempotency-repository';
 import { SqlImportMappingRepository } from './repositories/sql-import-mapping-repository';
 import { SqlImportRepository } from './repositories/sql-import-repository';
+import { SqlImportPublishRepository } from './repositories/sql-import-publish-repository';
 import { SqlImportValidationRepository } from './repositories/sql-import-validation-repository';
 import type { ImportValidationRepository, ImportValidationRow } from './ports/import-validation-repository';
 import { SqlMaterialRepository } from './repositories/sql-material-repository';
@@ -132,46 +132,6 @@ function requireIdempotencyKey(c: Context<AppEnv>): string | Response {
 function parseExpectedVersion(value: unknown): number | null {
   const version = Number(value);
   return Number.isInteger(version) && version >= 1 ? version : null;
-}
-
-function guardedIdempotencyInsert(
-  db: D1Database,
-  input: {
-    key: string;
-    actorId: string;
-    operation: string;
-    requestHash: string;
-    responseJson: string;
-    statusCode: number;
-    now: string;
-    batchId: string;
-    expectedVersion: number;
-    allowedStatuses: ImportBatchSummary['status'][];
-  },
-) {
-  const statusPlaceholders = input.allowedStatuses.map(() => '?').join(',');
-  return db.prepare(
-    `INSERT INTO idempotency_records
-      (idempotency_key,actor_member_id,operation,request_hash,response_json,status_code,created_at)
-     VALUES (
-       ?,
-       (SELECT ? WHERE EXISTS (
-         SELECT 1 FROM import_batches WHERE id=? AND version=? AND status IN (${statusPlaceholders})
-       )),
-       ?,?,?,?,?
-     )`,
-  ).bind(
-    input.key,
-    input.actorId,
-    input.batchId,
-    input.expectedVersion,
-    ...input.allowedStatuses,
-    input.operation,
-    input.requestHash,
-    input.responseJson,
-    input.statusCode,
-    input.now,
-  );
 }
 
 async function requestHash(value: unknown): Promise<string> {
@@ -744,23 +704,21 @@ p2App.post('/imports/:id/publish', requireRoles('admin', 'project_manager'), asy
   const hash = await requestHash(requestBody);
   const replay = await replayIdempotentResponse(c, key, operation, hash);
   if (replay) return replay;
-  const { database: validationDatabase } = createCloudflarePersistence(c.env);
-  const publishValidationRepository = new SqlImportValidationRepository(validationDatabase);
-  const batch = await findBatch(c.env.DB, c.req.param('id'));
+  const { database } = createCloudflarePersistence(c.env);
+  const importRepository = new SqlImportRepository(database);
+  const publishRepository = new SqlImportPublishRepository(database);
+  const publishValidationRepository = new SqlImportValidationRepository(database);
+  const batch = await importRepository.findById(c.req.param('id'));
   if (!batch) return c.json(apiError('IMPORT_NOT_FOUND', '导入批次不存在'), 404);
   if (batch.version !== expectedVersion) return c.json(apiError('VERSION_CONFLICT', '导入批次版本已变化，请刷新后重试'), 409);
   if (batch.status !== 'ready' && batch.status !== 'publishing') return c.json(apiError('IMPORT_NOT_READY', '存在未完成校验或错误行，不能发布'), 422);
 
-  const rowResult = await c.env.DB.prepare(
-    `SELECT id,batch_id,chunk_index,sheet_name,source_row_number,source_key,raw_json,normalized_json,errors_json,warnings_json,row_status,published_demand_id
-     FROM import_rows WHERE batch_id=? AND row_status='valid' ORDER BY source_row_number,id LIMIT ?`,
-  ).bind(batch.id, limit).all<ImportRowDb>();
-  const rows = rowResult.results ?? [];
+  const rows = await publishRepository.listValidRows(batch.id, limit);
   const actor = c.get('currentUser');
   const now = new Date().toISOString();
   const gridErrors: Array<{ sheetName: string; rowNumber: number; errors: ImportIssue[] }> = [];
   for (const row of rows) {
-    const normalized = parseJson<NormalizedImportRow | null>(row.normalized_json, null);
+    const normalized = parseJson<NormalizedImportRow | null>(row.normalizedJson, null);
     const errors: ImportIssue[] = [];
     if (!normalized) errors.push({ code: 'LOCATION_MISSING', message: '缺少位置校验结果，请重新校验' });
     else {
@@ -768,105 +726,66 @@ p2App.post('/imports/:id/publish', requireRoles('admin', 'project_manager'), asy
       await resolveGridLocation(publishValidationRepository, checked, errors);
       if (!errors.length && (checked.voltageLevelId !== normalized.voltageLevelId || checked.lineId !== normalized.lineId || checked.startTowerId !== normalized.startTowerId || checked.endTowerId !== normalized.endTowerId)) errors.push({ code: 'LOCATION_CHANGED', message: '台账对象已变化，请重新校验' });
     }
-    if (errors.length) gridErrors.push({ sheetName: row.sheet_name, rowNumber: row.source_row_number, errors });
+    if (errors.length) gridErrors.push({ sheetName: row.sheetName, rowNumber: row.rowNumber, errors });
   }
   if (gridErrors.length) return c.json(apiError('IMPORT_GRID_CHANGED', '台账已变化，请先维护基础台账并重新校验导入', gridErrors), 422);
-  const sourceKeys = rows.map((row) => row.source_key);
-  const existingBySource = new Map<string, string>();
-  if (sourceKeys.length) {
-    const placeholders = sourceKeys.map(() => '?').join(',');
-    const direct = await c.env.DB.prepare(`SELECT id,source_key FROM demands WHERE source_key IN (${placeholders})`).bind(...sourceKeys).all<{ id: string; source_key: string }>();
-    for (const demand of direct.results ?? []) existingBySource.set(demand.source_key, demand.id);
-    const linked = await c.env.DB.prepare(`SELECT demand_id,source_key FROM demand_source_rows WHERE source_key IN (${placeholders})`).bind(...sourceKeys).all<{ demand_id: string; source_key: string }>();
-    for (const source of linked.results ?? []) existingBySource.set(source.source_key, source.demand_id);
-  }
+  const sourceKeys = rows.map((row) => row.sourceKey);
+  const existingBySource = new Map((await publishRepository.findDemandIdsBySourceKeys(sourceKeys)).map((item) => [item.sourceKey, item.demandId]));
   const signatures = rows
-    .map((row) => parseJson<NormalizedImportRow | null>(row.normalized_json, null)?.businessSignature ?? null)
+    .map((row) => parseJson<NormalizedImportRow | null>(row.normalizedJson, null)?.businessSignature ?? null)
     .filter((value): value is string => Boolean(value));
-  const existingBySignature = new Map<string, string>();
-  if (signatures.length) {
-    const placeholders = signatures.map(() => '?').join(',');
-    const existing = await c.env.DB.prepare(
-      `SELECT id,business_signature FROM demands WHERE source_type='import' AND source_batch_id=? AND business_signature IN (${placeholders})`,
-    ).bind(batch.id, ...signatures).all<{ id: string; business_signature: string }>();
-    for (const demand of existing.results ?? []) existingBySignature.set(demand.business_signature, demand.id);
-  }
+  const existingBySignature = new Map((await publishRepository.findImportDemandIdsBySignatures(batch.id, signatures)).map((item) => [item.businessSignature, item.demandId]));
 
-  const publishedRows = batch.published_rows + rows.length;
-  const done = publishedRows >= batch.valid_rows;
+  const publishedRows = batch.publishedRows + rows.length;
+  const done = publishedRows >= batch.validRows;
   const nextStatus: ImportBatchSummary['status'] = done ? 'published' : 'publishing';
   const data: ImportPublishResult = { processed: rows.length, publishedRows, done, version: expectedVersion + 1 };
   const response = { ok: true as const, data };
-  const statements: D1PreparedStatement[] = [guardedIdempotencyInsert(c.env.DB, {
-    key,
-    actorId: actor.id,
-    operation,
-    requestHash: hash,
-    responseJson: JSON.stringify(response),
-    statusCode: 200,
-    now,
-    batchId: batch.id,
-    expectedVersion,
-    allowedStatuses: ['ready', 'publishing'],
-  })];
+  const publishRows = [];
   for (const row of rows) {
-    const normalized = parseJson<NormalizedImportRow | null>(row.normalized_json, null);
+    const normalized = parseJson<NormalizedImportRow | null>(row.normalizedJson, null);
     if (!normalized || !normalized.businessSignature) {
       return c.json(apiError('IMPORT_ROW_NOT_VALIDATED', '存在缺少规范化结果的行'), 409);
     }
-    statements.push(gridLocationGuard(c.env.DB, normalized.voltageLevelId!, normalized.lineId!, normalized.startTowerId, normalized.endTowerId, normalized.voltageRaw, normalized.lineName, normalized.section));
-    const existingId = existingBySource.get(row.source_key) ?? existingBySignature.get(normalized.businessSignature);
+    const existingId = existingBySource.get(row.sourceKey) ?? existingBySignature.get(normalized.businessSignature);
     const demandId = existingId ?? crypto.randomUUID();
-    if (!existingId) {
-      statements.push(c.env.DB.prepare(
-        `INSERT INTO demands
-         (id,source_type,source_key,source_batch_id,source_file_sha256,source_file_name,source_sheet,source_row_number,sequence_no,business_year,voltage_raw,voltage_verified,line_name,section_text,category_key,owner,business_signature,raw_json,extra_json,version,created_by,created_at,updated_at,voltage_level_id,line_id,location_type,start_tower_id,end_tower_id)
-         VALUES (?,'import',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'{}',1,?,?,?,?,?,?,?,?)`,
-      ).bind(
-        demandId, row.source_key, batch.id, batch.file_sha256, batch.file_name, row.sheet_name, row.source_row_number,
-        normalized.sequenceNo, normalized.year, normalized.voltageRaw, normalized.voltageVerified, normalized.lineName,
-        normalized.section, normalized.category, normalized.owner, normalized.businessSignature, row.raw_json,
-        actor.id, now, now,
-        normalized.voltageLevelId, normalized.lineId, normalized.locationType, normalized.startTowerId, normalized.endTowerId,
-      ));
-      existingBySignature.set(normalized.businessSignature, demandId);
-    }
-    statements.push(c.env.DB.prepare(
-      `INSERT INTO demand_source_rows
-       (id,demand_id,import_row_id,source_key,file_sha256,file_name,sheet_name,source_row_number,raw_json,created_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?)`,
-    ).bind(crypto.randomUUID(), demandId, row.id, row.source_key, batch.file_sha256, batch.file_name, row.sheet_name, row.source_row_number, row.raw_json, now));
-    if (normalized.materialModel && normalized.quantityScaled !== null) {
-      statements.push(c.env.DB.prepare(
-        `INSERT INTO demand_materials
-         (id,demand_id,raw_model,material_id,quantity_scaled,unit,created_at,source_import_row_id,created_by,version)
-         VALUES (?,?,?,?,?,?,?,?,?,1)`,
-      ).bind(crypto.randomUUID(), demandId, normalized.materialModel, normalized.materialId, normalized.quantityScaled, normalized.unit, now, row.id, actor.id));
-    }
-    statements.push(c.env.DB.prepare(
-      `UPDATE import_rows SET row_status='published',published_demand_id=?,updated_at=? WHERE id=? AND batch_id=? AND row_status='valid'`,
-    ).bind(demandId, now, row.id, batch.id));
+    if (!existingId) existingBySignature.set(normalized.businessSignature, demandId);
+    publishRows.push({
+      rowId: row.id,
+      demandId,
+      createDemand: !existingId,
+      sourceRowId: crypto.randomUUID(),
+      materialRowId: crypto.randomUUID(),
+      sourceKey: row.sourceKey,
+      sheetName: row.sheetName,
+      rowNumber: row.rowNumber,
+      rawJson: row.rawJson,
+      normalized,
+    });
   }
-
-  statements.push(
-    c.env.DB.prepare(
-      `UPDATE import_batches
-       SET status=?,published_rows=?,published_at=?,version=version+1,updated_at=?
-       WHERE id=? AND version=? AND status IN ('ready','publishing')`,
-    ).bind(nextStatus, publishedRows, done ? now : null, now, batch.id, expectedVersion),
-    c.env.DB.prepare(
-      `INSERT INTO audit_events (id,actor_member_id,action,object_type,object_id,before_json,after_json,created_at)
-       VALUES (?,?, 'import.publish','import_batch',?,?,?,?)`,
-    ).bind(crypto.randomUUID(), actor.id, batch.id, JSON.stringify({ publishedRows: batch.published_rows }), JSON.stringify(data), now),
-  );
   try {
-    const result = await c.env.DB.batch(statements);
-    const batchUpdate = result[result.length - 2];
-    if (Number(batchUpdate?.meta.changes ?? 0) !== 1) return c.json(apiError('VERSION_CONFLICT', '导入批次已被并发发布，请刷新后重试'), 409);
+    await publishRepository.commitPublish({
+      batchId: batch.id,
+      expectedVersion,
+      actorId: actor.id,
+      now,
+      idempotencyKey: key,
+      operation,
+      requestHash: hash,
+      responseJson: JSON.stringify(response),
+      fileName: batch.fileName,
+      fileSha256: batch.fileSha256,
+      nextStatus,
+      publishedRows,
+      publishedAt: done ? now : null,
+      auditId: crypto.randomUUID(),
+      beforePublishedRows: batch.publishedRows,
+      rows: publishRows,
+    });
   } catch {
     const replayAfterRace = await replayIdempotentResponse(c, key, operation, hash);
     if (replayAfterRace) return replayAfterRace;
-    const current = await findBatch(c.env.DB, batch.id);
+    const current = await importRepository.findById(batch.id);
     if (current && current.version !== expectedVersion) return c.json(apiError('VERSION_CONFLICT', '导入批次版本已变化，请刷新后重试'), 409);
     return c.json(apiError('IMPORT_PUBLISH_CONFLICT', '发布发生并发冲突，请刷新后继续'), 409);
   }
