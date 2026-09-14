@@ -1,127 +1,246 @@
 # Cloudflare 运行、成本与部署说明
 
-核对日期：2026-09-14。**P0–P6、最终业务模型、基础台账对象化和本轮后端可移植化代码施工均已完成。Cloudflare Workers Free + D1 + R2 仍是当前部署基线；同一 Hono 应用已通过 `PersistencePorts` 注入在 Node + SQLite + Filesystem 第二运行时完成应用级 E2E 和旧库升级演练。P7 真实数据与正式环境验收仍未完成；本轮未升级远端 D1、未合并 `main`、未正式发布。生产环境实际版本必须以部署记录和 `/api/health` 实测为准。**
+核对日期：2026-09-14。
 
-## 1. 云上开发与发布工作流
+## 1. 当前部署状态
 
-后续默认工作流以 **GitHub + Cloudflare** 为唯一必需环境，用户 Mac 和任何本地电脑都不应成为开发、测试、合并或发布前置条件。
+后端可移植化已通过 GitHub PR #1 合入 `main`，合并 commit：
 
-- 代码阅读、修改、分支、PR、合并均在 GitHub 远端完成。
-- `npm run check` 等完整自动门禁应由 GitHub Actions 执行；后续验收以远端 CI 结果为准。
-- Cloudflare Workers / D1 / R2 发布优先由 GitHub Actions、Cloudflare Git integration 或其他受保护的云端发布 workflow 触发。
-- Cloudflare API Token、Account ID、D1/R2 标识及生产 Secrets 只能存于 GitHub Environment/Secrets 或 Cloudflare Secrets，不写入仓库、PR、前端和日志。
-- 若 GitHub 当前没有完整的 Cloudflare 发布 workflow，先补齐 CI/CD、Environment protection 和最小权限服务身份，再做正式发布；不要退回依赖个人电脑 Wrangler 登录态的流程。
-- GitHub CI 仍应覆盖 Cloudflare 与 Node 两套类型边界、前端产物、Worker dry-run、认证/权限/并发/原子性测试、Node + SQLite + Filesystem E2E 和 P7-era → 0012 migration rehearsal。
+`7a49b44275038dddd3803cb17de9b7e4fe06ba33`
 
-仓库中保留的本地开发脚本和 Node 第二运行时仍可用于故障复现或未来普通服务器迁移，但只是**可选能力**，不是后续 AI 或正式运维的依赖。业务/认证层继续只接收 `RuntimeBindings.PERSISTENCE`；Cloudflare D1/R2 adapter 仅在 Worker `index.ts` 基础设施入口组装。
+PR #1 合并前 CI 与合并后的 `main` CI #31 均通过。Cloudflare Workers + D1 + R2 仍是当前生产部署基线；Node + SQLite + Filesystem 仅作为第二运行时和未来普通服务器迁移能力。
 
-## 2. 部署拓扑
+当前生产发布能力正在 PR #2 `ops: add protected Cloudflare production workflows` 中收口。PR #2 合入后，仓库将有四类 Actions：
+
+- `CI`：push `main` / PR / 手工，仅执行完整代码门禁；
+- `Production preflight (no deployment)`：手工，仅校验 production config + dry-run，不携带云凭据；
+- `Production D1 migration`：手工、`production` Environment 绑定，只执行正式 D1 migration；
+- `Production release`：手工、`production` Environment 绑定，只发布 Worker/Static Assets/已审核绑定，并在发布后验证真实 `/api/health`。
+
+**代码中存在 workflow 不等于生产已经配置或发布。** 当前 GitHub 连接没有 Administration / Environment / Secrets 管理接口，也没有 workflow dispatch 写能力；`main` 当前 branch endpoint 显示 `protected: false`。因此 production Environment、Variables、Secrets、Cloudflare 资源、正式 migration 和正式 release 都必须以真实云端证据为准，不能根据 YAML 推断完成。
+
+## 2. 云上开发与发布原则
+
+后续 GitHub + Cloudflare 是唯一必需环境：
+
+- 禁止把用户 Mac、本地 shell、本地 Wrangler、本地 SQLite 或其他个人电脑作为开发、测试或发布前置条件；
+- 代码通过远端分支 → PR → GitHub Actions → 合并 `main`；
+- 生产变更只通过受保护的 GitHub Actions / Cloudflare 云端流程；
+- Cloudflare API Token、认证 Secret、bootstrap Secret 不进入 Git、PR、前端或 Actions 日志；
+- 普通 push/PR 不允许自动执行 D1 migration 或正式 Worker deploy；
+- D1 migration 与 Worker deploy 分离，分别显式批准；
+- `0009`–`0012` 已冻结，正式/共享环境只追加新 migration，不修改历史 migration。
+
+## 3. 生产拓扑
 
 ```text
-电脑/手机浏览器
-  → 自定义域名 / Cloudflare 网络层
-  → Workers Static Assets（Vue静态应用）
-  → /api/*（Hono，验证系统会话 Cookie、成员角色及业务范围）
-      → D1：业务表、流水、任务、快照
-      → 私有 R2：附件、JSON 分片备份（原始文件需另行留存）
-      → Email：已验证团队邮箱
-  → Cron：领取分批任务、预警、发信和备份
+浏览器
+  → 自定义域名 / Cloudflare
+  → Workers Static Assets（Vue）
+  → /api/*（Hono）
+      → D1：业务数据、会话、任务、快照
+      → 私有 R2：附件、逻辑备份分片
+  → Cron：预警、通知 outbox、备份任务
 ```
 
-静态文件尽量直接由资源层提供；`/api`和`/api/*`必须优先进入Worker，未知API不能返回SPA页面。保持前端与API同域，不为图表、字体或库添加不必要的境外第三方加载链路。
+生产保持 API 与 Web 同域。`/api` 和 `/api/*` 必须优先进入 Worker，未知 API 不能回退为 SPA HTML。
 
-## 3. 免费额度与CPU
+## 4. GitHub production Environment
 
-| 服务 | 已核对的免费边界 |
-|---|---|
-| Workers | 10万请求/天，普通请求及Cron每次CPU10ms，128MB内存 |
-| Static Assets | 直接静态资源请求免费且不限量；若主动先执行Worker则计入其调用 |
-| D1 | 500万读取行/天、10万写入行/天；单库500MB，账户合计5GB |
-| D1单次操作 | 免费每Worker调用50次查询、每SQL最多100个绑定参数 |
-| R2标准存储 | 10GB-month/月、100万A类操作、1000万B类操作；超额计费 |
-| Cron | 免费账户5个触发器 |
-| Email | 向账户内已验证收件地址发送免费；任意收件人发送需付费Workers |
+正式发布前必须在 GitHub 实际建立并检查 `production` Environment。按当前仓库和套餐可用能力，至少配置：
 
-CPU是执行代码的时间，网络/数据库等待不计入。JS解析大JSON、大Excel解压/生成、排序归并、批量验证、构造大量SQL及序列化仍占CPU；图表渲染和浏览器解析不占Worker CPU，但占用户设备资源。超CPU限制会失败，`async`、后台执行或`waitUntil()`不提高CPU限额。
+### Environment protection
 
-免费方案验证用真实部署的CPU指标和请求结果；本地workerd只验证行为，不代表Cloudflare Free CPU、配额或网络已达标。每批20行是初始值，不是平台保证的安全值。注意50次查询和100个参数是不同限制，20行×多个字段不能盲目拼成单个超参数SQL。
+- Deployment branch policy：只允许 `main`；
+- Required reviewer：如当前套餐支持则启用；
+- 禁止自批和管理员绕过：如当前套餐支持则启用；
+- 不允许 feature branch 直接拿 production Secret 运行生产 workflow。
 
-如果实测需要大量工程补偿才满足10ms，可提议Workers Paid：最低$5/月，HTTP请求默认CPU30秒、可配置至5分钟；付费Cron按间隔有不同CPU上限。资源超套餐另计。该升级不购买传统服务器，也不自动获得大陆线路加速。
+YAML 中写 `environment: production` 不能替代真实 Environment protection 配置。
 
-用量监控不能假定硬封顶：R2需开通计费订阅；私有桶、认证、文件大小/总量限制、孤立上传清理和容量监控一起控制成本。预算告警只提醒，不能表述为绝不会产生账单。
+### Environment Variables
 
-## 4. 生产准备与可移交运维（P7实施）
+`PRODUCTION_CONFIG_JSON`
+: 真实、非敏感、经过 `npm run p7 -- config` 验证的严格 JSON。包含 Worker 名称、Account ID、自定义域名、D1 名称/ID、R2 bucket、静态资源和 Cron 配置；不包含任何 Secret 值。
 
-### 4.1 责任与身份分离
+`PRODUCTION_DEPLOY_ENABLED`
+: 平时建议 `false`。只有批准准确 commit 的发布窗口才改为 `true`。
 
-生产环境不得依赖资产所有者个人 Cloudflare 登录态。应用管理员、Cloudflare 技术运维和 CI/CD 使用不同身份：
+`PRODUCTION_MIGRATION_ENABLED`
+: 平时必须 `false`。只有完成备份、停写和目标 D1 核对后，批准 migration 窗口才临时设为 `true`。
 
-- **应用管理员**只在本系统内管理业务成员、角色、项目/框架范围和规则，不需要 Cloudflare 权限。
-- **技术运维人员**使用自己的 Cloudflare Account Member 身份处理域名、Workers、D1/R2、Secrets、WAF、迁移与故障，禁止共享资产所有者账号密码。业务账号不在 Cloudflare 管理。
-- **受托运维负责人**如果需要在资产所有者不介入的情况下继续邀请/撤销 Cloudflare 成员、创建或轮换 account-owned API token，则必须在交接时明确授予其 Super Administrator 等足够权限。Cloudflare 当前要求 Super Administrator 才能管理 Account Members，创建/更新 account-owned API token 也需要 Super Administrator 权限；这是高权限角色，只授予明确的受托负责人。
-- **CI/CD 服务身份**使用 Cloudflare account-owned API token，按实际发布所需最小权限配置并存入 GitHub Secrets/Environment Secrets。禁止使用资产所有者的 Global API Key、个人长期 API Token 或浏览器登录 Cookie 作为自动化依赖。
-- **资产所有者**可保留 Super Administrator 作为紧急兜底，但日常发布、迁移、基础设施调整和业务账号管理不应要求其登录。
+### Environment Secret
 
-若资产所有者当前是唯一 Super Administrator，首次完整移交仍需要其完成一次性的受托负责人授权；授权完成后，后续日常运维不再依赖资产所有者账号。
+`CLOUDFLARE_API_TOKEN`
+: 使用 Cloudflare account-owned API token，按 Worker/D1/R2/路由实际操作配置最小权限。禁止使用 Global API Key、个人浏览器登录态或个人长期 Token 作为 CI/CD 依赖。
 
-### 4.2 系统账号与认证 Secret
+## 5. Wrangler production config
 
-业务账号完全在应用内维护，不配置 Cloudflare Access。生产至少需要两个与业务数据分离的运行时 Secret：`AUTH_CREDENTIAL_PEPPER` 和一次性 `BOOTSTRAP_TOKEN`；只放 Worker Secrets / 部署密钥管理中，不进入 Git、前端或日志。首管理员创建成功后 bootstrap 普通路径关闭；后续账号、重置密码、角色和范围均由应用管理员处理。
+模板：`apps/api/wrangler.production.example.json`。
 
-慢 KDF 在浏览器 Web Worker 执行 Argon2id，Worker 服务端只做 HMAC-SHA256 verifier 和会话校验，因此登录不会为了密码慢哈希消耗大量 Worker CPU。P7 仍需实测真实 Workers 请求 CPU，以及不同手机/浏览器执行 Argon2id 的耗时和交互体验。
+生产配置必须保持：
 
-### 4.3 上线步骤
+- `APP_ENV=production`；
+- `workers_dev=false`；
+- `preview_urls=false`；
+- 一个自定义域名；
+- 唯一 `DB` D1 binding；
+- 唯一 `FILES` R2 binding；
+- `ASSETS` 静态资源 binding；
+- `/api`、`/api/*` 使用 `run_worker_first`；
+- Cron `*/5 * * * *`；
+- 不包含认证 Secret 值。
 
-以下步骤在 P7 执行；逐项状态和证据要求见 [P7_ACCEPTANCE.md](P7_ACCEPTANCE.md)：
+生产配置长期声明：
 
-1. 以当前已验证功能基线完成本地检查和主要业务验收，准备正式账号与自定义域名；显式确定首个真实应用管理员 username，并生成一次性 bootstrap secret。
-2. 由已授权的受托技术运维身份创建/配置 D1、R2 和 Workers；提供 `apac` 位置提示。提示不能锁定具体机房，也不承诺香港路由。采用全球网络，不接入中国大陆网络。
-3. 将 `apps/api/wrangler.production.example.json` 复制为被Git忽略的 `apps/api/wrangler.production.jsonc`，写入真实D1/R2绑定、`APP_ENV=production`、自定义域名和正式Worker名称；移除占位符。配置使用严格 JSON 子集，运行 `npm run p7 -- config apps/api/wrangler.production.jsonc` 检查；模板不含 Secret。
-4. 保持 `workers_dev=false`、`preview_urls=false`。生产认证只接受系统会话 Cookie；不得启用 `X-Dev-User-*`、Cloudflare Access JWT 或其他请求头身份兜底。
-5. 通过 Worker Secrets 配置 `AUTH_CREDENTIAL_PEPPER`、`BOOTSTRAP_TOKEN`；不写入前端和 Git。首管理员创建后验证 bootstrap 再次调用已关闭。
-6. 如后续启用邮件通知，再单独设置通知邮箱/域名与 SPF/DKIM；业务账号不要求邮箱，邮件基础设施验证不得重新变成登录前提。
-7. 在本地/测试库完成迁移与恢复演练，备份现有正式库，再对准确数据库执行正式迁移。确认版本和资源名后部署。
-8. 开启分批定时任务、备份及用量告警；测试浏览器关闭后仍能提醒，以及发送失败的恢复行为。
-9. 在目标地区的移动/联通/电信测试账号密码登录、7天会话、首次改密、首页、列表、附件和可选邮件；记录结果再决定正式使用。
-10. 完成运维移交演练：由受托维护人或 CI 服务身份在资产所有者不登录 Cloudflare 的情况下完成一次受控发布、一次迁移演练和一次回退；验证旧维护人撤权、CI Token 轮换后系统仍可运行，并记录紧急恢复路径。
-
-生产部署命令形状（从仓库根目录执行，只有完成上述准备且获得当次授权后才使用）：
-
-```sh
-npm run check
-npm exec --workspace @tpm/api -- wrangler deploy --config wrangler.production.jsonc
+```json
+"secrets": {
+  "required": ["AUTH_CREDENTIAL_PEPPER"]
+}
 ```
 
-仓库默认普通 push CI 只做检查；手工 production preflight 只校验非敏感配置并 dry-run，不应携带云凭据。`docs/templates/production-deploy.yml.example` 是未激活模板；实际生产是否已经存在其他受控发布流程必须读取当前 GitHub/Cloudflare 配置确认，不能仅根据模板状态推断。任何启用/修改生产发布流程都必须先获得授权并验证 Environment 分支/审批规则和 account-owned API token。完整操作顺序、证据与回退边界见 [P7_RUNBOOK.md](P7_RUNBOOK.md)。
+Wrangler 会在正式 deploy 时检查永久认证 pepper 是否已经配置；缺失时发布必须失败。
 
-## 5. 数据备份和回退
+`BOOTSTRAP_TOKEN` 是一次性 Worker Secret，不放进长期 `secrets.required`。首次管理员创建成功、再次 bootstrap 已确认关闭后删除该 Secret，否则会把一次性初始化凭据变成长久发布依赖。
 
-- 当前实现通过 D1 绑定逐表读取，每 100 行写入私有 R2 JSON 分片，附 SHA-256 和 manifest；不使用 D1 HTTP SQL 导出 API，不需要单独导出 Token。
-- 北京时间 03:00 创建任务，Cron 每次只推进一个分片步骤；daily 保留 7 份、monthly 保留 3 份已完成备份。完成时间和保留清理 CPU 须按真实数据规模测量。
-- 分片备份不是跨表一致快照。正式迁移备份须可靠停写并暂停并发 Cron/step，留存 schema 指纹、截止时间和逐表对账；无法保证停写时必须使用另行验证的一致性方案。
-- manifest 仅列附件 key，不含本体或内容 hash；附件需独立下载、核对大小/hash。30 天延迟删除和周期孤立对象清理尚未实现，不应假定已经启用。
-- 恢复先在隔离 D1 应用同版本迁移并回灌 JSON，核对行数、金额/数量、状态、规则、外键和附件，`auth_sessions` 不恢复；只校验 checksum 不等于恢复成功。
-- 代码回退不等于数据回退。首次正式/共享环境使用后历史迁移冻结；保持旧应用与新 schema 兼容，数据恢复经隔离核对后再切换，不直接覆盖正式库。
-- P6 已实现业务预警、通知 outbox 和备份任务状态；Cloudflare CPU/额度/容量及外部可用性告警仍需 P7 正式配置并验证负责人收得到。
+## 6. 正式发布顺序
 
-## 6. 官方依据
+### 6.1 代码门禁
 
-- [Workers价格](https://developers.cloudflare.com/workers/platform/pricing/)
-- [Workers资源与CPU限制](https://developers.cloudflare.com/workers/platform/limits/)
-- [静态资源路由](https://developers.cloudflare.com/workers/static-assets/routing/worker-script/)
-- [Wrangler配置](https://developers.cloudflare.com/workers/wrangler/configuration/)
-- [D1价格](https://developers.cloudflare.com/d1/platform/pricing/)
-- [D1限制](https://developers.cloudflare.com/d1/platform/limits/)
-- [D1位置提示](https://developers.cloudflare.com/d1/configuration/data-location/)
-- [D1批量事务](https://developers.cloudflare.com/d1/worker-api/d1-database/)
-- [D1导出至R2](https://developers.cloudflare.com/workflows/examples/backup-d1/)
-- [D1导出API限制](https://developers.cloudflare.com/api/resources/d1/subresources/database/methods/export/)
-- [R2价格](https://developers.cloudflare.com/r2/pricing/)
-- [R2开通与订阅](https://developers.cloudflare.com/r2/get-started/)
-- [Email价格及已验证收件人](https://developers.cloudflare.com/email-service/platform/pricing/)
-- [Cloudflare中国大陆网络](https://developers.cloudflare.com/china-network/)
-- [Cloudflare Account Members 与权限](https://developers.cloudflare.com/fundamentals/manage-members/)
-- [Cloudflare Account Roles](https://developers.cloudflare.com/fundamentals/manage-members/roles/)
-- [Cloudflare Account-owned API Tokens](https://developers.cloudflare.com/fundamentals/api/get-started/account-owned-tokens/)
+1. 所有修改先进入远端施工分支和 PR；
+2. PR 最新 HEAD 的 GitHub Actions `npm run check` 必须全绿；
+3. 通过 GitHub 合入 `main`；
+4. 合并后的 `main` CI 再次通过；
+5. 后续生产 workflow 输入的 `release_sha` 必须等于当前准确 `main` SHA。
 
-所有价格/限制上线前需再次核对。免费不等于无限额或可用性保证；全球网络不等于中国大陆加速。
+### 6.2 资源与身份核对
+
+在 Cloudflare 真实核对：
+
+- Account / Zone 归属；
+- Worker 名称；
+- D1 database 名称和 UUID；
+- R2 bucket 名称且保持私有；
+- 自定义域名；
+- 计费方案与 R2 开通状态；
+- `AUTH_CREDENTIAL_PEPPER` 是否已安全配置；
+- 首次初始化阶段是否需要临时 `BOOTSTRAP_TOKEN`。
+
+仓库里的 `wrangler.acceptance.jsonc` 只代表历史 acceptance 配置，不能直接当成新的正式 production config。
+
+### 6.3 预检
+
+运行 GitHub Actions `Production preflight (no deployment)`：
+
+- 完整 `npm run check`；
+- materialize `PRODUCTION_CONFIG_JSON`；
+- `npm run p7 -- config`；
+- Wrangler production dry-run；
+- 不携带 Cloudflare Token，不产生云端变更。
+
+### 6.4 D1 migration
+
+如正式 D1 尚未达到代码要求的 schema：
+
+1. 核对当前 `d1 migrations list`；
+2. 已有正式数据时先停写、暂停会写库的 Cron/任务并完成可恢复备份；空库也记录“空库无业务数据”证据；
+3. 手工触发 `Production D1 migration`；
+4. 输入准确 `main` SHA、migration evidence reference、目标正式 D1 UUID；
+5. workflow 会要求输入 UUID 与 `PRODUCTION_CONFIG_JSON` 的 `database_id` 完全相同；
+6. 执行前后分别 `wrangler d1 migrations list DB --remote`；
+7. 执行 `wrangler d1 migrations apply DB --remote`；
+8. migration 失败立即停止，不继续 Worker 发布，也不修改历史 migration 规避失败。
+
+### 6.5 Worker 发布
+
+migration/schema ready 后手工触发 `Production release`：
+
+1. 输入准确当前 `main` SHA；
+2. 输入已审核的发布/备份/schema 证据引用；
+3. workflow 再执行完整 `npm run check`；
+4. validation + dry-run；
+5. 再次确认 `origin/main` 仍等于批准 SHA；
+6. `wrangler deploy --config wrangler.production.jsonc`；
+7. GitHub runner 从 production config 提取真实自定义域名；
+8. 请求 `https://<domain>/api/health`；
+9. 只有 `ok=true`、service 正确、`schema.ready=true` 才判定发布后的基础健康检查通过。
+
+代码 deploy **不自动执行 migration**。
+
+## 7. 首管理员与登录验收
+
+首次上线时：
+
+1. 临时配置 Worker Secret `BOOTSTRAP_TOKEN`；
+2. 通过 HTTPS 页面使用 token 创建明确的首管理员 username；
+3. 验证第二次 bootstrap 被拒绝；
+4. 删除 `BOOTSTRAP_TOKEN`；
+5. 应用内创建第二管理员；
+6. 验证 username/password 登录、浏览器 Argon2id、HttpOnly/Secure/SameSite Cookie、7 天会话、首次改密、停用成员撤销旧会话；
+7. 匿名受保护 API 必须拒绝，未知 API 必须返回 JSON 404。
+
+密码、派生 credential、bootstrap token 和 Cookie 不写入 Actions 日志、GitHub issue/PR 或部署记录。
+
+## 8. 核心生产验收
+
+发布后仍需真实完成：
+
+- `/api/health` 与 schema ready；
+- 登录与权限范围；
+- 电压等级 → 线路 → 杆塔基础台账；
+- 手工需求和标准模板导入；
+- 项目储备 / 项目物资；
+- 项目级出库；
+- 多执行任务；
+- 物资供应 / 实施 / 结算；
+- 四状态回投；
+- 框架 / 协议 / 预算 / 发生 / 实际费用；
+- 附件上传、下载、权限与 R2 私有性；
+- Cron / 预警 / 通知 outbox / 备份；
+- 自定义域名、HTTPS、静态资源和移动端访问。
+
+详细证据矩阵见 `P7_ACCEPTANCE.md`。
+
+## 9. Logs、Metrics 与免费额度
+
+真实 Cloudflare 环境必须观察：
+
+- Workers Logs / 错误日志；
+- Workers Analytics：请求量、错误率、CPU time；
+- D1 读取/写入行和容量；
+- R2 存储量、A/B 类操作；
+- Cron 执行成功率；
+- 备份周期耗时和失败状态；
+- 目标地区实际网络体验。
+
+不要用本地 wall-clock、workerd 或合成数据替代 Cloudflare Free CPU/额度结论。
+
+当前文档核对的免费基线仍为：Workers 10 万请求/天、普通请求和 Cron 10ms CPU；D1 500 万读取行/天、10 万写入行/天；R2 免费层包含 10GB-month、100 万 A 类和 1000 万 B 类操作。正式使用前必须再次以 Cloudflare 官方页面为准。
+
+## 10. 回退与恢复
+
+- 代码回退不等于数据回退；
+- 回退 Worker 前先确认旧代码兼容当前 schema；
+- D1 数据恢复只先恢复到隔离库并对账，不能直接覆盖有新写入的正式库；
+- R2/附件需要独立核对，不以 D1 manifest checksum 代替附件本体完整性；
+- `auth_sessions` 不恢复；
+- 首次正式/共享环境使用后 migration 历史冻结，只追加；
+- 保留前一 Worker version/deployment ID、准确 schema 状态、备份引用和回退证据。
+
+详细步骤见 `P7_RUNBOOK.md`。
+
+## 11. 官方依据
+
+- Workers 配置：https://developers.cloudflare.com/workers/wrangler/configuration/
+- Workers Secrets：https://developers.cloudflare.com/workers/configuration/secrets/
+- Workers 价格：https://developers.cloudflare.com/workers/platform/pricing/
+- Workers 限制：https://developers.cloudflare.com/workers/platform/limits/
+- D1 migrations：https://developers.cloudflare.com/d1/reference/migrations/
+- D1 价格：https://developers.cloudflare.com/d1/platform/pricing/
+- D1 限制：https://developers.cloudflare.com/d1/platform/limits/
+- R2 文档：https://developers.cloudflare.com/r2/
+- R2 价格：https://developers.cloudflare.com/r2/pricing/
+- Cloudflare Account Members：https://developers.cloudflare.com/fundamentals/manage-members/
+- Account-owned API Tokens：https://developers.cloudflare.com/fundamentals/api/get-started/account-owned-tokens/
+
+所有价格、限制和 GitHub/Cloudflare 权限能力在正式上线前再次核对；“免费”不等于无限额或可用性保证。
