@@ -113,6 +113,12 @@ test('authentication middleware uses portable session and member repositories', 
   assert.doesNotMatch(source, /c\.env\.DB|\bD1Database\b/, 'auth middleware must not depend directly on D1');
 });
 
+test('session lifecycle helpers use SessionRepository instead of auth_sessions SQL', () => {
+  const source = readFileSync(resolve(root, 'apps/api/src/session.ts'), 'utf8');
+  assert.match(source, /SqlSessionRepository/);
+  assert.doesNotMatch(source, /\bD1Database\b|\b(?:FROM|INTO|UPDATE)\s+auth_sessions\b/i, 'session helpers must not inline auth session persistence');
+});
+
 test('Cloudflare infrastructure adapters depend inward on portable ports', () => {
   const adapters = [
     ['d1-database.ts', /implements\s+DatabasePort/, /ports\/database/],

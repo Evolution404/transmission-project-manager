@@ -1,6 +1,8 @@
 import type { Context } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import type { WorkerBindings } from './env';
+import { SqlSessionRepository } from './repositories/sql-session-repository';
+import { createCloudflarePersistence } from './runtime/cloudflare/persistence';
 
 const encoder = new TextEncoder();
 export const SESSION_COOKIE = 'tpm_session';
@@ -43,6 +45,11 @@ export function clearSessionCookie(c: Context<any>): void {
   });
 }
 
+function sessionRepository(c: Context<any>) {
+  const { database } = createCloudflarePersistence(c.env);
+  return new SqlSessionRepository(database);
+}
+
 export async function createSession(
   c: Context<any>,
   memberId: string,
@@ -53,24 +60,24 @@ export async function createSession(
   const now = new Date();
   const nowIso = now.toISOString();
   const expiresAt = new Date(now.getTime() + SESSION_MAX_AGE_SECONDS * 1000).toISOString();
-  await c.env.DB.prepare(
-    `INSERT INTO auth_sessions
-     (id, member_id, token_hash, session_version, created_at, last_seen_at, expires_at, revoked_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, NULL)`,
-  ).bind(crypto.randomUUID(), memberId, tokenHash, sessionVersion, nowIso, nowIso, expiresAt).run();
+  await sessionRepository(c).create({
+    id: crypto.randomUUID(),
+    memberId,
+    tokenHash,
+    sessionVersion,
+    createdAt: nowIso,
+    lastSeenAt: nowIso,
+    expiresAt,
+  });
   setSessionCookie(c, token);
   return token;
 }
 
-export async function revokeSessionToken(db: D1Database, token: string): Promise<void> {
+export async function revokeSessionToken(c: Context<any>, token: string): Promise<void> {
   const tokenHash = await hashSessionToken(token);
-  await db.prepare(
-    `UPDATE auth_sessions SET revoked_at = COALESCE(revoked_at, ?) WHERE token_hash = ?`,
-  ).bind(new Date().toISOString(), tokenHash).run();
+  await sessionRepository(c).revokeByTokenHash(tokenHash, new Date().toISOString());
 }
 
-export async function revokeAllMemberSessions(db: D1Database, memberId: string): Promise<void> {
-  await db.prepare(
-    `UPDATE auth_sessions SET revoked_at = COALESCE(revoked_at, ?) WHERE member_id = ? AND revoked_at IS NULL`,
-  ).bind(new Date().toISOString(), memberId).run();
+export async function revokeAllMemberSessions(c: Context<any>, memberId: string): Promise<void> {
+  await sessionRepository(c).revokeAllForMember(memberId, new Date().toISOString());
 }

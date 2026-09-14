@@ -351,7 +351,7 @@ app.get('/api/me', (c) => {
 
 app.post('/api/auth/logout', async (c) => {
   const token = getSessionToken(c);
-  if (token) await revokeSessionToken(c.env.DB, token);
+  if (token) await revokeSessionToken(c, token);
   clearSessionCookie(c);
   return c.json({ ok: true as const, data: { loggedOut: true } });
 });

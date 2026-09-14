@@ -85,13 +85,20 @@ test('session repository only touches stale non-revoked sessions', async () => {
       sql: 'INSERT INTO members (id,username,display_name,role,enabled,version,must_change_password,session_version,invited_at,first_login_at,last_login_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
       params: ['member-1', 'alice', 'Alice', 'readonly', 1, 1, 0, 1, null, null, null],
     });
-    await database.run({
-      sql: 'INSERT INTO auth_sessions (id,member_id,token_hash,session_version,created_at,last_seen_at,expires_at,revoked_at) VALUES (?,?,?,?,?,?,?,NULL)',
-      params: ['session-1', 'member-1', 'hash-1', 1, '2026-09-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z', '2026-09-20T00:00:00.000Z'],
+    await sessions.create({
+      id: 'session-1',
+      memberId: 'member-1',
+      tokenHash: 'hash-1',
+      sessionVersion: 1,
+      createdAt: '2026-09-01T00:00:00.000Z',
+      lastSeenAt: '2026-09-01T00:00:00.000Z',
+      expiresAt: '2026-09-20T00:00:00.000Z',
     });
 
     await sessions.touchLastSeen('hash-1', '2026-09-14T00:00:00.000Z', '2026-09-13T23:00:00.000Z');
     assert.equal((await sessions.findByTokenHash('hash-1'))?.lastSeenAt, '2026-09-14T00:00:00.000Z');
+    await sessions.revokeByTokenHash('hash-1', '2026-09-14T00:01:00.000Z');
+    assert.equal((await sessions.findByTokenHash('hash-1'))?.revokedAt, '2026-09-14T00:01:00.000Z');
   } finally {
     sqlite.close();
   }
