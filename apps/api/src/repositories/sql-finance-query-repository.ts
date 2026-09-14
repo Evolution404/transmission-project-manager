@@ -2,12 +2,14 @@ import type {
   AgreementStatus,
   AgreementSummary,
   AgreementVersionSummary,
+  BudgetAllocationInput,
+  BudgetAllocationSummary,
   FinanceProjectSummary,
   FrameworkSummary,
   FrameworkVersionSummary,
 } from '@tpm/shared';
 import type { DatabasePort } from '../ports/database.ts';
-import type { FinanceQueryRepository } from '../ports/finance-query-repository.ts';
+import type { AgreementAllocationValidation, FinanceQueryRepository } from '../ports/finance-query-repository.ts';
 
 type FrameworkRow = {
   id: string; code: string; name: string; total_amount_fen: number; annual_target_fen: number | null;
@@ -180,5 +182,32 @@ export class SqlFinanceQueryRepository implements FinanceQueryRepository {
       reason: row.reason,
       createdAt: row.created_at,
     }));
+  }
+
+  async validateAgreementAllocations(
+    frameworkId: string,
+    allocations: readonly BudgetAllocationInput[],
+    effectiveDate: string | null,
+    requireActive: boolean,
+  ): Promise<AgreementAllocationValidation> {
+    if (!allocations.length) return { ok: true, summaries: [] };
+    const placeholders = allocations.map(() => '?').join(',');
+    const rows = await this.database.all<AgreementRow>({
+      sql: `SELECT id,framework_id,code,name,amount_fen,valid_from,valid_to,status,version,created_at,updated_at
+            FROM agreements WHERE id IN (${placeholders})`,
+      params: allocations.map((item) => item.agreementId),
+    });
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    const summaries: BudgetAllocationSummary[] = [];
+    for (const item of allocations) {
+      const agreement = byId.get(item.agreementId);
+      if (!agreement) return { ok: false, reason: 'not_found' };
+      if (agreement.framework_id !== frameworkId) return { ok: false, reason: 'framework_mismatch' };
+      if (requireActive && (agreement.status !== 'active' || (effectiveDate !== null && (effectiveDate < agreement.valid_from || effectiveDate > agreement.valid_to)))) {
+        return { ok: false, reason: 'not_effective' };
+      }
+      summaries.push({ agreementId: agreement.id, amountFen: item.amountFen, agreementCode: agreement.code, agreementName: agreement.name });
+    }
+    return { ok: true, summaries };
   }
 }

@@ -1,13 +1,4 @@
-import type {
-  BudgetAllocationInput,
-  BudgetAllocationSummary,
-  BudgetVersionSummary,
-  ProjectBudgetSummary,
-} from '@tpm/shared';
-
-export type AgreementAllocationValidation =
-  | { ok: true; summaries: BudgetAllocationSummary[] }
-  | { ok: false; reason: 'not_found' | 'framework_mismatch' | 'not_effective' };
+import type { BudgetVersionSummary, ProjectBudgetSummary } from '@tpm/shared';
 
 interface BudgetMutationMeta {
   actorId: string;
@@ -48,12 +39,6 @@ export interface FinanceBudgetRepository {
   listBudgets(projectId: string | null): Promise<readonly ProjectBudgetSummary[]>;
   findBudget(id: string): Promise<ProjectBudgetSummary | null>;
   getBudgetHistory(id: string): Promise<readonly BudgetVersionSummary[] | null>;
-  validateAgreementAllocations(
-    frameworkId: string,
-    allocations: readonly BudgetAllocationInput[],
-    effectiveDate: string | null,
-    requireActive: boolean,
-  ): Promise<AgreementAllocationValidation>;
   createBudget(input: CreateBudgetRecord): Promise<void>;
   updateBudget(input: UpdateBudgetRecord): Promise<void>;
   confirmBudget(input: ConfirmBudgetRecord): Promise<void>;

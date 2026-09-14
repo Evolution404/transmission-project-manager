@@ -63,20 +63,13 @@ function allocationWrites(prefix, allocations = baseBudget.allocations) {
   return allocations.map((item, index) => ({ id:`${prefix}-${index}`,agreementId:item.agreementId,amountFen:item.amountFen }));
 }
 
-test('budget repository lists budgets with allocations and validates agreements without N+1 route queries', async () => {
+test('budget repository lists budgets with allocations without N+1 route queries', async () => {
   const { sqlite, repository } = createRepository();
   try {
     await repository.createBudget({ budget:baseBudget, allocations:allocationWrites('ba'), ...mutationMeta });
     assert.deepEqual(await repository.listBudgets(null), [baseBudget]);
     assert.deepEqual(await repository.findBudget('b1'), baseBudget);
     assert.equal(await repository.findBudget('missing'), null);
-
-    const ok = await repository.validateAgreementAllocations('fw-1', [{ agreementId:'ag-1',amountFen:600 }], '2026-03-01', true);
-    assert.equal(ok.ok, true);
-    assert.deepEqual(ok.ok ? ok.summaries.map((item) => item.agreementCode) : [], ['AG-1']);
-    assert.deepEqual(await repository.validateAgreementAllocations('fw-1', [{ agreementId:'missing',amountFen:1 }], null, false), { ok:false, reason:'not_found' });
-    assert.deepEqual(await repository.validateAgreementAllocations('fw-1', [{ agreementId:'ag-x',amountFen:1 }], null, false), { ok:false, reason:'framework_mismatch' });
-    assert.deepEqual(await repository.validateAgreementAllocations('fw-1', [{ agreementId:'ag-2',amountFen:1 }], '2026-03-01', true), { ok:false, reason:'not_effective' });
   } finally { sqlite.close(); }
 });
 

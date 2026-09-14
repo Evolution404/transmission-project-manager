@@ -1,12 +1,6 @@
-import type {
-  BudgetAllocationInput,
-  BudgetAllocationSummary,
-  BudgetVersionSummary,
-  ProjectBudgetSummary,
-} from '@tpm/shared';
+import type { BudgetAllocationSummary, BudgetVersionSummary, ProjectBudgetSummary } from '@tpm/shared';
 import type { DatabasePort, DatabaseStatement } from '../ports/database.ts';
 import type {
-  AgreementAllocationValidation,
   ConfirmBudgetRecord,
   CreateBudgetRecord,
   FinanceBudgetRepository,
@@ -33,16 +27,6 @@ type AllocationRow = {
   amount_fen: number;
   code: string;
   name: string;
-};
-
-type AgreementRow = {
-  id: string;
-  framework_id: string;
-  code: string;
-  name: string;
-  valid_from: string;
-  valid_to: string;
-  status: 'active' | 'paused' | 'expired';
 };
 
 type BudgetVersionRow = {
@@ -211,32 +195,6 @@ export class SqlFinanceBudgetRepository implements FinanceBudgetRepository {
       confirmedAt: row.confirmed_at,
       allocations: allocations.get(row.id) ?? [],
     }));
-  }
-
-  async validateAgreementAllocations(
-    frameworkId: string,
-    allocations: readonly BudgetAllocationInput[],
-    effectiveDate: string | null,
-    requireActive: boolean,
-  ): Promise<AgreementAllocationValidation> {
-    if (!allocations.length) return { ok: true, summaries: [] };
-    const placeholders = allocations.map(() => '?').join(',');
-    const rows = await this.database.all<AgreementRow>({
-      sql: `SELECT id,framework_id,code,name,valid_from,valid_to,status FROM agreements WHERE id IN (${placeholders})`,
-      params: allocations.map((item) => item.agreementId),
-    });
-    const byId = new Map(rows.map((row) => [row.id, row]));
-    const summaries: BudgetAllocationSummary[] = [];
-    for (const item of allocations) {
-      const agreement = byId.get(item.agreementId);
-      if (!agreement) return { ok: false, reason: 'not_found' };
-      if (agreement.framework_id !== frameworkId) return { ok: false, reason: 'framework_mismatch' };
-      if (requireActive && (agreement.status !== 'active' || (effectiveDate !== null && (effectiveDate < agreement.valid_from || effectiveDate > agreement.valid_to)))) {
-        return { ok: false, reason: 'not_effective' };
-      }
-      summaries.push({ agreementId: agreement.id, amountFen: item.amountFen, agreementCode: agreement.code, agreementName: agreement.name });
-    }
-    return { ok: true, summaries };
   }
 
   async createBudget(input: CreateBudgetRecord): Promise<void> {

@@ -61,6 +61,11 @@ test('finance query repository lists projects and frameworks as business DTOs', 
     assert.equal(await repository.findProject('missing'), null);
     assert.equal(await repository.hasProjectFinanceHistory('p1'), false);
     assert.equal(await repository.hasProjectFinanceHistory('p2'), true);
+    const valid = await repository.validateAgreementAllocations('fw-a', [{ agreementId: 'ag-a1', amountFen: 300 }], '2026-03-01', true);
+    assert.deepEqual(valid, { ok: true, summaries: [{ agreementId: 'ag-a1', amountFen: 300, agreementCode: 'A-1', agreementName: 'Agreement A1' }] });
+    assert.deepEqual(await repository.validateAgreementAllocations('fw-a', [{ agreementId: 'missing', amountFen: 1 }], null, false), { ok: false, reason: 'not_found' });
+    assert.deepEqual(await repository.validateAgreementAllocations('fw-a', [{ agreementId: 'ag-b', amountFen: 1 }], null, false), { ok: false, reason: 'framework_mismatch' });
+    assert.deepEqual(await repository.validateAgreementAllocations('fw-a', [{ agreementId: 'ag-a2', amountFen: 1 }], '2026-03-01', true), { ok: false, reason: 'not_effective' });
   } finally { sqlite.close(); }
 });
 

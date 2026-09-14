@@ -446,7 +446,7 @@ p4App.post('/budgets', requireRoles('admin', 'project_manager', 'finance'), asyn
   if (allocations.length && !project.frameworkId) return c.json(apiError('PROJECT_FRAMEWORK_REQUIRED', '项目未归属框架，不能分配协议'), 422);
   let summaries: BudgetAllocationSummary[] = [];
   if (project.frameworkId) {
-    const checked = await budgetRepository.validateAgreementAllocations(project.frameworkId, allocations, null, false);
+    const checked = await queryRepository.validateAgreementAllocations(project.frameworkId, allocations, null, false);
     if (!checked.ok) {
       if (checked.reason === 'not_found') return c.json(apiError('AGREEMENT_NOT_FOUND', '协议不存在'), 422);
       if (checked.reason === 'framework_mismatch') return c.json(apiError('AGREEMENT_FRAMEWORK_MISMATCH', '协议与项目不属于同一框架'), 422);
@@ -491,7 +491,7 @@ p4App.put('/budgets/:id', requireRoles('admin', 'project_manager', 'finance'), a
   if (allocations.length && !project.frameworkId) return c.json(apiError('PROJECT_FRAMEWORK_REQUIRED', '项目未归属框架，不能分配协议'), 422);
   let summaries: BudgetAllocationSummary[] = [];
   if (project.frameworkId) {
-    const checked = await budgetRepository.validateAgreementAllocations(project.frameworkId, allocations, null, false);
+    const checked = await queryRepository.validateAgreementAllocations(project.frameworkId, allocations, null, false);
     if (!checked.ok) {
       if (checked.reason === 'not_found') return c.json(apiError('AGREEMENT_NOT_FOUND', '协议不存在'), 422);
       if (checked.reason === 'framework_mismatch') return c.json(apiError('AGREEMENT_FRAMEWORK_MISMATCH', '协议与项目不属于同一框架'), 422);
@@ -536,7 +536,7 @@ p4App.post('/budgets/:id/confirm', requireRoles('admin', 'project_manager', 'fin
   const project = await queryRepository.findProject(current.projectId); if (!project?.frameworkId) return c.json(apiError('PROJECT_FRAMEWORK_REQUIRED', '确认预算前项目必须归属框架'), 422);
   const sum = safeSum(current.allocations.map((item) => item.amountFen));
   if (!current.allocations.length || sum === null || sum !== current.totalAmountFen) return c.json(apiError('BUDGET_ALLOCATION_MISMATCH', '确认预算时协议分配合计必须精确等于预算总额'), 422);
-  const checked = await budgetRepository.validateAgreementAllocations(project.frameworkId, current.allocations, today(), true);
+  const checked = await queryRepository.validateAgreementAllocations(project.frameworkId, current.allocations, today(), true);
   if (!checked.ok) {
     if (checked.reason === 'not_found') return c.json(apiError('AGREEMENT_NOT_FOUND', '协议不存在'), 422);
     if (checked.reason === 'framework_mismatch') return c.json(apiError('AGREEMENT_FRAMEWORK_MISMATCH', '协议与项目不属于同一框架'), 422);
