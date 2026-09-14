@@ -125,3 +125,19 @@ test('production migration is a separate manual workflow bound to exact main rev
   assert.match(source, /d1 migrations apply DB --remote/);
   assert.doesNotMatch(source, /\n  (push|pull_request|schedule|workflow_run):|wrangler deploy --config/);
 });
+
+test('production Cloudflare inventory is manual, environment-bound and read-only', () => {
+  const source = readFileSync(new URL('../.github/workflows/production-cloudflare-inventory.yml', import.meta.url), 'utf8');
+  assert.match(source, /workflow_dispatch:/);
+  assert.match(source, /environment: production/);
+  assert.match(source, /account_id/);
+  assert.match(source, /CLOUDFLARE_READ_API_TOKEN/);
+  assert.doesNotMatch(source, /secrets\.CLOUDFLARE_API_TOKEN/);
+  assert.match(source, /\/workers\/scripts/);
+  assert.match(source, /\/d1\/database/);
+  assert.match(source, /\/r2\/buckets/);
+  assert.match(source, /\/workers\/domains/);
+  assert.match(source, /\/zones/);
+  assert.doesNotMatch(source, /\n  (push|pull_request|schedule|workflow_run):/);
+  assert.doesNotMatch(source, /(?:-X|--request)\s+(?:POST|PUT|PATCH|DELETE)|wrangler\s+(?:deploy|d1\s+migrations\s+apply|d1\s+execute|r2\s+bucket\s+create|secret\s+put)/i);
+});
