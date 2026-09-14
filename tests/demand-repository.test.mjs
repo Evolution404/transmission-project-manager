@@ -11,11 +11,15 @@ function createRepository() {
     CREATE TABLE transmission_lines (id TEXT PRIMARY KEY, voltage_level_id TEXT NOT NULL, line_name TEXT NOT NULL, enabled INTEGER NOT NULL);
     CREATE TABLE transmission_towers (id TEXT PRIMARY KEY, line_id TEXT NOT NULL, tower_no TEXT NOT NULL, sort_index INTEGER NOT NULL, enabled INTEGER NOT NULL);
     CREATE TABLE materials (id TEXT PRIMARY KEY, code TEXT, name TEXT NOT NULL, model TEXT NOT NULL, unit TEXT NOT NULL, enabled INTEGER NOT NULL, version INTEGER NOT NULL);
-    CREATE TABLE master_data_guards (valid INTEGER NOT NULL);
-    CREATE TRIGGER master_data_guard BEFORE INSERT ON master_data_guards
-      WHEN NEW.valid<>1 BEGIN SELECT RAISE(ABORT,'MASTER_DATA_GUARD_FAILED'); END;
-    CREATE TRIGGER master_data_guard_cleanup AFTER INSERT ON master_data_guards
-      BEGIN DELETE FROM master_data_guards; END;
+    CREATE TABLE master_data_guards (
+      id INTEGER PRIMARY KEY CHECK(id=1),
+      invalid_grid_location INTEGER NOT NULL DEFAULT 1 CONSTRAINT INVALID_GRID_LOCATION CHECK(invalid_grid_location=1),
+      voltage_parent INTEGER NOT NULL DEFAULT 1 CONSTRAINT VOLTAGE_LEVEL_NOT_FOUND CHECK(voltage_parent=1),
+      line_parent INTEGER NOT NULL DEFAULT 1 CONSTRAINT LINE_NOT_FOUND CHECK(line_parent=1),
+      line_reference INTEGER NOT NULL DEFAULT 1 CONSTRAINT LINE_LOCATION_IN_USE CHECK(line_reference=1),
+      tower_reference INTEGER NOT NULL DEFAULT 1 CONSTRAINT TOWER_LOCATION_IN_USE CHECK(tower_reference=1),
+      voltage_reference INTEGER NOT NULL DEFAULT 1 CONSTRAINT VOLTAGE_LOCATION_IN_USE CHECK(voltage_reference=1)
+    );
     CREATE TABLE demands (
       id TEXT PRIMARY KEY, source_type TEXT NOT NULL, source_key TEXT NOT NULL UNIQUE,
       source_batch_id TEXT, source_file_sha256 TEXT, source_file_name TEXT, source_sheet TEXT, source_row_number INTEGER,
@@ -93,7 +97,7 @@ test('structured demand creation rechecks grid and material versions and commits
     sqlite.prepare("UPDATE materials SET version=4 WHERE id='m1'").run();
     await assert.rejects(repository.createStructured({
       ...base, id: 'd2', sourceKey: 'manual:d2', responseJson: '{"ok":true,"id":"d2"}', idempotencyKey: 'idem-d2', requestHash: 'hash-d2', auditId: 'audit-d2',
-    }), /MASTER_DATA_GUARD_FAILED/);
+    }), /INVALID_GRID_LOCATION/);
     assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM demands WHERE id='d2'").get().count, 0);
     assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM idempotency_records WHERE idempotency_key='idem-d2'").get().count, 0);
   } finally { sqlite.close(); }

@@ -42,7 +42,7 @@ function rowSummary(row: RowDb): ImportValidationRow {
 function gridGuard(input: CommitImportPublishInput['rows'][number]): DatabaseStatement {
   const item = input.normalized;
   return {
-    sql: `INSERT INTO master_data_guards (valid) VALUES (CASE WHEN EXISTS (
+    sql: `INSERT INTO master_data_guards (id,invalid_grid_location) VALUES (1,CASE WHEN EXISTS (
             SELECT 1 FROM transmission_lines l JOIN voltage_levels v ON v.id=l.voltage_level_id
             WHERE l.id=? AND v.id=? AND l.enabled=1 AND v.enabled=1 AND v.display_name=? AND l.line_name=?
             AND ((? IS NULL AND ? IS NULL AND ?='全线') OR EXISTS (
@@ -50,7 +50,8 @@ function gridGuard(input: CommitImportPublishInput['rows'][number]): DatabaseSta
               WHERE s.id=? AND e.id=? AND s.line_id=l.id AND s.enabled=1 AND e.enabled=1 AND s.sort_index<=e.sort_index
               AND (CASE WHEN s.id=e.id THEN s.tower_no ELSE s.tower_no || '—' || e.tower_no END)=?
             ))
-          ) THEN 1 ELSE 0 END)`,
+          ) THEN 1 ELSE 0 END)
+          ON CONFLICT(id) DO UPDATE SET invalid_grid_location=excluded.invalid_grid_location`,
     params: [
       item.lineId!, item.voltageLevelId!, item.voltageRaw, item.lineName,
       item.startTowerId, item.endTowerId, item.section,

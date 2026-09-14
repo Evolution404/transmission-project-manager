@@ -1,33 +1,25 @@
-# 数据库迁移
+# 数据库 Schema 基线
 
-当前开发 schema 使用按编号递增的 D1 migration，最新要求由 `apps/api/src/schema.ts` 的 `REQUIRED_MIGRATION` 明确声明，并由仓库测试强制要求它始终等于最新 committed migration。
+当前项目仍处于开发阶段，数据库采用**单一可重建基线**：
 
-## 本地开发
+`0001_initial_schema.sql`
 
-正常从仓库根目录启动即可：
+## 开发阶段规则
 
-```sh
-npm run dev
-```
+- migrations 目录只能存在这一个 SQL 文件。
+- 除非用户明确要求兼容已有数据或保留升级路径，否则禁止新增 `0002+` migration。
+- schema 变化直接修改 `0001_initial_schema.sql`，并同步更新 `tests/migrations.lock.json` 中唯一 checksum。
+- 本地开发启动器检测到 `0001` checksum 变化或旧 migration 历史时，会重建本地 D1，再使用 Wrangler 标准 migration 命令重新应用当前基线。
+- 不保留旧 schema 兼容层，不编写补丁 migration，不为历史开发版本增加升级 workaround。
 
-API 开发启动器会先执行全部待应用的本地 migration，再启动 Wrangler；运行期间如果 `apps/api/migrations/*.sql` 新增或变化，会自动再次执行 migration apply。业务 API 同时有 schema readiness 门禁：数据库落后于代码要求时返回 `503 SCHEMA_OUTDATED`，不会继续执行到缺表 SQL。
+## 何时允许追加 migration
 
-如需手工执行迁移：
+只有用户明确要求“兼容已有数据 / 保留升级路径”后，才进入版本化 migration 模式。届时应先冻结当前基线，再为后续变化新增 migration，并补充真实的数据保留、升级和回退测试。
+
+## 本地验证
 
 ```sh
 npm exec --workspace @tpm/api -- wrangler d1 migrations apply transmission-project-manager-local --local
 ```
 
-健康检查：
-
-```sh
-curl http://127.0.0.1:8787/api/health
-```
-
-应看到 `schema.ready=true`，且 `currentMigration` 已包含 `requiredMigration`。
-
-本地数据位于 `.wrangler/`，已被 Git 忽略。初始化配置中的数据库 ID 是本地占位符。
-
-## 正式环境
-
-正式环境不得依赖用户访问页面时自动迁移，也不得把本地假数据或示例费用迁入正式库。发布流程必须先显式完成并验证正式 D1 migration，再切换新 Worker；migration 失败时停止发布。运行时 schema readiness 仍保留为最后一道 fail-closed 门禁。
+标准命令必须能够从空数据库一次应用 `0001_initial_schema.sql`；不得依赖 `d1 execute --file`、手工写 `d1_migrations` 或其他特殊处理。

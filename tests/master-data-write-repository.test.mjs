@@ -25,11 +25,18 @@ function createRepository() {
       enabled INTEGER NOT NULL, version INTEGER NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
       UNIQUE(line_id,tower_no), UNIQUE(line_id,sort_index)
     );
-    CREATE TABLE master_data_guards (valid INTEGER NOT NULL);
-    CREATE TRIGGER master_data_guard BEFORE INSERT ON master_data_guards
-      WHEN NEW.valid<>1 BEGIN SELECT RAISE(ABORT,'MASTER_DATA_GUARD_FAILED'); END;
-    CREATE TRIGGER master_data_guard_cleanup AFTER INSERT ON master_data_guards
-      BEGIN DELETE FROM master_data_guards; END;
+    CREATE TABLE demands (
+      id TEXT PRIMARY KEY, voltage_level_id TEXT, line_id TEXT
+    );
+    CREATE TABLE master_data_guards (
+      id INTEGER PRIMARY KEY CHECK(id=1),
+      invalid_grid_location INTEGER NOT NULL DEFAULT 1 CONSTRAINT INVALID_GRID_LOCATION CHECK(invalid_grid_location=1),
+      voltage_parent INTEGER NOT NULL DEFAULT 1 CONSTRAINT VOLTAGE_LEVEL_NOT_FOUND CHECK(voltage_parent=1),
+      line_parent INTEGER NOT NULL DEFAULT 1 CONSTRAINT LINE_NOT_FOUND CHECK(line_parent=1),
+      line_reference INTEGER NOT NULL DEFAULT 1 CONSTRAINT LINE_LOCATION_IN_USE CHECK(line_reference=1),
+      tower_reference INTEGER NOT NULL DEFAULT 1 CONSTRAINT TOWER_LOCATION_IN_USE CHECK(tower_reference=1),
+      voltage_reference INTEGER NOT NULL DEFAULT 1 CONSTRAINT VOLTAGE_LOCATION_IN_USE CHECK(voltage_reference=1)
+    );
     CREATE TABLE audit_events (
       id TEXT PRIMARY KEY, actor_member_id TEXT, action TEXT NOT NULL, object_type TEXT NOT NULL,
       object_id TEXT NOT NULL, before_json TEXT, after_json TEXT, created_at TEXT NOT NULL
@@ -100,7 +107,7 @@ test('line create rechecks enabled parent inside the same atomic batch', async (
       requireEnabledParent: true,
       mutation: mutation('line-1'),
       audit: { action: 'master.lines.create', objectType: 'transmission_lines', before: null, after: { id: 'line-1' } },
-    }), /MASTER_DATA_GUARD_FAILED/);
+    }), /VOLTAGE_LEVEL_NOT_FOUND/);
     assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM transmission_lines").get().count, 0);
     assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM audit_events").get().count, 0);
     assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM idempotency_records").get().count, 0);

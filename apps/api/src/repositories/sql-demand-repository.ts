@@ -100,7 +100,7 @@ export class SqlDemandRepository implements DemandRepository {
             VALUES (?,?,?,?,?,201,?)`,
       params: [input.idempotencyKey, input.actorId, input.operation, input.requestHash, input.responseJson, input.now],
     }, {
-      sql: `INSERT INTO master_data_guards (valid) VALUES (CASE WHEN EXISTS (
+      sql: `INSERT INTO master_data_guards (id,invalid_grid_location) VALUES (1,CASE WHEN EXISTS (
               SELECT 1 FROM transmission_lines l JOIN voltage_levels v ON v.id=l.voltage_level_id
               WHERE l.id=? AND v.id=? AND l.enabled=1 AND v.enabled=1 AND v.display_name=? AND l.line_name=?
               AND ((? IS NULL AND ? IS NULL AND ?='全线') OR EXISTS (
@@ -108,7 +108,8 @@ export class SqlDemandRepository implements DemandRepository {
                 WHERE s.id=? AND e.id=? AND s.line_id=l.id AND s.enabled=1 AND e.enabled=1 AND s.sort_index<=e.sort_index
                 AND (CASE WHEN s.id=e.id THEN s.tower_no ELSE s.tower_no || '—' || e.tower_no END)=?
               ))
-            ) THEN 1 ELSE 0 END)`,
+            ) THEN 1 ELSE 0 END)
+            ON CONFLICT(id) DO UPDATE SET invalid_grid_location=excluded.invalid_grid_location`,
       params: [
         input.lineId, input.voltageLevelId, input.voltageName, input.lineName,
         input.startTowerId, input.endTowerId, input.sectionText,
@@ -131,10 +132,11 @@ export class SqlDemandRepository implements DemandRepository {
     const materialVersionEntries = Object.entries(input.materialVersions);
     if (materialVersionEntries.length) {
       statements.push({
-        sql: `INSERT INTO master_data_guards (valid) VALUES (CASE WHEN NOT EXISTS (
+        sql: `INSERT INTO master_data_guards (id,invalid_grid_location) VALUES (1,CASE WHEN NOT EXISTS (
                 SELECT 1 FROM json_each(?) expected LEFT JOIN materials m ON m.id=expected.key
                 WHERE m.id IS NULL OR m.enabled<>1 OR m.version<>CAST(expected.value AS INTEGER)
-              ) THEN 1 ELSE 0 END)`,
+              ) THEN 1 ELSE 0 END)
+              ON CONFLICT(id) DO UPDATE SET invalid_grid_location=excluded.invalid_grid_location`,
         params: [JSON.stringify(input.materialVersions)],
       });
     }

@@ -12,22 +12,23 @@ function sha256(path) {
   return createHash('sha256').update(readFileSync(path)).digest('hex');
 }
 
-test('current development migration baseline is explicitly checksum locked', () => {
+test('development schema stays on one resettable baseline unless compatibility is explicitly requested', () => {
   const migrationFiles = readdirSync(migrationsDir)
     .filter((name) => /^\d{4}_.+\.sql$/.test(name))
     .sort();
-  const lockedFiles = Object.keys(lock).map((path) => basename(path)).sort();
   assert.deepEqual(
     migrationFiles,
-    lockedFiles,
-    '开发期重整迁移后必须显式同步 tests/migrations.lock.json；不得留下已删除或未纳入门禁的迁移',
+    ['0001_initial_schema.sql'],
+    '当前仍是开发阶段：除非用户明确要求兼容已有数据/升级路径，否则禁止新增 0002+ migration；应直接重写 0001_initial_schema.sql 并重建开发数据库',
   );
 
+  const lockedFiles = Object.keys(lock).map((path) => basename(path)).sort();
+  assert.deepEqual(lockedFiles, migrationFiles, '迁移锁必须只覆盖唯一开发基线');
   for (const [relativePath, expectedHash] of Object.entries(lock)) {
     assert.equal(
       sha256(resolve(root, relativePath)),
       expectedHash,
-      `${relativePath} 与当前开发基线不一致；如属明确的开发期 schema 重整，请同步更新迁移锁`,
+      `${relativePath} 与唯一开发基线不一致；开发期 schema 重整必须同步更新该单一 checksum`,
     );
   }
 });
@@ -231,13 +232,14 @@ test('mobile UI keeps usable navigation and dashboard density', () => {
   assert.doesNotMatch(dashboardSource, /:cols="5"/);
 });
 
-test('local API development automatically applies and watches migrations', () => {
+test('local API development rebuilds the local D1 when the single development baseline changes', () => {
   const apiPackage = JSON.parse(readFileSync(resolve(root, 'apps/api/package.json'), 'utf8'));
   assert.equal(apiPackage.scripts.dev, 'node ../../scripts/dev/api-dev.mjs');
   const source = readFileSync(resolve(root, 'scripts/dev/api-dev.mjs'), 'utf8');
-  assert.match(source, /migrations/);
-  assert.match(source, /watch\(/);
+  assert.match(source, /0001_initial_schema|baseline|基线/);
+  assert.match(source, /重建本地 D1/);
   assert.match(source, /'d1',\s*'migrations',\s*'apply'/);
+  assert.doesNotMatch(source, /watch\(/);
 });
 
 test('schema readiness guard always targets the latest committed migration', () => {
@@ -272,22 +274,22 @@ test('committed tests cannot silently bypass the quality gate', () => {
   }
 });
 
-test('Node runtime gate exercises the real app, SQLite, Filesystem, and migration rehearsal', () => {
+test('Node runtime gate exercises the real app, SQLite, Filesystem, and the single schema baseline', () => {
   const nodeConfig = readFileSync(resolve(root, 'apps/api/tsconfig.node-runtime.json'), 'utf8');
   assert.match(nodeConfig, /"src\/app\.ts"/, 'Node typecheck must include the real HTTP app');
   assert.doesNotMatch(nodeConfig, /adapters\/cloudflare|runtime\/cloudflare|src\/index\.ts/, 'Node typecheck must stay outside Cloudflare infrastructure');
 
   const appTest = resolve(root, 'tests/node-runtime-app.test.mjs');
-  const migrationTest = resolve(root, 'tests/node-runtime-migration-rehearsal.test.mjs');
+  const migrationTest = resolve(root, 'tests/migrations.test.mjs');
   assert.equal(existsSync(appTest), true, 'missing Node application runtime E2E');
-  assert.equal(existsSync(migrationTest), true, 'missing Node migration rehearsal');
+  assert.equal(existsSync(migrationTest), true, 'missing single-baseline schema test');
   const appSource = readFileSync(appTest, 'utf8');
   assert.match(appSource, /createNodePersistence/);
   assert.match(appSource, /PERSISTENCE/);
   assert.doesNotMatch(appSource, /\bDB\s*:|\bFILES\s*:/, 'Node E2E must not fall back to Cloudflare bindings');
   const migrationSource = readFileSync(migrationTest, 'utf8');
-  assert.match(migrationSource, /0007_p7_flexible_demand_sources\.sql/);
-  assert.match(migrationSource, /0012_master_data_write_guards\.sql/);
+  assert.match(migrationSource, /0001_initial_schema\.sql/);
+  assert.doesNotMatch(migrationSource, /0002_|0012_/);
 });
 
 test('Node integration suite is safe for file-level parallelism', () => {
@@ -300,8 +302,8 @@ test('Node integration suite is safe for file-level parallelism', () => {
   assert.match(wranglerHelper, /'--inspector-port'/, 'parallel Wrangler runtimes need isolated inspector ports');
 
   const migrationTests = readFileSync(resolve(root, 'tests/migrations.test.mjs'), 'utf8');
-  assert.match(migrationTests, /node:sqlite/, 'migration data-preservation tests should avoid one Wrangler process per SQL statement');
-  assert.match(migrationTests, /applyWranglerMigrations/, 'migration tests must retain a real Wrangler migration smoke path');
+  assert.match(migrationTests, /node:sqlite/, 'single-baseline schema tests should validate SQLite directly');
+  assert.match(migrationTests, /applyLocalMigrations/, 'schema tests must retain a real Wrangler migration smoke path');
 
   const ports = new Map();
   for (const file of collectTestFiles(resolve(root, 'tests'))) {
