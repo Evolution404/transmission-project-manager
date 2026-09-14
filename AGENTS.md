@@ -2,7 +2,7 @@
 
 ## 开始工作
 
-- 当前基线：P0–P6、最终业务模型和“电压等级 → 线路 → 杆塔 → 需求定位”基础台账对象化均已完成；当前在 `refactor/backend-runtime-portability-20260913` 上进行后端可移植化重构。长期业务事实以 `docs/BUSINESS_BASELINE.md`、`docs/DESIGN.md`、`docs/DATA_MODEL.md` 为准；当前施工状态只看 `docs/AI_HANDOFF.md`，历史 WIP/恢复过程只通过 Git 历史追溯。P7 负责真实业务数据和正式环境验收。
+- 当前基线：P0–P6、最终业务模型、“电压等级 → 线路 → 杆塔 → 需求定位”基础台账对象化和后端可移植化均已完成并合入 `main`；当前进入 P7 正式生产发布、首管理员和真实环境验收。长期业务事实以 `docs/BUSINESS_BASELINE.md`、`docs/DESIGN.md`、`docs/DATA_MODEL.md` 为准；当前施工状态只看 `docs/AI_HANDOFF.md`，生产步骤看 `docs/P7_RUNBOOK.md`，历史 WIP/恢复过程只通过 Git 历史追溯。
 - 开始前运行 `git status --short --branch`，先读 `docs/README.md`，再阅读 `docs/AI_HANDOFF.md`、`docs/BUSINESS_BASELINE.md`、`docs/IMPLEMENTATION_PLAN.md`、`docs/DESIGN.md`、`docs/DATA_MODEL.md` 和 `docs/TESTING.md`。
 - **测试先于生产代码。** 新阶段或缺陷修复先写/更新能约束目标行为的测试，再修改生产实现；完成后必须跑完整 `npm run check`。发现 bug 必须先补回归用例，禁止只修表现。
 - 不覆盖他人的未提交修改。后续若用户明确要求多个 AI 协作，先划定文件/模块所有权。
