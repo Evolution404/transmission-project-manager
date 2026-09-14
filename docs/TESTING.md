@@ -32,15 +32,15 @@ npm run check
 - 全部 `tests/*.test.mjs` Node/workerd+D1 测试；
 - 全部 `apps/web/tests/*.test.ts` Vue/Vitest 行为测试。
 
-`feat/notion-object-storage` 最近一次完整 `npm run check`（2026-09-14）：
+`feat/master-data-line-centric-history-20260914` 最近一次完整 `npm run check`（2026-09-14，M3 杆塔排序收口）：
 
 - TypeScript（Cloudflare + Node）：PASS；
 - Web production build：PASS；
 - Worker `wrangler deploy --dry-run`：PASS；
-- Vue/Vitest：64/64 PASS；
+- Vue/Vitest：92/92 PASS；
 - Node：260/260 PASS。
 
-本轮新增门禁覆盖 Notion `ObjectStorePort` adapter、R2/Notion provider 切换、Node Filesystem 保持、Notion 初始化 env 处理、P7 production config 的 Notion/R2 互斥校验，以及 R2 `10042` 未启用时只读 inventory 的降级处理。除此之外，真实 Notion `TPM Object Store` 已执行 `put → get → delete → get=null` smoke 并 PASS。完整 `npm run check` 仍属于本地门禁，不代表正式 Cloudflare CPU/D1 配额、目标地区网络、正式 Worker Secret 或生产恢复已经验收；合入前仍要求 GitHub CI 复现。
+本轮在既有 Notion/ObjectStore、P0–P7 和可移植运行时门禁基础上，新增覆盖杆塔编号规范化/自然排序、单杆自动插入、同号稳定身份、专用移动 API、`tower_order_version` 并发保护、稀疏 rank 间隙耗尽后的 D1 两阶段物化重排，以及单杆新增界面不再提交技术排序值。完整 `npm run check` 仍属于本地门禁，不代表正式 Cloudflare CPU/D1 配额、目标地区网络、正式 Worker Secret 或生产恢复已经验收；合入前仍要求 GitHub CI 复现。
 
 ## 3. 迁移与仓库守卫
 

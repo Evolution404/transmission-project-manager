@@ -60,6 +60,21 @@ it('bulk paste creates new towers and submits current versions for existing towe
   ] });
 });
 
+it('single tower creation sends no manual order and explains automatic numeric placement', async () => {
+  const w = mount(MasterDataView, { props: { currentUser: admin } }); await flushPromises();
+  await w.get('[data-test="select-line-l1"]').trigger('click'); await flushPromises();
+  await w.get('[data-test="open-new-tower"]').trigger('click');
+  expect(w.text()).toContain('按规范化编号自动插入合适位置');
+  expect(w.text()).not.toContain('线路顺序');
+  await w.get('[data-test="tower-number-input"]').setValue('10-1');
+  await w.get('[data-test="save-tower"]').trigger('click'); await flushPromises();
+  const call = vi.mocked(fetch).mock.calls.find(([u, init]) => String(u) === '/api/master/towers' && init?.method === 'POST');
+  expect(call).toBeTruthy();
+  const body = JSON.parse(String(call![1]!.body));
+  expect(body.towerNo).toBe('#010-1');
+  expect(body).not.toHaveProperty('sortRank');
+});
+
 it('readonly users navigate the same hierarchy without mutation controls', async () => {
   const w = mount(MasterDataView, { props: { currentUser: { ...admin, role: 'readonly' } } }); await flushPromises();
   await w.get('[data-test="select-line-l1"]').trigger('click'); await flushPromises();

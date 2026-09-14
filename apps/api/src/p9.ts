@@ -9,7 +9,7 @@ import type {
   TransmissionTowerSummary,
   VoltageLevelSummary,
 } from '@tpm/shared';
-import { normalizeTowerNo } from '@tpm/shared';
+import { compareTowerNo, normalizeTowerNo } from '@tpm/shared';
 import { requireRoles, type AppEnv } from './auth.ts';
 import type { CommitSingleMasterDataInput, MasterDataWriteKind } from './ports/master-data-write-repository';
 import { SqlDemandRepository } from './repositories/sql-demand-repository.ts';
@@ -93,6 +93,33 @@ function listPage(c: Context<AppEnv>): { limit: number; cursor: [string, string]
   } catch { return c.json(apiError('INVALID_CURSOR', '分页游标无效'), 400); }
 }
 function pageCursor(first: string, id: string) { return btoa(encodeURIComponent(JSON.stringify([first, id]))); }
+
+function inferNewTowerOrder(
+  existing: readonly { id: string; towerNo: string; sortRank: number }[],
+  towerNo: string,
+): { sortRank: number; rebalance: boolean } {
+  if (!existing.length) return { sortRank: 1000, rebalance: false };
+
+  let insertIndex = existing.findIndex((item) => compareTowerNo(towerNo, item.towerNo) < 0);
+  if (insertIndex < 0) insertIndex = existing.length;
+  const left = insertIndex > 0 ? existing[insertIndex - 1]! : null;
+  const right = insertIndex < existing.length ? existing[insertIndex]! : null;
+
+  if (!left && right) {
+    if (right.sortRank > 1) return { sortRank: Math.floor(right.sortRank / 2), rebalance: false };
+    return { sortRank: 500, rebalance: true };
+  }
+  if (left && !right) {
+    if (left.sortRank <= Number.MAX_SAFE_INTEGER - 1000) return { sortRank: left.sortRank + 1000, rebalance: false };
+    return { sortRank: (existing.length + 1) * 1000, rebalance: true };
+  }
+  if (left && right) {
+    const gap = right.sortRank - left.sortRank;
+    if (gap > 1) return { sortRank: Math.floor((left.sortRank + right.sortRank) / 2), rebalance: false };
+    return { sortRank: insertIndex * 1000 + 500, rebalance: true };
+  }
+  return { sortRank: 1000, rebalance: false };
+}
 p9App.get('/master/lines', async (c) => {
   const page = listPage(c); if (page instanceof Response) return page;
   const voltageLevelId = cleanText(c.req.query('voltageLevelId'), 120) || null;
@@ -242,6 +269,23 @@ for (const kind of Object.keys(masterTables) as MasterKind[]) {
       const id = method === 'post' ? crypto.randomUUID() : c.req.param('id')!;
       const before = method === 'post' ? null : await repository.findRecord(masterWriteKinds[kind], id);
       if (method !== 'post' && !before) return c.json(apiError('MASTER_DATA_NOT_FOUND', '台账对象不存在'), 404);
+      let towerOrderContext: { lineId: string; version: number; rebalance: boolean } | null = null;
+      if (kind === 'towers' && method === 'post') {
+        const lineId = cleanText(body.lineId, 120);
+        const parent = lineId ? await repository.findTowerParent(lineId) : null;
+        if (!parent) return c.json(apiError('LINE_NOT_FOUND', constraintMessages.LINE_NOT_FOUND!), 422);
+        const towerNo = normalizeTowerNo(cleanText(body.towerNo, 80));
+        if (!towerNo) return c.json(apiError('INVALID_TOWER_NUMBER', '杆塔编号格式无法识别'), 422);
+        const order = await repository.listTowerOrder(lineId);
+        const inferred = inferNewTowerOrder(order, towerNo);
+        towerOrderContext = { lineId, version: parent.towerOrderVersion, rebalance: inferred.rebalance };
+        body = { ...body, towerNo, sortRank: inferred.sortRank };
+      } else if (kind === 'towers' && method === 'delete' && before) {
+        const lineId = String(before.line_id);
+        const parent = await repository.findTowerParent(lineId);
+        if (!parent) return c.json(apiError('LINE_NOT_FOUND', constraintMessages.LINE_NOT_FOUND!), 422);
+        towerOrderContext = { lineId, version: parent.towerOrderVersion, rebalance: false };
+      }
       const version = intValue(body.expectedVersion, 1, Number.MAX_SAFE_INTEGER);
       if (method !== 'post' && version === null) return c.json(apiError('INVALID_VERSION', 'expectedVersion 必须为正整数'), 422);
       if (before && before.version !== version) return c.json(apiError('VERSION_CONFLICT', '数据已变化，请刷新后重试'), 409);
@@ -249,6 +293,7 @@ for (const kind of Object.keys(masterTables) as MasterKind[]) {
         const data = { id, deleted: true };
         return commitSingleMaster(c, mutation, {
           kind: masterWriteKinds[kind], action: 'delete', id, expectedVersion: version,
+          ...(towerOrderContext ? { parentLineId: towerOrderContext.lineId, expectedTowerOrderVersion: towerOrderContext.version, changesTowerOrder: true, rebalanceTowerOrder: towerOrderContext.rebalance } : {}),
           audit: { action: `master.${kind}.delete`, objectType: masterTables[kind], before, after: null },
         }, data, 200);
       }
@@ -258,10 +303,17 @@ for (const kind of Object.keys(masterTables) as MasterKind[]) {
       if (method === 'patch' && before && kind === 'towers' && normalizeTowerNo(cleanText(body.towerNo, 80)) !== before.tower_no) {
         return c.json(apiError('RENAME_REQUIRED', '杆塔编号变更必须使用“杆塔更名”操作，以保留历史编号'), 422);
       }
+      if (method === 'patch' && before && kind === 'towers' && cleanText(body.lineId, 120) !== before.line_id) {
+        return c.json(apiError('TOWER_LINE_CHANGE_UNSUPPORTED', '杆塔不能通过普通编辑切换所属线路'), 422);
+      }
+      if (method === 'patch' && before && kind === 'towers' && Number(body.sortRank) !== Number(before.sort_rank)) {
+        return c.json(apiError('ORDER_MOVE_REQUIRED', '杆塔顺序变更必须使用“调整顺序”操作'), 422);
+      }
       const prepared = await prepareSingleMaster(c, kind, body, id, before); if (prepared instanceof Response) return prepared;
       return commitSingleMaster(c, mutation, {
         kind: masterWriteKinds[kind], action: method === 'post' ? 'create' : 'update', id,
         values: prepared.values, expectedVersion: method === 'post' ? null : version,
+        ...(towerOrderContext ? { parentLineId: towerOrderContext.lineId, expectedTowerOrderVersion: towerOrderContext.version, changesTowerOrder: true, rebalanceTowerOrder: towerOrderContext.rebalance } : {}),
         requireEnabledParent: prepared.requireEnabledParent, audit: prepared.audit,
       }, prepared.data, method === 'post' ? 201 : 200);
     });
@@ -358,6 +410,56 @@ p9App.post('/master/towers/:id/rename', requireRoles('admin'), async (c) => {
   } catch (cause) {
     const raced = await replay(c, mutation); if (raced) return raced;
     if (String(cause).includes('idempotency_records.request_hash')) return c.json(apiError('VERSION_CONFLICT', '数据已变化，请刷新后重试'), 409);
+    throw cause;
+  }
+  return c.json(response, 200);
+});
+
+p9App.post('/master/lines/:lineId/towers/:towerId/move', requireRoles('admin'), async (c) => {
+  let body: Record<string, unknown>; try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
+  const mutation = await beginMutation(c, body); if (mutation instanceof Response) return mutation;
+  const lineId = c.req.param('lineId'), towerId = c.req.param('towerId');
+  const expectedTowerOrderVersion = intValue(body.expectedTowerOrderVersion, 1, Number.MAX_SAFE_INTEGER);
+  if (expectedTowerOrderVersion === null) return c.json(apiError('INVALID_ORDER_VERSION', 'expectedTowerOrderVersion 必须为正整数'), 422);
+  const beforeTowerId = cleanText(body.beforeTowerId, 120) || null;
+  const afterTowerId = cleanText(body.afterTowerId, 120) || null;
+  if ((beforeTowerId ? 1 : 0) + (afterTowerId ? 1 : 0) !== 1) return c.json(apiError('INVALID_MOVE_TARGET', '请选择放在某一杆塔之前或之后'), 422);
+  const targetTowerId = beforeTowerId ?? afterTowerId!;
+  if (targetTowerId === towerId) return c.json(apiError('INVALID_MOVE_TARGET', '目标杆塔不能是自身'), 422);
+
+  const repository = masterDataWriteRepository(c);
+  const line = await repository.findRecord('line', lineId);
+  if (!line) return c.json(apiError('MASTER_DATA_NOT_FOUND', '线路不存在'), 404);
+  if (Number(line.tower_order_version) !== expectedTowerOrderVersion) return c.json(apiError('ORDER_VERSION_CONFLICT', '杆塔顺序已变化，请刷新后重试'), 409);
+  const order = await repository.listTowerOrder(lineId);
+  const moving = order.find((item) => item.id === towerId), target = order.find((item) => item.id === targetTowerId);
+  if (!moving || !target) return c.json(apiError('INVALID_TOWER_RELATION', '移动杆塔和目标杆塔必须属于当前线路'), 422);
+
+  const originalIds = order.map((item) => item.id);
+  const withoutMoving = order.filter((item) => item.id !== towerId);
+  const targetIndex = withoutMoving.findIndex((item) => item.id === targetTowerId);
+  const insertIndex = beforeTowerId ? targetIndex : targetIndex + 1;
+  const nextOrder = [...withoutMoving]; nextOrder.splice(insertIndex, 0, moving);
+  if (nextOrder.every((item, index) => item.id === originalIds[index])) return c.json(apiError('ORDER_NO_CHANGE', '杆塔已经位于指定位置'), 422);
+
+  const left = withoutMoving[insertIndex - 1] ?? null;
+  const right = withoutMoving[insertIndex] ?? null;
+  const rebalance = right
+    ? right.sortRank - (left?.sortRank ?? 0) <= 1
+    : (left?.sortRank ?? 0) > Number.MAX_SAFE_INTEGER - 1000;
+  const response = { ok: true as const, data: { towerId, lineId, towerOrderVersion: expectedTowerOrderVersion + 1 } };
+  const now = new Date().toISOString();
+  try {
+    await repository.commitTowerMove({
+      lineId, towerId, targetTowerId, placement: beforeTowerId ? 'before' : 'after', expectedTowerOrderVersion, rebalance,
+      mutation: { key: mutation.key, actorId: c.get('currentUser').id, operation: mutation.operation, hash: mutation.hash, responseJson: JSON.stringify(response), statusCode: 200, now, auditId: crypto.randomUUID() },
+      audit: { action: 'master.towers.move', objectType: 'transmission_towers', before: { towerId, order: originalIds }, after: { towerId, order: nextOrder.map((item) => item.id) } },
+    });
+  } catch (cause) {
+    const raced = await replay(c, mutation); if (raced) return raced;
+    const error = String(cause);
+    if (error.includes('idempotency_records.request_hash')) return c.json(apiError('ORDER_VERSION_CONFLICT', '杆塔顺序已变化，请刷新后重试'), 409);
+    if (error.includes('UNIQUE constraint')) return c.json(apiError('ORDER_VERSION_CONFLICT', '杆塔顺序已变化，请刷新后重试'), 409);
     throw cause;
   }
   return c.json(response, 200);

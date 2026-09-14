@@ -178,10 +178,11 @@ test('line and tower parent relations reject disabled parents while names/number
   assert.equal(duplicateTowerNo.response.status, 201);
   assert.equal(duplicateTowerNo.body.data.towerNo, '#010');
 
-  const duplicateTowerOrder = await jsonRequest('/api/master/towers', mutation('POST', idem('duplicate-tower-order'), {
+  const ignoredManualOrder = await jsonRequest('/api/master/towers', mutation('POST', idem('duplicate-tower-order'), {
     lineId: lineA.id, towerNo: '11', sortRank: 1000, towerType: null, enabled: true,
   }));
-  assert.equal(duplicateTowerOrder.response.status, 409);
+  assert.equal(ignoredManualOrder.response.status, 201);
+  assert.equal(ignoredManualOrder.body.data.towerNo, '#011');
 });
 
 test('structured demand supports whole-line, tower and tower-range locations and exposes object ids', async () => {
@@ -287,7 +288,7 @@ test('referenced line cannot change parent and referenced tower cannot move to a
     expectedVersion: towerA20.version,
   }));
   assert.equal(moveTower.response.status, 422);
-  assert.equal(moveTower.body.error.code, 'TOWER_LOCATION_IN_USE');
+  assert.equal(moveTower.body.error.code, 'TOWER_LINE_CHANGE_UNSUPPORTED');
 });
 
 test('structured demand with many material rows stays within the D1 invocation query budget', async () => {
@@ -359,16 +360,21 @@ test('referenced-line tower can change current order while deletion remains prot
   const made = await jsonRequest('/api/master/towers', mutation('POST', idem('interior'), { lineId: lineA.id, towerNo: '15', sortRank: 15000 }));
   assert.equal(made.response.status, 201);
   const item = made.body.data;
-  const reordered = await jsonRequest(`/api/master/towers/${item.id}`, mutation('PATCH', idem('interior-move'), { ...item, expectedVersion: 1, sortRank: 30000 }));
+  const lineBeforeMove = (await jsonRequest(`/api/master/lines?query=${encodeURIComponent(lineA.lineName)}`)).body.data.items.find((value) => value.id === lineA.id);
+  const reordered = await jsonRequest(`/api/master/lines/${lineA.id}/towers/${item.id}/move`, mutation('POST', idem('interior-move'), {
+    expectedTowerOrderVersion: lineBeforeMove.towerOrderVersion,
+    afterTowerId: towerA20.id,
+  }));
   assert.equal(reordered.response.status, 200);
-  assert.equal((await jsonRequest(`/api/master/towers/${item.id}`, mutation('DELETE', idem('interior-delete'), { expectedVersion: reordered.body.data.version }))).response.status, 422);
+  assert.equal((await jsonRequest(`/api/master/towers/${item.id}`, mutation('DELETE', idem('interior-delete'), { expectedVersion: item.version }))).response.status, 422);
   const disabled = await jsonRequest(`/api/master/lines/${lineA.id}`, mutation('PATCH', idem('history-disable'), { ...lineA, expectedVersion: 1, enabled: false }));
   assert.equal(disabled.response.status, 200);
   const history = await jsonRequest('/api/demands?query=MD-RANGE');
   assert.equal(history.body.data.items[0].lineId, lineA.id);
   assert.equal(history.body.data.items[0].section, '#010—#020');
   assert.equal((await jsonRequest('/api/demands', mutation('POST', idem('new-disabled'), { sequenceNo: 'NEW', voltageLevelId: 'vl-ac-220', lineId: lineA.id, locationType: 'whole_line' }))).response.status, 422);
-  const disableChild = await jsonRequest(`/api/master/towers/${item.id}`, mutation('PATCH', idem('child-disable'), { ...reordered.body.data, expectedVersion: reordered.body.data.version, enabled: false }));
+  const currentItem = (await jsonRequest(`/api/master/towers?lineId=${lineA.id}`)).body.data.items.find((value) => value.id === item.id);
+  const disableChild = await jsonRequest(`/api/master/towers/${item.id}`, mutation('PATCH', idem('child-disable'), { ...currentItem, expectedVersion: currentItem.version, enabled: false }));
   assert.equal(disableChild.response.status, 200, 'must be able to disable children of a disabled parent');
 });
 
@@ -497,4 +503,106 @@ test('tower rename canonicalizes the new number, preserves history and never tre
     expectedVersion: renamed.body.data.version, towerNo: '32',
   }), managerCookie);
   assert.equal(forbidden.response.status, 403);
+});
+
+test('tower ordering uses line order versions, auto-inserts new towers by normalized number and moves by business position', async () => {
+  const createdLine = await jsonRequest('/api/master/lines', mutation('POST', idem('order-line'), {
+    voltageLevelId: 'vl-ac-110', lineName: '顺序调整线', enabled: true,
+  }));
+  assert.equal(createdLine.response.status, 201);
+  const line = createdLine.body.data;
+  assert.equal(line.towerOrderVersion, 1);
+
+  const a = await jsonRequest('/api/master/towers', mutation('POST', idem('order-a'), {
+    lineId: line.id, towerNo: '101', towerType: null, enabled: true,
+  }));
+  const c = await jsonRequest('/api/master/towers', mutation('POST', idem('order-c'), {
+    lineId: line.id, towerNo: '103', towerType: null, enabled: true,
+  }));
+  const b = await jsonRequest('/api/master/towers', mutation('POST', idem('order-b'), {
+    lineId: line.id, towerNo: '102', towerType: null, enabled: true,
+  }));
+  assert.deepEqual([a.response.status, b.response.status, c.response.status], [201, 201, 201]);
+  assert.ok(a.body.data.sortRank < b.body.data.sortRank);
+  assert.ok(b.body.data.sortRank < c.body.data.sortRank);
+  assert.deepEqual((await jsonRequest(`/api/master/towers?lineId=${line.id}`)).body.data.items.map((item) => item.towerNo), ['#101', '#102', '#103']);
+
+  const branch = await jsonRequest('/api/master/towers', mutation('POST', idem('order-branch'), {
+    lineId: line.id, towerNo: '102-1', towerType: null, enabled: true,
+  }));
+  assert.equal(branch.response.status, 201);
+  assert.deepEqual((await jsonRequest(`/api/master/towers?lineId=${line.id}`)).body.data.items.map((item) => item.towerNo), ['#101', '#102', '#102-1', '#103']);
+
+  const afterCreate = (await jsonRequest(`/api/master/lines?query=${encodeURIComponent('顺序调整线')}`)).body.data.items.find((item) => item.id === line.id);
+  assert.equal(afterCreate.towerOrderVersion, 5);
+
+  const bypass = await jsonRequest(`/api/master/towers/${a.body.data.id}`, mutation('PATCH', idem('order-bypass'), {
+    ...a.body.data, sortRank: 2500, expectedVersion: a.body.data.version,
+  }));
+  assert.equal(bypass.response.status, 422);
+  assert.equal(bypass.body.error.code, 'ORDER_MOVE_REQUIRED');
+
+  const moved = await jsonRequest(`/api/master/lines/${line.id}/towers/${c.body.data.id}/move`, mutation('POST', idem('order-move'), {
+    expectedTowerOrderVersion: 5, beforeTowerId: b.body.data.id,
+  }));
+  assert.equal(moved.response.status, 200);
+  assert.equal(moved.body.data.towerId, c.body.data.id);
+  assert.equal(moved.body.data.towerOrderVersion, 6);
+  assert.deepEqual((await jsonRequest(`/api/master/towers?lineId=${line.id}`)).body.data.items.map((item) => item.id), [a.body.data.id, c.body.data.id, b.body.data.id, branch.body.data.id]);
+
+  const stale = await jsonRequest(`/api/master/lines/${line.id}/towers/${b.body.data.id}/move`, mutation('POST', idem('order-stale'), {
+    expectedTowerOrderVersion: 5, beforeTowerId: c.body.data.id,
+  }));
+  assert.equal(stale.response.status, 409);
+  assert.equal(stale.body.error.code, 'ORDER_VERSION_CONFLICT');
+
+  const same = await jsonRequest(`/api/master/lines/${line.id}/towers/${c.body.data.id}/move`, mutation('POST', idem('order-noop'), {
+    expectedTowerOrderVersion: 6, afterTowerId: a.body.data.id,
+  }));
+  assert.equal(same.response.status, 422);
+  assert.equal(same.body.error.code, 'ORDER_NO_CHANGE');
+});
+
+test('new tower auto placement handles head, branch numbers, tail and duplicate numbers without identity guessing', async () => {
+  const line = (await jsonRequest('/api/master/lines', mutation('POST', idem('auto-place-line'), {
+    voltageLevelId: 'vl-ac-110', lineName: '自动插入线', enabled: true,
+  }))).body.data;
+  for (const no of ['10', '20', '10-1', '5', '30', '10']) {
+    const made = await jsonRequest('/api/master/towers', mutation('POST', idem(`auto-place-${no}`), {
+      lineId: line.id, towerNo: no, enabled: true,
+    }));
+    assert.equal(made.response.status, 201);
+  }
+  const list = await jsonRequest(`/api/master/towers?lineId=${line.id}`);
+  assert.deepEqual(list.body.data.items.map((item) => item.towerNo), [
+    '#005', '#010', '#010', '#010-1', '#020', '#030',
+  ]);
+  const ranks = list.body.data.items.map((item) => item.sortRank);
+  assert.ok(ranks.every((rank, index) => index === 0 || rank > ranks[index - 1]));
+});
+
+test('tower sparse ordering automatically rebalances when repeated numeric auto-inserts exhaust a rank gap', async () => {
+  const line = (await jsonRequest('/api/master/lines', mutation('POST', idem('rebalance-line'), {
+    voltageLevelId: 'vl-ac-110', lineName: '稀疏排序线', enabled: true,
+  }))).body.data;
+  for (const no of ['201', '202']) {
+    const made = await jsonRequest('/api/master/towers', mutation('POST', idem(`rebalance-${no}`), {
+      lineId: line.id, towerNo: no, enabled: true,
+    }));
+    assert.equal(made.response.status, 201);
+  }
+  for (let branch = 1; branch <= 12; branch += 1) {
+    const result = await jsonRequest('/api/master/towers', mutation('POST', idem(`rebalance-branch-${branch}`), {
+      lineId: line.id, towerNo: `201-${branch}`, enabled: true,
+    }));
+    assert.equal(result.response.status, 201, `branch ${branch}: ${JSON.stringify(result.body)}`);
+  }
+  const list = await jsonRequest(`/api/master/towers?lineId=${line.id}`);
+  assert.deepEqual(list.body.data.items.map((item) => item.towerNo), [
+    '#201', ...Array.from({ length: 12 }, (_, index) => `#201-${index + 1}`), '#202',
+  ]);
+  const ranks = list.body.data.items.map((item) => item.sortRank);
+  assert.ok(ranks.every((rank) => Number.isSafeInteger(rank) && rank > 0));
+  assert.equal(new Set(ranks).size, ranks.length);
+  assert.equal((await jsonRequest(`/api/master/lines?query=${encodeURIComponent('稀疏排序线')}`)).body.data.items.find((item) => item.id === line.id).towerOrderVersion, 15);
 });

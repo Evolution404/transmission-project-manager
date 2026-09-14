@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { normalizeTowerNo } from '@tpm/shared';
+import { compareTowerNo, normalizeTowerNo } from '@tpm/shared';
 
 describe('杆塔编号规范化', () => {
   it.each([
@@ -35,5 +35,18 @@ describe('杆塔编号规范化', () => {
     '#ABC',
   ])('拒绝无法识别的杆塔编号 %s', (input) => {
     expect(normalizeTowerNo(input)).toBeNull();
+  });
+});
+
+describe('杆塔编号自然顺序', () => {
+  it('主号按数值排序，同主号无支号在前、支号按数值排序', () => {
+    const input = ['#1000', '#010-2', '#011', '#009', '#010-1', '#100', '#010'];
+    expect([...input].sort(compareTowerNo)).toEqual([
+      '#009', '#010', '#010-1', '#010-2', '#011', '#100', '#1000',
+    ]);
+  });
+
+  it('完全相同的规范编号比较结果为 0，允许业务层保留同号对象', () => {
+    expect(compareTowerNo('#010-1', '#010-1')).toBe(0);
   });
 });

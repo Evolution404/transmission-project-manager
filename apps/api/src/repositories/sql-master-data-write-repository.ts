@@ -3,6 +3,7 @@ import type {
   CommitLineRenameInput,
   CommitSingleMasterDataInput,
   CommitTowerBatchInput,
+  CommitTowerMoveInput,
   CommitTowerRenameInput,
   MasterDataWriteKind,
   MasterDataWriteRepository,
@@ -48,14 +49,30 @@ export class SqlMasterDataWriteRepository implements MasterDataWriteRepository {
     return row ? { displayName: row.display_name, enabled: row.enabled === 1 } : null;
   }
 
-  async findTowerParent(lineId: string): Promise<{ lineName: string; enabled: boolean; voltageEnabled: boolean } | null> {
-    const row = await this.database.first<{ line_name: string; enabled: number; voltage_enabled: number }>({
-      sql: `SELECT l.line_name,l.enabled,v.enabled AS voltage_enabled
+  async findTowerParent(lineId: string): Promise<{ lineName: string; enabled: boolean; voltageEnabled: boolean; towerOrderVersion: number } | null> {
+    const row = await this.database.first<{ line_name: string; enabled: number; voltage_enabled: number; tower_order_version: number }>({
+      sql: `SELECT l.line_name,l.enabled,l.tower_order_version,v.enabled AS voltage_enabled
             FROM transmission_lines l JOIN voltage_levels v ON v.id=l.voltage_level_id
             WHERE l.id=? LIMIT 1`,
       params: [lineId],
     });
-    return row ? { lineName: row.line_name, enabled: row.enabled === 1, voltageEnabled: row.voltage_enabled === 1 } : null;
+    return row ? { lineName: row.line_name, enabled: row.enabled === 1, voltageEnabled: row.voltage_enabled === 1, towerOrderVersion: row.tower_order_version } : null;
+  }
+
+  async findLastTowerRank(lineId: string): Promise<number> {
+    const row = await this.database.first<{ rank: number | null }>({
+      sql: 'SELECT MAX(sort_rank) AS rank FROM transmission_towers WHERE line_id=?',
+      params: [lineId],
+    });
+    return Number(row?.rank ?? 0);
+  }
+
+  async listTowerOrder(lineId: string): Promise<readonly { id: string; towerNo: string; sortRank: number }[]> {
+    const rows = await this.database.all<{ id: string; tower_no: string; sort_rank: number }>({
+      sql: 'SELECT id,tower_no,sort_rank FROM transmission_towers WHERE line_id=? ORDER BY sort_rank,id',
+      params: [lineId],
+    });
+    return rows.map((row) => ({ id: row.id, towerNo: row.tower_no, sortRank: row.sort_rank }));
   }
 
   async countLineTowers(lineId: string): Promise<number> {
@@ -71,15 +88,22 @@ export class SqlMasterDataWriteRepository implements MasterDataWriteRepository {
     const versionCondition = input.expectedVersion === null
       ? { sql: '1', params: [] as DatabaseValue[] }
       : { sql: `EXISTS(SELECT 1 FROM ${table} WHERE id=? AND version=?)`, params: [input.id, input.expectedVersion] as DatabaseValue[] };
+    const orderCondition = input.changesTowerOrder
+      ? {
+          sql: 'EXISTS(SELECT 1 FROM transmission_lines WHERE id=? AND tower_order_version=?)',
+          params: [input.parentLineId!, input.expectedTowerOrderVersion!] as DatabaseValue[],
+        }
+      : { sql: '1', params: [] as DatabaseValue[] };
     const statements: DatabaseStatement[] = [{
       sql: `INSERT INTO idempotency_records
             (idempotency_key,actor_member_id,operation,request_hash,response_json,status_code,created_at)
-            VALUES (?,?,?,CASE WHEN ${versionCondition.sql} THEN ? ELSE NULL END,?,?,?)`,
+            VALUES (?,?,?,CASE WHEN ${versionCondition.sql} AND ${orderCondition.sql} THEN ? ELSE NULL END,?,?,?)`,
       params: [
         input.mutation.key,
         input.mutation.actorId,
         input.mutation.operation,
         ...versionCondition.params,
+        ...orderCondition.params,
         input.mutation.hash,
         input.mutation.responseJson,
         input.mutation.statusCode,
@@ -169,7 +193,31 @@ export class SqlMasterDataWriteRepository implements MasterDataWriteRepository {
       });
     }
 
+    if (input.rebalanceTowerOrder) {
+      statements.push({
+        sql: `WITH ranked(id,new_rank) AS MATERIALIZED (
+                SELECT id,-ROW_NUMBER() OVER (ORDER BY sort_rank,id)*1000
+                FROM transmission_towers WHERE line_id=?
+              )
+              UPDATE transmission_towers
+              SET sort_rank=(SELECT new_rank FROM ranked WHERE ranked.id=transmission_towers.id)
+              WHERE line_id=?`,
+        params: [input.parentLineId!, input.parentLineId!],
+      });
+      statements.push({
+        sql: 'UPDATE transmission_towers SET sort_rank=-sort_rank WHERE line_id=?',
+        params: [input.parentLineId!],
+      });
+    }
     statements.push(this.businessStatement(input));
+    if (input.changesTowerOrder) {
+      statements.push({
+        sql: `UPDATE transmission_lines
+              SET tower_order_version=tower_order_version+1,updated_at=?
+              WHERE id=? AND tower_order_version=?`,
+        params: [input.mutation.now, input.parentLineId!, input.expectedTowerOrderVersion!],
+      });
+    }
     statements.push({
       sql: `INSERT INTO audit_events
             (id,actor_member_id,action,object_type,object_id,before_json,after_json,created_at)
@@ -363,6 +411,115 @@ export class SqlMasterDataWriteRepository implements MasterDataWriteRepository {
         input.mutation.now,
       ],
     }];
+    await this.database.batch(statements);
+  }
+
+  async commitTowerMove(input: CommitTowerMoveInput): Promise<void> {
+    const statements: DatabaseStatement[] = [{
+      sql: `INSERT INTO idempotency_records
+            (idempotency_key,actor_member_id,operation,request_hash,response_json,status_code,created_at)
+            VALUES (?,?,?,CASE WHEN EXISTS(
+              SELECT 1 FROM transmission_lines WHERE id=? AND tower_order_version=?
+            ) AND EXISTS(
+              SELECT 1 FROM transmission_towers WHERE id=? AND line_id=?
+            ) AND EXISTS(
+              SELECT 1 FROM transmission_towers WHERE id=? AND line_id=?
+            ) THEN ? ELSE NULL END,?,?,?)`,
+      params: [
+        input.mutation.key,
+        input.mutation.actorId,
+        input.mutation.operation,
+        input.lineId,
+        input.expectedTowerOrderVersion,
+        input.towerId,
+        input.lineId,
+        input.targetTowerId,
+        input.lineId,
+        input.mutation.hash,
+        input.mutation.responseJson,
+        input.mutation.statusCode,
+        input.mutation.now,
+      ],
+    }];
+
+    if (input.rebalance) {
+      statements.push({
+        sql: `WITH ranked(id,new_rank) AS MATERIALIZED (
+                SELECT id,-ROW_NUMBER() OVER (ORDER BY sort_rank,id)*1000
+                FROM transmission_towers WHERE line_id=?
+              )
+              UPDATE transmission_towers
+              SET sort_rank=(SELECT new_rank FROM ranked WHERE ranked.id=transmission_towers.id)
+              WHERE line_id=?`,
+        params: [input.lineId, input.lineId],
+      });
+      statements.push({
+        sql: 'UPDATE transmission_towers SET sort_rank=-sort_rank WHERE line_id=?',
+        params: [input.lineId],
+      });
+    }
+
+    statements.push({
+      sql: 'UPDATE transmission_towers SET sort_rank=-9007199254740000 WHERE id=? AND line_id=?',
+      params: [input.towerId, input.lineId],
+    });
+    if (input.placement === 'before') {
+      statements.push({
+        sql: `UPDATE transmission_towers
+              SET sort_rank=(
+                SELECT CAST((COALESCE((
+                  SELECT MAX(previous.sort_rank) FROM transmission_towers previous
+                  WHERE previous.line_id=? AND previous.id<>? AND previous.sort_rank>0
+                    AND previous.sort_rank<target.sort_rank
+                ),0)+target.sort_rank)/2 AS INTEGER)
+                FROM transmission_towers target WHERE target.id=? AND target.line_id=?
+              ),updated_at=?
+              WHERE id=? AND line_id=?`,
+        params: [input.lineId, input.towerId, input.targetTowerId, input.lineId, input.mutation.now, input.towerId, input.lineId],
+      });
+    } else {
+      statements.push({
+        sql: `UPDATE transmission_towers
+              SET sort_rank=(
+                SELECT CASE WHEN (
+                  SELECT MIN(next.sort_rank) FROM transmission_towers next
+                  WHERE next.line_id=? AND next.id<>? AND next.sort_rank>target.sort_rank
+                ) IS NULL THEN target.sort_rank+1000 ELSE CAST((target.sort_rank+(
+                  SELECT MIN(next.sort_rank) FROM transmission_towers next
+                  WHERE next.line_id=? AND next.id<>? AND next.sort_rank>target.sort_rank
+                ))/2 AS INTEGER) END
+                FROM transmission_towers target WHERE target.id=? AND target.line_id=?
+              ),updated_at=?
+              WHERE id=? AND line_id=?`,
+        params: [
+          input.lineId, input.towerId,
+          input.lineId, input.towerId,
+          input.targetTowerId, input.lineId,
+          input.mutation.now, input.towerId, input.lineId,
+        ],
+      });
+    }
+    statements.push({
+      sql: `UPDATE transmission_lines
+            SET tower_order_version=tower_order_version+1,updated_at=?
+            WHERE id=? AND tower_order_version=?`,
+      params: [input.mutation.now, input.lineId, input.expectedTowerOrderVersion],
+    });
+    statements.push({
+      sql: `INSERT INTO audit_events
+            (id,actor_member_id,action,object_type,object_id,before_json,after_json,created_at)
+            VALUES (?,?,?,?,?,?,?,?)`,
+      params: [
+        input.mutation.auditId,
+        input.mutation.actorId,
+        input.audit.action,
+        input.audit.objectType,
+        input.towerId,
+        json(input.audit.before),
+        json(input.audit.after),
+        input.mutation.now,
+      ],
+    });
     await this.database.batch(statements);
   }
 

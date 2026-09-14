@@ -151,12 +151,13 @@ main CI run `34844921647` PASS。
 - M2 已完成：`POST /api/master/lines/:id/rename` 与 `POST /api/master/towers/:id/rename` 为唯一正式更名通道；普通 PATCH 和批量维护不能绕过历史链。历史查询分别为 `/name-history`、`/number-history`；列表 `query` 同时命中当前值和历史值，并返回历史匹配提示。
 - 同名/同编号仍是合法主数据；P2 导入已从“按名称 LIMIT 1”改为多候选判断，出现重复线路名返回 `LINE_AMBIGUOUS`，重复杆塔编号返回 `TOWER_AMBIGUOUS`。
 - M2 回归：master-data + P2 + import-validation 33/33 PASS；Web 定向 36/36 PASS；shared/api/web 全部 typecheck PASS。
-- 下一施工点为 M3：专用杆塔移动 API、稀疏 `sort_rank`、`tower_order_version` 并发门禁、默认末尾新增，以及普通 PATCH/批量维护禁止直接修改技术排序值。
+- M3 核心能力已完成：专用杆塔移动 API、稀疏 `sort_rank`、`tower_order_version` 并发门禁、普通 PATCH 禁止直接改顺序；单杆新增已改为按规范化编号自然顺序自动插入，而不是默认末尾。间隙耗尽时通过两阶段物化重排恢复稀疏 rank。旧界面单杆新增已移除排序输入。
+- M3 收口后的完整 `npm run check` PASS：Node **260/260**、Web/Vitest **92/92**，并包含 Cloudflare/Node TypeScript、Web production build、Worker dry-run、单一 `0001_initial_schema.sql` 和 Node+SQLite+Filesystem 第二运行时门禁。
 
 ## 下一步
 
 1. 按 `MASTER_DATA_REDESIGN_PLAN.md` 执行 M1：先写杆塔编号规范化、schema、更名历史/排序基础测试，再改生产实现。
-2. M1 通过后继续 M2 更名与历史、M3 排序、M4 批量导入、M5 线路中心 UI；每阶段小提交并 push。
+2. M1–M3 已完成；继续 M4 大批杆塔导入/自动内部切片与预览，然后 M5 线路中心 UI；每阶段小提交并 push。
 3. 本轮 schema 变化只允许修改唯一 `0001_initial_schema.sql`，同步 `tests/migrations.lock.json`；禁止新增 migration。
 4. 本轮代码全部完成并 `npm run check` 全绿后再开 PR；未获用户明确授权前不合并 `main`、不触发 production release。
 5. P7 首管理员已创建，但一次性 `BOOTSTRAP_TOKEN` 的远端删除和其余完整 P7-01～13 仍需单独收尾，不得因本轮功能施工误标为全部完成。

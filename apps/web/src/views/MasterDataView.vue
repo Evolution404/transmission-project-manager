@@ -35,7 +35,7 @@ const saving = ref(false);
 
 const voltageForm = ref({ displayName: '', code: '', systemType: 'AC' as VoltageSystemType, nominalKv: '', sortOrder: '', enabled: true });
 const lineForm = ref({ voltageLevelId: '', lineCode: '', lineName: '', enabled: true });
-const towerForm = ref({ lineId: '', towerNo: '', sortRank: '', towerType: '', enabled: true });
+const towerForm = ref({ lineId: '', towerNo: '', towerType: '', enabled: true });
 
 const voltageOptions = computed(() => voltageLevels.value.map((item) => ({ label: item.displayName + (item.enabled ? '' : '（停用）'), value: item.id, disabled: !item.enabled && item.id !== editingLine.value?.voltageLevelId })));
 const systemOptions = [{ label: '交流', value: 'AC' }, { label: '直流', value: 'DC' }];
@@ -165,17 +165,16 @@ async function saveLine() {
 
 function openTower(item?: TransmissionTowerSummary) {
   editingTower.value = item ?? null;
-  towerForm.value = item ? { lineId: item.lineId, towerNo: item.towerNo, sortRank: String(item.sortRank), towerType: item.towerType ?? '', enabled: item.enabled } : { lineId: selectedLineId.value ?? '', towerNo: '', sortRank: '', towerType: '', enabled: true };
+  towerForm.value = item ? { lineId: item.lineId, towerNo: item.towerNo, towerType: item.towerType ?? '', enabled: item.enabled } : { lineId: selectedLineId.value ?? '', towerNo: '', towerType: '', enabled: true };
   towerModal.value = true;
 }
 
 async function saveTower() {
   const towerNo = normalizeTowerNo(towerForm.value.towerNo);
-  const sortRank = Number(towerForm.value.sortRank);
-  if (!towerForm.value.lineId || !towerNo || !Number.isInteger(sortRank) || sortRank <= 0) { message.warning('请选择线路，并填写如 10、10-1、#010 的有效杆塔编号'); return; }
+  if (!towerForm.value.lineId || !towerNo) { message.warning('请选择线路，并填写如 10、10-1、#010 的有效杆塔编号'); return; }
   saving.value = true;
   try {
-    const body = { ...towerForm.value, towerNo, sortRank, towerType: towerForm.value.towerType.trim() || null };
+    const body = { ...towerForm.value, towerNo, towerType: towerForm.value.towerType.trim() || null };
     if (editingTower.value) await apiRequest(`/api/master/towers/${editingTower.value.id}`, jsonInit('PATCH', { ...body, expectedVersion: editingTower.value.version }));
     else await apiRequest('/api/master/towers', jsonInit('POST', body));
     towerModal.value = false; await loadAll(); message.success('杆塔已保存');
@@ -229,7 +228,7 @@ onMounted(loadAll);
       </section>
       <section class="master-panel tower-panel">
         <header><div><small>03 · {{ selectedLine?.lineName ?? '请选择线路' }}</small><h3>杆塔清单</h3></div></header>
-        <n-space v-if="isAdmin && selectedLine" class="tower-actions"><n-button size="small" :disabled="!selectedLine.enabled || !selectedVoltage?.enabled" @click="openTower()">新增杆塔</n-button><n-button size="small" data-test="open-bulk-towers" :disabled="!selectedLine.enabled || !selectedVoltage?.enabled" @click="openBulk">批量维护</n-button></n-space>
+        <n-space v-if="isAdmin && selectedLine" class="tower-actions"><n-button size="small" data-test="open-new-tower" :disabled="!selectedLine.enabled || !selectedVoltage?.enabled" @click="openTower()">新增杆塔</n-button><n-button size="small" data-test="open-bulk-towers" :disabled="!selectedLine.enabled || !selectedVoltage?.enabled" @click="openBulk">批量维护</n-button></n-space>
         <n-data-table v-if="towers.length" :columns="towerColumns" :data="towers" :pagination="false" :scroll-x="420" />
         <n-empty v-else :description="selectedLine ? '当前线路下暂无杆塔' : '选择一条线路，查看杆塔清单'" />
         <n-button v-if="towerCursor" @click="loadTowers(true)">加载更多杆塔</n-button>
@@ -254,8 +253,8 @@ onMounted(loadAll);
     </n-modal>
 
     <n-modal v-model:show="towerModal" preset="card" title="杆塔" style="width:min(560px,calc(100vw - 32px))">
-      <n-form label-placement="top"><n-form-item label="所属线路"><span>{{ selectedLine?.lineName }}</span></n-form-item><n-form-item label="杆塔号"><n-input v-model:value="towerForm.towerNo" placeholder="例如：10-1" /></n-form-item><n-form-item label="线路顺序"><n-input v-model:value="towerForm.sortRank" placeholder="请输入排序值" /></n-form-item><n-form-item label="杆塔类型（可选）"><n-input v-model:value="towerForm.towerType" placeholder="例如：角钢塔、钢管杆" /></n-form-item><n-form-item label="启用"><n-switch v-model:value="towerForm.enabled" /></n-form-item></n-form>
-      <template #footer><div class="actions"><n-button @click="towerModal=false">取消</n-button><n-button type="primary" :loading="saving" @click="saveTower">保存</n-button></div></template>
+      <n-form label-placement="top"><n-form-item label="所属线路"><span>{{ selectedLine?.lineName }}</span></n-form-item><n-form-item label="杆塔号"><n-input v-model:value="towerForm.towerNo" data-test="tower-number-input" placeholder="例如：10-1" /></n-form-item><n-alert v-if="!editingTower" type="info" :bordered="false">新增杆塔会按规范化编号自动插入合适位置，后续仍可手动调整顺序。</n-alert><n-form-item label="杆塔类型（可选）"><n-input v-model:value="towerForm.towerType" placeholder="例如：角钢塔、钢管杆" /></n-form-item><n-form-item label="启用"><n-switch v-model:value="towerForm.enabled" /></n-form-item></n-form>
+      <template #footer><div class="actions"><n-button @click="towerModal=false">取消</n-button><n-button data-test="save-tower" type="primary" :loading="saving" @click="saveTower">保存</n-button></div></template>
     </n-modal>
   </div>
 </template>

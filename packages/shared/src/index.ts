@@ -299,6 +299,36 @@ export function normalizeTowerNo(input: string): string | null {
   return branch === null ? `#${mainText}` : `#${mainText}-${branch}`;
 }
 
+/**
+ * 比较两个可识别的杆塔编号的自然业务顺序。
+ * 主号按数值升序；同主号时无支号在前，随后支号按数值升序。
+ * 无法识别的值排在可识别值之后，仅作为防御性兜底；正式写入仍应先通过 normalizeTowerNo。
+ */
+export function compareTowerNo(left: string, right: string): number {
+  const parse = (value: string): { main: number; branch: number | null; normalized: string } | null => {
+    const normalized = normalizeTowerNo(value);
+    if (!normalized) return null;
+    const match = /^#(\d+)(?:-(\d+))?$/.exec(normalized);
+    if (!match) return null;
+    return {
+      main: Number(match[1]),
+      branch: match[2] === undefined ? null : Number(match[2]),
+      normalized,
+    };
+  };
+  const a = parse(left), b = parse(right);
+  if (a && b) {
+    if (a.main !== b.main) return a.main - b.main;
+    if (a.branch === null && b.branch !== null) return -1;
+    if (a.branch !== null && b.branch === null) return 1;
+    if (a.branch !== null && b.branch !== null && a.branch !== b.branch) return a.branch - b.branch;
+    return 0;
+  }
+  if (a) return -1;
+  if (b) return 1;
+  return left.localeCompare(right, 'zh-CN', { numeric: true });
+}
+
 export interface VoltageLevelSummary {
   id: string;
   code: string;
