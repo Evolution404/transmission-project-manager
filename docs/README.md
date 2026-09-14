@@ -11,6 +11,7 @@
 5. `TESTING.md`：自动测试与完整门禁。
 6. `IMPLEMENTATION_PLAN.md`：阶段状态、完成项和下一步。
 7. `AI_HANDOFF.md`：唯一的当前代码交接真源，记录施工分支、未提交工作区、最近门禁和下一步。
+8. `MASTER_DATA_REDESIGN_PLAN.md`：当前基础台账线路中心化、更名历史、杆塔编号规范化、排序与批量导入重构计划。
 
 ## 运行与上线
 

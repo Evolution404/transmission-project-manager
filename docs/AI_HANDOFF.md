@@ -4,7 +4,8 @@
 
 仓库：`Evolution404/transmission-project-manager`
 默认分支：`main`
-当前施工状态：P7 生产验收 / 首管理员收尾；无未合并生产代码分支。
+当前施工状态：基础台账第二轮重构正在施工；P7 生产验收暂不作为当前代码主线。
+当前施工分支：`feat/master-data-line-centric-history-20260914`。
 最近一次正式发布代码 SHA：`a907dbee2dfddb0a4f266ed25cf2f18a18d9df51`
 
 2026-09-14 20:32（UTC+8）续接核对：本机 `main` 与 `origin/main` 均为
@@ -126,12 +127,29 @@ main CI run `34844921647` PASS。
 - Notion Internal Integration 已创建并授权给唯一根页面 `Transmission Project Manager Storage`。Token 只允许存在于本机根 `.env` 或 GitHub `production` Secret，不得提交或打印；Notion 非敏感资源 ID 归入受审 production config。
 - 本分支已新增 `NotionObjectStoreAdapter`、Notion/R2/Filesystem provider 选择、P7 双 provider 校验、`npm run notion:init` 与 `npm run notion:smoke`。真实 Notion `TPM Object Store` 已初始化，真实 `put → get → delete → get=null` smoke 已 PASS；生产 Data Source ID 已纳入受审 `wrangler.production.jsonc`。
 
+## 2026-09-14 基础台账第二轮重构
+
+首管理员已在正式环境成功创建，公开 `GET /api/auth/status` 已实测返回 `initialized=true`。随后用户审核基础台账真实操作体验并确认启动第二轮重构；完整施工计划见 `MASTER_DATA_REDESIGN_PLAN.md`。
+
+本轮定稿原则：
+
+- UI 从“电压等级 / 线路 / 杆塔”桌面三列改为线路中心式：线路列表 → 线路详情 → 全宽杆塔清单；电压等级仅作筛选、标签和独立台账设置。
+- 杆塔编号统一规范为 `#001`、`#010`、`#010-1`、`#3058` 等；用户可输入 `10`、`10-1` 等，非法格式直接拒绝。
+- 杆塔稳定身份与当前编号、线路实际顺序分离；顺序支持拖拽和“移动到目标前/后”。
+- 线路、杆塔均支持正式更名，稳定 ID 不变，旧名/旧编号进入历史并可搜索。
+- 名称/编号允许重名和复用，不能建立“历史名称永久占用命名空间”的唯一约束；搜索允许返回多对象。
+- 取消用户可见的杆塔批量 20 条限制；浏览器全量解析/预检，后端内部安全分片、幂等、可续跑。
+- 当前仍为开发阶段，所有 schema 变化直接修改唯一 `0001_initial_schema.sql`，禁止新增 `0002+`。
+
+施工必须按测试先行、M1–M5 小提交推进，并及时更新本文件和 `IMPLEMENTATION_PLAN.md`。
+
 ## 下一步
 
-1. **当前唯一首要阻塞是首管理员 bootstrap。** 临时把 `BOOTSTRAP_TOKEN` 配置为 Worker Secret，完成 HTTPS bootstrap 后验证第二次 bootstrap 返回关闭状态，再立即删除该 Worker Secret。当前 Mac/Codex 自动执行面不能从本机 `.env` 写远端 Secret，因此此步骤必须走允许 Secret 写入的受控执行面，且绝不能把 Token 放入 Git/PR/日志。
-2. 首管理员完成后继续真实登录、Secure/HttpOnly/SameSite Cookie、匿名 API、角色/范围和核心业务 smoke；再覆盖 Notion 附件、Cron/outbox/backup、手机/桌面和目标地区网络验收。
-3. 不需要再重跑 schema squash、Notion adapter、Secret 统一或 health 传播窗口修复；这些均已完成。仍禁止新增 `0002+` migration，除非用户明确要求兼容已有数据/升级路径。
-4. P7 最终证据仍以 `P7_ACCEPTANCE.md` 为准。当前可确认 CI、正式 release、domain、health、schema 全绿，但完整 P7-01～13 尚未全部完成。
+1. 按 `MASTER_DATA_REDESIGN_PLAN.md` 执行 M1：先写杆塔编号规范化、schema、更名历史/排序基础测试，再改生产实现。
+2. M1 通过后继续 M2 更名与历史、M3 排序、M4 批量导入、M5 线路中心 UI；每阶段小提交并 push。
+3. 本轮 schema 变化只允许修改唯一 `0001_initial_schema.sql`，同步 `tests/migrations.lock.json`；禁止新增 migration。
+4. 本轮代码全部完成并 `npm run check` 全绿后再开 PR；未获用户明确授权前不合并 `main`、不触发 production release。
+5. P7 首管理员已创建，但一次性 `BOOTSTRAP_TOKEN` 的远端删除和其余完整 P7-01～13 仍需单独收尾，不得因本轮功能施工误标为全部完成。
 
 ## 生产资源现状：不要猜
 

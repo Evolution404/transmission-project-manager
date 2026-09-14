@@ -14,7 +14,7 @@
 | P4 | 框架、协议、预算版本、预算发生与实际费用 | 已完成 |
 | P5 | 一次项目级出库、多执行任务、供应/实施/结算三线、四状态反馈 | 已完成 |
 | P6 | 月报、分析、预警、年度事项、通知 outbox、D1→对象存储逻辑备份 | 已完成 |
-| 基础台账重构 | 电压等级 → 线路 → 杆塔 → 需求位置对象化 | 已完成 |
+| 基础台账重构 | 第一轮对象化已完成；第二轮线路中心 UI、编号规范化、更名历史、可调顺序与大批导入 | **施工中**，见 `MASTER_DATA_REDESIGN_PLAN.md` |
 | 后端可移植化 | Database/ObjectStore Ports；Cloudflare D1 + Notion/R2、Node SQLite/Filesystem 可替换运行时 | 已完成基础重构；Notion provider 当前在 `feat/notion-object-storage` 收口 |
 | 云端发布流水线 | GitHub Actions → Cloudflare 受控发布、D1 migration 分离 | PR #2 已合入 main；main CI #37 PASS，真实发布未执行 |
 | P7 | 真实业务数据、真实 Cloudflare/D1/对象存储/网络、恢复和运维移交 | 未完成，必须真实环境验收 |
@@ -160,6 +160,20 @@ P7 重点是证明当前系统在真实环境可正式使用：
 - 为每项真实验收保留证据，不能用本地或合成结果代替。
 
 详细矩阵见 `P7_ACCEPTANCE.md`，操作步骤见 `P7_RUNBOOK.md`，最新云端状态见 `AI_HANDOFF.md`。
+
+## 6A. 当前施工：基础台账第二轮重构
+
+施工分支：`feat/master-data-line-centric-history-20260914`。
+
+执行顺序：
+
+1. M1 编号规范化与单一基线 schema；
+2. M2 线路/杆塔专用更名与历史搜索；
+3. M3 杆塔稀疏排序、拖拽/移动和独立 `tower_order_version`；
+4. M4 大批杆塔导入预检、自动内部切片和断点继续；
+5. M5 线路中心式桌面/移动 UI。
+
+具体数据规则、交互和验收项以 `MASTER_DATA_REDESIGN_PLAN.md` 为准。每一里程碑必须测试先行、小提交、及时 push，并同步本文件和 `AI_HANDOFF.md`。
 
 ## 7. 完成标准
 
