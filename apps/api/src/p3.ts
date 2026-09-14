@@ -647,50 +647,21 @@ p3App.get('/projects', async (c) => {
   const user = c.get('currentUser');
   const hasAll = user.role === 'admin' || user.scopes.some((scope) => scope.type === 'all');
   const projectIds = user.scopes.filter((scope) => scope.type === 'project' && scope.id).map((scope) => scope.id as string);
-  if (!hasAll && projectIds.length === 0) return c.json({ ok: true as const, data: { items: [], nextCursor: null } });
-
-  const where: string[] = [];
-  const params: unknown[] = [];
-  if (!hasAll) {
-    where.push(`p.id IN (${projectIds.map(() => '?').join(',')})`);
-    params.push(...projectIds);
-  }
-  if (cursor) {
-    where.push('(p.created_at < ? OR (p.created_at = ? AND p.id < ?))');
-    params.push(cursor.createdAt, cursor.createdAt, cursor.id);
-  }
-  params.push(limit + 1);
-  const result = await c.env.DB.prepare(
-    `SELECT p.id,p.name,p.business_year,p.owner,p.status,p.reserve_version,p.framework_id,p.version,p.created_by,p.created_at,p.updated_at,
-            COALESCE((SELECT SUM(pcl.amount_fen) FROM project_cost_lines pcl WHERE pcl.project_id=p.id AND pcl.amount_fen IS NOT NULL),0) AS known_amount_fen,
-            (SELECT COUNT(*) FROM demand_allocations da WHERE da.project_id=p.id) AS allocation_count,
-            (SELECT COUNT(*) FROM project_cost_lines pcl WHERE pcl.project_id=p.id AND pcl.kind='material' AND pcl.unit_price_scaled IS NOT NULL) AS priced_material_count
-     FROM projects p
-     ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
-     ORDER BY p.created_at DESC,p.id DESC LIMIT ?`,
-  ).bind(...params).all<ProjectRow & { known_amount_fen: number; allocation_count: number; priced_material_count: number }>();
-  const rows = result.results ?? [];
-  const hasMore = rows.length > limit;
-  const page = hasMore ? rows.slice(0, limit) : rows;
-  const items = page.map((row) => {
-    const allocationCount = Number(row.allocation_count);
-    const missingPriceCount = Math.max(0, allocationCount - Number(row.priced_material_count));
-    return projectSummary(row, {
-      knownAmountFen: Number(row.known_amount_fen),
-      missingPriceCount,
-      completenessBasisPoints: allocationCount === 0 ? 0 : Math.floor(((allocationCount - missingPriceCount) * 10000) / allocationCount),
-    });
+  const { database } = createCloudflarePersistence(c.env);
+  const page = await new SqlProjectQueryRepository(database).listProjects({
+    allowedProjectIds: hasAll ? null : projectIds,
+    cursor,
+    limit,
   });
-  const last = page.at(-1);
-  return c.json({ ok: true as const, data: { items, nextCursor: hasMore && last ? makeCursor(last.created_at, last.id) : null } });
+  return c.json({ ok: true as const, data: { items: page.items, nextCursor: page.nextCursor ? makeCursor(page.nextCursor.createdAt, page.nextCursor.id) : null } });
 });
 
 p3App.get('/projects/:id', async (c) => {
-  const project = await findProject(c.env.DB, c.req.param('id'));
-  if (!project) return c.json(apiError('PROJECT_NOT_FOUND', '储备项目不存在'), 404);
-  if (!canAccessProject(c, project.id)) return c.json(apiError('SCOPE_FORBIDDEN', '当前成员无权访问该项目'), 403);
-  const detail = await fetchProjectDetail(c.env.DB, project.id);
-  return c.json({ ok: true as const, data: detail! });
+  const { database } = createCloudflarePersistence(c.env);
+  const detail = await new SqlProjectQueryRepository(database).getProjectDetail(c.req.param('id'));
+  if (!detail) return c.json(apiError('PROJECT_NOT_FOUND', '储备项目不存在'), 404);
+  if (!canAccessProject(c, detail.id)) return c.json(apiError('SCOPE_FORBIDDEN', '当前成员无权访问该项目'), 403);
+  return c.json({ ok: true as const, data: detail });
 });
 
 p3App.put('/projects/:id/allocations', requireRoles('admin', 'project_manager'), async (c) => {

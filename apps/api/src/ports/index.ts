@@ -3,7 +3,7 @@ export type { ClockPort } from './clock';
 export type { CredentialMutationInput, CredentialRepository, MemberCredentialRecord, ResetCredentialInput } from './credential-repository';
 export type { BootstrapAdminRecord, CreateManagedMemberRecord, ManagedMemberScopeRecord, MemberAdminRepository, UpdateManagedMemberRecord, UpdateManagedMemberResult } from './member-admin-repository';
 export type { LinePageCursor, MasterDataRepository, TowerPageCursor } from './master-data-repository';
-export type { ProjectQueryRepository, ProjectSuggestionGroup, ReserveCandidatePage } from './project-query-repository';
+export type { ProjectPage, ProjectPageCursor, ProjectQueryRepository, ProjectSuggestionGroup, ReserveCandidatePage } from './project-query-repository';
 export type { CreateMaterialRecord, MaterialRepository } from './material-repository';
 export type { CommitSingleMasterDataInput, MasterDataWriteKind, MasterDataWriteRepository } from './master-data-write-repository';
 export type { MemberRepository } from './member-repository';

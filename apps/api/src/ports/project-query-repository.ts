@@ -1,4 +1,4 @@
-import type { ReserveCandidate } from '@tpm/shared';
+import type { ProjectDetail, ProjectSummary, ReserveCandidate } from '@tpm/shared';
 
 export interface ReserveCandidatePage {
   items: readonly ReserveCandidate[];
@@ -13,7 +13,19 @@ export interface ProjectSuggestionGroup {
   itemCount: number;
 }
 
+export interface ProjectPageCursor {
+  createdAt: string;
+  id: string;
+}
+
+export interface ProjectPage {
+  items: readonly ProjectSummary[];
+  nextCursor: ProjectPageCursor | null;
+}
+
 export interface ProjectQueryRepository {
   listCandidates(input: { limit: number; cursor: string | null }): Promise<ReserveCandidatePage>;
   listSuggestions(limit: number): Promise<readonly ProjectSuggestionGroup[]>;
+  listProjects(input: { allowedProjectIds: readonly string[] | null; cursor: ProjectPageCursor | null; limit: number }): Promise<ProjectPage>;
+  getProjectDetail(id: string): Promise<ProjectDetail | null>;
 }
