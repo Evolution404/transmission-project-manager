@@ -1,6 +1,7 @@
 import type { DatabasePort, DatabaseStatement, DatabaseValue } from '../ports/database.ts';
 import type {
   CommitSingleMasterDataInput,
+  CommitTowerBatchInput,
   MasterDataWriteKind,
   MasterDataWriteRepository,
   TransmissionLineWriteValues,
@@ -27,6 +28,14 @@ export class SqlMasterDataWriteRepository implements MasterDataWriteRepository {
 
   async findRecord(kind: MasterDataWriteKind, id: string): Promise<Record<string, string | number | null> | null> {
     return this.database.first({ sql: `SELECT * FROM ${tables[kind]} WHERE id=? LIMIT 1`, params: [id] });
+  }
+
+  async findTowerRecords(ids: readonly string[]): Promise<readonly Record<string, string | number | null>[]> {
+    if (!ids.length) return [];
+    return this.database.all({
+      sql: `SELECT * FROM transmission_towers WHERE id IN (${ids.map(() => '?').join(',')})`,
+      params: [...ids],
+    });
   }
 
   async findVoltageParent(id: string): Promise<{ displayName: string; enabled: boolean } | null> {
@@ -112,6 +121,73 @@ export class SqlMasterDataWriteRepository implements MasterDataWriteRepository {
         input.audit.action,
         input.audit.objectType,
         input.id,
+        json(input.audit.before),
+        json(input.audit.after),
+        input.mutation.now,
+      ],
+    });
+    await this.database.batch(statements);
+  }
+
+  async commitTowerBatch(input: CommitTowerBatchInput): Promise<void> {
+    const guarded = input.items.filter((item) => item.expectedVersion !== null);
+    const condition = guarded.length
+      ? guarded.map(() => 'EXISTS(SELECT 1 FROM transmission_towers WHERE id=? AND version=?)').join(' AND ')
+      : '1';
+    const conditionParams = guarded.flatMap((item) => [item.id, item.expectedVersion!] as DatabaseValue[]);
+    const statements: DatabaseStatement[] = [{
+      sql: `INSERT INTO idempotency_records
+            (idempotency_key,actor_member_id,operation,request_hash,response_json,status_code,created_at)
+            VALUES (?,?,?,CASE WHEN ${condition} THEN ? ELSE NULL END,?,?,?)`,
+      params: [
+        input.mutation.key,
+        input.mutation.actorId,
+        input.mutation.operation,
+        ...conditionParams,
+        input.mutation.hash,
+        input.mutation.responseJson,
+        input.mutation.statusCode,
+        input.mutation.now,
+      ],
+    }, {
+      sql: `INSERT INTO master_data_guards (valid)
+            VALUES (CASE WHEN EXISTS (
+              SELECT 1 FROM transmission_lines l JOIN voltage_levels v ON v.id=l.voltage_level_id
+              WHERE l.id=? AND l.enabled=1 AND v.enabled=1
+            ) THEN 1 ELSE 0 END)`,
+      params: [input.lineId],
+    }];
+
+    let temporaryIndex = 0;
+    for (const item of input.items) {
+      if (!item.vacateUniqueKeys) continue;
+      statements.push({
+        sql: 'UPDATE transmission_towers SET sort_index=?,tower_no=? WHERE id=?',
+        params: [-1000001 - temporaryIndex, `temporary:${item.id}`, item.id],
+      });
+      temporaryIndex += 1;
+    }
+    for (const item of input.items) {
+      statements.push(this.businessStatement({
+        kind: 'tower',
+        action: item.expectedVersion === null ? 'create' : 'update',
+        id: item.id,
+        values: item.values,
+        expectedVersion: item.expectedVersion,
+        mutation: input.mutation,
+        audit: { action: '', objectType: '', before: null, after: null },
+      }));
+    }
+    statements.push({
+      sql: `INSERT INTO audit_events
+            (id,actor_member_id,action,object_type,object_id,before_json,after_json,created_at)
+            VALUES (?,?,?,?,?,?,?,?)`,
+      params: [
+        input.mutation.auditId,
+        input.mutation.actorId,
+        'master.towers.batch',
+        'transmission_line',
+        input.lineId,
         json(input.audit.before),
         json(input.audit.after),
         input.mutation.now,
