@@ -263,6 +263,24 @@ test('committed tests cannot silently bypass the quality gate', () => {
   }
 });
 
+test('Node runtime gate exercises the real app, SQLite, Filesystem, and migration rehearsal', () => {
+  const nodeConfig = readFileSync(resolve(root, 'apps/api/tsconfig.node-runtime.json'), 'utf8');
+  assert.match(nodeConfig, /"src\/app\.ts"/, 'Node typecheck must include the real HTTP app');
+  assert.doesNotMatch(nodeConfig, /adapters\/cloudflare|runtime\/cloudflare|src\/index\.ts/, 'Node typecheck must stay outside Cloudflare infrastructure');
+
+  const appTest = resolve(root, 'tests/node-runtime-app.test.mjs');
+  const migrationTest = resolve(root, 'tests/node-runtime-migration-rehearsal.test.mjs');
+  assert.equal(existsSync(appTest), true, 'missing Node application runtime E2E');
+  assert.equal(existsSync(migrationTest), true, 'missing Node migration rehearsal');
+  const appSource = readFileSync(appTest, 'utf8');
+  assert.match(appSource, /createNodePersistence/);
+  assert.match(appSource, /PERSISTENCE/);
+  assert.doesNotMatch(appSource, /\bDB\s*:|\bFILES\s*:/, 'Node E2E must not fall back to Cloudflare bindings');
+  const migrationSource = readFileSync(migrationTest, 'utf8');
+  assert.match(migrationSource, /0007_p7_flexible_demand_sources\.sql/);
+  assert.match(migrationSource, /0012_master_data_write_guards\.sql/);
+});
+
 test('Node integration suite is safe for file-level parallelism', () => {
   const packageJson = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8'));
   const match = packageJson.scripts?.['test:node']?.match(/--test-concurrency=(\d+)/);
