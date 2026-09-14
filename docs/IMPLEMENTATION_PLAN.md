@@ -29,7 +29,7 @@
 | P9 基础台账与结构化需求 | 已完成 |
 | P2 导入/需求 | 已完成；`p2.ts` 0 直接 D1 |
 | P3 项目储备 | 已完成；`p3.ts` 0 直接 D1，已有静态防回退门禁 |
-| P4 财务 | 进行中；查询与幂等 replay 已迁移，framework/agreement 写仓储当前 WIP |
+| P4 财务 | 已完成；`p4.ts` 0 直接 D1，查询/写入/预算/流水/汇总均经 portable repository，并有静态防回退门禁 |
 | P5/P8 执行业务 | 待迁移 |
 | P6 backup / notification 后台任务 | 待迁移 |
 | Node + SQLite + Filesystem 应用级 E2E / 迁移演练 | 待完成 |
@@ -103,15 +103,17 @@
 
 所有新功能和缺陷修复继续执行 test-first，详见 `TESTING.md`。
 
-P3 可移植化收口提交 `e34bde3` 后最近一次完整 `npm run check`：
+P4 可移植化完整收口后最近一次 `npm run check`：
 
 - TypeScript：PASS。
 - Web production build：PASS。
 - Worker `wrangler deploy --dry-run`：PASS。
 - Vue/Vitest：64/64 PASS。
-- Node：210/210 PASS。
+- Node：221/221 PASS。
 
-这只证明本地/合成门禁，不等于生产验收。之后的 P4 查询迁移和幂等 replay 已通过 `p4-finance` 11/11、`finance-query-repository` 2/2、repository guards 和双 runtime typecheck；P4 后续 WIP 完成后需再次跑完整 `npm run check`。
+P4 专项还通过 `p4-finance` 11/11、finance query/write/budget/entry/summary repository tests、repository guards 和 Cloudflare + Node 双 runtime typecheck。`p4.ts` 已由静态门禁保证不能直接回到 D1。
+
+这些只证明本地/合成门禁，不等于生产验收。
 
 ## 5. 当前施工与发布边界
 
