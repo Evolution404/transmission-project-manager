@@ -23,6 +23,7 @@ export type { BindProjectFrameworkRecord, CreateAgreementRecord, CreateFramework
 export type { CreateMaterialRecord, MaterialRepository } from './material-repository';
 export type { CommitSingleMasterDataInput, MasterDataWriteKind, MasterDataWriteRepository } from './master-data-write-repository';
 export type { MemberRepository } from './member-repository';
+export type { AlertEnsureInput, AlertEnsureResult, NotificationDeliveryEvent, NotificationRepository, NotificationResultWrite } from './notification-repository';
 export type { DatabasePort, DatabaseRunResult, DatabaseStatement, DatabaseValue, TransactionPort } from './database';
 export type { DemandRepository, ResolvedDemandLine, ResolvedDemandTower } from './demand-repository';
 export type { AppendDemandMaterialsRecord, DemandMaterialWrite, DemandMaterialWriteRepository, DemandMaterialWriteState } from './demand-material-write-repository';

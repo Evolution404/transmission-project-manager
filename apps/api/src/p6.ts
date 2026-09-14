@@ -30,6 +30,7 @@ import { SqlIdempotencyRepository } from './repositories/sql-idempotency-reposit
 import { SqlOperationJournalRepository } from './repositories/sql-operation-journal-repository';
 import { SqlAnalysisRepository } from './repositories/sql-analysis-repository';
 import type { AnalysisRepository } from './ports/analysis-repository';
+import { SqlNotificationRepository } from './repositories/sql-notification-repository';
 
 const DEFAULT_RULE_MODE: AnalysisLagMode = 'ratio';
 const DEFAULT_RULE_THRESHOLD_BP = 8000;
@@ -257,97 +258,10 @@ function milestoneDue(base: MilestoneSummary, asOf: string): MilestoneDueSummary
   const leadDays = base.leadDays.find((item) => item === diff) ?? null;
   return { ...base, dueMonth, dueDate, needsDate: false, reminderDue: diff < 0 || leadDays !== null, reminderLeadDays: leadDays, overdue: diff < 0 };
 }
-async function verifiedRecipients(db: D1Database, frameworkId: string | null = null, projectId: string | null = null) {
-  const result = await db.prepare(
-    `SELECT DISTINCT nc.address FROM notification_contacts nc
-     INNER JOIN members m ON m.id=nc.member_id
-     WHERE nc.enabled=1 AND nc.verified_at IS NOT NULL AND m.enabled=1
-       AND (m.role='admin' OR EXISTS (
-         SELECT 1 FROM member_scopes ms WHERE ms.member_id=m.id AND (
-           ms.scope_type='all' OR (? IS NOT NULL AND ms.scope_type='framework' AND ms.scope_id=?) OR (? IS NOT NULL AND ms.scope_type='project' AND ms.scope_id=?)
-         )
-       ))
-     ORDER BY nc.address COLLATE NOCASE`,
-  ).bind(frameworkId, frameworkId, projectId, projectId).all<{ address: string }>();
-  return (result.results ?? []).map((row) => row.address);
-}
-async function ensureAlert(db: D1Database, input: { ruleKey: string; ruleVersion: number; objectType: string; objectId: string; periodKey: string; severity: 'info' | 'warning' | 'critical'; message: string; now: string; recipients: string[] }) {
-  const active = await db.prepare(
-    `SELECT id,first_seen_at FROM alert_events
-     WHERE rule_key=? AND rule_version=? AND object_type=? AND object_id=? AND period_key=? AND state='active'
-     ORDER BY first_seen_at DESC,id DESC LIMIT 1`,
-  ).bind(input.ruleKey, input.ruleVersion, input.objectType, input.objectId, input.periodKey).first<{ id: string; first_seen_at: string }>();
-  if (active) {
-    await db.prepare(`UPDATE alert_events SET last_seen_at=? WHERE id=? AND state='active'`).bind(input.now, active.id).run();
-    return { created: false, eventId: active.id, firstSeenAt: active.first_seen_at };
-  }
-
-  const countRow = await db.prepare(
-    `SELECT COUNT(*) AS count FROM alert_events WHERE rule_key=? AND rule_version=? AND object_type=? AND object_id=? AND period_key=?`,
-  ).bind(input.ruleKey, input.ruleVersion, input.objectType, input.objectId, input.periodKey).first<{ count: number }>();
-  const crossing = Number(countRow?.count ?? 0) + 1;
-  const uniqueKey = `${input.ruleKey}:${input.ruleVersion}:${input.objectType}:${input.objectId}:${input.periodKey}:crossing:${crossing}`;
-  const eventId = crypto.randomUUID();
-  const statements: D1PreparedStatement[] = [
-    db.prepare(`INSERT INTO alert_events (id,rule_key,rule_version,object_type,object_id,period_key,severity,state,unique_event_key,message,first_seen_at,last_seen_at,resolved_at) VALUES (?,?,?,?,?,?,?,'active',?,?,?,?,NULL)`).bind(eventId, input.ruleKey, input.ruleVersion, input.objectType, input.objectId, input.periodKey, input.severity, uniqueKey, input.message, input.now, input.now),
-  ];
-  for (const recipient of input.recipients) {
-    statements.push(db.prepare(`INSERT INTO notification_outbox (id,event_id,recipient,notification_key,status,lease_token,lease_until,attempt_count,next_attempt_at,last_error,created_at,updated_at) VALUES (?,?,?,?,'pending',NULL,NULL,0,?,NULL,?,?)`).bind(crypto.randomUUID(), eventId, recipient, `${uniqueKey}:${recipient.toLowerCase()}`, input.now, input.now, input.now));
-  }
-  try {
-    await db.batch(statements);
-    return { created: true, eventId, firstSeenAt: input.now };
-  } catch {
-    const winner = await db.prepare(
-      `SELECT id,first_seen_at FROM alert_events
-       WHERE rule_key=? AND rule_version=? AND object_type=? AND object_id=? AND period_key=? AND state='active'
-       ORDER BY first_seen_at DESC,id DESC LIMIT 1`,
-    ).bind(input.ruleKey, input.ruleVersion, input.objectType, input.objectId, input.periodKey).first<{ id: string; first_seen_at: string }>();
-    if (winner) return { created: false, eventId: winner.id, firstSeenAt: winner.first_seen_at };
-    throw new Error('alert creation conflict');
-  }
-}
-
-async function ensureDailySummary(db: D1Database, eventId: string, asOf: string, now: string, recipients: string[]) {
-  for (const recipient of recipients) {
-    const key = `daily:${asOf}:${eventId}:${recipient.toLowerCase()}`;
-    await db.prepare(
-      `INSERT OR IGNORE INTO notification_outbox
-       (id,event_id,recipient,notification_key,status,lease_token,lease_until,attempt_count,next_attempt_at,last_error,created_at,updated_at)
-       VALUES (?,?,?,?,'pending',NULL,NULL,0,?,NULL,?,?)`,
-    ).bind(crypto.randomUUID(), eventId, recipient, key, now, now, now).run();
-  }
-}
-
-async function resolveActiveAlerts(db: D1Database, input: { ruleKey: string; objectId: string; now: string; recipients: string[] }) {
-  const active = await db.prepare(
-    `SELECT id,rule_version,object_type,object_id,period_key,severity,message
-     FROM alert_events WHERE rule_key=? AND object_id=? AND state='active' ORDER BY first_seen_at,id`,
-  ).bind(input.ruleKey, input.objectId).all<{ id: string; rule_version: number; object_type: string; object_id: string; period_key: string; severity: 'info' | 'warning' | 'critical'; message: string }>();
-  let recovered = 0;
-  for (const event of active.results ?? []) {
-    const recoveryId = crypto.randomUUID();
-    const recoveryKey = `${input.ruleKey}.recovered:${event.id}`;
-    const statements: D1PreparedStatement[] = [
-      db.prepare(`UPDATE alert_events SET state='resolved',resolved_at=?,last_seen_at=? WHERE id=? AND state='active'`).bind(input.now, input.now, event.id),
-      db.prepare(`INSERT OR IGNORE INTO alert_events (id,rule_key,rule_version,object_type,object_id,period_key,severity,state,unique_event_key,message,first_seen_at,last_seen_at,resolved_at) VALUES (?,?,?,?,?,?,?,'resolved',?,?,?,?,?)`).bind(recoveryId, `${input.ruleKey}.recovered`, event.rule_version, event.object_type, event.object_id, input.now.slice(0, 10), 'info', recoveryKey, `已恢复：${event.message}`, input.now, input.now, input.now),
-    ];
-    for (const recipient of input.recipients) {
-      statements.push(db.prepare(
-        `INSERT OR IGNORE INTO notification_outbox
-         (id,event_id,recipient,notification_key,status,lease_token,lease_until,attempt_count,next_attempt_at,last_error,created_at,updated_at)
-         VALUES (?,(SELECT id FROM alert_events WHERE unique_event_key=?),?,?,'pending',NULL,NULL,0,?,NULL,?,?)`,
-      ).bind(crypto.randomUUID(), recoveryKey, recipient, `${recoveryKey}:${recipient.toLowerCase()}`, input.now, input.now, input.now));
-    }
-    await db.batch(statements);
-    recovered += 1;
-  }
-  return recovered;
-}
-
 export async function evaluateAlerts(env: WorkerBindings, asOf: string) {
   const { database } = createCloudflarePersistence(env);
   const analysis = new SqlAnalysisRepository(database);
+  const notifications = new SqlNotificationRepository(database);
   const rule = await currentRule(analysis);
   let createdEvents = 0;
   const now = `${asOf}T00:00:00.000Z`;
@@ -355,81 +269,47 @@ export async function evaluateAlerts(env: WorkerBindings, asOf: string) {
   for (const frameworkId of frameworks) {
     const progress = await frameworkProgress(analysis, frameworkId, asOf);
     if (!progress || !rule) continue;
-    const recipients = await verifiedRecipients(env.DB, frameworkId, null);
+    const recipients = await notifications.verifiedRecipients(frameworkId, null);
     if (progress.lagging) {
-      const event = await ensureAlert(env.DB, { ruleKey: 'analysis.lag', ruleVersion: rule.version, objectType: 'framework', objectId: frameworkId, periodKey: asOf.slice(0, 7), severity: 'warning', message: `${progress.frameworkName} 实际进度低于同期计划`, now, recipients });
+      const event = await notifications.ensureAlert({ ruleKey: 'analysis.lag', ruleVersion: rule.version, objectType: 'framework', objectId: frameworkId, periodKey: asOf.slice(0, 7), severity: 'warning', message: `${progress.frameworkName} 实际进度低于同期计划`, now, recipients });
       if (event.created) createdEvents += 1;
-      else if (event.firstSeenAt.slice(0, 10) < asOf) await ensureDailySummary(env.DB, event.eventId, asOf, now, recipients);
+      else if (event.firstSeenAt.slice(0, 10) < asOf) await notifications.ensureDailySummary(event.eventId, asOf, now, recipients);
     } else {
-      createdEvents += await resolveActiveAlerts(env.DB, { ruleKey: 'analysis.lag', objectId: frameworkId, now, recipients });
+      createdEvents += await notifications.resolveActiveAlerts({ ruleKey: 'analysis.lag', objectId: frameworkId, now, recipients });
     }
   }
   const milestoneRows = await analysis.listOpenMilestones();
   for (const row of milestoneRows) {
     const due = milestoneDue(row, asOf);
     if (!due.reminderDue) continue;
-    const recipients = await verifiedRecipients(env.DB, null, row.projectId);
+    const recipients = await notifications.verifiedRecipients(null, row.projectId);
     const periodKey = row.datePrecision === 'month' ? `${asOf.slice(0, 7)}:${asOf}` : asOf;
-    const event = await ensureAlert(env.DB, { ruleKey: 'milestone.due', ruleVersion: row.version, objectType: 'milestone', objectId: row.id, periodKey, severity: due.overdue ? 'warning' : 'info', message: `年度事项：${row.title}`, now, recipients });
+    const event = await notifications.ensureAlert({ ruleKey: 'milestone.due', ruleVersion: row.version, objectType: 'milestone', objectId: row.id, periodKey, severity: due.overdue ? 'warning' : 'info', message: `年度事项：${row.title}`, now, recipients });
     if (event.created) createdEvents += 1;
   }
   return { createdEvents };
 }
 
-async function claimOutbox(db: D1Database, now: string, limit: number, leaseSeconds: number) {
-  const candidates = await db.prepare(
-    `SELECT id,event_id,recipient,status,lease_token,lease_until,attempt_count,next_attempt_at,last_error,created_at,updated_at
-     FROM notification_outbox
-     WHERE ((status IN ('pending','failed') AND next_attempt_at<=?) OR (status='leased' AND lease_until<=?))
-     ORDER BY next_attempt_at,created_at,id LIMIT ?`,
-  ).bind(now, now, limit).all<OutboxRow>();
-  const leaseUntil = new Date(Date.parse(now) + leaseSeconds * 1000).toISOString();
-  const tokens = new Map<string, string>();
-  const statements: D1PreparedStatement[] = [];
-  for (const row of candidates.results ?? []) {
-    const token = crypto.randomUUID();
-    tokens.set(row.id, token);
-    statements.push(db.prepare(
-      `UPDATE notification_outbox SET status='leased',lease_token=?,lease_until=?,updated_at=?
-       WHERE id=? AND ((status IN ('pending','failed') AND next_attempt_at<=?) OR (status='leased' AND lease_until<=?))`,
-    ).bind(token, leaseUntil, now, row.id, now, now));
-  }
-  if (statements.length) await db.batch(statements);
-  const items: NotificationOutboxSummary[] = [];
-  for (const [id, token] of tokens) {
-    const row = await db.prepare(`SELECT id,event_id,recipient,status,lease_token,lease_until,attempt_count,next_attempt_at,last_error,created_at,updated_at FROM notification_outbox WHERE id=? AND status='leased' AND lease_token=? LIMIT 1`).bind(id, token).first<OutboxRow>();
-    if (row) items.push(outboxSummary(row, now));
-  }
-  return items;
-}
 function retryAt(now: string, attemptCount: number) {
   const minutes = Math.min(24 * 60, 5 * (2 ** Math.max(0, attemptCount - 1)));
   return new Date(Date.parse(now) + minutes * 60_000).toISOString();
 }
 
-async function completeOutboxLease(db: D1Database, row: OutboxRow, leaseToken: string, outcome: 'sent' | 'failed' | 'unknown', now: string, error: string | null) {
-  const attempts = row.attempt_count + 1;
-  const nextAttemptAt = outcome === 'failed' ? retryAt(now, attempts) : now;
-  const result = await db.prepare(
-    `UPDATE notification_outbox
-     SET status=?,lease_token=NULL,lease_until=NULL,attempt_count=?,next_attempt_at=?,last_error=?,updated_at=?
-     WHERE id=? AND status='leased' AND lease_token=?`,
-  ).bind(outcome, attempts, nextAttemptAt, error, now, row.id, leaseToken).run();
-  return { changed: Number(result.meta.changes ?? 0) === 1, attempts, nextAttemptAt };
-}
-
 async function deliverNotificationBatch(env: WorkerBindings, now: string) {
   const url = env.NOTIFICATION_DELIVERY_URL?.trim();
   if (!url) return { configured: false, processed: 0, sent: 0, failed: 0, unknown: 0 };
-  const items = await claimOutbox(env.DB, now, 10, 90);
+  const { database } = createCloudflarePersistence(env);
+  const repository = new SqlNotificationRepository(database);
+  const items = await repository.claimOutbox(now, 10, 90);
   let sent = 0, failed = 0, unknown = 0;
   for (const item of items) {
     if (!item.leaseToken) continue;
-    const row = await env.DB.prepare(`SELECT id,event_id,recipient,status,lease_token,lease_until,attempt_count,next_attempt_at,last_error,created_at,updated_at FROM notification_outbox WHERE id=? LIMIT 1`).bind(item.id).first<OutboxRow>();
-    if (!row || row.status !== 'leased' || row.lease_token !== item.leaseToken) continue;
-    const event = await env.DB.prepare(`SELECT message,rule_key,severity FROM alert_events WHERE id=? LIMIT 1`).bind(row.event_id).first<{ message: string; rule_key: string; severity: string }>();
+    const row = await repository.findOutbox(item.id);
+    if (!row || row.status !== 'leased' || row.leaseToken !== item.leaseToken) continue;
+    const event = await repository.findDeliveryEvent(row.eventId);
     if (!event) {
-      await completeOutboxLease(env.DB, row, item.leaseToken, 'failed', now, 'alert event missing');
+      const attempts = row.attemptCount + 1;
+      await repository.completeOutboxLease({ row, leaseToken: item.leaseToken, status: 'failed', attempts, nextAttemptAt: retryAt(now, attempts), error: 'alert event missing', updatedAt: now });
       failed += 1;
       continue;
     }
@@ -441,14 +321,7 @@ async function deliverNotificationBatch(env: WorkerBindings, now: string) {
       if (token) headers.Authorization = `Bearer ${token}`;
       const response = await fetch(url, {
         method: 'POST', headers,
-        body: JSON.stringify({
-          notificationId: row.id,
-          eventId: row.event_id,
-          to: row.recipient,
-          subject: `[输电项目管理] ${event.severity === 'critical' ? '重要预警' : event.severity === 'warning' ? '预警提醒' : '事项提醒'}`,
-          text: event.message,
-          ruleKey: event.rule_key,
-        }),
+        body: JSON.stringify({ notificationId: row.id, eventId: row.eventId, to: row.recipient, subject: `[输电项目管理] ${event.severity === 'critical' ? '重要预警' : event.severity === 'warning' ? '预警提醒' : '事项提醒'}`, text: event.message, ruleKey: event.ruleKey }),
         signal: AbortSignal.timeout(8000),
       });
       if (response.ok) outcome = 'sent';
@@ -457,7 +330,8 @@ async function deliverNotificationBatch(env: WorkerBindings, now: string) {
       outcome = 'unknown';
       error = cause instanceof Error ? cause.message.slice(0, 1000) : 'delivery result unknown';
     }
-    await completeOutboxLease(env.DB, row, item.leaseToken, outcome, now, error);
+    const attempts = row.attemptCount + 1;
+    await repository.completeOutboxLease({ row, leaseToken: item.leaseToken, status: outcome, attempts, nextAttemptAt: outcome === 'failed' ? retryAt(now, attempts) : now, error, updatedAt: now });
     if (outcome === 'sent') sent += 1;
     else if (outcome === 'failed') failed += 1;
     else unknown += 1;
@@ -886,20 +760,20 @@ p6App.post('/notification-contacts', requireRoles('admin'), async (c) => {
   let body: Record<string, unknown>; try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
   const memberId = cleanText(body.memberId), address = cleanText(body.address).toLowerCase(), verified = body.verified === true, enabled = body.enabled !== false;
   if (!memberId || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address)) return c.json(apiError('INVALID_CONTACT', '通知成员或地址无效'), 422);
-  const member = await c.env.DB.prepare(`SELECT id FROM members WHERE id=? LIMIT 1`).bind(memberId).first<{ id: string }>(); if (!member) return c.json(apiError('MEMBER_NOT_FOUND', '成员不存在'), 404);
+  const { database } = createCloudflarePersistence(c.env);
+  const repository = new SqlNotificationRepository(database);
+  if (!await repository.memberExists(memberId)) return c.json(apiError('MEMBER_NOT_FOUND', '成员不存在'), 404);
   const request = { memberId, address, verified, enabled }, hash = await requestHash(request), operation = 'notification-contacts.create'; const replay = await replayIdempotentResponse(c, key, operation, hash); if (replay) return replay;
   const actor = c.get('currentUser'), id = crypto.randomUUID(), now = new Date().toISOString(), verifiedAt = verified ? now : null;
   const data: NotificationContactSummary = { id, memberId, address, verifiedAt, enabled, version: 1, createdAt: now, updatedAt: now }, response = { ok: true as const, data };
-  try { await c.env.DB.batch([
-    c.env.DB.prepare(`INSERT INTO notification_contacts (id,member_id,address,verified_at,enabled,version,created_at,updated_at) VALUES (?,?,?,?,?,1,?,?)`).bind(id, memberId, address, verifiedAt, enabled ? 1 : 0, now, now),
-    auditStatement(c.env.DB, actor.id, 'notification-contact.create', 'notification_contact', id, null, data, now), idempotencyStatement(c.env.DB, key, actor.id, operation, hash, response, 201, now),
-  ]); } catch { return c.json(apiError('CONTACT_CONFLICT', '通知地址已存在或写入冲突'), 409); }
+  try { await repository.createContact({ contact: data, journal: { auditId: crypto.randomUUID(), actorId: actor.id, action: 'notification-contact.create', objectType: 'notification_contact', objectId: id, before: null, after: data, idempotencyKey: key, operation, requestHash: hash, responseJson: JSON.stringify(response), statusCode: 201, now } }); }
+  catch { return c.json(apiError('CONTACT_CONFLICT', '通知地址已存在或写入冲突'), 409); }
   return c.json(response, 201);
 });
 
 p6App.get('/notification-contacts', requireRoles('admin'), async (c) => {
-  const result = await c.env.DB.prepare(`SELECT id,member_id,address,verified_at,enabled,version,created_at,updated_at FROM notification_contacts ORDER BY address COLLATE NOCASE`).all<ContactRow>();
-  return c.json({ ok: true as const, data: { items: (result.results ?? []).map(contactSummary) } });
+  const { database } = createCloudflarePersistence(c.env);
+  return c.json({ ok: true as const, data: { items: await new SqlNotificationRepository(database).listContacts() } });
 });
 
 p6App.post('/alerts/evaluate', requireRoles('admin','project_manager'), async (c) => {
@@ -908,19 +782,20 @@ p6App.post('/alerts/evaluate', requireRoles('admin','project_manager'), async (c
   const asOf = validDate(body.asOf); if (!asOf) return c.json(apiError('INVALID_AS_OF', 'asOf 必须为有效日期'), 422);
   const request = { asOf }, hash = await requestHash(request), operation = `alerts.evaluate:${asOf}`; const replay = await replayIdempotentResponse(c, key, operation, hash); if (replay) return replay;
   const data = await evaluateAlerts(c.env, asOf), actor = c.get('currentUser'), now = new Date().toISOString(), response = { ok: true as const, data };
-  try { await c.env.DB.batch([auditStatement(c.env.DB, actor.id, 'alerts.evaluate', 'alert_cycle', asOf, null, data, now), idempotencyStatement(c.env.DB, key, actor.id, operation, hash, response, 200, now)]); }
+  const { database } = createCloudflarePersistence(c.env);
+  try { await new SqlOperationJournalRepository(database).record({ auditId: crypto.randomUUID(), actorId: actor.id, action: 'alerts.evaluate', objectType: 'alert_cycle', objectId: asOf, before: null, after: data, idempotencyKey: key, operation, requestHash: hash, responseJson: JSON.stringify(response), statusCode: 200, now }); }
   catch { return c.json(apiError('ALERT_EVALUATION_CONFLICT', '预警评估记录冲突'), 409); }
   return c.json(response);
 });
 
 p6App.get('/alerts', async (c) => {
-  const result = await c.env.DB.prepare(`SELECT id,rule_key,rule_version,object_type,object_id,period_key,severity,state,message,first_seen_at,last_seen_at,resolved_at FROM alert_events ORDER BY last_seen_at DESC,id DESC LIMIT 200`).all<AlertRow>();
-  return c.json({ ok: true as const, data: { items: (result.results ?? []).map(alertSummary) } });
+  const { database } = createCloudflarePersistence(c.env);
+  return c.json({ ok: true as const, data: { items: await new SqlNotificationRepository(database).listAlerts(200) } });
 });
 
 p6App.get('/notification-outbox', requireRoles('admin'), async (c) => {
-  const result = await c.env.DB.prepare(`SELECT id,event_id,recipient,status,lease_token,lease_until,attempt_count,next_attempt_at,last_error,created_at,updated_at FROM notification_outbox ORDER BY created_at DESC,id DESC LIMIT 200`).all<OutboxRow>();
-  return c.json({ ok: true as const, data: { items: (result.results ?? []).map((row) => outboxSummary(row)) } });
+  const { database } = createCloudflarePersistence(c.env);
+  return c.json({ ok: true as const, data: { items: await new SqlNotificationRepository(database).listOutbox(200) } });
 });
 
 p6App.post('/notification-outbox/claim', requireRoles('admin'), async (c) => {
@@ -929,8 +804,9 @@ p6App.post('/notification-outbox/claim', requireRoles('admin'), async (c) => {
   const now = validIso(body.now), limit = safePositive(body.limit), leaseSeconds = safePositive(body.leaseSeconds);
   if (!now || limit === null || limit > MAX_OUTBOX_CLAIM || leaseSeconds === null || leaseSeconds > 3600) return c.json(apiError('INVALID_CLAIM', '领取时间、数量或租约时长无效'), 422);
   const request = { now, limit, leaseSeconds }, hash = await requestHash(request), operation = `notification-outbox.claim:${key}`; const replay = await replayIdempotentResponse(c, key, operation, hash); if (replay) return replay;
-  const items = await claimOutbox(c.env.DB, now, limit, leaseSeconds), actor = c.get('currentUser'), storedAt = new Date().toISOString(), response = { ok: true as const, data: { items } };
-  try { await c.env.DB.batch([auditStatement(c.env.DB, actor.id, 'notification-outbox.claim', 'notification_outbox', key, null, { count: items.length }, storedAt), idempotencyStatement(c.env.DB, key, actor.id, operation, hash, response, 200, storedAt)]); }
+  const { database } = createCloudflarePersistence(c.env);
+  const items = await new SqlNotificationRepository(database).claimOutbox(now, limit, leaseSeconds), actor = c.get('currentUser'), storedAt = new Date().toISOString(), response = { ok: true as const, data: { items } };
+  try { await new SqlOperationJournalRepository(database).record({ auditId: crypto.randomUUID(), actorId: actor.id, action: 'notification-outbox.claim', objectType: 'notification_outbox', objectId: key, before: null, after: { count: items.length }, idempotencyKey: key, operation, requestHash: hash, responseJson: JSON.stringify(response), statusCode: 200, now: storedAt }); }
   catch { return c.json(apiError('CLAIM_CONFLICT', '通知领取记录冲突'), 409); }
   return c.json(response);
 });
@@ -941,18 +817,17 @@ p6App.post('/notification-outbox/:id/result', requireRoles('admin'), async (c) =
   const leaseToken = cleanText(body.leaseToken), outcome = cleanText(body.outcome), now = validIso(body.now), error = body.error === null || body.error === undefined || body.error === '' ? null : cleanText(body.error).slice(0, 1000);
   if (!leaseToken || !['sent','failed','unknown'].includes(outcome) || !now) return c.json(apiError('INVALID_DELIVERY_RESULT', '通知结果参数无效'), 422);
   const request = { leaseToken, outcome, now, error }, hash = await requestHash(request), operation = `notification-outbox.result:${c.req.param('id')}`; const replay = await replayIdempotentResponse(c, key, operation, hash); if (replay) return replay;
-  const row = await c.env.DB.prepare(`SELECT id,event_id,recipient,status,lease_token,lease_until,attempt_count,next_attempt_at,last_error,created_at,updated_at FROM notification_outbox WHERE id=? LIMIT 1`).bind(c.req.param('id')).first<OutboxRow>();
+  const { database } = createCloudflarePersistence(c.env);
+  const repository = new SqlNotificationRepository(database);
+  const row = await repository.findOutbox(c.req.param('id'));
   if (!row) return c.json(apiError('NOT_FOUND', '通知不存在'), 404);
-  if (row.status !== 'leased' || row.lease_token !== leaseToken) return c.json(apiError('LEASE_CONFLICT', '通知租约已失效'), 409);
-  const attempts = row.attempt_count + 1, status = outcome as NotificationOutboxStatus, nextAttemptAt = outcome === 'failed' ? retryAt(now, attempts) : now;
+  if (row.status !== 'leased' || row.leaseToken !== leaseToken) return c.json(apiError('LEASE_CONFLICT', '通知租约已失效'), 409);
+  const attempts = row.attemptCount + 1, status = outcome as NotificationOutboxStatus, nextAttemptAt = outcome === 'failed' ? retryAt(now, attempts) : now;
   const actor = c.get('currentUser'), updatedAt = new Date().toISOString();
-  const data: NotificationOutboxSummary = { ...outboxSummary({ ...row, status, lease_token: null, lease_until: null, attempt_count: attempts, next_attempt_at: nextAttemptAt, last_error: error, updated_at: updatedAt }), leaseToken: null, leasedAt: null };
+  const data: NotificationOutboxSummary = { ...row, status, leaseToken: null, leasedAt: null, leaseUntil: null, attemptCount: attempts, nextAttemptAt, lastError: error, updatedAt };
   const response = { ok: true as const, data };
-  try { await c.env.DB.batch([
-    c.env.DB.prepare(`UPDATE notification_outbox SET status=?,lease_token=NULL,lease_until=NULL,attempt_count=?,next_attempt_at=?,last_error=?,updated_at=? WHERE id=? AND status='leased' AND lease_token=?`).bind(status, attempts, nextAttemptAt, error, updatedAt, row.id, leaseToken),
-    auditStatement(c.env.DB, actor.id, 'notification-outbox.result', 'notification_outbox', row.id, { status: row.status, attemptCount: row.attempt_count }, { status, attemptCount: attempts }, updatedAt),
-    idempotencyStatement(c.env.DB, key, actor.id, operation, hash, response, 200, updatedAt),
-  ]); } catch { return c.json(apiError('DELIVERY_RESULT_CONFLICT', '通知结果写入冲突'), 409); }
+  try { await repository.completeOutboxLease({ row, leaseToken, status, attempts, nextAttemptAt, error, updatedAt, journal: { auditId: crypto.randomUUID(), actorId: actor.id, action: 'notification-outbox.result', objectType: 'notification_outbox', objectId: row.id, before: { status: row.status, attemptCount: row.attemptCount }, after: { status, attemptCount: attempts }, idempotencyKey: key, operation, requestHash: hash, responseJson: JSON.stringify(response), statusCode: 200, now: updatedAt } }); }
+  catch { return c.json(apiError('DELIVERY_RESULT_CONFLICT', '通知结果写入冲突'), 409); }
   return c.json(response);
 });
 
