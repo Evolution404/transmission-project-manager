@@ -3,6 +3,7 @@ import type {
   CommitLineRenameInput,
   CommitSingleMasterDataInput,
   CommitTowerBatchInput,
+  CommitTowerImportChunkInput,
   CommitTowerMoveInput,
   CommitTowerRenameInput,
   MasterDataWriteKind,
@@ -295,6 +296,93 @@ export class SqlMasterDataWriteRepository implements MasterDataWriteRepository {
         input.mutation.actorId,
         'master.towers.batch',
         'transmission_line',
+        input.lineId,
+        json(input.audit.before),
+        json(input.audit.after),
+        input.mutation.now,
+      ],
+    });
+    await this.database.batch(statements);
+  }
+
+  async commitTowerImportChunk(input: CommitTowerImportChunkInput): Promise<void> {
+    const updates = input.items.filter((item) => item.action === 'update');
+    const updateCondition = updates.length
+      ? updates.map(() => 'EXISTS(SELECT 1 FROM transmission_towers WHERE id=? AND line_id=? AND version=?)').join(' AND ')
+      : '1';
+    const updateParams = updates.flatMap((item) => [item.id, input.lineId, item.expectedVersion!] as DatabaseValue[]);
+    const statements: DatabaseStatement[] = [{
+      sql: `INSERT INTO idempotency_records
+            (idempotency_key,actor_member_id,operation,request_hash,response_json,status_code,created_at)
+            VALUES (?,?,?,CASE WHEN EXISTS(
+              SELECT 1 FROM transmission_lines WHERE id=? AND tower_order_version=?
+            ) AND ${updateCondition} THEN ? ELSE NULL END,?,?,?)`,
+      params: [
+        input.mutation.key,
+        input.mutation.actorId,
+        input.mutation.operation,
+        input.lineId,
+        input.expectedTowerOrderVersion,
+        ...updateParams,
+        input.mutation.hash,
+        input.mutation.responseJson,
+        input.mutation.statusCode,
+        input.mutation.now,
+      ],
+    }, {
+      sql: `INSERT INTO master_data_guards (id,line_parent)
+            VALUES (1,CASE WHEN EXISTS (
+              SELECT 1 FROM transmission_lines l JOIN voltage_levels v ON v.id=l.voltage_level_id
+              WHERE l.id=? AND l.enabled=1 AND v.enabled=1
+            ) THEN 1 ELSE 0 END)
+            ON CONFLICT(id) DO UPDATE SET line_parent=excluded.line_parent`,
+      params: [input.lineId],
+    }];
+
+    if (input.rebalanceTowerOrder) {
+      statements.push({
+        sql: `WITH ranked(id,new_rank) AS MATERIALIZED (
+                SELECT id,-ROW_NUMBER() OVER (ORDER BY sort_rank,id)*1000
+                FROM transmission_towers WHERE line_id=?
+              )
+              UPDATE transmission_towers
+              SET sort_rank=(SELECT new_rank FROM ranked WHERE ranked.id=transmission_towers.id)
+              WHERE line_id=?`,
+        params: [input.lineId, input.lineId],
+      }, {
+        sql: 'UPDATE transmission_towers SET sort_rank=-sort_rank WHERE line_id=?',
+        params: [input.lineId],
+      });
+    }
+
+    for (const item of input.items) {
+      statements.push(this.businessStatement({
+        kind: 'tower',
+        action: item.action,
+        id: item.id,
+        values: item.values,
+        expectedVersion: item.expectedVersion,
+        mutation: input.mutation,
+        audit: { action: '', objectType: '', before: null, after: null },
+      }));
+    }
+    if (input.changesTowerOrder) {
+      statements.push({
+        sql: `UPDATE transmission_lines
+              SET tower_order_version=tower_order_version+1,updated_at=?
+              WHERE id=? AND tower_order_version=?`,
+        params: [input.mutation.now, input.lineId, input.expectedTowerOrderVersion],
+      });
+    }
+    statements.push({
+      sql: `INSERT INTO audit_events
+            (id,actor_member_id,action,object_type,object_id,before_json,after_json,created_at)
+            VALUES (?,?,?,?,?,?,?,?)`,
+      params: [
+        input.mutation.auditId,
+        input.mutation.actorId,
+        input.audit.action,
+        input.audit.objectType,
         input.lineId,
         json(input.audit.before),
         json(input.audit.after),

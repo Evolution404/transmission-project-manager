@@ -606,3 +606,62 @@ test('tower sparse ordering automatically rebalances when repeated numeric auto-
   assert.equal(new Set(ranks).size, ranks.length);
   assert.equal((await jsonRequest(`/api/master/lines?query=${encodeURIComponent('稀疏排序线')}`)).body.data.items.find((item) => item.id === line.id).towerOrderVersion, 15);
 });
+
+test('tower import chunk hides technical ranks, preserves stable updates and auto-places new towers atomically', async () => {
+  const line = (await jsonRequest('/api/master/lines', mutation('POST', idem('import-chunk-line'), {
+    voltageLevelId: 'vl-ac-110', lineName: '杆塔导入线', enabled: true,
+  }))).body.data;
+  const seed10 = await jsonRequest('/api/master/towers', mutation('POST', idem('import-seed-10'), { lineId: line.id, towerNo: '10', towerType: '旧类型', enabled: true }));
+  const seed20 = await jsonRequest('/api/master/towers', mutation('POST', idem('import-seed-20'), { lineId: line.id, towerNo: '20', towerType: null, enabled: true }));
+  assert.equal(seed10.response.status, 201);
+  assert.equal(seed20.response.status, 201);
+
+  const refreshed = (await jsonRequest(`/api/master/lines?query=${encodeURIComponent('杆塔导入线')}`)).body.data.items.find((item) => item.id === line.id);
+  assert.equal(refreshed.towerOrderVersion, 3);
+  const path = `/api/master/lines/${line.id}/towers/import-chunk`;
+  const body = {
+    expectedTowerOrderVersion: 3,
+    items: [
+      { action: 'update', id: seed10.body.data.id, expectedVersion: seed10.body.data.version, towerNo: '#010', towerType: '新类型', enabled: false },
+      { action: 'create', towerNo: '#015', towerType: '角钢塔', enabled: true },
+      { action: 'create', towerNo: '#020-1', towerType: null, enabled: true },
+    ],
+  };
+  const key = idem('tower-import-chunk');
+  const first = await jsonRequest(path, mutation('POST', key, body));
+  assert.equal(first.response.status, 201);
+  assert.equal(first.body.data.towerOrderVersion, 4);
+  assert.equal(first.body.data.created, 2);
+  assert.equal(first.body.data.updated, 1);
+  assert.deepEqual((await jsonRequest(`/api/master/towers?lineId=${line.id}`)).body.data.items.map((item) => [item.towerNo, item.towerType, item.enabled]), [
+    ['#010', '新类型', false], ['#015', '角钢塔', true], ['#020', null, true], ['#020-1', null, true],
+  ]);
+
+  const replay = await jsonRequest(path, mutation('POST', key, body));
+  assert.equal(replay.response.status, 201);
+  assert.deepEqual(replay.body, first.body);
+  const stale = await jsonRequest(path, mutation('POST', idem('tower-import-stale'), { ...body, expectedTowerOrderVersion: 3 }));
+  assert.equal(stale.response.status, 409);
+  assert.equal(stale.body.error.code, 'ORDER_VERSION_CONFLICT');
+});
+
+test('tower import chunk is internal bounded protocol and never permits rename through an update row', async () => {
+  const line = (await jsonRequest('/api/master/lines', mutation('POST', idem('import-guard-line'), {
+    voltageLevelId: 'vl-ac-110', lineName: '导入门禁线', enabled: true,
+  }))).body.data;
+  const tower = (await jsonRequest('/api/master/towers', mutation('POST', idem('import-guard-tower'), { lineId: line.id, towerNo: '100' }))).body.data;
+  const path = `/api/master/lines/${line.id}/towers/import-chunk`;
+  const tooMany = await jsonRequest(path, mutation('POST', idem('import-too-many'), {
+    expectedTowerOrderVersion: 2,
+    items: Array.from({ length: 21 }, (_, index) => ({ action: 'create', towerNo: `#${String(200 + index).padStart(3, '0')}`, towerType: null, enabled: true })),
+  }));
+  assert.equal(tooMany.response.status, 422);
+  assert.equal(tooMany.body.error.code, 'INVALID_TOWER_IMPORT_CHUNK');
+
+  const rename = await jsonRequest(path, mutation('POST', idem('import-rename'), {
+    expectedTowerOrderVersion: 2,
+    items: [{ action: 'update', id: tower.id, expectedVersion: tower.version, towerNo: '#101', towerType: null, enabled: true }],
+  }));
+  assert.equal(rename.response.status, 422);
+  assert.equal(rename.body.error.code, 'RENAME_REQUIRED');
+});

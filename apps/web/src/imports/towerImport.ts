@@ -1,0 +1,130 @@
+import { normalizeTowerNo, type TransmissionTowerSummary } from '@tpm/shared';
+import type { ParsedSpreadsheet, ParsedSpreadsheetRow } from './parser';
+
+export interface TowerImportSourceRow {
+  source: string;
+  rowNumber: number;
+  towerNoInput: string;
+  towerType: string | null;
+  enabled: boolean;
+  parseError?: string | null;
+}
+
+export type TowerImportAction = 'create' | 'update' | 'unchanged' | 'error';
+
+export interface TowerImportPreviewRow extends TowerImportSourceRow {
+  towerNo: string | null;
+  action: TowerImportAction;
+  message: string | null;
+  id?: string;
+  expectedVersion?: number;
+}
+
+export interface TowerImportPreview {
+  counts: { total: number; create: number; update: number; unchanged: number; error: number };
+  rows: TowerImportPreviewRow[];
+}
+
+const towerHeaders = ['杆塔编号', '杆塔号', '塔号'];
+const typeHeaders = ['杆塔类型', '类型', '塔型'];
+const stateHeaders = ['状态', '启用状态', '是否启用'];
+
+function clean(value: unknown): string {
+  return value === null || value === undefined ? '' : String(value).trim();
+}
+
+function parseEnabled(value: unknown): { enabled: boolean; error: string | null } {
+  const text = clean(value);
+  if (!text || ['启用', '是', '1', 'true', 'TRUE'].includes(text)) return { enabled: true, error: null };
+  if (['停用', '否', '0', 'false', 'FALSE'].includes(text)) return { enabled: false, error: null };
+  return { enabled: true, error: `状态“${text}”无法识别，仅支持启用/停用` };
+}
+
+export function parseTowerPaste(text: string): TowerImportSourceRow[] {
+  const lines = text.split(/\r?\n/).filter((line) => line.trim());
+  if (!lines.length) return [];
+  const matrix = lines.map((line) => line.split('\t').map((cell) => cell.trim()));
+  const first = matrix[0] ?? [];
+  const hasHeader = first.some((cell) => towerHeaders.includes(cell));
+  const towerColumn = hasHeader ? first.findIndex((cell) => towerHeaders.includes(cell)) : 0;
+  const typeColumn = hasHeader ? first.findIndex((cell) => typeHeaders.includes(cell)) : 1;
+  const stateColumn = hasHeader ? first.findIndex((cell) => stateHeaders.includes(cell)) : 2;
+  return matrix.slice(hasHeader ? 1 : 0).map((cells, index) => {
+    const state = parseEnabled(stateColumn >= 0 ? cells[stateColumn] : '');
+    return {
+      source: '粘贴',
+      rowNumber: index + (hasHeader ? 2 : 1),
+      towerNoInput: clean(cells[towerColumn]),
+      towerType: typeColumn >= 0 ? clean(cells[typeColumn]) || null : null,
+      enabled: state.enabled,
+      parseError: state.error,
+    };
+  });
+}
+
+function columnName(headers: readonly string[], aliases: readonly string[]): string | null {
+  return headers.find((header) => aliases.includes(header.trim())) ?? null;
+}
+
+function fromSpreadsheetRow(source: string, row: ParsedSpreadsheetRow, towerColumn: string, typeColumn: string | null, stateColumn: string | null): TowerImportSourceRow {
+  const state = parseEnabled(stateColumn ? row.cells[stateColumn] : null);
+  return {
+    source,
+    rowNumber: row.rowNumber,
+    towerNoInput: clean(row.cells[towerColumn]),
+    towerType: typeColumn ? clean(row.cells[typeColumn]) || null : null,
+    enabled: state.enabled,
+    parseError: state.error,
+  };
+}
+
+export function towerRowsFromSpreadsheet(spreadsheet: ParsedSpreadsheet): TowerImportSourceRow[] {
+  const rows: TowerImportSourceRow[] = [];
+  for (const sheet of spreadsheet.sheets) {
+    const towerColumn = columnName(sheet.headers, towerHeaders);
+    if (!towerColumn) continue;
+    const typeColumn = columnName(sheet.headers, typeHeaders);
+    const stateColumn = columnName(sheet.headers, stateHeaders);
+    rows.push(...sheet.rows.map((row) => fromSpreadsheetRow(sheet.name, row, towerColumn, typeColumn, stateColumn)));
+  }
+  if (!rows.length) throw new Error('未找到“杆塔编号/杆塔号”列');
+  return rows;
+}
+
+export function buildTowerImportPreview(sourceRows: readonly TowerImportSourceRow[], existing: readonly TransmissionTowerSummary[]): TowerImportPreview {
+  const existingByNo = new Map<string, TransmissionTowerSummary[]>();
+  for (const tower of existing) {
+    const group = existingByNo.get(tower.towerNo) ?? [];
+    group.push(tower);
+    existingByNo.set(tower.towerNo, group);
+  }
+  const sourceCounts = new Map<string, number>();
+  for (const row of sourceRows) {
+    const towerNo = normalizeTowerNo(row.towerNoInput);
+    if (towerNo) sourceCounts.set(towerNo, (sourceCounts.get(towerNo) ?? 0) + 1);
+  }
+  const rows: TowerImportPreviewRow[] = sourceRows.map((row) => {
+    if (row.parseError) return { ...row, towerNo: normalizeTowerNo(row.towerNoInput), action: 'error', message: row.parseError };
+    const towerNo = normalizeTowerNo(row.towerNoInput);
+    if (!towerNo) return { ...row, towerNo: null, action: 'error', message: `杆塔编号“${row.towerNoInput}”无法识别` };
+    if ((sourceCounts.get(towerNo) ?? 0) > 1) return { ...row, towerNo, action: 'error', message: `${towerNo} 在导入数据中重复，无法自动判断实体` };
+    const matches = existingByNo.get(towerNo) ?? [];
+    if (matches.length > 1) return { ...row, towerNo, action: 'error', message: `${towerNo} 当前对应多个杆塔对象，请人工选择具体对象` };
+    if (!matches.length) return { ...row, towerNo, action: 'create', message: '新增' };
+    const current = matches[0]!;
+    if ((current.towerType ?? null) === row.towerType && current.enabled === row.enabled) {
+      return { ...row, towerNo, action: 'unchanged', message: '无变化', id: current.id, expectedVersion: current.version };
+    }
+    return { ...row, towerNo, action: 'update', message: '更新属性', id: current.id, expectedVersion: current.version };
+  });
+  const counts = { total: rows.length, create: 0, update: 0, unchanged: 0, error: 0 };
+  for (const row of rows) counts[row.action] += 1;
+  return { counts, rows };
+}
+
+export function towerImportChunks(rows: readonly TowerImportPreviewRow[], size = 20): TowerImportPreviewRow[][] {
+  const actionable = rows.filter((row) => row.action === 'create' || row.action === 'update');
+  const chunks: TowerImportPreviewRow[][] = [];
+  for (let index = 0; index < actionable.length; index += size) chunks.push(actionable.slice(index, index + size));
+  return chunks;
+}

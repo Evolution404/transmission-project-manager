@@ -157,7 +157,7 @@ main CI run `34844921647` PASS。
 ## 下一步
 
 1. 按 `MASTER_DATA_REDESIGN_PLAN.md` 执行 M1：先写杆塔编号规范化、schema、更名历史/排序基础测试，再改生产实现。
-2. M1–M3 已完成；继续 M4 大批杆塔导入/自动内部切片与预览，然后 M5 线路中心 UI；每阶段小提交并 push。
+2. M1–M3 已完成；M4 默认“新增 / 更新”模式已完成，继续补“完整清单按文件顺序重排”，然后 M5 线路中心 UI；每阶段小提交并 push。
 3. 本轮 schema 变化只允许修改唯一 `0001_initial_schema.sql`，同步 `tests/migrations.lock.json`；禁止新增 migration。
 4. 本轮代码全部完成并 `npm run check` 全绿后再开 PR；未获用户明确授权前不合并 `main`、不触发 production release。
 5. P7 首管理员已创建，但一次性 `BOOTSTRAP_TOKEN` 的远端删除和其余完整 P7-01～13 仍需单独收尾，不得因本轮功能施工误标为全部完成。

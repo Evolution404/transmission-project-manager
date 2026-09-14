@@ -103,6 +103,23 @@ export interface CommitTowerMoveInput {
   audit: MasterAuditRecord;
 }
 
+export interface TowerImportChunkWriteItem {
+  action: 'create' | 'update';
+  id: string;
+  expectedVersion: number | null;
+  values: TransmissionTowerWriteValues;
+}
+
+export interface CommitTowerImportChunkInput {
+  lineId: string;
+  expectedTowerOrderVersion: number;
+  changesTowerOrder: boolean;
+  rebalanceTowerOrder: boolean;
+  items: TowerImportChunkWriteItem[];
+  mutation: MasterMutationRecord;
+  audit: MasterAuditRecord;
+}
+
 export interface MasterDataWriteRepository {
   findRecord(kind: MasterDataWriteKind, id: string): Promise<Record<string, string | number | null> | null>;
   findTowerRecords(ids: readonly string[]): Promise<readonly Record<string, string | number | null>[]>;
@@ -116,4 +133,5 @@ export interface MasterDataWriteRepository {
   commitLineRename(input: CommitLineRenameInput): Promise<void>;
   commitTowerRename(input: CommitTowerRenameInput): Promise<void>;
   commitTowerMove(input: CommitTowerMoveInput): Promise<void>;
+  commitTowerImportChunk(input: CommitTowerImportChunkInput): Promise<void>;
 }

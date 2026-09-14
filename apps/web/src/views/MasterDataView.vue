@@ -6,6 +6,16 @@ import {
 } from 'naive-ui';
 import { normalizeTowerNo, type CurrentUser, type TransmissionLineSummary, type TransmissionTowerSummary, type VoltageLevelSummary, type VoltageSystemType } from '@tpm/shared';
 import { parseApiResponse } from '../api/response';
+import { parseFileInWorker } from '../imports/workerClient';
+import {
+  buildTowerImportPreview,
+  parseTowerPaste,
+  towerImportChunks,
+  towerRowsFromSpreadsheet,
+  type TowerImportPreview,
+  type TowerImportPreviewRow,
+  type TowerImportSourceRow,
+} from '../imports/towerImport';
 
 const props = defineProps<{ currentUser: CurrentUser }>();
 const message = useMessage();
@@ -22,6 +32,14 @@ const lineCursor = ref<string | null>(null), towerCursor = ref<string | null>(nu
 const loading = ref(false);
 let lineRequest = 0, towerRequest = 0;
 const bulkModal = ref(false), bulkText = ref('');
+const bulkPreview = ref<TowerImportPreview | null>(null);
+const bulkSourceLabel = ref('');
+const bulkPreparing = ref(false);
+const bulkChunks = ref<TowerImportPreviewRow[][]>([]);
+const bulkChunkKeys = ref<string[]>([]);
+const bulkNextChunk = ref(0);
+const bulkProcessed = ref(0);
+const bulkOrderVersion = ref<number | null>(null);
 const selectedVoltage = computed(() => voltageLevels.value.find((v) => v.id === selectedVoltageId.value));
 const selectedLine = computed(() => lines.value.find((l) => l.id === selectedLineId.value));
 
@@ -94,31 +112,99 @@ async function removeObject(kind: string, item: { id: string; version: number })
   finally { saving.value = false; }
 }
 async function openBulk() {
-  bulkText.value = ''; bulkModal.value = true;
-}
-async function saveBulk() {
-  const rows = bulkText.value.trim().split(/\r?\n/).filter((row) => row.trim());
-  if (!rows.length || rows.length > 20) { message.warning('每次请填写 1–20 行'); return; }
-  const items = [];
-  for (const row of rows) {
-    const cells = row.split('\t').map((v) => v.trim());
-    const [towerNoInput, order, towerType = '', state = '启用'] = cells;
-    const towerNo = normalizeTowerNo(towerNoInput ?? '');
-    const sortRank = Number(order);
-    if (cells.length < 2 || cells.length > 4 || !towerNo || !Number.isInteger(sortRank) || sortRank <= 0 || !['启用', '停用', '1', '0', ''].includes(state)) { message.warning('杆塔编号必须为 10、10-1、#010 等可识别格式，并填写有效顺序'); return; }
-    const existing = towers.value.find((t) => t.towerNo.toLowerCase() === towerNo.toLowerCase());
-    items.push({ ...(existing ? { id: existing.id, expectedVersion: existing.version } : {}), towerNo, sortRank, towerType: towerType || null, enabled: !['停用', '0'].includes(state) });
-  }
-  saving.value = true;
-  try {
-    await apiRequest(`/api/master/lines/${selectedLineId.value}/towers/batch`, jsonInit('POST', { items }));
-    bulkModal.value = false; await loadTowers(); message.success('杆塔批量维护已保存');
-  } catch (cause) { message.error(cause instanceof Error ? cause.message : '批量保存失败'); }
-  finally { saving.value = false; }
+  bulkText.value = '';
+  bulkPreview.value = null;
+  bulkSourceLabel.value = '';
+  bulkChunks.value = [];
+  bulkChunkKeys.value = [];
+  bulkNextChunk.value = 0;
+  bulkProcessed.value = 0;
+  bulkOrderVersion.value = null;
+  bulkModal.value = true;
 }
 
-function jsonInit(method: 'POST' | 'PATCH' | 'DELETE', body: unknown): RequestInit {
-  return { method, headers: { 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() }, body: JSON.stringify(body) };
+async function loadCompleteTowers(lineId: string): Promise<TransmissionTowerSummary[]> {
+  const result: TransmissionTowerSummary[] = [];
+  let cursor: string | null = null;
+  do {
+    const query: string = `/api/master/towers?lineId=${encodeURIComponent(lineId)}&limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
+    const page: { items: TransmissionTowerSummary[]; nextCursor?: string | null } = await apiRequest(query);
+    result.push(...page.items);
+    cursor = page.nextCursor ?? null;
+  } while (cursor);
+  return result;
+}
+
+async function prepareBulkPreview(sourceRows: TowerImportSourceRow[], label: string) {
+  const line = selectedLine.value;
+  if (!line) { message.warning('请先选择线路'); return; }
+  bulkPreparing.value = true;
+  try {
+    const existing = await loadCompleteTowers(line.id);
+    bulkPreview.value = buildTowerImportPreview(sourceRows, existing);
+    bulkSourceLabel.value = label;
+    bulkChunks.value = towerImportChunks(bulkPreview.value.rows);
+    bulkChunkKeys.value = bulkChunks.value.map(() => crypto.randomUUID());
+    bulkNextChunk.value = 0;
+    bulkProcessed.value = 0;
+    bulkOrderVersion.value = line.towerOrderVersion;
+  } catch (cause) { message.error(cause instanceof Error ? cause.message : '杆塔导入预览失败'); }
+  finally { bulkPreparing.value = false; }
+}
+
+async function previewBulkPaste() {
+  const rows = parseTowerPaste(bulkText.value);
+  if (!rows.length) { message.warning('请粘贴至少一行杆塔数据'); return; }
+  await prepareBulkPreview(rows, '粘贴数据');
+}
+
+async function onBulkFile(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  if (!file) return;
+  bulkPreparing.value = true;
+  try {
+    const spreadsheet = await parseFileInWorker(file);
+    await prepareBulkPreview(towerRowsFromSpreadsheet(spreadsheet), file.name);
+  } catch (cause) { message.error(cause instanceof Error ? cause.message : '杆塔文件解析失败'); }
+  finally { bulkPreparing.value = false; input.value = ''; }
+}
+
+async function saveBulk() {
+  const preview = bulkPreview.value, lineId = selectedLineId.value;
+  if (!preview || !lineId || bulkOrderVersion.value === null) return;
+  if (preview.counts.error) { message.warning('请先修正预览中的错误'); return; }
+  if (!bulkChunks.value.length) { message.success('导入内容没有需要写入的变化'); return; }
+  saving.value = true;
+  try {
+    while (bulkNextChunk.value < bulkChunks.value.length) {
+      const chunkIndex = bulkNextChunk.value;
+      const chunk = bulkChunks.value[chunkIndex]!;
+      const items = chunk.map((row) => ({
+        action: row.action,
+        ...(row.action === 'update' ? { id: row.id, expectedVersion: row.expectedVersion } : {}),
+        towerNo: row.towerNo,
+        towerType: row.towerType,
+        enabled: row.enabled,
+      }));
+      const responseData: { created: number; updated: number; towerOrderVersion: number } = await apiRequest(
+        `/api/master/lines/${lineId}/towers/import-chunk`,
+        jsonInit('POST', { expectedTowerOrderVersion: bulkOrderVersion.value, items }, bulkChunkKeys.value[chunkIndex]!),
+      );
+      bulkOrderVersion.value = responseData.towerOrderVersion;
+      bulkProcessed.value += chunk.length;
+      bulkNextChunk.value += 1;
+    }
+    bulkModal.value = false;
+    await loadAll();
+    message.success(`杆塔导入完成：新增 ${preview.counts.create}，更新 ${preview.counts.update}，无变化 ${preview.counts.unchanged}`);
+  } catch (cause) {
+    message.error(`${cause instanceof Error ? cause.message : '杆塔导入失败'}；已完成部分不会重复写入，可直接继续`);
+  } finally { saving.value = false; }
+}
+
+function jsonInit(method: 'POST' | 'PATCH' | 'DELETE', body: unknown, idempotencyKey: string = crypto.randomUUID()): RequestInit {
+  return { method, headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey }, body: JSON.stringify(body) };
 }
 
 function openVoltage(item?: VoltageLevelSummary) {
@@ -228,18 +314,30 @@ onMounted(loadAll);
       </section>
       <section class="master-panel tower-panel">
         <header><div><small>03 · {{ selectedLine?.lineName ?? '请选择线路' }}</small><h3>杆塔清单</h3></div></header>
-        <n-space v-if="isAdmin && selectedLine" class="tower-actions"><n-button size="small" data-test="open-new-tower" :disabled="!selectedLine.enabled || !selectedVoltage?.enabled" @click="openTower()">新增杆塔</n-button><n-button size="small" data-test="open-bulk-towers" :disabled="!selectedLine.enabled || !selectedVoltage?.enabled" @click="openBulk">批量维护</n-button></n-space>
+        <n-space v-if="isAdmin && selectedLine" class="tower-actions"><n-button size="small" data-test="open-new-tower" :disabled="!selectedLine.enabled || !selectedVoltage?.enabled" @click="openTower()">新增杆塔</n-button><n-button size="small" data-test="open-bulk-towers" :disabled="!selectedLine.enabled || !selectedVoltage?.enabled" @click="openBulk">导入杆塔</n-button></n-space>
         <n-data-table v-if="towers.length" :columns="towerColumns" :data="towers" :pagination="false" :scroll-x="420" />
         <n-empty v-else :description="selectedLine ? '当前线路下暂无杆塔' : '选择一条线路，查看杆塔清单'" />
         <n-button v-if="towerCursor" @click="loadTowers(true)">加载更多杆塔</n-button>
       </section>
     </div>
-    <n-modal v-model:show="bulkModal" preset="card" title="批量维护杆塔" style="width:min(680px,calc(100vw - 32px))">
-      <p>当前线路：{{ selectedLine?.lineName }}。从表格粘贴，每行依次为杆塔号、线路顺序、类型（可空）、启用/停用（可空）。每次最多 20 行。</p>
-      <p>已加载的同号杆塔将更新，其余新增。未粘贴的杆塔保留。{{ towerCursor ? '还有未加载杆塔，请先加载对应记录再修改。' : '' }}</p>
-      <n-button size="small" @click="bulkText=towers.slice(0,20).map(t => [t.towerNo,t.sortRank,t.towerType ?? '',t.enabled ? '启用' : '停用'].join('\t')).join('\n')">填入已加载杆塔（最多 20 行）</n-button>
-      <n-input v-model:value="bulkText" data-test="bulk-tower-text" type="textarea" :rows="10" placeholder="请粘贴杆塔号、顺序、类型、状态，例如从表格复制的四列数据" />
-      <template #footer><div class="actions"><n-button @click="bulkModal=false">取消</n-button><n-button data-test="save-bulk-towers" type="primary" :loading="saving" @click="saveBulk">保存本批</n-button></div></template>
+    <n-modal v-model:show="bulkModal" preset="card" title="导入杆塔" style="width:min(780px,calc(100vw - 32px))">
+      <p>当前线路：{{ selectedLine?.lineName }}。可选择 .xlsx / .csv，或直接从表格粘贴“杆塔编号、杆塔类型、状态”。系统会先规范编号并与完整线路台账对比，再一次确认导入。</p>
+      <div class="tower-import-source">
+        <input data-test="tower-import-file" type="file" accept=".xlsx,.csv" :disabled="bulkPreparing || saving" @change="onBulkFile" />
+        <span>或</span>
+        <n-button size="small" :loading="bulkPreparing" data-test="preview-bulk-towers" @click="previewBulkPaste">预览粘贴数据</n-button>
+      </div>
+      <n-input v-model:value="bulkText" data-test="bulk-tower-text" type="textarea" :rows="8" placeholder="杆塔编号[TAB]杆塔类型[TAB]状态，例如：10-1    角钢塔    启用。第一行也可以带表头。" />
+      <div v-if="bulkPreview" class="tower-import-preview" data-test="tower-import-preview">
+        <p><strong>{{ bulkSourceLabel }}</strong>：共 {{ bulkPreview.counts.total }} 行；新增 {{ bulkPreview.counts.create }}，更新 {{ bulkPreview.counts.update }}，无变化 {{ bulkPreview.counts.unchanged }}，错误 {{ bulkPreview.counts.error }}。</p>
+        <p v-if="!bulkPreview.counts.error">系统将自动分批写入；新增杆塔按规范编号自动插入合适位置，不改变已有杆塔的人工顺序。</p>
+        <div v-if="bulkPreview.counts.error" class="tower-import-errors">
+          <p v-for="row in bulkPreview.rows.filter(item => item.action === 'error').slice(0,20)" :key="`${row.source}-${row.rowNumber}`">{{ row.source }}第 {{ row.rowNumber }} 行：{{ row.message }}</p>
+          <p v-if="bulkPreview.counts.error > 20">另有 {{ bulkPreview.counts.error - 20 }} 条错误，请修正后重新预览。</p>
+        </div>
+        <p v-if="bulkChunks.length">进度：{{ bulkProcessed }} / {{ bulkChunks.reduce((total, chunk) => total + chunk.length, 0) }} 条需要写入的数据。</p>
+      </div>
+      <template #footer><div class="actions"><n-button @click="bulkModal=false">取消</n-button><n-button data-test="save-bulk-towers" type="primary" :loading="saving" :disabled="!bulkPreview || bulkPreview.counts.error>0" @click="saveBulk">{{ bulkNextChunk > 0 ? '继续导入' : '开始导入' }}</n-button></div></template>
     </n-modal>
 
     <n-modal v-model:show="voltageModal" preset="card" title="电压等级" style="width:min(560px,calc(100vw - 32px))">
@@ -265,6 +363,7 @@ onMounted(loadAll);
 @media(max-width:640px){.master-hero{align-items:flex-start;flex-direction:column;padding:16px}.master-hero h2{font-size:18px}}
 
 .master-breadcrumb{display:flex;align-items:center;flex-wrap:wrap;gap:8px;color:#7d8798}.master-breadcrumb button{border:0;background:transparent;color:#2457d6;cursor:pointer;padding:6px 0;font:inherit}
+.tower-import-source{display:flex;align-items:center;gap:10px;margin:12px 0}.tower-import-preview{margin-top:14px;padding:12px 14px;border-radius:10px;background:#f7f9fc;border:1px solid #e6eaf1}.tower-import-preview p{margin:5px 0}.tower-import-errors{max-height:180px;overflow:auto;color:#b42318}
 .master-columns{display:grid;grid-template-columns:minmax(210px,.8fr) minmax(240px,1fr) minmax(440px,1.8fr);gap:14px;align-items:start}
 .master-panel{min-width:0;background:#fff;border:1px solid #e4e9f1;border-radius:14px;padding:16px;min-height:360px}
 .master-panel header{display:flex;justify-content:space-between;gap:8px;align-items:center;margin-bottom:16px}.master-panel h3{margin:4px 0 0;font-size:17px}.master-panel small{color:#7d8798}.master-item{border:1px solid #edf0f5;border-radius:10px;margin-bottom:8px;overflow:hidden}.master-item.selected{border-color:#84a5f5;background:#f0f5ff}.master-select{display:flex;flex-direction:column;text-align:left;width:100%;gap:7px;padding:12px;border:0;background:transparent;color:inherit;cursor:pointer;font:inherit}.master-select strong{overflow-wrap:anywhere}.master-select span{font-size:12px;color:#7d8798;display:flex;justify-content:space-between}.master-select b{color:#2457d6}.item-actions{display:flex;gap:14px;padding:0 12px 10px}.tower-actions{margin-bottom:14px}
