@@ -21,6 +21,7 @@ import type {
 } from '@tpm/shared';
 import { requireRoles, type AppEnv } from './auth';
 import { SqlIdempotencyRepository } from './repositories/sql-idempotency-repository';
+import { SqlImportMappingRepository } from './repositories/sql-import-mapping-repository';
 import { createCloudflarePersistence } from './runtime/cloudflare/persistence';
 
 const REQUIRED_MAPPING_KEYS = [
@@ -553,25 +554,20 @@ p2App.post('/import-mappings', requireRoles('admin', 'project_manager'), async (
   if (replay) return replay;
 
   const actor = c.get('currentUser');
-  const id = crypto.randomUUID();
   const now = new Date().toISOString();
-  const row: MappingTemplateRow = { id, name, mapping_json: JSON.stringify(body.mapping), version: 1, created_at: now, updated_at: now };
-  const response = { ok: true as const, data: mappingTemplateSummary(row) };
+  const data: ImportMappingTemplate = { id: crypto.randomUUID(), name, mapping: body.mapping, version: 1, createdAt: now, updatedAt: now };
+  const response = { ok: true as const, data };
+  const { database } = createCloudflarePersistence(c.env);
   try {
-    await c.env.DB.batch([
-      c.env.DB.prepare(
-        `INSERT INTO import_mapping_templates (id,name,mapping_json,version,created_by,created_at,updated_at)
-         VALUES (?,?,?,1,?,?,?)`,
-      ).bind(id, name, row.mapping_json, actor.id, now, now),
-      c.env.DB.prepare(
-        `INSERT INTO audit_events (id,actor_member_id,action,object_type,object_id,before_json,after_json,created_at)
-         VALUES (?,?, 'import_mapping.create','import_mapping',?,NULL,?,?)`,
-      ).bind(crypto.randomUUID(), actor.id, id, JSON.stringify(response.data), now),
-      c.env.DB.prepare(
-        `INSERT INTO idempotency_records (idempotency_key,actor_member_id,operation,request_hash,response_json,status_code,created_at)
-         VALUES (?,?,?,?,?,201,?)`,
-      ).bind(key, actor.id, operation, hash, JSON.stringify(response), now),
-    ]);
+    await new SqlImportMappingRepository(database).create({
+      template: data,
+      actorId: actor.id,
+      auditId: crypto.randomUUID(),
+      idempotencyKey: key,
+      operation,
+      requestHash: hash,
+      responseJson: JSON.stringify(response),
+    });
   } catch {
     return c.json(apiError('MAPPING_TEMPLATE_EXISTS', '同名字段映射模板已存在'), 409);
   }
@@ -579,11 +575,8 @@ p2App.post('/import-mappings', requireRoles('admin', 'project_manager'), async (
 });
 
 p2App.get('/import-mappings', async (c) => {
-  const result = await c.env.DB.prepare(
-    `SELECT id,name,mapping_json,version,created_at,updated_at
-     FROM import_mapping_templates ORDER BY name COLLATE NOCASE LIMIT 100`,
-  ).all<MappingTemplateRow>();
-  return c.json({ ok: true as const, data: { items: (result.results ?? []).map(mappingTemplateSummary) } });
+  const { database } = createCloudflarePersistence(c.env);
+  return c.json({ ok: true as const, data: { items: await new SqlImportMappingRepository(database).list() } });
 });
 
 p2App.post('/materials', requireRoles('admin', 'project_manager'), async (c) => {
