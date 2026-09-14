@@ -689,26 +689,32 @@ p3App.put('/projects/:id/allocations', requireRoles('admin', 'project_manager'),
       completenessBasisPoints: 0,
     }),
   };
-  const statements: D1PreparedStatement[] = [
-    projectVersionGuard(c.env.DB, project.id, expectedVersion, now, 'draft'),
-    c.env.DB.prepare('DELETE FROM demand_allocations WHERE project_id=?').bind(project.id),
-  ];
-  for (const allocation of allocations) {
-    statements.push(allocationInsertStatement(c.env.DB, project.id, crypto.randomUUID(), allocation.demandMaterialId, allocation.quantityScaled, now));
-  }
-  statements.push(
-    auditStatement(c.env.DB, actor.id, 'project.allocations.replace', 'project', project.id, { version: expectedVersion }, { version: nextVersion, allocations }, now),
-    idempotencyStatement(c.env.DB, key, actor.id, operation, hash, response, 200, now),
-  );
+  const { database } = createCloudflarePersistence(c.env);
+  const repository = new SqlProjectWriteRepository(database);
   try {
-    await c.env.DB.batch(statements);
+    await repository.replaceAllocations({
+      projectId: project.id,
+      expectedVersion,
+      now,
+      allocations: allocations.map((allocation) => ({
+        id: crypto.randomUUID(),
+        demandMaterialId: allocation.demandMaterialId,
+        quantityScaled: allocation.quantityScaled,
+      })),
+      actorId: actor.id,
+      auditId: crypto.randomUUID(),
+      idempotencyKey: key,
+      operation,
+      requestHash: hash,
+      responseJson: JSON.stringify(response),
+    });
   } catch {
     const replayAfterRace = await replayIdempotentResponse(c, key, operation, hash);
     if (replayAfterRace) return replayAfterRace;
     const current = await findProject(c.env.DB, project.id);
     if (current && current.version !== expectedVersion) return c.json(apiError('VERSION_CONFLICT', '项目已被并发修改，请刷新后重试'), 409);
-    const failure = await allocationFailure(c.env.DB, allocations);
-    if (failure) return c.json(apiError(failure.code, failure.message, 'details' in failure ? failure.details : undefined), failure.status);
+    const failure = await repository.findAllocationFailure(allocations);
+    if (failure) return c.json(apiError(failure.code, failure.message, failure.details), failure.status);
     return c.json(apiError('ALLOCATION_UPDATE_CONFLICT', '分配更新发生冲突，请刷新后重试'), 409);
   }
   return c.json(response);

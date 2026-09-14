@@ -88,3 +88,30 @@ test('project repository reports missing demand material distinctly', async () =
     });
   } finally { sqlite.close(); }
 });
+
+test('allocation replacement preserves old rows on stale version and replaces them atomically on success', async () => {
+  const { sqlite, repository } = createRepository();
+  try {
+    sqlite.prepare("INSERT INTO projects VALUES ('p1','Reserve',2026,NULL,'draft',0,NULL,2,'admin-1','t','t')").run();
+    sqlite.prepare("INSERT INTO demand_allocations VALUES ('old','p1','dm-1',40,'t')").run();
+    const base = {
+      projectId: 'p1', expectedVersion: 2, now: '2026-09-14T02:10:00.000Z',
+      allocations: [{ id: 'new', demandMaterialId: 'dm-2', quantityScaled: 25 }],
+      actorId: 'admin-1', auditId: 'replace-audit', idempotencyKey: 'replace-idem', operation: 'projects.allocations:p1',
+      requestHash: 'replace-hash', responseJson: '{"ok":true}',
+    };
+    await assert.rejects(repository.replaceAllocations({ ...base, expectedVersion: 1 }));
+    assert.deepEqual(sqlite.prepare("SELECT id,demand_material_id,quantity_scaled FROM demand_allocations WHERE project_id='p1'").all().map((row) => ({ ...row })), [
+      { id: 'old', demand_material_id: 'dm-1', quantity_scaled: 40 },
+    ]);
+    assert.equal(sqlite.prepare("SELECT version FROM projects WHERE id='p1'").get().version, 2);
+    assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM idempotency_records WHERE idempotency_key='replace-idem'").get().count, 0);
+
+    await repository.replaceAllocations(base);
+    assert.deepEqual(sqlite.prepare("SELECT id,demand_material_id,quantity_scaled FROM demand_allocations WHERE project_id='p1'").all().map((row) => ({ ...row })), [
+      { id: 'new', demand_material_id: 'dm-2', quantity_scaled: 25 },
+    ]);
+    assert.equal(sqlite.prepare("SELECT version FROM projects WHERE id='p1'").get().version, 3);
+    assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM audit_events WHERE id='replace-audit'").get().count, 1);
+  } finally { sqlite.close(); }
+});

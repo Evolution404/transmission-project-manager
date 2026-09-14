@@ -1,5 +1,5 @@
 import type { DatabasePort, DatabaseStatement } from '../ports/database.ts';
-import type { AllocationFailure, CreateProjectRecord, ProjectAllocationWrite, ProjectWriteRepository } from '../ports/project-write-repository.ts';
+import type { AllocationFailure, CreateProjectRecord, ProjectAllocationWrite, ProjectWriteRepository, ReplaceProjectAllocationsRecord } from '../ports/project-write-repository.ts';
 
 export class SqlProjectWriteRepository implements ProjectWriteRepository {
   private readonly database: DatabasePort;
@@ -37,6 +37,49 @@ export class SqlProjectWriteRepository implements ProjectWriteRepository {
       sql: `INSERT INTO idempotency_records (idempotency_key,actor_member_id,operation,request_hash,response_json,status_code,created_at)
             VALUES (?,?,?,?,?,201,?)`,
       params: [input.idempotencyKey, input.actorId, input.operation, input.requestHash, input.responseJson, project.createdAt],
+    });
+    await this.database.batch(statements);
+  }
+
+  async replaceAllocations(input: ReplaceProjectAllocationsRecord): Promise<void> {
+    const statements: DatabaseStatement[] = [{
+      sql: `UPDATE projects
+            SET status='draft',version=version+1,updated_at=CASE WHEN version=? THEN ? ELSE NULL END
+            WHERE id=?`,
+      params: [input.expectedVersion, input.now, input.projectId],
+    }, {
+      sql: 'DELETE FROM demand_allocations WHERE project_id=?',
+      params: [input.projectId],
+    }];
+    for (const allocation of input.allocations) {
+      statements.push({
+        sql: `INSERT INTO demand_allocations (id,project_id,demand_material_id,quantity_scaled,created_at)
+              VALUES (
+                ?,?,
+                (SELECT dm.id FROM demand_materials dm
+                 WHERE dm.id=? AND dm.quantity_scaled >= COALESCE((
+                   SELECT SUM(da.quantity_scaled) FROM demand_allocations da WHERE da.demand_material_id=dm.id
+                 ),0)+?),
+                ?,?
+              )`,
+        params: [allocation.id, input.projectId, allocation.demandMaterialId, allocation.quantityScaled, allocation.quantityScaled, input.now],
+      });
+    }
+    statements.push({
+      sql: `INSERT INTO audit_events (id,actor_member_id,action,object_type,object_id,before_json,after_json,created_at)
+            VALUES (?,?,'project.allocations.replace','project',?,?,?,?)`,
+      params: [
+        input.auditId,
+        input.actorId,
+        input.projectId,
+        JSON.stringify({ version: input.expectedVersion }),
+        JSON.stringify({ version: input.expectedVersion + 1, allocations: input.allocations.map((item) => ({ demandMaterialId: item.demandMaterialId, quantityScaled: item.quantityScaled })) }),
+        input.now,
+      ],
+    }, {
+      sql: `INSERT INTO idempotency_records (idempotency_key,actor_member_id,operation,request_hash,response_json,status_code,created_at)
+            VALUES (?,?,?,?,?,200,?)`,
+      params: [input.idempotencyKey, input.actorId, input.operation, input.requestHash, input.responseJson, input.now],
     });
     await this.database.batch(statements);
   }

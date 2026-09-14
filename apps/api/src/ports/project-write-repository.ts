@@ -24,7 +24,21 @@ export interface CreateProjectRecord {
   responseJson: string;
 }
 
+export interface ReplaceProjectAllocationsRecord {
+  projectId: string;
+  expectedVersion: number;
+  now: string;
+  allocations: ProjectAllocationWrite[];
+  actorId: string;
+  auditId: string;
+  idempotencyKey: string;
+  operation: string;
+  requestHash: string;
+  responseJson: string;
+}
+
 export interface ProjectWriteRepository {
   create(input: CreateProjectRecord): Promise<void>;
+  replaceAllocations(input: ReplaceProjectAllocationsRecord): Promise<void>;
   findAllocationFailure(allocations: readonly Pick<ProjectAllocationWrite, 'demandMaterialId' | 'quantityScaled'>[]): Promise<AllocationFailure | null>;
 }
