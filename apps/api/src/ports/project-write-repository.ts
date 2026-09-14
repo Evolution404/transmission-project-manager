@@ -56,9 +56,36 @@ export interface ProtectedProjectScopeItem {
   protectedQuantityScaled: number;
 }
 
+export interface ProjectCostLineWrite {
+  id: string;
+  kind: 'material' | 'construction' | 'other';
+  demandAllocationId: string | null;
+  label: string;
+  unitPriceScaled: number | null;
+  amountFen: number | null;
+  source: string | null;
+  priceDate: string | null;
+  taxInclusive: boolean | null;
+}
+
+export interface ReplaceProjectCostsRecord {
+  projectId: string;
+  expectedVersion: number;
+  now: string;
+  lines: ProjectCostLineWrite[];
+  actorId: string;
+  auditId: string;
+  idempotencyKey: string;
+  operation: string;
+  requestHash: string;
+  responseJson: string;
+  auditAfter: unknown;
+}
+
 export interface ProjectWriteRepository {
   create(input: CreateProjectRecord): Promise<void>;
   replaceAllocations(input: ReplaceProjectAllocationsRecord): Promise<void>;
+  replaceCosts(input: ReplaceProjectCostsRecord): Promise<void>;
   findProject(id: string): Promise<ProjectWriteState | null>;
   getProtectedScope(projectId: string): Promise<readonly ProtectedProjectScopeItem[]>;
   findAllocationFailure(allocations: readonly Pick<ProjectAllocationWrite, 'demandMaterialId' | 'quantityScaled'>[]): Promise<AllocationFailure | null>;

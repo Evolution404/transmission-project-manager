@@ -31,6 +31,11 @@ function createRepository() {
     CREATE TABLE implementation_lines (project_id TEXT,demand_material_id TEXT,completed_quantity_scaled INTEGER NOT NULL);
     CREATE TABLE settlements (id TEXT PRIMARY KEY,voided_at TEXT);
     CREATE TABLE settlement_coverage (settlement_id TEXT NOT NULL,project_id TEXT NOT NULL,demand_material_id TEXT NOT NULL,quantity_scaled INTEGER NOT NULL);
+    CREATE TABLE project_cost_lines (
+      id TEXT PRIMARY KEY,project_id TEXT NOT NULL,kind TEXT NOT NULL,demand_allocation_id TEXT,label TEXT NOT NULL,
+      unit_price_scaled INTEGER,amount_fen INTEGER,price_source TEXT,price_date TEXT,tax_inclusive INTEGER,
+      created_at TEXT NOT NULL,updated_at TEXT NOT NULL
+    );
     INSERT INTO demand_materials VALUES ('dm-1',100),('dm-2',50);
   `);
   return { sqlite, repository: new SqlProjectWriteRepository(new SqliteDatabaseAdapter(sqlite)) };
@@ -136,5 +141,33 @@ test('project write repository exposes project state and protected delivery scop
       { demandMaterialId: 'dm-1', protectedQuantityScaled: 40 },
     ]);
     assert.equal(await repository.findProject('missing'), null);
+  } finally { sqlite.close(); }
+});
+
+test('cost replacement keeps old costs on stale version and swaps them atomically on success', async () => {
+  const { sqlite, repository } = createRepository();
+  try {
+    sqlite.prepare("INSERT INTO projects VALUES ('p1','Reserve',2026,NULL,'draft',0,NULL,3,'admin-1','t','t')").run();
+    sqlite.prepare("INSERT INTO project_cost_lines VALUES ('old','p1','other',NULL,'Old',NULL,100,NULL,NULL,NULL,'t','t')").run();
+    const base = {
+      projectId: 'p1', expectedVersion: 3, now: '2026-09-14T02:20:00.000Z',
+      lines: [
+        { id: 'mat', kind: 'material', demandAllocationId: 'alloc-1', label: 'Material', unitPriceScaled: 1230000, amountFen: 456, source: 'quote', priceDate: '2026-09-14', taxInclusive: true },
+        { id: 'fixed', kind: 'construction', demandAllocationId: null, label: 'Construction', unitPriceScaled: null, amountFen: 200, source: null, priceDate: null, taxInclusive: null },
+      ],
+      actorId: 'admin-1', auditId: 'cost-audit', idempotencyKey: 'cost-idem', operation: 'projects.costs:p1', requestHash: 'cost-hash', responseJson: '{"ok":true}',
+      auditAfter: { version: 4, knownAmountFen: 656, missingPriceCount: 0, completenessBasisPoints: 10000 },
+    };
+    await assert.rejects(repository.replaceCosts({ ...base, expectedVersion: 2 }));
+    assert.deepEqual(sqlite.prepare("SELECT id,label FROM project_cost_lines WHERE project_id='p1'").all().map((row) => ({ ...row })), [{ id: 'old', label: 'Old' }]);
+    assert.equal(sqlite.prepare("SELECT version FROM projects WHERE id='p1'").get().version, 3);
+    assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM idempotency_records WHERE idempotency_key='cost-idem'").get().count, 0);
+
+    await repository.replaceCosts(base);
+    assert.deepEqual(sqlite.prepare("SELECT id,label FROM project_cost_lines WHERE project_id='p1' ORDER BY id").all().map((row) => ({ ...row })), [
+      { id: 'fixed', label: 'Construction' }, { id: 'mat', label: 'Material' },
+    ]);
+    assert.equal(sqlite.prepare("SELECT version FROM projects WHERE id='p1'").get().version, 4);
+    assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM audit_events WHERE id='cost-audit'").get().count, 1);
   } finally { sqlite.close(); }
 });

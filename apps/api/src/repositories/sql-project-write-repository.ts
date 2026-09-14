@@ -1,5 +1,5 @@
 import type { DatabasePort, DatabaseStatement } from '../ports/database.ts';
-import type { AllocationFailure, CreateProjectRecord, ProjectAllocationWrite, ProjectWriteRepository, ProjectWriteState, ProtectedProjectScopeItem, ReplaceProjectAllocationsRecord } from '../ports/project-write-repository.ts';
+import type { AllocationFailure, CreateProjectRecord, ProjectAllocationWrite, ProjectWriteRepository, ProjectWriteState, ProtectedProjectScopeItem, ReplaceProjectAllocationsRecord, ReplaceProjectCostsRecord } from '../ports/project-write-repository.ts';
 
 export class SqlProjectWriteRepository implements ProjectWriteRepository {
   private readonly database: DatabasePort;
@@ -121,6 +121,49 @@ export class SqlProjectWriteRepository implements ProjectWriteRepository {
         JSON.stringify({ version: input.expectedVersion + 1, allocations: input.allocations.map((item) => ({ demandMaterialId: item.demandMaterialId, quantityScaled: item.quantityScaled })) }),
         input.now,
       ],
+    }, {
+      sql: `INSERT INTO idempotency_records (idempotency_key,actor_member_id,operation,request_hash,response_json,status_code,created_at)
+            VALUES (?,?,?,?,?,200,?)`,
+      params: [input.idempotencyKey, input.actorId, input.operation, input.requestHash, input.responseJson, input.now],
+    });
+    await this.database.batch(statements);
+  }
+
+  async replaceCosts(input: ReplaceProjectCostsRecord): Promise<void> {
+    const statements: DatabaseStatement[] = [{
+      sql: `UPDATE projects
+            SET status='draft',version=version+1,updated_at=CASE WHEN version=? THEN ? ELSE NULL END
+            WHERE id=?`,
+      params: [input.expectedVersion, input.now, input.projectId],
+    }, {
+      sql: 'DELETE FROM project_cost_lines WHERE project_id=?',
+      params: [input.projectId],
+    }];
+    for (const line of input.lines) {
+      statements.push({
+        sql: `INSERT INTO project_cost_lines
+              (id,project_id,kind,demand_allocation_id,label,unit_price_scaled,amount_fen,price_source,price_date,tax_inclusive,created_at,updated_at)
+              VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+        params: [
+          line.id,
+          input.projectId,
+          line.kind,
+          line.demandAllocationId,
+          line.label,
+          line.unitPriceScaled,
+          line.amountFen,
+          line.source,
+          line.priceDate,
+          line.taxInclusive === null ? null : line.taxInclusive ? 1 : 0,
+          input.now,
+          input.now,
+        ],
+      });
+    }
+    statements.push({
+      sql: `INSERT INTO audit_events (id,actor_member_id,action,object_type,object_id,before_json,after_json,created_at)
+            VALUES (?,?,'project.costs.replace','project',?,?,?,?)`,
+      params: [input.auditId, input.actorId, input.projectId, JSON.stringify({ version: input.expectedVersion }), JSON.stringify(input.auditAfter), input.now],
     }, {
       sql: `INSERT INTO idempotency_records (idempotency_key,actor_member_id,operation,request_hash,response_json,status_code,created_at)
             VALUES (?,?,?,?,?,200,?)`,

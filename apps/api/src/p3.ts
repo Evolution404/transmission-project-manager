@@ -678,12 +678,15 @@ p3App.put('/projects/:id/costs', requireRoles('admin', 'project_manager'), async
   const hash = await requestHash(requestBody);
   const replay = await replayIdempotentResponse(c, key, operation, hash);
   if (replay) return replay;
-  const project = await findProject(c.env.DB, c.req.param('id'));
+  const { database } = createCloudflarePersistence(c.env);
+  const queryRepository = new SqlProjectQueryRepository(database);
+  const writeRepository = new SqlProjectWriteRepository(database);
+  const project = await queryRepository.getProjectDetail(c.req.param('id'));
   if (!project) return c.json(apiError('PROJECT_NOT_FOUND', '储备项目不存在'), 404);
   if (!canAccessProject(c, project.id)) return c.json(apiError('SCOPE_FORBIDDEN', '当前成员无权修改该项目'), 403);
   if (project.version !== expectedVersion) return c.json(apiError('VERSION_CONFLICT', '项目已被修改，请刷新后重试'), 409);
 
-  const allocations = await loadAllocationRows(c.env.DB, project.id);
+  const allocations = project.allocations;
   if (allocations.length === 0) return c.json(apiError('PROJECT_EMPTY', '项目没有需求物资分配，不能估算'), 422);
   const allocationMap = new Map(allocations.map((item) => [item.id, item]));
   const priceMap = new Map<string, MaterialPriceInput>();
@@ -728,7 +731,7 @@ p3App.put('/projects/:id/costs', requireRoles('admin', 'project_manager'), async
   const nextVersion = expectedVersion + 1;
   const materialLines: Array<{
     id: string;
-    allocation: AllocationRow;
+    allocation: ProjectAllocationDetail;
     price: MaterialPriceInput;
     amountFen: number | null;
   }> = [];
@@ -745,7 +748,7 @@ p3App.put('/projects/:id/costs', requireRoles('admin', 'project_manager'), async
     };
     let amountFen: number | null = null;
     if (price.unitPriceScaled !== null) {
-      amountFen = calculateAmountFen(allocation.quantity_scaled, price.unitPriceScaled);
+      amountFen = calculateAmountFen(allocation.quantityScaled, price.unitPriceScaled);
       if (amountFen === null) return c.json(apiError('AMOUNT_OVERFLOW', '物资估算金额超过安全整数范围'), 422);
       knownAmountFen += amountFen;
       if (!Number.isSafeInteger(knownAmountFen)) return c.json(apiError('AMOUNT_OVERFLOW', '项目估算金额超过安全整数范围'), 422);
@@ -760,44 +763,50 @@ p3App.put('/projects/:id/costs', requireRoles('admin', 'project_manager'), async
     ok: true as const,
     data: { version: nextVersion, ...summary },
   };
-  const statements: D1PreparedStatement[] = [
-    projectVersionGuard(c.env.DB, project.id, expectedVersion, now, 'draft'),
-    c.env.DB.prepare('DELETE FROM project_cost_lines WHERE project_id=?').bind(project.id),
+  const costLines = [
+    ...materialLines.map((line) => ({
+      id: line.id,
+      kind: 'material' as const,
+      demandAllocationId: line.allocation.id,
+      label: line.allocation.material
+        ? `${line.allocation.material.name} ${line.allocation.material.model}`
+        : line.allocation.rawModel,
+      unitPriceScaled: line.price.unitPriceScaled,
+      amountFen: line.amountFen,
+      source: line.price.source,
+      priceDate: line.price.priceDate,
+      taxInclusive: line.price.taxInclusive,
+    })),
+    ...fixedCosts.map((fixed) => ({
+      id: crypto.randomUUID(),
+      kind: fixed.kind,
+      demandAllocationId: null,
+      label: fixed.label,
+      unitPriceScaled: null,
+      amountFen: fixed.amountFen,
+      source: fixed.source,
+      priceDate: fixed.priceDate,
+      taxInclusive: fixed.taxInclusive,
+    })),
   ];
-  for (const line of materialLines) {
-    const label = line.allocation.material_name
-      ? `${line.allocation.material_name} ${line.allocation.material_model ?? line.allocation.raw_model}`
-      : line.allocation.raw_model;
-    statements.push(c.env.DB.prepare(
-      `INSERT INTO project_cost_lines
-       (id,project_id,kind,demand_allocation_id,label,unit_price_scaled,amount_fen,price_source,price_date,tax_inclusive,created_at,updated_at)
-       VALUES (?,?,'material',?,?,?,?,?,?,?,?,?)`,
-    ).bind(
-      line.id, project.id, line.allocation.id, label, line.price.unitPriceScaled, line.amountFen,
-      line.price.source, line.price.priceDate, line.price.taxInclusive === null ? null : line.price.taxInclusive ? 1 : 0,
-      now, now,
-    ));
-  }
-  for (const fixed of fixedCosts) {
-    statements.push(c.env.DB.prepare(
-      `INSERT INTO project_cost_lines
-       (id,project_id,kind,demand_allocation_id,label,unit_price_scaled,amount_fen,price_source,price_date,tax_inclusive,created_at,updated_at)
-       VALUES (?,?,?,NULL,?,NULL,?,?,?,?,?,?)`,
-    ).bind(
-      crypto.randomUUID(), project.id, fixed.kind, fixed.label, fixed.amountFen, fixed.source, fixed.priceDate,
-      fixed.taxInclusive === null ? null : fixed.taxInclusive ? 1 : 0, now, now,
-    ));
-  }
-  statements.push(
-    auditStatement(c.env.DB, actor.id, 'project.costs.replace', 'project', project.id, { version: expectedVersion }, { version: nextVersion, ...summary }, now),
-    idempotencyStatement(c.env.DB, key, actor.id, operation, hash, response, 200, now),
-  );
   try {
-    await c.env.DB.batch(statements);
+    await writeRepository.replaceCosts({
+      projectId: project.id,
+      expectedVersion,
+      now,
+      lines: costLines,
+      actorId: actor.id,
+      auditId: crypto.randomUUID(),
+      idempotencyKey: key,
+      operation,
+      requestHash: hash,
+      responseJson: JSON.stringify(response),
+      auditAfter: { version: nextVersion, ...summary },
+    });
   } catch {
     const replayAfterRace = await replayIdempotentResponse(c, key, operation, hash);
     if (replayAfterRace) return replayAfterRace;
-    const current = await findProject(c.env.DB, project.id);
+    const current = await writeRepository.findProject(project.id);
     if (current && current.version !== expectedVersion) return c.json(apiError('VERSION_CONFLICT', '项目已被并发修改，请刷新后重试'), 409);
     return c.json(apiError('COST_UPDATE_CONFLICT', '估算更新发生冲突，请刷新后重试'), 409);
   }
