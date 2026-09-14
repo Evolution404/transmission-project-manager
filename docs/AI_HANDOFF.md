@@ -158,9 +158,9 @@ main CI run `34844921647` PASS。
 
 ## 下一步
 
-1. M1–M5 功能实现、本地完整门禁和 PR #10 首轮 CI 均已完成；保持分支 clean，等待明确授权后再决定是否合并 `main`。
-2. 继续保持唯一 `0001_initial_schema.sql` 开发策略，禁止新增 migration。
-3. CI 全绿后才能考虑 PR/合并。未获用户明确授权前不合并 `main`、不触发 production release。
+1. 基础台账重构 PR #10 已于 2026-09-14 合入 `main@b8fe536699ddf516697e3bbdbe66ddc3caddeec2`；合并后 main CI run `34860874168` PASS，Production preflight run `34861164236` PASS。
+2. 继续保持唯一 `0001_initial_schema.sql` 开发策略，禁止新增 migration。生产 D1 已执行过旧版同名 `0001`，不能依靠 migration 文件名判断 schema ready。
+3. 当前生产 D1 只读核对：`members=1`、`transmission_lines=1`、`transmission_towers=1`、`demands=0`；旧 `sort_index` 仍存在，`sort_rank` 与两张更名历史表不存在。下一步按 `P7_RUNBOOK.md` 5.3A 执行一次性 schema reconciliation：先记录 D1 Time Travel bookmark，再运行受审 SQL并核对行数、列结构与 `PRAGMA foreign_key_check`。只有 schema 对齐后才允许 Production release。
 4. P7 首管理员已创建，但一次性 `BOOTSTRAP_TOKEN` 的远端删除和其余完整 P7-01～13 仍需单独收尾，不得因本轮功能施工误标为全部完成。
 
 ## 生产资源现状：不要猜
