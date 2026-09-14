@@ -274,16 +274,29 @@ test('task supply, implementation and settlement advance independently and enfor
   assert.equal(reported.response.status, 201);
   assert.deepEqual(reported.body.data.totals, { reportedQuantityScaled: 600000, shippedQuantityScaled: 0, arrivedQuantityScaled: 0 });
 
-  const implementation = await jsonRequest('/api/task-implementations', mutation('POST', 'task-implementation', {
+  const implementationKey = idem('task-implementation');
+  const implementationBody = {
     taskId: t1.id,
     expectedImplementationVersion: 1,
     recordDate: '2026-09-15',
     scopeLines: [{ taskDemandScopeId: t1.demandScopes[0].id, completedQuantityScaled: 150000 }],
     materialUsages: [{ taskMaterialRequirementId: taskMaterial.id, quantityScaled: 150000 }],
     note: '已完成部分现场工作',
-  }));
+  };
+  const implementation = await jsonRequest('/api/task-implementations', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Idempotency-Key': implementationKey },
+    body: JSON.stringify(implementationBody),
+  });
   assert.equal(implementation.response.status, 201);
   assert.equal(implementation.body.data.implementationVersion, 2);
+  const implementationReplay = await jsonRequest('/api/task-implementations', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Idempotency-Key': implementationKey },
+    body: JSON.stringify(implementationBody),
+  });
+  assert.equal(implementationReplay.response.status, 201);
+  assert.equal(implementationReplay.body.data.id, implementation.body.data.id);
 
   const settlement = await jsonRequest('/api/task-settlements', mutation('POST', 'task-settlement', {
     taskId: t1.id,

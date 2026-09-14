@@ -5,6 +5,7 @@ import { SqlIdempotencyRepository } from './repositories/sql-idempotency-reposit
 import { SqlProjectReleaseRepository } from './repositories/sql-project-release-repository';
 import { SqlProjectTaskRepository } from './repositories/sql-project-task-repository';
 import { SqlTaskSupplyRepository } from './repositories/sql-task-supply-repository';
+import { SqlTaskImplementationRepository } from './repositories/sql-task-implementation-repository';
 import { createCloudflarePersistence } from './runtime/cloudflare/persistence';
 
 const MAX_ITEMS = 100;
@@ -1399,61 +1400,77 @@ p8App.post('/task-implementations', requireRoles('admin', 'project_manager', 'im
   let body: Record<string, unknown>; try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
   const taskId = cleanText(body.taskId), version = expectedVersion(body.expectedImplementationVersion), recordDate = validDate(body.recordDate), note = nullableText(body.note, 1000);
   if (!taskId || version === null || !recordDate || note === undefined || !Array.isArray(body.scopeLines) || body.scopeLines.length > MAX_ITEMS || !Array.isArray(body.materialUsages) || body.materialUsages.length > MAX_ITEMS) return c.json(apiError('INVALID_TASK_IMPLEMENTATION', '任务实施参数无效'), 422);
-  const task = await findTask(c.env.DB, taskId);
+
+  const { database } = createCloudflarePersistence(c.env);
+  const repository = new SqlTaskImplementationRepository(database);
+  const task = await repository.findTaskHeader(taskId);
   if (!task) return c.json(apiError('TASK_NOT_FOUND', '执行任务不存在'), 404);
-  if (!await canProject(c, task.project_id)) return c.json(apiError('SCOPE_FORBIDDEN', '无权登记该任务实施'), 403);
-  if (task.implementation_version !== version) return c.json(apiError('VERSION_CONFLICT', '任务实施状态已变化，请刷新后重试'), 409);
-  const scopes = await loadTaskDemandScopes(c.env.DB, taskId), scopeMap = new Map(scopes.map((item) => [item.id, item]));
+  if (!hasProjectAccess(c, task.projectId, task.frameworkId)) return c.json(apiError('SCOPE_FORBIDDEN', '无权登记该任务实施'), 403);
+
   const scopeLines: Array<{ taskDemandScopeId: string; completedQuantityScaled: number }> = [], scopeSeen = new Set<string>();
   let scopedQuantity = 0;
   for (const raw of body.scopeLines) {
     if (!raw || typeof raw !== 'object') return c.json(apiError('INVALID_IMPLEMENTATION_SCOPE', '实施需求范围无效'), 422);
     const item = raw as Record<string, unknown>, scopeId = cleanText(item.taskDemandScopeId), quantity = positiveInteger(item.completedQuantityScaled);
-    if (!scopeMap.has(scopeId) || quantity === null || scopeSeen.has(scopeId)) return c.json(apiError('INVALID_IMPLEMENTATION_SCOPE', '实施需求范围不属于任务或存在重复'), 422);
+    if (!scopeId || quantity === null || scopeSeen.has(scopeId)) return c.json(apiError('INVALID_IMPLEMENTATION_SCOPE', '实施需求范围无效或存在重复'), 422);
     scopeSeen.add(scopeId); scopeLines.push({ taskDemandScopeId: scopeId, completedQuantityScaled: quantity }); scopedQuantity += quantity;
   }
   const completedQuantity = body.completedQuantityScaled === undefined ? scopedQuantity : positiveInteger(body.completedQuantityScaled);
   if (completedQuantity === null || completedQuantity <= 0 || scopedQuantity > completedQuantity) return c.json(apiError('INVALID_IMPLEMENTATION_QUANTITY', '实施完成量必须为正且不小于需求范围完成量'), 422);
-  const plannedLinked = scopes.reduce((sum, scope) => sum + scope.planned_quantity_scaled, 0);
-  if (plannedLinked === task.planned_quantity_scaled && scopedQuantity !== completedQuantity) return c.json(apiError('IMPLEMENTATION_SCOPE_MISMATCH', '任务范围已全部关联需求时，实施完成量必须与需求范围明细合计一致'), 422);
-  const previousTotal = await c.env.DB.prepare(`SELECT COALESCE(SUM(completed_quantity_scaled),0) AS total FROM task_implementation_records WHERE task_id=?`).bind(taskId).first<{ total: number }>();
-  if (Number(previousTotal?.total ?? 0) + completedQuantity > task.planned_quantity_scaled) return c.json(apiError('IMPLEMENTATION_EXCEEDS_TASK', '累计实施完成量超过任务计划量'), 422);
-  for (const line of scopeLines) {
-    const used = await c.env.DB.prepare(`SELECT COALESCE(SUM(completed_quantity_scaled),0) AS total FROM task_implementation_scope_lines WHERE task_demand_scope_id=?`).bind(line.taskDemandScopeId).first<{ total: number }>();
-    if (Number(used?.total ?? 0) + line.completedQuantityScaled > scopeMap.get(line.taskDemandScopeId)!.planned_quantity_scaled) return c.json(apiError('IMPLEMENTATION_EXCEEDS_DEMAND_SCOPE', '实施完成量超过任务需求范围'), 422);
-  }
-  const materials = await loadTaskMaterials(c.env.DB, taskId), materialMap = new Map(materials.map((item) => [item.id, item]));
+
   const usages: Array<{ taskMaterialRequirementId: string; quantityScaled: number }> = [], usageSeen = new Set<string>();
   for (const raw of body.materialUsages) {
     if (!raw || typeof raw !== 'object') return c.json(apiError('INVALID_MATERIAL_USAGE', '实施物资使用明细无效'), 422);
     const item = raw as Record<string, unknown>, materialId = cleanText(item.taskMaterialRequirementId), quantity = nonNegativeInteger(item.quantityScaled);
-    if (!materialMap.has(materialId) || quantity === null || usageSeen.has(materialId)) return c.json(apiError('INVALID_MATERIAL_USAGE', '实施物资使用明细不属于任务或存在重复'), 422);
-    const used = await c.env.DB.prepare(`SELECT COALESCE(SUM(tmul.quantity_scaled),0) AS total FROM task_material_usage_lines tmul INNER JOIN task_implementation_records tir ON tir.id=tmul.implementation_id WHERE tmul.task_material_requirement_id=?`).bind(materialId).first<{ total: number }>();
-    if (Number(used?.total ?? 0) + quantity > materialMap.get(materialId)!.required_quantity_scaled) return c.json(apiError('MATERIAL_USAGE_EXCEEDS_TASK', '累计实际物资使用量超过任务物资需求，需先做明确范围变更'), 422);
+    if (!materialId || quantity === null || usageSeen.has(materialId)) return c.json(apiError('INVALID_MATERIAL_USAGE', '实施物资使用明细无效或存在重复'), 422);
     usageSeen.add(materialId); usages.push({ taskMaterialRequirementId: materialId, quantityScaled: quantity });
   }
+
   const request = { taskId, expectedImplementationVersion: version, recordDate, completedQuantityScaled: completedQuantity, scopeLines, materialUsages: usages, note };
   const hash = await requestHash(request), operation = 'task-implementations.create'; const replay = await replayIdempotentResponse(c, key, operation, hash); if (replay) return replay;
+  if (task.implementationVersion !== version) return c.json(apiError('VERSION_CONFLICT', '任务实施状态已变化，请刷新后重试'), 409);
+
+  const state = await repository.loadValidationState(taskId);
+  const scopeMap = new Map(state.scopes.map((item) => [item.id, item]));
+  for (const line of scopeLines) {
+    const scope = scopeMap.get(line.taskDemandScopeId);
+    if (!scope) return c.json(apiError('INVALID_IMPLEMENTATION_SCOPE', '实施需求范围不属于任务或存在重复'), 422);
+    if (scope.usedQuantityScaled + line.completedQuantityScaled > scope.plannedQuantityScaled) return c.json(apiError('IMPLEMENTATION_EXCEEDS_DEMAND_SCOPE', '实施完成量超过任务需求范围'), 422);
+  }
+  const plannedLinked = state.scopes.reduce((sum, scope) => sum + scope.plannedQuantityScaled, 0);
+  if (plannedLinked === task.plannedQuantityScaled && scopedQuantity !== completedQuantity) return c.json(apiError('IMPLEMENTATION_SCOPE_MISMATCH', '任务范围已全部关联需求时，实施完成量必须与需求范围明细合计一致'), 422);
+  if (state.previousCompletedQuantityScaled + completedQuantity > task.plannedQuantityScaled) return c.json(apiError('IMPLEMENTATION_EXCEEDS_TASK', '累计实施完成量超过任务计划量'), 422);
+
+  const materialMap = new Map(state.materials.map((item) => [item.id, item]));
+  for (const usage of usages) {
+    const material = materialMap.get(usage.taskMaterialRequirementId);
+    if (!material) return c.json(apiError('INVALID_MATERIAL_USAGE', '实施物资使用明细不属于任务或存在重复'), 422);
+    if (material.usedQuantityScaled + usage.quantityScaled > material.requiredQuantityScaled) return c.json(apiError('MATERIAL_USAGE_EXCEEDS_TASK', '累计实际物资使用量超过任务物资需求，需先做明确范围变更'), 422);
+  }
+
   const actor = c.get('currentUser'), now = new Date().toISOString(), id = crypto.randomUUID();
-  const finalSettlement = await c.env.DB.prepare(`SELECT id FROM task_settlements WHERE task_id=? AND final=1 AND voided_at IS NULL LIMIT 1`).bind(taskId).first<{ id: string }>();
-  const existingReminder = await c.env.DB.prepare(`SELECT first_implementation_date FROM task_settlement_reminders WHERE task_id=? LIMIT 1`).bind(taskId).first<{ first_implementation_date: string }>();
-  const firstImplementationDate = existingReminder && existingReminder.first_implementation_date < recordDate ? existingReminder.first_implementation_date : recordDate;
+  const firstImplementationDate = state.firstImplementationDate && state.firstImplementationDate < recordDate ? state.firstImplementationDate : recordDate;
   const data = { id, taskId, recordDate, completedQuantityScaled: completedQuantity, scopeLines, materialUsages: usages, note, implementationVersion: version + 1, createdAt: now };
   const response = { ok: true as const, data };
   try {
-    await c.env.DB.batch([
-      taskImplementationVersionGuard(c.env.DB, taskId, version, now),
-      c.env.DB.prepare(`INSERT INTO task_implementation_records (id,task_id,record_date,completed_quantity_scaled,note,created_by,created_at) VALUES (?,?,?,?,?,?,?)`).bind(id, taskId, recordDate, completedQuantity, note, actor.id, now),
-      ...scopeLines.map((line) => c.env.DB.prepare(`INSERT INTO task_implementation_scope_lines (id,implementation_id,task_demand_scope_id,completed_quantity_scaled,created_at) VALUES (?,?,?,?,?)`).bind(crypto.randomUUID(), id, line.taskDemandScopeId, line.completedQuantityScaled, now)),
-      ...usages.map((line) => c.env.DB.prepare(`INSERT INTO task_material_usage_lines (id,implementation_id,task_material_requirement_id,quantity_scaled,created_at) VALUES (?,?,?,?,?)`).bind(crypto.randomUUID(), id, line.taskMaterialRequirementId, line.quantityScaled, now)),
-      c.env.DB.prepare(
-        `INSERT INTO task_settlement_reminders (task_id,first_implementation_date,due_date,status,final_settlement_id,updated_at)
-         VALUES (?,?,?,?,?,?)
-         ON CONFLICT(task_id) DO UPDATE SET first_implementation_date=excluded.first_implementation_date,due_date=excluded.due_date,status=excluded.status,final_settlement_id=excluded.final_settlement_id,updated_at=excluded.updated_at`,
-      ).bind(taskId, firstImplementationDate, addDays(firstImplementationDate, 30), finalSettlement ? 'closed' : 'open', finalSettlement?.id ?? null, now),
-      auditStatement(c.env.DB, actor.id, 'project_task.implementation', 'project_task', taskId, { implementationVersion: version }, { implementationVersion: version + 1, completedQuantityScaled: completedQuantity }, now),
-      idempotencyStatement(c.env.DB, key, actor.id, operation, hash, response, 201, now),
-    ]);
+    await repository.createImplementation({
+      event: data,
+      expectedImplementationVersion: version,
+      scopeWrites: scopeLines.map((line) => ({ id: crypto.randomUUID(), ...line })),
+      usageWrites: usages.map((line) => ({ id: crypto.randomUUID(), ...line })),
+      reminder: {
+        firstImplementationDate,
+        dueDate: addDays(firstImplementationDate, 30),
+        status: state.finalSettlementId ? 'closed' : 'open',
+        finalSettlementId: state.finalSettlementId,
+      },
+      actorId: actor.id,
+      auditId: crypto.randomUUID(),
+      idempotencyKey: key,
+      operation,
+      requestHash: hash,
+      responseJson: JSON.stringify(response),
+    });
   } catch {
     const race = await replayIdempotentResponse(c, key, operation, hash); if (race) return race;
     return c.json(apiError('VERSION_CONFLICT', '任务实施状态已被并发修改，请刷新后重试'), 409);
