@@ -16,7 +16,7 @@
 | P6 | 月报、分析、预警、年度事项、通知 outbox、D1→R2 逻辑备份 | 已完成 |
 | 基础台账重构 | 电压等级 → 线路 → 杆塔 → 需求位置对象化 | 已完成 |
 | 后端可移植化 | Cloudflare D1/R2 + Node SQLite/Filesystem 双运行时 | 已完成并通过 PR #1 合入 `main` |
-| 云端发布流水线 | GitHub Actions → Cloudflare 受控发布、D1 migration 分离 | PR #2 施工/验收中 |
+| 云端发布流水线 | GitHub Actions → Cloudflare 受控发布、D1 migration 分离 | PR #2 已合入 main；main CI #37 PASS，真实发布未执行 |
 | P7 | 真实业务数据、真实 Cloudflare/D1/R2/网络、恢复和运维移交 | 未完成，必须真实环境验收 |
 
 ## 2. 当前业务主路径
@@ -118,11 +118,9 @@ PR #1 合并前 GitHub CI 全绿；合并后的 `main@7a49b44275038dddd3803cb17d
 
 ## 5. 当前施工与发布边界
 
-后端可移植化施工已经结束并合入 `main`。当前施工分支改为：
+后端可移植化施工已经结束并合入 `main`。当前生产 workflow 已进入 `main@bc4774767c159068d59e16d6726444c5c1525dd6`。
 
-`ops/cloudflare-github-deploy-20260914`
-
-当前 PR：#2 `ops: add protected Cloudflare production workflows`。
+PR #2 已合并；当前云端配置记录分支为 `ops/production-environment-handoff-20260914`。
 
 PR #2 建立：
 
@@ -135,10 +133,10 @@ PR #2 建立：
 
 一次性 `BOOTSTRAP_TOKEN` 不属于永久 `secrets.required`；首次管理员初始化完成后应删除。
 
-当前 GitHub 连接没有 Administration / Environment / Secrets 管理权限，也没有 workflow dispatch 写能力；`main` 当前 branch endpoint 显示 `protected: false`。因此以下事项**尚未完成且不得伪造已完成状态**：
+2026-09-14 GitHub 云端 UI 已建立 `production` Environment，只允许 `main` 部署，两个 enable variable 均为 `false`。仓库 0 collaborators，尚未配置 required reviewer、阻止自审或禁管理员绕过；main branch protection 尚未保存。Cloudflare Dashboard 在云端浏览器持续安全验证，以下事项**尚未完成且不得伪造已完成状态**：
 
-- GitHub `production` Environment 的真实创建/审批策略/分支限制；
-- `PRODUCTION_CONFIG_JSON`、两个 enable variable 的真实配置；
+- GitHub `production` Environment 的审核策略；
+- `PRODUCTION_CONFIG_JSON` 的真实配置；
 - `CLOUDFLARE_API_TOKEN` 的真实配置；
 - Cloudflare 永久/一次性 Worker Secrets 的真实配置；
 - 正式 D1/R2/Worker 资源核对或创建；
@@ -151,7 +149,7 @@ PR #2 建立：
 
 P7 重点是证明当前系统在真实环境可正式使用：
 
-- 等 PR #2 GitHub CI 全绿后合入 `main`，并确认合并后 CI；
+- PR #2 与合并后的 main CI #37 已全绿；继续以实际最新 main SHA 为发布输入；
 - 在 GitHub 实际配置受保护 `production` Environment、Variables、account-owned Cloudflare token；
 - 核对/建立正式 Worker、D1、R2、自定义域名和 Worker Secrets；
 - 对正式 D1 做备份/停写/目标 ID 核对后，通过独立 workflow 执行 migration；
