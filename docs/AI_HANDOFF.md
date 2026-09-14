@@ -4,14 +4,18 @@
 
 仓库：`Evolution404/transmission-project-manager`
 默认分支：`main`
-当前施工分支：`fix/production-health-propagation-20260914`
-当前 `origin/main`：`9102a17f7795ef85254845c6dea0b156a2d2b05b`
+当前施工状态：P7 生产验收 / 首管理员收尾；无未合并生产代码分支。
+最近一次正式发布代码 SHA：`a907dbee2dfddb0a4f266ed25cf2f18a18d9df51`
 
 2026-09-14 20:32（UTC+8）续接核对：本机 `main` 与 `origin/main` 均为
 `9102a17f7795ef85254845c6dea0b156a2d2b05b`，工作区在开始施工前为 clean；
 `apps/api/migrations/` 仍只有唯一 `0001_initial_schema.sql`（另有说明文档），未新增 `0002+`。
 PR #8 已合并；该 SHA 的 CI run `34840904099` 与 Production preflight run
 `34841056465` 均 PASS。
+
+随后针对首次 production release 的 health 传播窗口误判创建 PR #9；PR #9 已合并，
+合并后的 `main` 代码 SHA 为 `a907dbee2dfddb0a4f266ed25cf2f18a18d9df51`，
+main CI run `34844921647` PASS。
 
 后端可移植化已经通过 GitHub PR #1 合入 `main`：
 
@@ -94,9 +98,17 @@ PR #8 已合并；该 SHA 的 CI run `34840904099` 与 Production preflight run
   `currentMigration=requiredMigration=0001_initial_schema.sql`。根页面 HTTPS 同样返回 200。
 - 已复现并定位发布流水线误判边界：旧 workflow 的 `curl --retry` 只重试传输/HTTP 错误，
   不会在 Cloudflare 部署传播期间对“HTTP 200 但仍是旧版本/旧语义”的 health body 重试。
-  当前施工分支已按测试先行增加语义重试门禁：先证明旧 workflow 测试失败，再改为最多 30 次
+  PR #9 已按测试先行增加语义重试门禁：先证明旧 workflow 测试失败，再改为最多 30 次
   `curl + JSON 语义校验`，目标 `tests/p7-preflight.test.mjs` 11/11 PASS，`git diff --check` PASS；
   随后的完整 `npm run check` 也 PASS（Node 254/254、Web 64/64，含 typecheck、build、Worker dry-run）。
+- PR #9 合入后，正式 `Production release` run `34845107626` 绑定精确
+  `main@a907dbee2dfddb0a4f266ed25cf2f18a18d9df51` 再次执行；`npm run check`、production config、
+  临时 Worker secret、dry-run、SHA 二次校验、Worker publish、`Verify custom domain and health`、
+  临时 Secret 文件清理全部 PASS，整条 release 最终为 **success**。
+- release 完成后再次从公网独立复核：`/api/health` 仍为 HTTP 200、`ok=true`、
+  `service=transmission-project-manager`、`schema.ready=true`、
+  `currentMigration=requiredMigration=0001_initial_schema.sql`；`/api/auth/status` 仍为
+  `initialized=false`，说明首管理员尚未创建，且正式数据库仍保持预期空账号状态。
 - 当前生产公开认证状态 `GET /api/auth/status` 返回 `initialized=false`，说明正式 production D1
   仍处于“未创建首管理员”的预期空账号状态。
 - 本机根 `.env` 只包含 `AUTH_CREDENTIAL_PEPPER`、`BOOTSTRAP_TOKEN`、
@@ -116,11 +128,10 @@ PR #8 已合并；该 SHA 的 CI run `34840904099` 与 Production preflight run
 
 ## 下一步
 
-1. 将当前 health 传播窗口修复跑完整 `npm run check`，提交、push、走 PR/CI 合入 `main`；不要直接改生产数据库，也不要新增 migration。
-2. 合入后用新的精确 `main` SHA 再跑一次 `Production release`，确认 workflow 最终状态为 PASS，避免把“发布成功但即时 health 误判”留成长期噪声。
-3. 首管理员仍未创建。需要临时把 `BOOTSTRAP_TOKEN` 配置为 Worker Secret，完成 HTTPS bootstrap 后验证第二次 bootstrap 返回关闭状态，再立即删除该 Worker Secret。当前自动执行面不能从本机 `.env` 写远端 Secret，因此此步骤必须走允许 Secret 写入的受控执行面，且绝不能把 Token 放入 Git/PR/日志。
-4. 首管理员完成后继续真实登录、Secure/HttpOnly/SameSite Cookie、匿名 API、角色/范围和核心业务 smoke；再覆盖 Notion 附件、Cron/outbox/backup、手机/桌面和目标地区网络验收。
-5. P7 最终证据仍以 `P7_ACCEPTANCE.md` 为准。当前可以确认 health/schema/domain 已通过人工复核，但完整 P7-01～13 尚未全部完成。
+1. **当前唯一首要阻塞是首管理员 bootstrap。** 临时把 `BOOTSTRAP_TOKEN` 配置为 Worker Secret，完成 HTTPS bootstrap 后验证第二次 bootstrap 返回关闭状态，再立即删除该 Worker Secret。当前 Mac/Codex 自动执行面不能从本机 `.env` 写远端 Secret，因此此步骤必须走允许 Secret 写入的受控执行面，且绝不能把 Token 放入 Git/PR/日志。
+2. 首管理员完成后继续真实登录、Secure/HttpOnly/SameSite Cookie、匿名 API、角色/范围和核心业务 smoke；再覆盖 Notion 附件、Cron/outbox/backup、手机/桌面和目标地区网络验收。
+3. 不需要再重跑 schema squash、Notion adapter、Secret 统一或 health 传播窗口修复；这些均已完成。仍禁止新增 `0002+` migration，除非用户明确要求兼容已有数据/升级路径。
+4. P7 最终证据仍以 `P7_ACCEPTANCE.md` 为准。当前可确认 CI、正式 release、domain、health、schema 全绿，但完整 P7-01～13 尚未全部完成。
 
 ## 生产资源现状：不要猜
 

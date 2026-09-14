@@ -196,6 +196,13 @@ Wrangler publish 均 PASS；唯一失败步骤是紧随发布后的 health 验�
 “Worker 发布失败”。后续 workflow 已在施工分支改为最多 30 次 `curl + JSON 语义校验`；
 修复合入 `main` 后必须再跑一次精确 SHA 绑定的 `Production release`，以取得最终全绿的发布证据。
 
+该修复随后经 PR #9 合入 `main`。合并后的 `main` CI run `34844921647` PASS；
+正式 `Production release` run `34845107626` 绑定
+`a907dbee2dfddb0a4f266ed25cf2f18a18d9df51` 再次执行，完整检查、配置校验、
+Worker publish、语义 health 验证和临时 Secret 清理全部 PASS，最终 conclusion=`success`。
+发布后独立公网复核 `/api/health` 仍满足 schema ready；`/api/auth/status` 为
+`initialized=false`，因此下一步已从“修发布流水线”转为“首管理员 bootstrap 与后续认证/业务验收”。
+
 ## 6. 首次管理员和认证验收
 
 首次上线：
