@@ -9,7 +9,6 @@ import type {
   ImportMappingTemplate,
   ImportPublishRequest,
   ImportPublishResult,
-  ImportRowSummary,
   ImportValidateRequest,
   MaterialSummary,
   NormalizedImportRow,
@@ -46,39 +45,6 @@ const MAX_CHUNK_ROWS = 20;
 const MAX_VALIDATION_ROWS = 20;
 const MAX_PUBLISH_ROWS = 10;
 
-interface ImportBatchRow {
-  id: string;
-  file_name: string;
-  file_sha256: string;
-  file_type: 'xlsx' | 'csv';
-  mapping_json: string;
-  status: ImportBatchSummary['status'];
-  uploaded_rows: number;
-  valid_rows: number;
-  error_rows: number;
-  warning_rows: number;
-  published_rows: number;
-  version: number;
-  created_at: string;
-  updated_at: string;
-  published_at: string | null;
-}
-
-interface ImportRowDb {
-  id: string;
-  batch_id: string;
-  chunk_index: number;
-  sheet_name: string;
-  source_row_number: number;
-  source_key: string;
-  raw_json: string;
-  normalized_json: string | null;
-  errors_json: string;
-  warnings_json: string;
-  row_status: ImportRowSummary['status'];
-  published_demand_id: string | null;
-}
-
 function apiError(code: string, message: string, details?: unknown): ApiError {
   return { ok: false, error: { code, message, ...(details === undefined ? {} : { details }) } };
 }
@@ -86,39 +52,6 @@ function apiError(code: string, message: string, details?: unknown): ApiError {
 function parseJson<T>(value: string | null, fallback: T): T {
   if (value === null) return fallback;
   try { return JSON.parse(value) as T; } catch { return fallback; }
-}
-
-function batchSummary(row: ImportBatchRow, reused = false): ImportBatchSummary {
-  return {
-    id: row.id,
-    fileName: row.file_name,
-    fileSha256: row.file_sha256,
-    fileType: row.file_type,
-    mapping: parseJson<ImportFieldMapping>(row.mapping_json, {} as ImportFieldMapping),
-    status: row.status,
-    uploadedRows: row.uploaded_rows,
-    validRows: row.valid_rows,
-    errorRows: row.error_rows,
-    warningRows: row.warning_rows,
-    publishedRows: row.published_rows,
-    version: row.version,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    publishedAt: row.published_at,
-    ...(reused ? { reused: true } : {}),
-  };
-}
-
-function importRowSummary(row: ImportRowDb): ImportRowSummary {
-  return {
-    id: row.id,
-    sheetName: row.sheet_name,
-    rowNumber: row.source_row_number,
-    status: row.row_status,
-    normalized: parseJson<NormalizedImportRow | null>(row.normalized_json, null),
-    errors: parseJson<ImportIssue[]>(row.errors_json, []),
-    warnings: parseJson<ImportIssue[]>(row.warnings_json, []),
-  };
 }
 
 function requireIdempotencyKey(c: Context<AppEnv>): string | Response {
@@ -385,13 +318,6 @@ function parseCursor(value: string | undefined): { createdAt: string; id: string
 
 function makeCursor(createdAt: string, id: string) {
   return btoa(JSON.stringify({ createdAt, id })).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-
-async function findBatch(db: D1Database, id: string) {
-  return db.prepare(
-    `SELECT id,file_name,file_sha256,file_type,mapping_json,status,uploaded_rows,valid_rows,error_rows,warning_rows,published_rows,version,created_at,updated_at,published_at
-     FROM import_batches WHERE id=? LIMIT 1`,
-  ).bind(id).first<ImportBatchRow>();
 }
 
 export const p2App = new Hono<AppEnv>();
@@ -680,13 +606,12 @@ p2App.post('/imports/:id/validate', requireRoles('admin', 'project_manager'), as
 });
 
 p2App.get('/imports/:id', requireRoles('admin', 'project_manager'), async (c) => {
-  const batch = await findBatch(c.env.DB, c.req.param('id'));
+  const { database } = createCloudflarePersistence(c.env);
+  const repository = new SqlImportRepository(database);
+  const batch = await repository.findById(c.req.param('id'));
   if (!batch) return c.json(apiError('IMPORT_NOT_FOUND', '导入批次不存在'), 404);
-  const rows = await c.env.DB.prepare(
-    `SELECT id,batch_id,chunk_index,sheet_name,source_row_number,source_key,raw_json,normalized_json,errors_json,warnings_json,row_status,published_demand_id
-     FROM import_rows WHERE batch_id=? ORDER BY source_row_number,id LIMIT 100`,
-  ).bind(batch.id).all<ImportRowDb>();
-  return c.json({ ok: true as const, data: { ...batchSummary(batch), rows: (rows.results ?? []).map(importRowSummary) } });
+  const rows = await repository.listRows(batch.id, 100);
+  return c.json({ ok: true as const, data: { ...batch, rows } });
 });
 
 p2App.post('/imports/:id/publish', requireRoles('admin', 'project_manager'), async (c) => {

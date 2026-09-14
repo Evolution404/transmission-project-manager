@@ -1,4 +1,4 @@
-import type { ImportBatchSummary } from '@tpm/shared';
+import type { ImportBatchSummary, ImportRowSummary } from '@tpm/shared';
 
 export interface CreateImportBatchRecord {
   batch: ImportBatchSummary;
@@ -43,6 +43,7 @@ export interface UploadImportChunkInput {
 export interface ImportRepository {
   findById(id: string): Promise<ImportBatchSummary | null>;
   findByFileHash(fileSha256: string): Promise<ImportBatchSummary | null>;
+  listRows(batchId: string, limit: number): Promise<readonly ImportRowSummary[]>;
   create(input: CreateImportBatchRecord): Promise<void>;
   recordReuse(input: RecordImportReuseInput): Promise<void>;
   uploadChunk(input: UploadImportChunkInput): Promise<void>;

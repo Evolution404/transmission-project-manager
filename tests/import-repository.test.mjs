@@ -83,6 +83,7 @@ test('chunk upload atomically inserts source rows and advances batch version', a
       ],
     });
     assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM import_rows WHERE batch_id='batch-1'").get().count, 2);
+    assert.deepEqual((await repository.listRows('batch-1', 100)).map((row) => row.id), ['row-1', 'row-2']);
     assert.deepEqual(await repository.findById('batch-1'), { ...batch, uploadedRows: 2, version: 2, updatedAt: '2026-09-14T01:05:00.000Z' });
     assert.equal(sqlite.prepare("SELECT status_code FROM idempotency_records WHERE idempotency_key='idem-chunk'").get().status_code, 200);
   } finally { sqlite.close(); }

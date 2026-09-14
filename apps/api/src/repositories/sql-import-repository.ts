@@ -1,6 +1,16 @@
-import type { ImportBatchSummary, ImportFieldMapping } from '@tpm/shared';
+import type { ImportBatchSummary, ImportFieldMapping, ImportIssue, ImportRowSummary, NormalizedImportRow } from '@tpm/shared';
 import type { DatabasePort } from '../ports/database.ts';
 import type { CreateImportBatchRecord, ImportRepository, RecordImportReuseInput, UploadImportChunkInput } from '../ports/import-repository.ts';
+
+type ImportRowDb = {
+  id: string;
+  sheet_name: string;
+  source_row_number: number;
+  normalized_json: string | null;
+  errors_json: string;
+  warnings_json: string;
+  row_status: ImportRowSummary['status'];
+};
 
 type ImportBatchRow = {
   id: string;
@@ -25,6 +35,23 @@ const batchSelect = `id,file_name,file_sha256,file_type,mapping_json,status,uplo
 
 function parseMapping(value: string): ImportFieldMapping {
   return JSON.parse(value) as ImportFieldMapping;
+}
+
+function parseJson<T>(value: string | null, fallback: T): T {
+  if (value === null) return fallback;
+  try { return JSON.parse(value) as T; } catch { return fallback; }
+}
+
+function rowSummary(row: ImportRowDb): ImportRowSummary {
+  return {
+    id: row.id,
+    sheetName: row.sheet_name,
+    rowNumber: row.source_row_number,
+    status: row.row_status,
+    normalized: parseJson<NormalizedImportRow | null>(row.normalized_json, null),
+    errors: parseJson<ImportIssue[]>(row.errors_json, []),
+    warnings: parseJson<ImportIssue[]>(row.warnings_json, []),
+  };
 }
 
 function summary(row: ImportBatchRow): ImportBatchSummary {
@@ -68,6 +95,15 @@ export class SqlImportRepository implements ImportRepository {
       params: [fileSha256],
     });
     return row ? summary(row) : null;
+  }
+
+  async listRows(batchId: string, limit: number): Promise<readonly ImportRowSummary[]> {
+    const rows = await this.database.all<ImportRowDb>({
+      sql: `SELECT id,sheet_name,source_row_number,normalized_json,errors_json,warnings_json,row_status
+            FROM import_rows WHERE batch_id=? ORDER BY source_row_number,id LIMIT ?`,
+      params: [batchId, limit],
+    });
+    return rows.map(rowSummary);
   }
 
   async create(input: CreateImportBatchRecord): Promise<void> {
