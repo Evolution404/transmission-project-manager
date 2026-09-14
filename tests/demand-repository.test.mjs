@@ -9,7 +9,7 @@ function createRepository() {
   sqlite.exec(`
     CREATE TABLE voltage_levels (id TEXT PRIMARY KEY, display_name TEXT NOT NULL, enabled INTEGER NOT NULL);
     CREATE TABLE transmission_lines (id TEXT PRIMARY KEY, voltage_level_id TEXT NOT NULL, line_name TEXT NOT NULL, enabled INTEGER NOT NULL);
-    CREATE TABLE transmission_towers (id TEXT PRIMARY KEY, line_id TEXT NOT NULL, tower_no TEXT NOT NULL, sort_index INTEGER NOT NULL, enabled INTEGER NOT NULL);
+    CREATE TABLE transmission_towers (id TEXT PRIMARY KEY, line_id TEXT NOT NULL, tower_no TEXT NOT NULL, sort_rank INTEGER NOT NULL, enabled INTEGER NOT NULL);
     CREATE TABLE materials (id TEXT PRIMARY KEY, code TEXT, name TEXT NOT NULL, model TEXT NOT NULL, unit TEXT NOT NULL, enabled INTEGER NOT NULL, version INTEGER NOT NULL);
     CREATE TABLE master_data_guards (
       id INTEGER PRIMARY KEY CHECK(id=1),
@@ -44,7 +44,7 @@ function createRepository() {
     );
     INSERT INTO voltage_levels VALUES ('vl-110','110kV',1),('vl-off','220kV',0);
     INSERT INTO transmission_lines VALUES ('line-1','vl-110','Line A',1),('line-off','vl-off','Line B',1);
-    INSERT INTO transmission_towers VALUES ('t1','line-1','#1',1,1),('t2','line-1','#2',2,1),('t-off','line-1','#3',3,0);
+    INSERT INTO transmission_towers VALUES ('t1','line-1','#001',1000,1),('t2','line-1','#002',2000,1),('t-off','line-1','#003',3000,0);
     INSERT INTO materials VALUES ('m1','M-1','Material 1','Model 1','piece',1,3),('m2',NULL,'Material 2','Model 2','piece',0,1);
   `);
   return { sqlite, repository: new SqlDemandRepository(new SqliteDatabaseAdapter(sqlite)) };
@@ -64,8 +64,8 @@ test('demand repository resolves selected towers and only enabled materials in s
   const { sqlite, repository } = createRepository();
   try {
     assert.deepEqual(await repository.findTowers(['t2', 't1']), [
-      { id: 't1', towerNo: '#1', sortIndex: 1, lineId: 'line-1', enabled: true },
-      { id: 't2', towerNo: '#2', sortIndex: 2, lineId: 'line-1', enabled: true },
+      { id: 't1', towerNo: '#001', sortRank: 1000, lineId: 'line-1', enabled: true },
+      { id: 't2', towerNo: '#002', sortRank: 2000, lineId: 'line-1', enabled: true },
     ]);
     assert.deepEqual(await repository.findEnabledMaterials(['m1', 'm2']), [
       { id: 'm1', code: 'M-1', name: 'Material 1', model: 'Model 1', unit: 'piece', enabled: true, version: 3 },
@@ -80,7 +80,7 @@ test('structured demand creation rechecks grid and material versions and commits
   const base = {
     id: 'd1', sourceKey: 'manual:d1', sequenceNo: '001', year: 2026,
     voltageLevelId: 'vl-110', lineId: 'line-1', locationType: 'tower_range', startTowerId: 't1', endTowerId: 't2',
-    voltageName: '110kV', lineName: 'Line A', sectionText: '#1—#2', category: null, owner: null,
+    voltageName: '110kV', lineName: 'Line A', sectionText: '#001—#002', category: null, owner: null,
     businessSignature: 'sig-1', rawJson: '{"sequenceNo":"001"}', actorId: 'admin-1', now: '2026-09-14T01:00:00.000Z',
     materials: [{ id: 'dm1', rawModel: 'Model 1', materialId: 'm1', quantityScaled: 10000, unit: 'piece' }],
     materialVersions: { m1: 3 },

@@ -15,15 +15,15 @@ function setup() {
   for (const name of readdirSync(dir).filter((name) => name.endsWith('.sql')).sort()) db.exec(readFileSync(resolve(dir, name), 'utf8'));
   db.prepare(`INSERT INTO members(id,username,display_name,role,credential_salt,credential_verifier,credential_algorithm,credential_params_json,credential_changed_at,created_at,updated_at)
               VALUES('admin','admin','Admin','admin','s','v','argon2id-v1','{}','t','t','t')`).run();
-  db.prepare(`INSERT INTO transmission_lines(id,voltage_level_id,line_code,line_name,enabled,version,created_at,updated_at)
-              VALUES('l','vl-ac-110',NULL,'Line A',1,1,'t','t')`).run();
-  db.prepare(`INSERT INTO transmission_towers(id,line_id,tower_no,sort_index,tower_type,enabled,version,created_at,updated_at)
-              VALUES('t1','l','#1',1,NULL,1,1,'t','t')`).run();
+  db.prepare(`INSERT INTO transmission_lines(id,voltage_level_id,line_code,line_name,name_valid_from,enabled,version,tower_order_version,created_at,updated_at)
+              VALUES('l','vl-ac-110',NULL,'Line A','t',1,1,1,'t','t')`).run();
+  db.prepare(`INSERT INTO transmission_towers(id,line_id,tower_no,number_valid_from,sort_rank,tower_type,enabled,version,created_at,updated_at)
+              VALUES('t1','l','#001','t',1000,NULL,1,1,'t','t')`).run();
   db.prepare(`INSERT INTO materials(id,code,name,model,unit,enabled,version,created_by,created_at,updated_at)
               VALUES('m','M','Material','Model','piece',1,1,'admin','t','t')`).run();
   db.prepare(`INSERT INTO import_batches(id,file_name,file_sha256,file_type,mapping_json,status,uploaded_rows,valid_rows,error_rows,warning_rows,published_rows,version,created_by,created_at,updated_at,published_at)
               VALUES('b','f.xlsx',?,'xlsx','{}','ready',1,1,0,0,0,1,'admin','t','t',NULL)`).run('a'.repeat(64));
-  const normalized = { sequenceNo:'1',voltageRaw:'110kV',voltageVerified:'110kV',voltageLevelId:'vl-ac-110',lineName:'Line A',lineId:'l',section:'#1',locationType:'tower',startTowerId:'t1',endTowerId:'t1',materialModel:'Model',quantityScaled:10000,unit:'piece',year:2026,category:null,owner:null,materialId:'m',businessSignature:'sig' };
+  const normalized = { sequenceNo:'1',voltageRaw:'110kV',voltageVerified:'110kV',voltageLevelId:'vl-ac-110',lineName:'Line A',lineId:'l',section:'#001',locationType:'tower',startTowerId:'t1',endTowerId:'t1',materialModel:'Model',quantityScaled:10000,unit:'piece',year:2026,category:null,owner:null,materialId:'m',businessSignature:'sig' };
   db.prepare(`INSERT INTO import_rows(id,batch_id,chunk_index,sheet_name,source_row_number,source_key,raw_json,normalized_json,errors_json,warnings_json,row_status,published_demand_id,created_at,updated_at)
               VALUES('r','b',0,'S',2,'src','{}',?,'[]','[]','valid',NULL,'t','t')`).run(JSON.stringify(normalized));
   return { db, repo: new SqlImportPublishRepository(new SqliteDatabaseAdapter(db)), normalized };

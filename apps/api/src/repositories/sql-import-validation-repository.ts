@@ -66,24 +66,24 @@ export class SqlImportValidationRepository implements ImportValidationRepository
     return row ? { id: row.id, displayName: row.display_name } : null;
   }
 
-  async findLineByName(voltageLevelId: string, lineName: string): Promise<ImportLineLookup | null> {
-    const row = await this.database.first<{ id: string; line_name: string }>({
+  async findLinesByName(voltageLevelId: string, lineName: string): Promise<readonly ImportLineLookup[]> {
+    const rows = await this.database.all<{ id: string; line_name: string }>({
       sql: `SELECT id,line_name FROM transmission_lines
-            WHERE enabled=1 AND voltage_level_id=? AND line_name=? COLLATE NOCASE LIMIT 1`,
+            WHERE enabled=1 AND voltage_level_id=? AND line_name=? COLLATE NOCASE ORDER BY id`,
       params: [voltageLevelId, lineName],
     });
-    return row ? { id: row.id, lineName: row.line_name } : null;
+    return rows.map((row) => ({ id: row.id, lineName: row.line_name }));
   }
 
   async findTowersByNumbers(lineId: string, towerNos: readonly string[]): Promise<readonly ImportTowerLookup[]> {
     if (!towerNos.length) return [];
-    const rows = await this.database.all<{ id: string; tower_no: string; sort_index: number }>({
-      sql: `SELECT id,tower_no,sort_index FROM transmission_towers
+    const rows = await this.database.all<{ id: string; tower_no: string; sort_rank: number }>({
+      sql: `SELECT id,tower_no,sort_rank FROM transmission_towers
             WHERE enabled=1 AND line_id=? AND tower_no COLLATE NOCASE IN (${towerNos.map(() => '?').join(',')})
-            ORDER BY sort_index,id`,
+            ORDER BY sort_rank,id`,
       params: [lineId, ...towerNos],
     });
-    return rows.map((row) => ({ id: row.id, towerNo: row.tower_no, sortIndex: row.sort_index }));
+    return rows.map((row) => ({ id: row.id, towerNo: row.tower_no, sortRank: row.sort_rank }));
   }
 
   async findMaterials(pairs: readonly { model: string; unit: string }[]): Promise<readonly ImportMaterialLookup[]> {

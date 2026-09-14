@@ -1,4 +1,10 @@
-import type { TransmissionLineSummary, TransmissionTowerSummary, VoltageLevelSummary } from '@tpm/shared';
+import type {
+  TransmissionLineNameHistoryEntry,
+  TransmissionLineSummary,
+  TransmissionTowerNoHistoryEntry,
+  TransmissionTowerSummary,
+  VoltageLevelSummary,
+} from '@tpm/shared';
 
 export interface LinePageCursor {
   lineName: string;
@@ -6,12 +12,14 @@ export interface LinePageCursor {
 }
 
 export interface TowerPageCursor {
-  sortIndex: number;
+  sortRank: number;
   id: string;
 }
 
 export interface MasterDataRepository {
   listVoltageLevels(): Promise<readonly VoltageLevelSummary[]>;
-  listLines(input: { voltageLevelId: string | null; cursor: LinePageCursor | null; limit: number }): Promise<readonly TransmissionLineSummary[]>;
-  listTowers(input: { lineId: string | null; cursor: TowerPageCursor | null; limit: number }): Promise<readonly TransmissionTowerSummary[]>;
+  listLines(input: { voltageLevelId: string | null; query: string | null; cursor: LinePageCursor | null; limit: number }): Promise<readonly TransmissionLineSummary[]>;
+  listTowers(input: { lineId: string | null; query: string | null; cursor: TowerPageCursor | null; limit: number }): Promise<readonly TransmissionTowerSummary[]>;
+  listLineNameHistory(lineId: string): Promise<readonly TransmissionLineNameHistoryEntry[]>;
+  listTowerNoHistory(towerId: string): Promise<readonly TransmissionTowerNoHistoryEntry[]>;
 }

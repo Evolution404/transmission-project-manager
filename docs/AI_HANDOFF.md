@@ -4,7 +4,8 @@
 
 仓库：`Evolution404/transmission-project-manager`
 默认分支：`main`
-当前施工状态：P7 生产验收 / 首管理员收尾；无未合并生产代码分支。
+当前施工状态：基础台账第二轮重构正在施工；P7 生产验收暂不作为当前代码主线。
+当前施工分支：`feat/master-data-line-centric-history-20260914`。
 最近一次正式发布代码 SHA：`a907dbee2dfddb0a4f266ed25cf2f18a18d9df51`
 
 2026-09-14 20:32（UTC+8）续接核对：本机 `main` 与 `origin/main` 均为
@@ -126,12 +127,41 @@ main CI run `34844921647` PASS。
 - Notion Internal Integration 已创建并授权给唯一根页面 `Transmission Project Manager Storage`。Token 只允许存在于本机根 `.env` 或 GitHub `production` Secret，不得提交或打印；Notion 非敏感资源 ID 归入受审 production config。
 - 本分支已新增 `NotionObjectStoreAdapter`、Notion/R2/Filesystem provider 选择、P7 双 provider 校验、`npm run notion:init` 与 `npm run notion:smoke`。真实 Notion `TPM Object Store` 已初始化，真实 `put → get → delete → get=null` smoke 已 PASS；生产 Data Source ID 已纳入受审 `wrangler.production.jsonc`。
 
+## 2026-09-14 基础台账第二轮重构
+
+首管理员已在正式环境成功创建，公开 `GET /api/auth/status` 已实测返回 `initialized=true`。随后用户审核基础台账真实操作体验并确认启动第二轮重构；完整施工计划见 `MASTER_DATA_REDESIGN_PLAN.md`。
+
+本轮定稿原则：
+
+- UI 从“电压等级 / 线路 / 杆塔”桌面三列改为线路中心式：线路列表 → 线路详情 → 全宽杆塔清单；电压等级仅作筛选、标签和独立台账设置。
+- 杆塔编号统一规范为 `#001`、`#010`、`#010-1`、`#3058` 等；用户可输入 `10`、`10-1` 等，非法格式直接拒绝。
+- 杆塔稳定身份与当前编号、线路实际顺序分离；顺序支持拖拽和“移动到目标前/后”。
+- 线路、杆塔均支持正式更名，稳定 ID 不变，旧名/旧编号进入历史并可搜索。
+- 名称/编号允许重名和复用，不能建立“历史名称永久占用命名空间”的唯一约束；搜索允许返回多对象。
+- 取消用户可见的杆塔批量 20 条限制；浏览器全量解析/预检，后端内部安全分片、幂等、可续跑。
+- 当前仍为开发阶段，所有 schema 变化直接修改唯一 `0001_initial_schema.sql`，禁止新增 `0002+`。
+
+施工必须按测试先行、M1–M5 小提交推进，并及时更新本文件和 `IMPLEMENTATION_PLAN.md`。
+
+### 当前施工进度
+
+- M1 已完成：共享 `normalizeTowerNo()` 已落地；数据库当前杆塔编号只接受规范形式；`sort_index` 已重构为 `sort_rank`；线路已有独立 `tower_order_version`；线路名/杆塔号唯一约束已删除；线路/杆塔更名历史表及当前有效期起点已进入唯一 `0001` 基线。
+- 导入侧已经同步规范化杆塔号：`#1`、`1` 等都按 `#001` 查询；无法识别格式返回 `TOWER_NUMBER_INVALID`；同编号多对象返回 `TOWER_AMBIGUOUS`，不自动猜测。
+- M1 定向门禁：Web 36/36 PASS；基础台账/迁移/Repository 31/31 PASS；P2 import 15/15 PASS；shared/api/web typecheck PASS；生产代码无 `sort_index/sortIndex` 残留。
+- M2 已完成：`POST /api/master/lines/:id/rename` 与 `POST /api/master/towers/:id/rename` 为唯一正式更名通道；普通 PATCH 和批量维护不能绕过历史链。历史查询分别为 `/name-history`、`/number-history`；列表 `query` 同时命中当前值和历史值，并返回历史匹配提示。
+- 同名/同编号仍是合法主数据；P2 导入已从“按名称 LIMIT 1”改为多候选判断，出现重复线路名返回 `LINE_AMBIGUOUS`，重复杆塔编号返回 `TOWER_AMBIGUOUS`。
+- M2 回归：master-data + P2 + import-validation 33/33 PASS；Web 定向 36/36 PASS；shared/api/web 全部 typecheck PASS。
+- M3 核心能力已完成：专用杆塔移动 API、稀疏 `sort_rank`、`tower_order_version` 并发门禁、普通 PATCH 禁止直接改顺序；单杆新增已改为按规范化编号自然顺序自动插入，而不是默认末尾。间隙耗尽时通过两阶段物化重排恢复稀疏 rank。旧界面单杆新增已移除排序输入。
+- M3 收口后的完整 `npm run check` PASS：Node **260/260**、Web/Vitest **92/92**，并包含 Cloudflare/Node TypeScript、Web production build、Worker dry-run、单一 `0001_initial_schema.sql` 和 Node+SQLite+Filesystem 第二运行时门禁。
+- M4 已完成：杆塔导入支持 `.xlsx` / `.csv` / 粘贴全量预检，用户侧不限行；非法编号/状态、文件内重复、当前编号歧义都会阻断。前端自动拆内部安全分片并保留幂等键/断点；完整清单模式必须唯一覆盖当前全部稳定 `tower_id`，随后用 `/towers/reorder` 集合式原子按文件顺序重排。
+- M5 已完成：旧三栏 `MasterDataView` 已彻底替换为线路中心首页和全宽线路详情；电压等级降为筛选/标签/台账设置。普通属性编辑与线路/杆塔专用更名分开，历史可查看；杆塔新增、导入、拖拽和“移动到目标前/后”调序入口均集中在线路详情。M5 定向 Web 测试 **41/41 PASS**；最终完整 `npm run check` 也已 PASS：Node **264/264**、Web **102/102**，并覆盖 TypeScript、Web production build、Worker dry-run、单一 `0001` 及 Node+SQLite+Filesystem 第二运行时。PR #10 已建立，首轮 CI run `34856165305` 完整 `npm run check` PASS。
+
 ## 下一步
 
-1. **当前唯一首要阻塞是首管理员 bootstrap。** 临时把 `BOOTSTRAP_TOKEN` 配置为 Worker Secret，完成 HTTPS bootstrap 后验证第二次 bootstrap 返回关闭状态，再立即删除该 Worker Secret。当前 Mac/Codex 自动执行面不能从本机 `.env` 写远端 Secret，因此此步骤必须走允许 Secret 写入的受控执行面，且绝不能把 Token 放入 Git/PR/日志。
-2. 首管理员完成后继续真实登录、Secure/HttpOnly/SameSite Cookie、匿名 API、角色/范围和核心业务 smoke；再覆盖 Notion 附件、Cron/outbox/backup、手机/桌面和目标地区网络验收。
-3. 不需要再重跑 schema squash、Notion adapter、Secret 统一或 health 传播窗口修复；这些均已完成。仍禁止新增 `0002+` migration，除非用户明确要求兼容已有数据/升级路径。
-4. P7 最终证据仍以 `P7_ACCEPTANCE.md` 为准。当前可确认 CI、正式 release、domain、health、schema 全绿，但完整 P7-01～13 尚未全部完成。
+1. M1–M5 功能实现、本地完整门禁和 PR #10 首轮 CI 均已完成；保持分支 clean，等待明确授权后再决定是否合并 `main`。
+2. 继续保持唯一 `0001_initial_schema.sql` 开发策略，禁止新增 migration。
+3. CI 全绿后才能考虑 PR/合并。未获用户明确授权前不合并 `main`、不触发 production release。
+4. P7 首管理员已创建，但一次性 `BOOTSTRAP_TOKEN` 的远端删除和其余完整 P7-01～13 仍需单独收尾，不得因本轮功能施工误标为全部完成。
 
 ## 生产资源现状：不要猜
 

@@ -14,6 +14,7 @@ import type {
   NormalizedImportRow,
   ParsedImportRow,
 } from '@tpm/shared';
+import { normalizeTowerNo } from '@tpm/shared';
 import { requireRoles, type AppEnv } from './auth.ts';
 import { SqlDemandQueryRepository } from './repositories/sql-demand-query-repository.ts';
 import { SqlIdempotencyRepository } from './repositories/sql-idempotency-repository.ts';
@@ -165,11 +166,16 @@ async function resolveGridLocation(repository: ImportValidationRepository, norma
   normalized.voltageVerified = voltage.displayName;
   normalized.voltageRaw = voltage.displayName;
 
-  const line = await repository.findLineByName(voltage.id, normalized.lineName);
-  if (!line) {
+  const lines = await repository.findLinesByName(voltage.id, normalized.lineName);
+  if (!lines.length) {
     errors.push({ code: 'LINE_UNKNOWN', field: 'lineName', message: '线路不存在或已停用，请先维护所选电压等级下的线路台账' });
     return;
   }
+  if (lines.length > 1) {
+    errors.push({ code: 'LINE_AMBIGUOUS', field: 'lineName', message: '线路名称匹配到多个对象，请在基础台账中核对后再导入' });
+    return;
+  }
+  const line = lines[0]!;
   normalized.lineId = line.id;
   normalized.lineName = line.lineName;
 
@@ -180,18 +186,38 @@ async function resolveGridLocation(repository: ImportValidationRepository, norma
     normalized.endTowerId = null;
     normalized.section = '全线';
   } else {
-    const exactRows = await repository.findTowersByNumbers(line.id, [rawSection]);
+    const exactTowerNo = normalizeTowerNo(rawSection);
+    const exactRows = exactTowerNo ? await repository.findTowersByNumbers(line.id, [exactTowerNo]) : [];
+    if (exactRows.length > 1) {
+      errors.push({ code: 'TOWER_AMBIGUOUS', field: 'section', message: '杆塔编号匹配到多个对象，请在基础台账中核对后再导入' });
+      return;
+    }
     const range = exactRows.length ? null : splitSectionRange(rawSection);
-    const towerNos = range ? [range.start, range.end] : [rawSection];
-    const towerRows = range ? await repository.findTowersByNumbers(line.id, towerNos) : exactRows;
-    const byNo = new Map(towerRows.map((row) => [row.towerNo.toLowerCase(), row]));
-    const start = byNo.get(towerNos[0]!.toLowerCase());
-    const end = byNo.get(towerNos[towerNos.length - 1]!.toLowerCase());
+    const towerNos = range
+      ? [normalizeTowerNo(range.start), normalizeTowerNo(range.end)]
+      : [exactTowerNo];
+    if (towerNos.some((towerNo) => !towerNo)) {
+      errors.push({ code: 'TOWER_NUMBER_INVALID', field: 'section', message: '杆塔编号格式无法识别，请使用如 10、10-1 或 #010 的格式' });
+      return;
+    }
+    const canonicalTowerNos = towerNos as string[];
+    const towerRows = range ? await repository.findTowersByNumbers(line.id, canonicalTowerNos) : exactRows;
+    const grouped = new Map<string, typeof towerRows>();
+    for (const row of towerRows) {
+      const key = row.towerNo.toLowerCase();
+      grouped.set(key, [...(grouped.get(key) ?? []), row]);
+    }
+    if (canonicalTowerNos.some((towerNo) => (grouped.get(towerNo.toLowerCase())?.length ?? 0) > 1)) {
+      errors.push({ code: 'TOWER_AMBIGUOUS', field: 'section', message: '杆塔编号匹配到多个对象，请在基础台账中核对后再导入' });
+      return;
+    }
+    const start = grouped.get(canonicalTowerNos[0]!.toLowerCase())?.[0];
+    const end = grouped.get(canonicalTowerNos[canonicalTowerNos.length - 1]!.toLowerCase())?.[0];
     if (!start || !end) {
       errors.push({ code: 'TOWER_UNKNOWN', field: 'section', message: '杆塔不存在或已停用，请先维护当前线路下的杆塔台账' });
       return;
     }
-    if (range && start.sortIndex >= end.sortIndex) {
+    if (range && start.sortRank >= end.sortRank) {
       errors.push({ code: 'TOWER_RANGE_REVERSED', field: 'section', message: '区段起止必须为不同杆塔，且起始顺序早于终止' });
       return;
     }

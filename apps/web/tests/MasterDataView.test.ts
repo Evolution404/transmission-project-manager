@@ -19,50 +19,174 @@ vi.mock('naive-ui', async () => {
 import MasterDataView from '../src/views/MasterDataView.vue';
 const admin = { id: 'a', role: 'admin' } as CurrentUser;
 const voltages = [{ id: 'v1', displayName: '110kV', enabled: true, version: 1 }, { id: 'v2', displayName: '220kV', enabled: true, version: 1 }];
-const line = { id: 'l1', voltageLevelId: 'v1', voltageLevelName: '110kV', lineName: '甲线', enabled: true, version: 1 };
-const tower = { id: 't1', lineId: 'l1', lineName: '甲线', towerNo: '#20+1', sortIndex: 2, towerType: null, enabled: true, version: 3 };
+const line = { id: 'l1', voltageLevelId: 'v1', voltageLevelName: '110kV', lineName: '甲线', enabled: true, version: 1, towerOrderVersion: 1 };
+const tower = { id: 't1', lineId: 'l1', lineName: '甲线', towerNo: '#020-1', sortRank: 2000, towerType: null, enabled: true, version: 3 };
+const tower2 = { id: 't2', lineId: 'l1', lineName: '甲线', towerNo: '#030', sortRank: 3000, towerType: null, enabled: true, version: 1 };
 const ok = (items: unknown[]) => new Response(JSON.stringify({ ok: true, data: { items } }), { headers: { 'Content-Type': 'application/json' } });
-beforeEach(() => vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+const data = (value: unknown) => new Response(JSON.stringify({ ok: true, data: value }), { headers: { 'Content-Type': 'application/json' } });
+let importOrderVersion = 1;
+beforeEach(() => {
+  importOrderVersion = 1;
+  vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+  if (init?.method && url.endsWith('/towers/import-chunk')) {
+    const body = JSON.parse(String(init.body)) as { items: Array<{ action: string }> };
+    const created = body.items.filter((item) => item.action === 'create').length;
+    if (created) importOrderVersion += 1;
+    return data({ created, updated: body.items.length - created, towerOrderVersion: importOrderVersion, items: [] });
+  }
+  if (init?.method && url.endsWith('/towers/reorder')) {
+    importOrderVersion += 1;
+    return data({ changed: true, towerOrderVersion: importOrderVersion, towerIds: JSON.parse(String(init.body)).towerIds });
+  }
+  if (init?.method && url.endsWith('/lines/l1/rename')) {
+    const body = JSON.parse(String(init.body));
+    return data({ ...line, lineName: body.lineName, version: line.version + 1 });
+  }
+  if (init?.method && url.endsWith('/towers/t1/rename')) {
+    const body = JSON.parse(String(init.body));
+    return data({ ...tower, towerNo: body.towerNo, version: tower.version + 1 });
+  }
   if (init?.method) return ok([]);
   if (url === '/api/master/voltage-levels') return ok(voltages);
-  if (url.startsWith('/api/master/lines?voltageLevelId=v1')) return ok([line]);
-  if (url.startsWith('/api/master/lines?voltageLevelId=v2')) return ok([]);
-  if (url.startsWith('/api/master/towers?lineId=l1')) return ok([tower]);
+  if (url === '/api/master/lines/l1/name-history') return ok([]);
+  if (url === '/api/master/towers/t1/number-history') return ok([]);
+  if (url.startsWith('/api/master/lines?')) return url.includes('voltageLevelId=v2') ? ok([]) : ok([line]);
+  if (url.startsWith('/api/master/towers?lineId=l1')) return ok([tower, tower2]);
   throw new Error(`unexpected ${url}`);
-})));
+  }));
+});
 afterEach(() => vi.unstubAllGlobals());
 
-it('drills into parents, loads only selected children and clears stale tower selection', async () => {
+it('starts with a line-centric list and opens a full-width line detail without a three-column hierarchy', async () => {
   const w = mount(MasterDataView, { props: { currentUser: admin } }); await flushPromises();
   expect(vi.mocked(fetch).mock.calls.some(([u]) => String(u).startsWith('/api/master/towers'))).toBe(false);
-  await w.get('[data-test="select-voltage-v1"]').trigger('click'); await flushPromises();
-  expect(w.get('[data-test="master-columns"]').attributes('data-step')).toBe('lines');
+  expect(w.findAll('[data-test="line-home"]')).toHaveLength(1);
+  expect(w.text()).toContain('线路台账');
+  expect(w.text()).not.toContain('01');
   await w.get('[data-test="select-line-l1"]').trigger('click'); await flushPromises();
-  expect(w.text()).toContain('#20+1');
-  expect(w.get('[data-test="master-columns"]').attributes('data-step')).toBe('towers');
-  await w.get('[data-test="select-voltage-v2"]').trigger('click'); await flushPromises();
-  expect(w.text()).not.toContain('#20+1');
-  await w.get('[data-test="back-voltage"]').trigger('click');
-  expect(w.get('[data-test="master-columns"]').attributes('data-step')).toBe('voltage');
+  expect(w.text()).toContain('#020-1');
+  expect(w.findAll('[data-test="line-detail"]')).toHaveLength(1);
+  expect(w.text()).toContain('110kV');
+  await w.get('[data-test="back-lines"]').trigger('click');
+  expect(w.findAll('[data-test="line-home"]')).toHaveLength(1);
+  expect(w.text()).not.toContain('#020-1');
 });
 
-it('bulk paste creates new towers and submits current versions for existing towers', async () => {
+it('previews a large paste once and automatically sends hidden safe import chunks without sort ranks', async () => {
   const w = mount(MasterDataView, { props: { currentUser: admin } }); await flushPromises();
   await w.get('[data-test="select-line-l1"]').trigger('click'); await flushPromises();
   await w.get('[data-test="open-bulk-towers"]').trigger('click');
-  await w.get('[data-test="bulk-tower-text"]').setValue('#20+1\t2\t角钢塔\t停用\nG1\t3\t\t启用');
+  const paste = Array.from({ length: 45 }, (_, index) => `${101 + index}\t角钢塔\t启用`).join('\n');
+  await w.get('[data-test="bulk-tower-text"]').setValue(paste);
+  await w.get('[data-test="preview-bulk-towers"]').trigger('click'); await flushPromises();
+  expect(w.get('[data-test="tower-import-preview"]').text()).toContain('共 45 行');
+  expect(w.get('[data-test="tower-import-preview"]').text()).toContain('新增 45');
   await w.get('[data-test="save-bulk-towers"]').trigger('click'); await flushPromises();
-  const call = vi.mocked(fetch).mock.calls.find(([u, init]) => String(u).endsWith('/towers/batch') && init?.method === 'POST');
-  expect(call).toBeTruthy();
-  expect(JSON.parse(String(call![1]!.body))).toEqual({ items: [
-    { id: 't1', expectedVersion: 3, towerNo: '#20+1', sortIndex: 2, towerType: '角钢塔', enabled: false },
-    { towerNo: 'G1', sortIndex: 3, towerType: null, enabled: true },
-  ] });
+  const calls = vi.mocked(fetch).mock.calls.filter(([u, init]) => String(u).endsWith('/towers/import-chunk') && init?.method === 'POST');
+  expect(calls).toHaveLength(3);
+  expect(calls.map(([, init]) => JSON.parse(String(init!.body)).items.length)).toEqual([20, 20, 5]);
+  for (const [, init] of calls) {
+    const body = JSON.parse(String(init!.body));
+    expect(body.items.every((item: Record<string, unknown>) => !('sortRank' in item))).toBe(true);
+    expect(new Headers(init!.headers).get('Idempotency-Key')).toBeTruthy();
+  }
 });
 
-it('readonly users navigate the same hierarchy without mutation controls', async () => {
+it('resumes from the failed chunk and reuses its idempotency key without resending completed chunks', async () => {
+  let orderVersion = 1;
+  let importAttempt = 0;
+  vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+    if (init?.method && url.endsWith('/towers/import-chunk')) {
+      importAttempt += 1;
+      const body = JSON.parse(String(init.body)) as { items: Array<{ action: string }> };
+      if (importAttempt === 2) return new Response(JSON.stringify({ ok: false, error: { code: 'TEMPORARY_FAILURE', message: '暂时失败' } }), { status: 503, headers: { 'Content-Type': 'application/json' } });
+      if (body.items.some((item) => item.action === 'create')) orderVersion += 1;
+      return data({ created: body.items.length, updated: 0, towerOrderVersion: orderVersion, items: [] });
+    }
+    if (init?.method) return ok([]);
+    if (url === '/api/master/voltage-levels') return ok(voltages);
+    if (url.startsWith('/api/master/lines?')) return ok([line]);
+    if (url.startsWith('/api/master/towers?lineId=l1')) return ok([tower]);
+    throw new Error(`unexpected ${url}`);
+  }));
+
+  const w = mount(MasterDataView, { props: { currentUser: admin } }); await flushPromises();
+  await w.get('[data-test="select-line-l1"]').trigger('click'); await flushPromises();
+  await w.get('[data-test="open-bulk-towers"]').trigger('click');
+  await w.get('[data-test="bulk-tower-text"]').setValue(Array.from({ length: 25 }, (_, index) => `${301 + index}\t\t启用`).join('\n'));
+  await w.get('[data-test="preview-bulk-towers"]').trigger('click'); await flushPromises();
+  await w.get('[data-test="save-bulk-towers"]').trigger('click'); await flushPromises();
+
+  let calls = vi.mocked(fetch).mock.calls.filter(([u, init]) => String(u).endsWith('/towers/import-chunk') && init?.method === 'POST');
+  expect(calls.map(([, init]) => JSON.parse(String(init!.body)).items.length)).toEqual([20, 5]);
+  const failedKey = new Headers(calls[1]![1]!.headers).get('Idempotency-Key');
+
+  await w.get('[data-test="save-bulk-towers"]').trigger('click'); await flushPromises();
+  calls = vi.mocked(fetch).mock.calls.filter(([u, init]) => String(u).endsWith('/towers/import-chunk') && init?.method === 'POST');
+  expect(calls.map(([, init]) => JSON.parse(String(init!.body)).items.length)).toEqual([20, 5, 5]);
+  expect(new Headers(calls[2]![1]!.headers).get('Idempotency-Key')).toBe(failedKey);
+});
+
+it('full-list mode requires coverage and submits the source row order as stable tower ids', async () => {
+  const w = mount(MasterDataView, { props: { currentUser: admin } }); await flushPromises();
+  await w.get('[data-test="select-line-l1"]').trigger('click'); await flushPromises();
+  await w.get('[data-test="open-bulk-towers"]').trigger('click');
+  await w.get('[data-test="tower-import-mode"]').setValue('full-order');
+  await w.get('[data-test="bulk-tower-text"]').setValue('30\t\t启用\n20-1\t\t启用');
+  await w.get('[data-test="preview-bulk-towers"]').trigger('click'); await flushPromises();
+  expect(w.get('[data-test="tower-import-preview"]').text()).toContain('完整清单校验通过');
+  await w.get('[data-test="save-bulk-towers"]').trigger('click'); await flushPromises();
+  const reorder = vi.mocked(fetch).mock.calls.find(([u, init]) => String(u).endsWith('/towers/reorder') && init?.method === 'POST');
+  expect(reorder).toBeTruthy();
+  expect(JSON.parse(String(reorder![1]!.body)).towerIds).toEqual(['t2', 't1']);
+});
+
+it('single tower creation sends no manual order and explains automatic numeric placement', async () => {
+  const w = mount(MasterDataView, { props: { currentUser: admin } }); await flushPromises();
+  await w.get('[data-test="select-line-l1"]').trigger('click'); await flushPromises();
+  await w.get('[data-test="open-new-tower"]').trigger('click');
+  expect(w.text()).toContain('按规范化编号自动插入合适位置');
+  expect(w.text()).not.toContain('线路顺序');
+  await w.get('[data-test="tower-number-input"]').setValue('10-1');
+  await w.get('[data-test="save-tower"]').trigger('click'); await flushPromises();
+  const call = vi.mocked(fetch).mock.calls.find(([u, init]) => String(u) === '/api/master/towers' && init?.method === 'POST');
+  expect(call).toBeTruthy();
+  const body = JSON.parse(String(call![1]!.body));
+  expect(body.towerNo).toBe('#010-1');
+  expect(body).not.toHaveProperty('sortRank');
+});
+
+it('uses dedicated line and tower rename actions instead of ordinary edit fields', async () => {
+  const w = mount(MasterDataView, { props: { currentUser: admin } }); await flushPromises();
+  await w.get('[data-test="select-line-l1"]').trigger('click'); await flushPromises();
+  await w.get('[data-test="open-line-rename"]').trigger('click');
+  await w.get('[data-test="line-rename-input"]').setValue('甲线新名');
+  await w.get('[data-test="save-line-rename"]').trigger('click'); await flushPromises();
+  const lineRename = vi.mocked(fetch).mock.calls.find(([u, init]) => String(u).endsWith('/lines/l1/rename') && init?.method === 'POST');
+  expect(JSON.parse(String(lineRename![1]!.body)).lineName).toBe('甲线新名');
+
+  await w.get('[data-test="open-tower-rename-t1"]').trigger('click');
+  await w.get('[data-test="tower-rename-input"]').setValue('21-1');
+  await w.get('[data-test="save-tower-rename"]').trigger('click'); await flushPromises();
+  const towerRename = vi.mocked(fetch).mock.calls.find(([u, init]) => String(u).endsWith('/towers/t1/rename') && init?.method === 'POST');
+  expect(JSON.parse(String(towerRename![1]!.body)).towerNo).toBe('#021-1');
+});
+
+it('manual order editor moves by business position and saves one complete stable-id order', async () => {
+  const w = mount(MasterDataView, { props: { currentUser: admin } }); await flushPromises();
+  await w.get('[data-test="select-line-l1"]').trigger('click'); await flushPromises();
+  await w.get('[data-test="open-order-editor"]').trigger('click'); await flushPromises();
+  await w.get('[data-test="order-moving"]').setValue('t2');
+  await w.get('[data-test="order-target"]').setValue('t1');
+  await w.get('[data-test="apply-order-move"]').trigger('click');
+  await w.get('[data-test="save-order"]').trigger('click'); await flushPromises();
+  const reorder = vi.mocked(fetch).mock.calls.filter(([u, init]) => String(u).endsWith('/towers/reorder') && init?.method === 'POST').at(-1);
+  expect(JSON.parse(String(reorder![1]!.body)).towerIds).toEqual(['t2', 't1']);
+});
+
+it('readonly users can inspect line detail without mutation controls', async () => {
   const w = mount(MasterDataView, { props: { currentUser: { ...admin, role: 'readonly' } } }); await flushPromises();
   await w.get('[data-test="select-line-l1"]').trigger('click'); await flushPromises();
-  expect(w.text()).toContain('#20+1');
-  for (const label of ['新增电压等级', '新增线路', '新增杆塔', '编辑', '删除', '批量维护']) expect(w.text()).not.toContain(label);
+  expect(w.text()).toContain('#020-1');
+  for (const label of ['新增线路', '新增杆塔', '编辑属性', '线路更名', '杆塔更名', '删除', '导入杆塔', '调整顺序', '台账设置']) expect(w.text()).not.toContain(label);
 });

@@ -104,9 +104,9 @@ before(async () => {
   assert.equal(line.response.status, 201);
   manualLineId = line.body.data.id;
   const createdTowers = [];
-  for (const [towerNo, sortIndex] of [['#1', 1], ['#2', 2], ['#3', 3]]) {
-    const tower = await jsonRequest('/api/master/towers', mutation('POST', idem(`master-tower-${sortIndex}`), {
-      lineId: manualLineId, towerNo, sortIndex, towerType: '测试塔', enabled: true,
+  for (const [towerNo, sortRank] of [['1', 1000], ['2', 2000], ['3', 3000]]) {
+    const tower = await jsonRequest('/api/master/towers', mutation('POST', idem(`master-tower-${sortRank}`), {
+      lineId: manualLineId, towerNo, sortRank, towerType: '测试塔', enabled: true,
     }));
     assert.equal(tower.response.status, 201);
     createdTowers.push(tower.body.data.id);
@@ -120,7 +120,7 @@ before(async () => {
     assert.equal(lineResult.response.status, 201);
     for (const [index, towerNo] of towerNos.entries()) {
       const tower = await jsonRequest('/api/master/towers', mutation('POST', idem(`grid-tower-${index}`), {
-        lineId: lineResult.body.data.id, towerNo, sortIndex: index + 1, towerType: '测试塔', enabled: true,
+        lineId: lineResult.body.data.id, towerNo, sortRank: (index + 1) * 1000, towerType: '测试塔', enabled: true,
       }));
       assert.equal(tower.response.status, 201);
     }
@@ -565,7 +565,7 @@ test('unknown grid objects block publication and are never created by import', a
   for (const [voltage, line, section, code] of [
     ['999kV', '未维护线路', '#1', 'VOLTAGE_LEVEL_UNKNOWN'],
     ['220kV', '未维护线路', '#1', 'LINE_UNKNOWN'],
-    ['220kV', '手工需求线', '#MISSING', 'TOWER_UNKNOWN'],
+    ['220kV', '手工需求线', '#MISSING', 'TOWER_NUMBER_INVALID'],
   ]) {
     const batch = await createBatch({ fileSha256: crypto.randomUUID().replaceAll('-', '').repeat(2) });
     await uploadChunk(batch, [{ sheetName: '需求', rowNumber: 2, cells: { 序号: 'UNKNOWN', 电压等级: voltage, 线路名称: line, 杆段: section } }]);
@@ -575,6 +575,23 @@ test('unknown grid objects block publication and are never created by import', a
     assert.equal((await publishBatch(batch)).response.status, 422);
   }
   assert.ok(!(await jsonRequest('/api/master/lines')).body.data.items.some((l) => l.lineName === '未维护线路'));
+});
+
+test('duplicate line names are valid master data but block import from guessing an identity', async () => {
+  for (const code of ['AMBIG-A', 'AMBIG-B']) {
+    const line = await jsonRequest('/api/master/lines', mutation('POST', idem(`ambiguous-line-${code}`), {
+      voltageLevelId: 'vl-ac-220', lineName: '同名导入线路', lineCode: code, enabled: true,
+    }));
+    assert.equal(line.response.status, 201);
+  }
+  const batch = await createBatch({ fileSha256: crypto.randomUUID().replaceAll('-', '').repeat(2) });
+  await uploadChunk(batch, [{ sheetName: '需求', rowNumber: 2, cells: {
+    序号: 'AMBIGUOUS-LINE', 电压等级: '220kV', 线路名称: '同名导入线路', 杆段: '#1',
+  } }]);
+  await validateBatch(batch);
+  const detail = await jsonRequest(`/api/imports/${batch.body.data.id}`);
+  assert.ok(detail.body.data.rows[0].errors.some((e) => e.code === 'LINE_AMBIGUOUS'));
+  assert.equal((await publishBatch(batch)).response.status, 422);
 });
 
 test('publication revalidates an already validated location after master data is disabled', async () => {

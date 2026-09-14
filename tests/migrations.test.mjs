@@ -40,8 +40,8 @@ test('single initial schema creates the complete current database without histor
       'SELECT COUNT(*) AS count FROM sqlite_master WHERE type=? AND name NOT LIKE ?',
     ).get(type, 'sqlite_%').count);
 
-    assert.equal(objectCount('table'), 69);
-    assert.equal(objectCount('index'), 98);
+    assert.equal(objectCount('table'), 71);
+    assert.equal(objectCount('index'), 103);
     assert.equal(objectCount('trigger'), 0);
     assert.doesNotMatch(baselineSql, /\bCREATE\s+TRIGGER\b/i, 'single development baseline must stay compatible with standard Cloudflare D1 migrations');
     assert.equal(Number(db.prepare('SELECT COUNT(*) AS count FROM settings_versions').get().count), 2);
@@ -54,6 +54,7 @@ test('single initial schema creates the complete current database without histor
       'project_material_requirements', 'project_tasks', 'task_settlements',
       'frameworks', 'agreements', 'financial_entries', 'attachments',
       'backup_runs', 'voltage_levels', 'transmission_lines', 'transmission_towers',
+      'transmission_line_name_history', 'transmission_tower_no_history',
     ];
     for (const name of expectedTables) {
       assert.equal(
@@ -62,6 +63,18 @@ test('single initial schema creates the complete current database without histor
         `missing table ${name}`,
       );
     }
+
+    const lineColumns = db.prepare('PRAGMA table_info(transmission_lines)').all().map((row) => row.name);
+    const towerColumns = db.prepare('PRAGMA table_info(transmission_towers)').all().map((row) => row.name);
+    assert.ok(lineColumns.includes('tower_order_version'));
+    assert.ok(towerColumns.includes('sort_rank'));
+    assert.ok(!towerColumns.includes('sort_index'));
+
+    const lineSql = String(db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='transmission_lines'").get().sql);
+    const towerSql = String(db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='transmission_towers'").get().sql);
+    assert.doesNotMatch(lineSql, /UNIQUE\s*\(\s*voltage_level_id\s*,\s*line_name/i);
+    assert.doesNotMatch(towerSql, /UNIQUE\s*\(\s*line_id\s*,\s*tower_no/i);
+    assert.match(towerSql, /UNIQUE\s*\(\s*line_id\s*,\s*sort_rank\s*\)/i);
 
     assert.throws(
       () => db.exec('INSERT INTO master_data_guards (id,invalid_grid_location) VALUES (1,0)'),

@@ -32,15 +32,15 @@ npm run check
 - 全部 `tests/*.test.mjs` Node/workerd+D1 测试；
 - 全部 `apps/web/tests/*.test.ts` Vue/Vitest 行为测试。
 
-`feat/notion-object-storage` 最近一次完整 `npm run check`（2026-09-14）：
+`feat/master-data-line-centric-history-20260914` 最近一次完整 `npm run check`（2026-09-14，M3 杆塔排序收口）：
 
 - TypeScript（Cloudflare + Node）：PASS；
 - Web production build：PASS；
 - Worker `wrangler deploy --dry-run`：PASS；
-- Vue/Vitest：64/64 PASS；
+- Vue/Vitest：92/92 PASS；
 - Node：260/260 PASS。
 
-本轮新增门禁覆盖 Notion `ObjectStorePort` adapter、R2/Notion provider 切换、Node Filesystem 保持、Notion 初始化 env 处理、P7 production config 的 Notion/R2 互斥校验，以及 R2 `10042` 未启用时只读 inventory 的降级处理。除此之外，真实 Notion `TPM Object Store` 已执行 `put → get → delete → get=null` smoke 并 PASS。完整 `npm run check` 仍属于本地门禁，不代表正式 Cloudflare CPU/D1 配额、目标地区网络、正式 Worker Secret 或生产恢复已经验收；合入前仍要求 GitHub CI 复现。
+本轮在既有 Notion/ObjectStore、P0–P7 和可移植运行时门禁基础上，新增覆盖杆塔编号规范化/自然排序、单杆自动插入、同号稳定身份、专用移动 API、`tower_order_version` 并发保护、稀疏 rank 间隙耗尽后的 D1 两阶段物化重排，以及单杆新增界面不再提交技术排序值。完整 `npm run check` 仍属于本地门禁，不代表正式 Cloudflare CPU/D1 配额、目标地区网络、正式 Worker Secret 或生产恢复已经验收；合入前仍要求 GitHub CI 复现。
 
 ## 3. 迁移与仓库守卫
 
@@ -79,14 +79,15 @@ npm run check
 必须覆盖：
 
 - 管理员才可写电压等级、线路、杆塔；读取按既有业务权限开放。
-- 电压等级/线路/杆塔唯一性、父级关系、启停状态和版本冲突。
+- 电压等级唯一性、线路/杆塔父级关系、启停状态、稳定 ID 与版本冲突；线路名称和杆塔编号允许重名。
 - `VoltageLevel 1:N TransmissionLine 1:N TransmissionTower` 严格成立。
-- `tower_no` 支持字符串编号；`sort_index` 与杆塔号分别唯一。
+- `tower_no` 必须规范为 `#001` / `#010-1` / `#3058` 等；稳定 `tower_id` 是身份真源；同线路当前 `sort_rank` 唯一并与编号解耦。
 - `whole_line / tower / tower_range` 三种位置形状及严格正向区段。
 - 跨线路杆塔、倒序区段、停用父级/杆塔必须拒绝。
-- 线路被需求引用后不能换电压等级；该线路所有杆塔身份/顺序/删除整体受保护，包括区段内部杆塔。
+- 线路被需求引用后不能换电压等级；杆塔不能通过普通编辑换线。线路/杆塔正式更名和杆塔顺序调整允许发生并必须保留历史/审计；引用对象删除仍受保护。
 - 未引用对象可删除；引用对象删除拒绝；停用后历史需求仍可读取，新需求不可使用。
-- 杆塔批量 1–20 行原子写入、版本竞争、幂等重放、失败整体回滚，以及未引用杆塔顺序交换。
+- 杆塔导入用户侧不限行数；浏览器全量预检后自动切为内部安全分片。覆盖 65 行自动分片、非法编号/状态、文件内重复、同号歧义、版本竞争、幂等重放、失败断点继续，以及内部 chunk 不允许绕过更名/排序门禁。
+- 完整清单重排必须覆盖当前线路全部稳定杆塔对象且无重复，文件行顺序成为最终顺序；缺项、重复、跨线路 ID、stale `tower_order_version` 均拒绝，成功后 ID/编号保持不变。
 - 线路/杆塔父级过滤和 cursor 分页无重复/遗漏，单页上限 100。
 - 手工需求只提交对象 ID；父级变化清空下游选择。
 - Excel validate/publish 都必须重新解析台账；未知或停用对象阻断发布，不自动创建台账。

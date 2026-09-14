@@ -38,7 +38,7 @@ export interface TransmissionLineWriteValues {
 export interface TransmissionTowerWriteValues {
   lineId: string;
   towerNo: string;
-  sortIndex: number;
+  sortRank: number;
   towerType: string | null;
   enabled: boolean;
 }
@@ -50,6 +50,10 @@ export interface CommitSingleMasterDataInput {
   values?: VoltageLevelWriteValues | TransmissionLineWriteValues | TransmissionTowerWriteValues;
   expectedVersion: number | null;
   requireEnabledParent?: boolean;
+  parentLineId?: string;
+  expectedTowerOrderVersion?: number;
+  changesTowerOrder?: boolean;
+  rebalanceTowerOrder?: boolean;
   mutation: MasterMutationRecord;
   audit: MasterAuditRecord;
 }
@@ -68,12 +72,75 @@ export interface CommitTowerBatchInput {
   audit: { before: unknown; after: unknown };
 }
 
+export interface CommitLineRenameInput {
+  id: string;
+  expectedVersion: number;
+  lineName: string;
+  historyId: string;
+  reason: string | null;
+  mutation: MasterMutationRecord;
+  audit: MasterAuditRecord;
+}
+
+export interface CommitTowerRenameInput {
+  id: string;
+  expectedVersion: number;
+  towerNo: string;
+  historyId: string;
+  reason: string | null;
+  mutation: MasterMutationRecord;
+  audit: MasterAuditRecord;
+}
+
+export interface CommitTowerMoveInput {
+  lineId: string;
+  towerId: string;
+  targetTowerId: string;
+  placement: 'before' | 'after';
+  expectedTowerOrderVersion: number;
+  rebalance: boolean;
+  mutation: MasterMutationRecord;
+  audit: MasterAuditRecord;
+}
+
+export interface TowerImportChunkWriteItem {
+  action: 'create' | 'update';
+  id: string;
+  expectedVersion: number | null;
+  values: TransmissionTowerWriteValues;
+}
+
+export interface CommitTowerImportChunkInput {
+  lineId: string;
+  expectedTowerOrderVersion: number;
+  changesTowerOrder: boolean;
+  rebalanceTowerOrder: boolean;
+  items: TowerImportChunkWriteItem[];
+  mutation: MasterMutationRecord;
+  audit: MasterAuditRecord;
+}
+
+export interface CommitTowerReorderInput {
+  lineId: string;
+  expectedTowerOrderVersion: number;
+  towerIds: string[];
+  mutation: MasterMutationRecord;
+  audit: MasterAuditRecord;
+}
+
 export interface MasterDataWriteRepository {
   findRecord(kind: MasterDataWriteKind, id: string): Promise<Record<string, string | number | null> | null>;
   findTowerRecords(ids: readonly string[]): Promise<readonly Record<string, string | number | null>[]>;
   findVoltageParent(id: string): Promise<{ displayName: string; enabled: boolean } | null>;
-  findTowerParent(lineId: string): Promise<{ lineName: string; enabled: boolean; voltageEnabled: boolean } | null>;
+  findTowerParent(lineId: string): Promise<{ lineName: string; enabled: boolean; voltageEnabled: boolean; towerOrderVersion: number } | null>;
+  findLastTowerRank(lineId: string): Promise<number>;
+  listTowerOrder(lineId: string): Promise<readonly { id: string; towerNo: string; sortRank: number }[]>;
   countLineTowers(lineId: string): Promise<number>;
   commitSingle(input: CommitSingleMasterDataInput): Promise<void>;
   commitTowerBatch(input: CommitTowerBatchInput): Promise<void>;
+  commitLineRename(input: CommitLineRenameInput): Promise<void>;
+  commitTowerRename(input: CommitTowerRenameInput): Promise<void>;
+  commitTowerMove(input: CommitTowerMoveInput): Promise<void>;
+  commitTowerImportChunk(input: CommitTowerImportChunkInput): Promise<void>;
+  commitTowerReorder(input: CommitTowerReorderInput): Promise<void>;
 }

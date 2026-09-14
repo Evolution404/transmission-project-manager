@@ -12,7 +12,7 @@ export interface ResolvedDemandLine {
 export interface ResolvedDemandTower {
   id: string;
   towerNo: string;
-  sortIndex: number;
+  sortRank: number;
   lineId: string;
   enabled: boolean;
 }
