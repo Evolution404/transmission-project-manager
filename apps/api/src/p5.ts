@@ -21,7 +21,9 @@ import type {
   SettlementSummary,
   VoidSettlementRequest,
 } from '@tpm/shared';
+import { deleteAttachmentContent, loadAttachmentContent, saveAttachmentContent } from './application/attachment-content';
 import { hasScope, requireRoles, type AppEnv } from './auth';
+import { createCloudflarePersistence } from './runtime/cloudflare/persistence';
 
 const MAX_LINES = 100;
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
@@ -1065,7 +1067,8 @@ p5App.post('/attachments', requireRoles('admin', 'project_manager', 'implementat
   const actor = c.get('currentUser'), id = crypto.randomUUID(), now = new Date().toISOString(), r2Key = `attachments/${projectId}/${id}`;
   const data: AttachmentSummary = { id, projectId, objectType, objectId, fileName, contentType, sizeBytes: bytes.byteLength, createdAt: now };
   const response = { ok: true as const, data };
-  await c.env.FILES.put(r2Key, bytes, { httpMetadata: { contentType } });
+  const { objectStore } = createCloudflarePersistence(c.env);
+  await saveAttachmentContent(objectStore, r2Key, new Uint8Array(bytes), contentType);
   try {
     await c.env.DB.batch([
       c.env.DB.prepare(`INSERT INTO attachments (id,project_id,object_type,object_id,r2_key,file_name,content_type,size_bytes,uploaded_by,created_at,deleted_at) VALUES (?,?,?,?,?,?,?,?,?,?,NULL)`).bind(id, projectId, objectType, objectId, r2Key, fileName, contentType, bytes.byteLength, actor.id, now),
@@ -1073,7 +1076,7 @@ p5App.post('/attachments', requireRoles('admin', 'project_manager', 'implementat
       idempotencyStatement(c.env.DB, key, actor.id, operation, hash, response, 201, now),
     ]);
   } catch {
-    await c.env.FILES.delete(r2Key);
+    await deleteAttachmentContent(objectStore, r2Key);
     const raceReplay = await replayIdempotentResponse(c, key, operation, hash); if (raceReplay) return raceReplay;
     return c.json(apiError('ATTACHMENT_CONFLICT', '附件元数据写入冲突'), 409);
   }
@@ -1095,12 +1098,13 @@ p5App.get('/attachments/:id/content', async (c) => {
   const attachment = await c.env.DB.prepare(`SELECT id,project_id,object_type,object_id,r2_key,file_name,content_type,size_bytes,created_at FROM attachments WHERE id=? AND deleted_at IS NULL LIMIT 1`).bind(c.req.param('id')).first<AttachmentRow>();
   if (!attachment) return c.json(apiError('NOT_FOUND', '附件不存在'), 404);
   if (!canProject(c, attachment.project_id)) return c.json(apiError('SCOPE_FORBIDDEN', '无权下载该项目附件'), 403);
-  const object = await c.env.FILES.get(attachment.r2_key);
+  const { objectStore } = createCloudflarePersistence(c.env);
+  const object = await loadAttachmentContent(objectStore, attachment.r2_key);
   if (!object) return c.json(apiError('ATTACHMENT_CONTENT_MISSING', '附件内容不存在'), 404);
   const headers = new Headers();
   headers.set('Content-Type', attachment.content_type);
   headers.set('Content-Length', String(attachment.size_bytes));
   headers.set('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(attachment.file_name)}`);
   headers.set('Cache-Control', 'private, no-store');
-  return new Response(object.body, { status: 200, headers });
+  return new Response(object.bytes, { status: 200, headers });
 });

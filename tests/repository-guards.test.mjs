@@ -95,6 +95,11 @@ test('portable backend core cannot depend on Cloudflare runtime types', () => {
   }
 });
 
+test('P5 attachment content no longer reaches the R2 binding directly', () => {
+  const source = readFileSync(resolve(root, 'apps/api/src/p5.ts'), 'utf8');
+  assert.doesNotMatch(source, /c\.env\.FILES/, 'P5 attachment content must use ObjectStorePort instead of the R2 binding directly');
+});
+
 test('Cloudflare infrastructure adapters depend inward on portable ports', () => {
   const adapters = [
     ['d1-database.ts', /implements\s+DatabasePort/, /ports\/database/],
