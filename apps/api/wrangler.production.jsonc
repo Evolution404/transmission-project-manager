@@ -30,8 +30,8 @@
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "transmission-project-manager-production",
-      "database_id": "32ab1d29-e720-41a1-a83f-11b579734a0e",
+      "database_name": "transmission-project-manager-production-20260915",
+      "database_id": "913b6387-46b0-40c6-b0b1-11f070b99f08",
       "migrations_dir": "migrations"
     }
   ]
