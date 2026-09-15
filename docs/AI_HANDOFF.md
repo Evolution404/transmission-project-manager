@@ -4,9 +4,14 @@
 
 仓库：`Evolution404/transmission-project-manager`
 默认分支：`main`
-当前施工状态：基础台账第二轮重构正在施工；P7 生产验收暂不作为当前代码主线。
-当前施工分支：`feat/master-data-line-centric-history-20260914`。
-最近一次正式发布代码 SHA：`a907dbee2dfddb0a4f266ed25cf2f18a18d9df51`
+当前施工状态：基础台账第二轮重构已合入并上线；当前主线是 2026-09-15 代码质量与操作界面加固。
+当前施工分支：`refactor/master-data-ux-hardening-20260915`。
+当前加固代码 HEAD：`4d0d5eb`（其后仅允许追加已验证小提交）。
+最近一次正式发布代码 SHA：`5f1eb178557b1f2e0b998a1b2ce5c09b867cf7f8`。
+
+2026-09-15 当前加固已完成并本地全绿：服务端线路状态筛选、线路杆塔数聚合查询、删除旧 `/towers/batch`、共享 Web API client、线路/杆塔操作区收敛、移动端上移/下移、同号排序目标辨识、删除后的 `towerCount/towerOrderVersion` 精确同步、首次加载失败重试和杆塔独立 loading。完整 `npm run check`：Node **264/264 PASS**、Web **111/111 PASS（19 文件）**，TypeScript、Web build、Worker dry-run、Node+SQLite+Filesystem 均 PASS。详细问题和后续候选见 `CODE_UI_AUDIT_2026-09-15.md`。
+
+生产已完成上一轮基础台账 schema reconciliation 和正式发布；`BOOTSTRAP_TOKEN` 已删除，长期 Worker Secret 只保留 `AUTH_CREDENTIAL_PEPPER`、`NOTION_API_TOKEN`。本加固分支尚未合入/发布，禁止把“本地全绿”写成“已上线”。
 
 2026-09-14 20:32（UTC+8）续接核对：本机 `main` 与 `origin/main` 均为
 `9102a17f7795ef85254845c6dea0b156a2d2b05b`，工作区在开始施工前为 clean；
@@ -106,12 +111,10 @@ main CI run `34844921647` PASS。
   `main@a907dbee2dfddb0a4f266ed25cf2f18a18d9df51` 再次执行；`npm run check`、production config、
   临时 Worker secret、dry-run、SHA 二次校验、Worker publish、`Verify custom domain and health`、
   临时 Secret 文件清理全部 PASS，整条 release 最终为 **success**。
-- release 完成后再次从公网独立复核：`/api/health` 仍为 HTTP 200、`ok=true`、
+- 当时该轮 release 完成后公网独立复核：`/api/health` 为 HTTP 200、`ok=true`、
   `service=transmission-project-manager`、`schema.ready=true`、
-  `currentMigration=requiredMigration=0001_initial_schema.sql`；`/api/auth/status` 仍为
-  `initialized=false`，说明首管理员尚未创建，且正式数据库仍保持预期空账号状态。
-- 当前生产公开认证状态 `GET /api/auth/status` 返回 `initialized=false`，说明正式 production D1
-  仍处于“未创建首管理员”的预期空账号状态。
+  `currentMigration=requiredMigration=0001_initial_schema.sql`；当时 `/api/auth/status` 仍为
+  `initialized=false`。**这是首次 bootstrap 之前的历史快照，不是当前生产状态；当前首管理员已创建且 `initialized=true`。**
 - 本机根 `.env` 只包含 `AUTH_CREDENTIAL_PEPPER`、`BOOTSTRAP_TOKEN`、
   `CLOUDFLARE_API_TOKEN`、`NOTION_API_TOKEN` 四个键；未发现第二套 dotenv。
 - 尝试由当前 Mac/Codex 执行面把本地 `BOOTSTRAP_TOKEN` 直接写入 Cloudflare Worker Secret 时，
@@ -158,10 +161,11 @@ main CI run `34844921647` PASS。
 
 ## 下一步
 
-1. 基础台账重构 PR #10 已于 2026-09-14 合入 `main@b8fe536699ddf516697e3bbdbe66ddc3caddeec2`；合并后 main CI run `34860874168` PASS，Production preflight run `34861164236` PASS。
-2. 继续保持唯一 `0001_initial_schema.sql` 开发策略，禁止新增 migration。生产 D1 已执行过旧版同名 `0001`，不能依靠 migration 文件名判断 schema ready。
-3. 当前生产 D1 只读核对：`members=1`、`transmission_lines=1`、`transmission_towers=1`、`demands=0`；旧 `sort_index` 仍存在，`sort_rank` 与两张更名历史表不存在。下一步按 `P7_RUNBOOK.md` 5.3A 执行一次性 schema reconciliation：先记录 D1 Time Travel bookmark，再运行受审 SQL并核对行数、列结构与 `PRAGMA foreign_key_check`。只有 schema 对齐后才允许 Production release。
-4. P7 首管理员已创建，但一次性 `BOOTSTRAP_TOKEN` 的远端删除和其余完整 P7-01～13 仍需单独收尾，不得因本轮功能施工误标为全部完成。
+1. 当前加固分支完成文档收口后提交/push，创建 PR 并由 GitHub CI 复现完整 `npm run check`；在 CI 全绿前不得合并。
+2. 本轮没有 schema 变化，不需要新的 production reconciliation/migration。继续保持唯一 `0001_initial_schema.sql` 开发策略，禁止无明确兼容需求的 `0002+`。
+3. 后续结构优化优先级：拆分 `MasterDataView.vue` 稳定业务边界；再评估 `p9.ts` master-data / demand-location 路由拆分和 `packages/shared/src/index.ts` 领域拆分。不要一次做巨型重构。
+4. UI 后续候选：危险删除二次确认、历史时间按 `Asia/Shanghai` 业务格式展示、超大线路的常规单塔移动改为更轻量的专用 move 流程。
+5. 当前生产已经健康运行；本加固分支未经明确发布授权不得触发 Production release。
 
 ## 生产资源现状：不要猜
 

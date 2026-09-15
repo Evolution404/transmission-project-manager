@@ -32,15 +32,15 @@ npm run check
 - 全部 `tests/*.test.mjs` Node/workerd+D1 测试；
 - 全部 `apps/web/tests/*.test.ts` Vue/Vitest 行为测试。
 
-`feat/master-data-line-centric-history-20260914` 最近一次完整 `npm run check`（2026-09-14，M3 杆塔排序收口）：
+`refactor/master-data-ux-hardening-20260915` 最近一次完整 `npm run check`（2026-09-15，基础台账代码/UI 审查第一阶段收口）：
 
 - TypeScript（Cloudflare + Node）：PASS；
 - Web production build：PASS；
 - Worker `wrangler deploy --dry-run`：PASS；
-- Vue/Vitest：92/92 PASS；
-- Node：260/260 PASS。
+- Vue/Vitest：**111/111 PASS（19 个测试文件）**；
+- Node：**264/264 PASS**。
 
-本轮在既有 Notion/ObjectStore、P0–P7 和可移植运行时门禁基础上，新增覆盖杆塔编号规范化/自然排序、单杆自动插入、同号稳定身份、专用移动 API、`tower_order_version` 并发保护、稀疏 rank 间隙耗尽后的 D1 两阶段物化重排，以及单杆新增界面不再提交技术排序值。完整 `npm run check` 仍属于本地门禁，不代表正式 Cloudflare CPU/D1 配额、目标地区网络、正式 Worker Secret 或生产恢复已经验收；合入前仍要求 GitHub CI 复现。
+本轮在既有基础台账业务门禁上新增/强化：服务端状态筛选后分页、废弃技术 batch 接口 404、统一 Web API client、移动端上移/下移、同号排序目标可辨识、删除后 `towerCount/towerOrderVersion` 本地同步，以及首次加载失败的可见重试恢复。完整 `npm run check` 仍属于本地门禁；合入前仍要求 GitHub CI 复现。
 
 ## 3. 迁移与仓库守卫
 
@@ -48,8 +48,8 @@ npm run check
 
 必须保持：
 
-- `tests/migrations.lock.json` 锁定每个 migration checksum。
-- 已应用 migration 不得修改或删除；当前 `0009`–`0012` 已明确冻结。
+- `tests/migrations.lock.json` 锁定当前开发基线 checksum。
+- 当前开发阶段只允许 `0001_initial_schema.sql` 单一可重建基线；除非用户明确要求兼容已投产业务数据或设计升级路径，否则禁止新增 `0002+` migration。
 - 空库可按顺序应用全部 migration，重复 apply 不破坏当前 schema。
 - schema readiness 必须指向最新 migration；数据库落后时业务接口统一 fail-closed 为 `SCHEMA_OUTDATED`。
 - 本地开发启动器先验证 migration 文件与 checksum lock 稳定，再从不可变临时快照执行。
@@ -184,7 +184,7 @@ npm run check
 - 各角色不会发出越权写请求；
 - 数量、金额转换使用正确定点/整数单位；
 - 需求手工创建与导入流程、父子级联和错误阻断；
-- `/master-data` 桌面三级关系和移动逐级导航；
+- `/master-data` 使用线路中心式“线路列表 → 线路详情”；移动端不得退回桌面三栏模拟，并须提供不依赖 drag/drop 的排序操作；
 - 重业务页面保持路由懒加载；
 - 全局中文 locale，禁止默认英文 placeholder。
 

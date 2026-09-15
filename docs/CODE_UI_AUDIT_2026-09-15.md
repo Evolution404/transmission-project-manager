@@ -76,10 +76,33 @@
 7. 修复 stale error、杆塔加载状态和不必要的全量刷新。
 8. 定向测试 + 完整 `npm run check`，小提交并及时 push。
 
-## 4. 后续候选，不在本批强行完成
+## 4. 第一阶段完成情况
+
+本轮第一阶段已全部落地：
+
+- 线路启用/停用筛选已进入服务端查询条件，分页前完成筛选，不再由 Web 对当前页二次过滤。
+- 线路杆塔数量改为聚合 JOIN，一次列表 query 返回计数。
+- 旧 `/api/master/lines/:id/towers/batch`、对应 Port/Repository 合同和死代码 `findLastTowerRank()` 已删除；正式批量入口只保留 `import-chunk + reorder`。
+- 新增 `apps/web/src/api/client.ts`；基础台账及需求、储备、实施结算、财务、分析、成员管理页面已统一使用共享 API client。导入 workflow 因需要保留 `错误码: 错误信息` 合同，继续使用自己的专用请求封装。
+- 线路详情只直出新增杆塔、导入杆塔、调整顺序三个高频动作，其余线路操作进入“更多操作”；杆塔行只直出编辑，低频/危险动作进入“更多”。
+- 排序编辑器保留桌面拖动，同时增加触屏可用的上移/下移；长距离移动继续支持目标前/后。目标下拉显示“当前序号 · 杆塔号 · 类型”，同号对象仍以稳定 ID 区分。
+- 删除杆塔改为前端精确更新当前行、`towerCount` 和 `towerOrderVersion`，不再无关重载电压等级/线路；避免删除后立即调序携带旧 order version。
+- 首次基础台账请求失败已纳入统一错误恢复：显示中文错误和“重新加载”，成功重试清除旧错误；杆塔查询有独立 loading 状态。
+
+2026-09-15 本地完整 `npm run check`：
+
+- Node：**264/264 PASS**；
+- Web：**111/111 PASS（19 个测试文件）**；
+- Cloudflare + Node + Web TypeScript：PASS；
+- Web production build：PASS；
+- Worker `wrangler deploy --dry-run`：PASS；
+- Node + SQLite + Filesystem 第二运行时：PASS。
+
+## 5. 后续候选，不在本批强行完成
 
 - `packages/shared/src/index.ts` 继续按领域拆模块，减少 1300+ 行入口文件。
 - `p9.ts` 按 master-data / demand-location 拆 route module，降低 800 行单文件复杂度。
-- 其余 View 逐步迁移统一 API client。
+- `MasterDataView.vue` 继续按稳定业务边界拆为线路列表、属性/更名弹窗、顺序编辑器、导入弹窗及 composable；当前不为减少行数做机械拆分。
+- 常规“移动一基杆塔”后续可评估直接调用专用 `/move`，避免为了简单移动总是加载并提交完整线路顺序；完整清单重排和导入仍保留全量稳定 ID 合同。
 - 线路列表在数据规模扩大后评估虚拟滚动；当前优先保证分页筛选语义正确。
-- 统一全站空状态、危险操作二次确认、日期时间显示组件。
+- 统一全站空状态、危险操作二次确认、日期时间显示组件；当前历史弹窗仍显示原始 ISO 时间，可改为 `Asia/Shanghai` 业务可读格式。

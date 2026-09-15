@@ -326,13 +326,13 @@ Worker 不解析大 Excel，也不接收无限大单批数据库写入。
 - 手机端“线路列表 → 线路详情”。
 - 全局中文提示继续通过门禁。
 
-**进度（2026-09-14）：已完成并通过本地完整门禁。** 旧三栏页面已删除：首页为全宽线路列表，电压等级仅作筛选、线路标签和独立“台账设置”；点击线路进入全宽杆塔详情。线路/杆塔普通属性编辑与专用更名分离，历史可查看；杆塔新增、导入、完整清单重排和人工拖拽/目标前后调序均在详情页完成。移动端沿用“线路列表 → 线路详情”单列结构，不再模拟三级栏。最终 `npm run check`：Node **264/264 PASS**、Web **102/102 PASS**，TypeScript、Web production build、Worker dry-run、Node+SQLite+Filesystem 第二运行时均 PASS；待远端 CI 复核后进入合并评估。
+**进度（2026-09-15）：M1–M5 已完成、合入并上线，随后进入加固。** 旧三栏页面已删除：首页为全宽线路列表，电压等级仅作筛选、线路标签和独立“台账设置”；点击线路进入全宽杆塔详情。线路/杆塔普通属性编辑与专用更名分离，历史可查看；杆塔新增、导入、完整清单重排和人工调序均在详情页完成。移动端沿用“线路列表 → 线路详情”单列结构，不再模拟三级栏，并已增加不依赖拖拽的上移/下移。2026-09-15 加固完整 `npm run check`：Node **264/264 PASS**、Web **111/111 PASS（19 文件）**，TypeScript、Web production build、Worker dry-run、Node+SQLite+Filesystem 第二运行时均 PASS。
 
 ## 11. 提交与文档策略
 
 所有施工都在分支：
 
-`feat/master-data-line-centric-history-20260914`
+原实现分支：`feat/master-data-line-centric-history-20260914`（已合入）。当前加固分支：`refactor/master-data-ux-hardening-20260915`。
 
 按 M1–M5 拆成小提交；每个里程碑做到：
 

@@ -8,7 +8,7 @@ P7 不新增另一套核心业务模型，目标是用真实业务资料、真�
 
 截至 2026-09-14，后端可移植化和云端生产 workflow 均已合入 `main@bc4774767c159068d59e16d6726444c5c1525dd6`，合并后 [CI #37](https://github.com/Evolution404/transmission-project-manager/actions/runs/34811093528) 完整门禁 PASS。此代码基线不构成生产验收通过。
 
-GitHub `production` Environment 已创建且只允许 `main` 部署，发布/迁移开关均为 `false`。Cloudflare Account/Zone/Worker/域名和 CI Token 已实测；当前线上 Worker 仍绑定旧 acceptance D1，属于 schema squash 前开发环境。当前正式对象存储方案为 Notion；Notion `TPM Object Store` Database/Data Source 已初始化且真实 `put/get/delete` smoke PASS。独立 production D1 已按单一 `0001_initial_schema.sql` 从空库标准创建成功；正式 Worker Secrets、release 和线上切换仍待完成。P7-01～13 保持待真实证据确认，最新状态见 `AI_HANDOFF.md`。
+GitHub `production` Environment 已创建且只允许 `main` 受控发布。正式 Worker `transmission-project-manager`、自定义域名 `project.980923.xyz`、独立 production D1 和 Notion 对象存储已经完成发布与线上健康验收；基础台账后续 schema reconciliation 也已完成，首管理员已创建，一次性 `BOOTSTRAP_TOKEN` 已删除。P7-01～13 的逐项验收仍必须以实际证据判定，不能因“生产已可用”自动全部标记完成；最新状态以 `AI_HANDOFF.md` 和实际 GitHub/Cloudflare 证据为准。
 
 ## 2. 验收矩阵
 
