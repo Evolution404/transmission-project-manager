@@ -13,6 +13,7 @@ export default {
     return app.fetch(request, runtimeBindings(env), ctx);
   },
   scheduled(controller: ScheduledController, env: WorkerBindings, ctx: ExecutionContext) {
+    if (env.MAINTENANCE_MODE === 'data-migration') return;
     ctx.waitUntil(runScheduledOperations(runtimeBindings(env), new Date(controller.scheduledTime).toISOString()).then(() => undefined));
   },
 };

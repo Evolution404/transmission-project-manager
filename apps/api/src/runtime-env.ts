@@ -4,6 +4,7 @@ export type ObjectStorageProvider = 'filesystem' | 'r2' | 'notion';
 
 export interface RuntimeConfig {
   APP_ENV: 'development' | 'test' | 'production';
+  MAINTENANCE_MODE?: 'data-migration';
   OBJECT_STORAGE_PROVIDER?: ObjectStorageProvider;
   AUTH_CREDENTIAL_PEPPER?: string;
   BOOTSTRAP_TOKEN?: string;

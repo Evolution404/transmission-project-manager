@@ -27,6 +27,21 @@ import { transmissionGridOperationsApp } from './transmission-grid-operations.ts
 
 export const app = new Hono<AppEnv>();
 
+app.use('/api/*', async (c, next) => {
+  if (c.env.MAINTENANCE_MODE !== 'data-migration') return next();
+  c.header('Cache-Control', 'no-store');
+  if (c.req.path === '/api/health') {
+    return c.json({
+      ok: true as const,
+      data: {
+        service: 'transmission-project-manager' as const,
+        maintenance: { active: true as const, reason: 'data-migration' as const },
+      },
+    });
+  }
+  return c.json(apiError('MAINTENANCE', '系统正在进行数据迁移，请稍后重试'), 503);
+});
+
 app.get('/api/health', async (c) => {
   const { database } = resolvePersistence(c.env);
   const body: HealthResponse = {
