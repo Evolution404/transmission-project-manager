@@ -62,7 +62,7 @@ npm run check
 
 ## 4. 认证、成员和权限
 
-主要测试：`p1-2-auth.test.mjs`、`p1-2-production-auth.test.mjs`、`admin-concurrency.test.mjs`、`member-atomicity.test.mjs`。
+主要测试：`authentication.test.mjs`、`production-authentication.test.mjs`、`admin-concurrency.test.mjs`、`member-atomicity.test.mjs`。
 
 覆盖：
 
@@ -77,7 +77,7 @@ npm run check
 
 ## 5. 基础台账与需求位置
 
-主要测试：`master-data.test.mjs`、`p2-import.test.mjs`、`MasterDataView.test.ts`、`DemandsView.test.ts`。
+主要测试：`master-data.test.mjs`、`demand-import.test.mjs`、`MasterDataView.test.ts`、`DemandsView.test.ts`。
 
 必须覆盖：
 
@@ -102,7 +102,7 @@ npm run check
 
 ## 6. 需求导入与物资
 
-主要测试：`p2-import.test.mjs` 和 Web import/parser 测试。
+主要测试：`demand-import.test.mjs` 和 Web import/parser 测试。
 
 覆盖：
 
@@ -117,7 +117,7 @@ npm run check
 
 ## 7. 项目储备与项目物资
 
-主要测试：`p3-reserves.test.mjs`、`final-business-flow.test.mjs`、`ReservesView.test.ts`。
+主要测试：`reserve-planning.test.mjs`、`final-business-flow.test.mjs`、`ReservesView.test.ts`。
 
 覆盖：
 
@@ -134,7 +134,7 @@ npm run check
 
 ## 8. 框架、协议与资金
 
-主要测试：`p4-finance.test.mjs`、`FinanceView.test.ts`。
+主要测试：`finance.test.mjs`、`FinanceView.test.ts`。
 
 覆盖：
 
@@ -149,7 +149,7 @@ npm run check
 
 ## 9. 项目出库、任务、供应、实施和结算
 
-主要测试：`final-business-flow.test.mjs`、`p5-delivery.test.mjs`、`DeliveryView.test.ts`。
+主要测试：`final-business-flow.test.mjs`、`project-lifecycle.test.mjs`、`DeliveryView.test.ts`。
 
 最终主模型必须覆盖：
 
@@ -163,11 +163,11 @@ npm run check
 - 四状态由所有任务事实回投原始需求，而不是人工标签。
 - 私有 R2 附件按项目范围重新鉴权。
 
-`p5-delivery.test.mjs` 中旧 release-batch/legacy implementation 测试只保证历史兼容，不定义新业务主路径。
+`project-lifecycle.test.mjs` 中旧 release-batch/legacy implementation 测试只保证历史兼容，不定义新业务主路径。
 
 ## 10. 分析、预警、通知和备份
 
-主要测试：`p6-analysis.test.mjs`。
+主要测试：`analysis-operations.test.mjs`。
 
 覆盖：
 
@@ -209,4 +209,4 @@ npm run check
 - 正式停写备份、隔离恢复、回退；
 - Cloudflare/GitHub 运维移交和 CI/CD 服务身份。
 
-详细证据要求见 `P7_ACCEPTANCE.md`，操作步骤见 `P7_RUNBOOK.md`。
+详细证据要求见 `PRODUCTION_ACCEPTANCE.md`，操作步骤见 `PRODUCTION_RUNBOOK.md`。

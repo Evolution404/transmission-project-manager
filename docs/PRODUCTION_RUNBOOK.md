@@ -1,10 +1,10 @@
-# P7 预检、发布与恢复操作手册
+# 生产预检、发布与恢复操作手册
 
 核对日期：2026-09-14。
 
-本手册描述真实 P7 环境的云端预检、migration、发布、验收和恢复。后续禁止把用户 Mac、本地 shell、本地 Wrangler 或其他个人电脑作为正式操作前提；GitHub Actions + Cloudflare 是默认执行面。
+本手册描述真实生产环境的云端预检、migration、发布、验收和恢复。后续禁止把用户 Mac、本地 shell、本地 Wrangler 或其他个人电脑作为正式操作前提；GitHub Actions + Cloudflare 是默认执行面。
 
-任何本地/合成历史结果都不能替代 P7 真实证据。
+任何本地/合成历史结果都不能替代生产真实证据。
 
 ## 1. 当前云端执行入口
 
@@ -89,7 +89,7 @@ PR #2 合入后使用以下 Actions：
 
 ### 4.1 真实业务资料
 
-P7-01～05 必须使用真实业务资料或明确的真实环境抽样：
+`PROD-01`～`PROD-05` 必须使用真实业务资料或明确的真实环境抽样：
 
 - 真实电压等级 / 线路 / 杆塔清单；
 - 系统标准需求模板回导；
@@ -140,7 +140,7 @@ P7-01～05 必须使用真实业务资料或明确的真实环境抽样：
 - `npm ci`；
 - `npm run check`；
 - 直接读取并校验受审的 `apps/api/wrangler.production.jsonc`；
-- `npm run p7 -- config`；
+- `npm run production:check -- config`；
 - production Wrangler dry-run；
 - 不加载 `CLOUDFLARE_API_TOKEN`；
 - 不执行 remote migration 或 deploy。
@@ -236,7 +236,7 @@ Worker publish、语义 health 验证和临时 Secret 清理全部 PASS，最终
 11. 匿名受保护 API 必须拒绝；
 12. 未知 `/api/*` 必须返回 JSON 404。
 
-不得把密码、派生 credential、Cookie 或 bootstrap token 写入 Actions 日志、GitHub PR/Issue、release note 或 P7 evidence。
+不得把密码、派生 credential、Cookie 或 bootstrap token 写入 Actions 日志、GitHub PR/Issue、release note 或生产验收 evidence。
 
 ## 7. 核心业务 smoke
 
@@ -260,7 +260,7 @@ Worker publish、语义 health 验证和临时 Secret 清理全部 PASS，最终
 - Cron / notification outbox / backup；
 - 手机和桌面自定义域名访问。
 
-P7-01～13 的具体证据矩阵以 `P7_ACCEPTANCE.md` 为准。
+`PROD-01`～`PROD-13` 的具体证据矩阵以 `PRODUCTION_ACCEPTANCE.md` 为准。
 
 ## 8. Logs、Metrics 与网络验收
 
@@ -307,7 +307,7 @@ Worker 回退不会自动回退 D1、对象存储、Secrets、Cron 或路由。
 
 ## 11. 运维移交
 
-P7 完成前，至少由非资产所有者个人登录态的 CI/CD 服务身份完成一次受控 migration 演练、受控代码发布、回退演练、Cloudflare token 轮换和旧维护人撤权后继续运行验证。
+生产验收完成前，至少由非资产所有者个人登录态的 CI/CD 服务身份完成一次受控 migration 演练、受控代码发布、回退演练、Cloudflare token 轮换和旧维护人撤权后继续运行验证。
 
 应用管理员只管理业务账号和权限，不需要 Cloudflare 权限。Cloudflare 技术运维使用自己的 Account Member 身份；CI 使用 account-owned token。资产所有者可保留 Super Administrator 作为紧急兜底，但日常发布不依赖其个人登录。
 

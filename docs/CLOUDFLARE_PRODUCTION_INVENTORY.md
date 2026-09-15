@@ -56,7 +56,7 @@ Token 的权限范围应限制在本项目所在的 Cloudflare Account 和 `9809
 - Worker Custom Domains：hostname、绑定 Worker、Zone；
 - Zones：域名、状态、类型、Zone ID。
 
-D1 `file_size` / `num_tables` 可用于初步判断数据库是否只是空资源，但不能替代业务数据对账。真正决定是否可 migration 前，仍需按 `docs/P7_RUNBOOK.md` 对目标 D1 做停写、备份、migration 状态和业务数据核对。
+D1 `file_size` / `num_tables` 可用于初步判断数据库是否只是空资源，但不能替代业务数据对账。真正决定是否可 migration 前，仍需按 `docs/PRODUCTION_RUNBOOK.md` 对目标 D1 做停写、备份、migration 状态和业务数据核对。
 
 ## 使用顺序
 
@@ -68,4 +68,4 @@ D1 `file_size` / `num_tables` 可用于初步判断数据库是否只是空资�
 6. 只有完成数据保护并确认 schema 需要升级时才运行独立 D1 migration；
 7. schema ready 后才进入 `Production release`。
 
-盘点成功本身不能标记 P7-06 或“生产发布完成”。
+盘点成功本身不能标记 `PROD-06` 或“生产发布完成”。

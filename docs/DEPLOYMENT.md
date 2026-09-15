@@ -64,7 +64,7 @@ YAML 中写 `environment: production` 不能替代真实 Environment protection 
 
 **长期数量：0。**
 
-生产非敏感配置直接提交到 `apps/api/wrangler.production.jsonc`，由 PR/CI 审核并通过 `npm run p7 -- config` 校验。不要在 GitHub Environment 再维护 `PRODUCTION_CONFIG_JSON`、部署开关或迁移开关，避免同一配置出现两份来源。
+生产非敏感配置直接提交到 `apps/api/wrangler.production.jsonc`，由 PR/CI 审核并通过 `npm run production:check -- config` 校验。不要在 GitHub Environment 再维护 `PRODUCTION_CONFIG_JSON`、部署开关或迁移开关，避免同一配置出现两份来源。
 
 ### Environment Secrets
 
@@ -138,7 +138,7 @@ YAML 中写 `environment: production` 不能替代真实 Environment protection 
 
 - 完整 `npm run check`；
 - 直接校验仓库中的 `apps/api/wrangler.production.jsonc`；
-- `npm run p7 -- config`；
+- `npm run production:check -- config`；
 - Wrangler production dry-run；
 - 不携带 Cloudflare Token，不产生云端变更。
 
@@ -205,7 +205,7 @@ migration/schema ready 后手工触发 `Production release`：
 - Cron / 预警 / 通知 outbox / 备份；
 - 自定义域名、HTTPS、静态资源和移动端访问。
 
-详细证据矩阵见 `P7_ACCEPTANCE.md`。
+详细证据矩阵见 `PRODUCTION_ACCEPTANCE.md`。
 
 ## 9. Logs、Metrics 与免费额度
 
@@ -233,7 +233,7 @@ Workers/D1 配额与价格必须在正式上线前再次按 Cloudflare 官方页
 - 只有用户明确宣布进入“兼容已有数据/保留升级路径”阶段后，才冻结当前基线并开始追加 migration；在此之前仍执行单基线重建策略；
 - 保留前一 Worker version/deployment ID、准确 schema 状态、备份引用和回退证据。
 
-详细步骤见 `P7_RUNBOOK.md`。
+详细步骤见 `PRODUCTION_RUNBOOK.md`。
 
 ## 11. 官方依据
 

@@ -169,7 +169,7 @@ CI/CD 优先使用 Cloudflare account-owned API token 作为服务身份，按�
 
 后续若启用邮件通知，联系方式作为可选资料独立维护，不参与登录或身份验证；邮件提供商要求的收件/域名验证属于通知基础设施配置，不等于验证业务账号。实时事件只写通知 outbox，定时器每5分钟处理一小批。规则首次越线及时提醒，持续未解决进入每日摘要；恢复、再次越线或严重程度增加产生新事件。唯一键包含规则版本、对象、发生周期和收件人。失败退避重试、可查询处理状态；不承诺第三方邮件端绝对恰好一次，发送结果未知时保留状态，避免无限重复发送。
 
-当前备份为 D1 绑定分表读取、每 100 行写 `ObjectStorePort` JSON 分片并生成 SHA-256/manifest，每日北京时间 03:00 创建任务，保留 7 份 daily 和 3 份 monthly 已完成备份。它不是跨表一致快照；正式迁移前必须停写、串行备份并完成隔离恢复对账。manifest 仅含附件 key，不含附件本体或内容 hash，正式恢复需另备附件并核对。当前 production provider 为 Notion，应用删除通过归档索引页实现逻辑删除；Notion API 当前不能物理撤销已上传 FileUpload，因此保留策略对 Notion 只能保证应用不可见，不能宣称底层字节已删除。R2/Filesystem 则可实现物理删除。详见 [P7_RUNBOOK.md](P7_RUNBOOK.md)。
+当前备份为 D1 绑定分表读取、每 100 行写 `ObjectStorePort` JSON 分片并生成 SHA-256/manifest，每日北京时间 03:00 创建任务，保留 7 份 daily 和 3 份 monthly 已完成备份。它不是跨表一致快照；正式迁移前必须停写、串行备份并完成隔离恢复对账。manifest 仅含附件 key，不含附件本体或内容 hash，正式恢复需另备附件并核对。当前 production provider 为 Notion，应用删除通过归档索引页实现逻辑删除；Notion API 当前不能物理撤销已上传 FileUpload，因此保留策略对 Notion 只能保证应用不可见，不能宣称底层字节已删除。R2/Filesystem 则可实现物理删除。详见 [PRODUCTION_RUNBOOK.md](PRODUCTION_RUNBOOK.md)。
 
 ## 11. Cloudflare 性能与运行边界
 

@@ -19,6 +19,6 @@ try {
   console.log(JSON.stringify(result, null, 2));
 } catch {
   // Parser errors can contain credential values or business rows: never print raw exceptions.
-  console.error('P7 check failed: unreadable/invalid input or arguments. Usage: config <JSON> | acceptance <JSON> | inputs <files...> | backup <manifest.json> <object-root>');
+  console.error('Production check failed: unreadable/invalid input or arguments. Usage: config <JSON> | acceptance <JSON> | inputs <files...> | backup <manifest.json> <object-root>');
   process.exitCode = 1;
 }

@@ -12,7 +12,7 @@
 - 当前任务：本轮代码与技术债收口完成；保持分支 clean，等待后续是否继续做纯结构拆分或另行设计 production schema 迁移。
 - 禁止 `reset/clean`，不要覆盖当前工作区；未经用户明确授权，不合并 `main`、不执行 production migration/reconciliation、不触发 Production release。
 
-长期业务事实只看 `BUSINESS_BASELINE.md`、`DESIGN.md`、`DATA_MODEL.md`；测试门禁看 `TESTING.md`；生产步骤看 `P7_RUNBOOK.md`。已完成阶段过程通过 Git 历史追溯，不再维护重复 WIP 文档。
+长期业务事实只看 `BUSINESS_BASELINE.md`、`DESIGN.md`、`DATA_MODEL.md`；测试门禁看 `TESTING.md`；生产步骤看 `PRODUCTION_RUNBOOK.md`。已完成阶段过程通过 Git 历史追溯，不再维护重复 WIP 文档。
 
 ## 本轮已完成但尚待完整门禁/提交的改动
 
@@ -58,7 +58,7 @@ line_tower_positions
 
 - 旧 `ops/production/master-data-schema-reconcile.sql` 已删除；它只能重建旧 `transmission_towers` 模型，继续保留存在误用风险。
 - 对应 `tests/schema-reconcile.test.mjs` 已删除。
-- `P7_RUNBOOK.md` 已改为 fail-closed：当前开发基线一旦和既有生产 D1 不一致，必须先单独设计并审核显式生产迁移；不得把改写后的同名 `0001` 或已删除的一次性 reconcile 脚本直接用于生产。
+- `PRODUCTION_RUNBOOK.md` 已改为 fail-closed：当前开发基线一旦和既有生产 D1 不一致，必须先单独设计并审核显式生产迁移；不得把改写后的同名 `0001` 或已删除的一次性 reconcile 脚本直接用于生产。
 - 已完成阶段性的 `MASTER_DATA_REDESIGN_PLAN.md` 已删除，内容并入三份长期业务/数据模型文档和本轮审计文档。
 - 备份表集合已加入自定义字段定义、版本集合、业务值和两类索引；P6 恢复夹具已开始同步新模型。
 
@@ -98,7 +98,7 @@ line_tower_positions
 
 ## 接下来执行顺序
 
-1. 若继续代码债重构，下一批只做无行为变化的 `p9.ts` / `MasterDataView.vue` / shared 类型模块拆分，不与当前 schema 改动混在同一提交。
+1. 后端阶段编号模块已退出生产源码；后续结构性清债继续围绕 `transmission-grid.ts`、`MasterDataView.vue` 和 shared 类型拆分，保持业务行为不变。
 2. 不合并 `main`、不发布生产，除非用户随后明确授权；生产 schema 迁移必须单独设计和审核。
 
 ## 必须继续保持的工程约束

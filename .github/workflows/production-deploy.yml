@@ -55,7 +55,7 @@ jobs:
 
       - run: npm ci
       - run: npm run check
-      - run: npm run p7 -- config apps/api/wrangler.production.jsonc
+      - run: npm run production:check -- config apps/api/wrangler.production.jsonc
 
       - name: Materialize ephemeral Worker secrets
         env:

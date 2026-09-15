@@ -4,7 +4,7 @@ import { existsSync, readFileSync, mkdtempSync, writeFileSync, mkdirSync, rmSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
-import { validateConfig, validateAcceptance, verifyBackup, inspectInputs } from '../scripts/p7/lib.mjs';
+import { validateConfig, validateAcceptance, verifyBackup, inspectInputs } from '../scripts/production/lib.mjs';
 
 const productionConfig = () => JSON.parse(readFileSync(new URL('../apps/api/wrangler.production.jsonc', import.meta.url)));
 function config() {
@@ -75,7 +75,7 @@ test('production config accepts either Notion or R2 storage but rejects mixed pr
   assert.ok(validateConfig(mixed).length > 0);
 });
 test('acceptance requires all 13 unique items and actual evidence; pending is not complete', () => {
-  const record = JSON.parse(readFileSync(new URL('../docs/templates/p7-evidence.example.json', import.meta.url)));
+  const record = JSON.parse(readFileSync(new URL('../docs/templates/production-evidence.example.json', import.meta.url)));
   assert.equal(validateAcceptance(record).complete, false);
   assert.deepEqual(validateAcceptance(record).errors, []);
   record.items[0].status = 'passed';
@@ -90,7 +90,7 @@ test('acceptance requires all 13 unique items and actual evidence; pending is no
   assert.ok(validateAcceptance(record).errors.length > 0);
 });
 test('backup checks bytes, row counts, contiguous indices, attachment presence and unsafe keys', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'tpm-p7-'));
+  const directory = mkdtempSync(join(tmpdir(), 'tpm-production-'));
   try {
     const bytes = JSON.stringify({ table: 'members', rows: [{ id: 'synthetic' }] });
     mkdirSync(join(directory, 'backups')); writeFileSync(join(directory, 'backups/chunk.json'), bytes);
@@ -110,7 +110,7 @@ test('backup checks bytes, row counts, contiguous indices, attachment presence a
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });
 test('input inventory hashes files without returning original data and flags old XLS', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'tpm-p7-input-'));
+  const directory = mkdtempSync(join(tmpdir(), 'tpm-production-input-'));
   try {
     writeFileSync(join(directory, 'demand.csv'), 'private business data');
     writeFileSync(join(directory, 'old.xls'), 'legacy');

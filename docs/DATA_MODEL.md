@@ -256,7 +256,7 @@ POST /api/backups/:id/step
 POST /api/backups/:id/verify
 ```
 
-`/api/health` 当前仍返回 `stage: "p6"`，表示 P6 分析/提醒/备份能力层级，不代表继续采用旧 P5 数据模型。业务接口先验证系统自身会话 Cookie，再根据 D1 成员启用状态、角色和范围授权；不解析 Cloudflare Access JWT，也不信任任何请求头 username/email/role。最终业务链中，需求/储备/项目级出库由 `admin/project_manager` 管理；执行任务与实施/供应由 `admin/project_manager/implementation` 操作；任务结算由 `admin/project_manager/finance` 操作。P4 框架/协议/预算/资金流水权限维持原边界。附件及所有业务读取仍按 `all/framework/project` scope 服务端过滤。未知 `/api` 路径返回 JSON 404，不回退到前端 HTML。旧 `/api/projects` allocation、`/api/release-batches`、旧 implementation/settlement 接口仍为历史兼容面，不作为新 UI 或最终业务主路径。
+`/api/health` 只返回服务标识与 schema readiness，不把内部实施阶段编号暴露为生产合同。业务接口先验证系统自身会话 Cookie，再根据 D1 成员启用状态、角色和范围授权；不解析 Cloudflare Access JWT，也不信任任何请求头 username/email/role。最终业务链中，需求/储备/项目级出库由 `admin/project_manager` 管理；执行任务与实施/供应由 `admin/project_manager/implementation` 操作；任务结算由 `admin/project_manager/finance` 操作。框架/协议/预算/资金流水沿用既有权限边界。附件及所有业务读取仍按 `all/framework/project` scope 服务端过滤。未知 `/api` 路径返回 JSON 404，不回退到前端 HTML。旧 `/api/projects` allocation、`/api/release-batches`、旧 implementation/settlement 接口仍为历史兼容面，不作为新 UI 或最终业务主路径。
 
 P7 不新增另一套核心接口族；需求数据主路径使用系统生成的标准模板填报并回导，真实业务值用于抽样核对，不要求通过任意历史 Excel 反推字段结构。其余重点是用真实 Cloudflare/D1/当前对象存储/邮件资源和目标地区网络对上述合同做端到端验收，必要改动仍需保持现有不变量与版本/幂等约束。
 

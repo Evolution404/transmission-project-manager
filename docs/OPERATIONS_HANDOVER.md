@@ -54,7 +54,7 @@
 
 ## 7. P7 交接补充核对
 
-- [ ] 使用 [P7_RUNBOOK.md](P7_RUNBOOK.md) 和私有发布记录，写清当前 commit、schema lock、Worker version、资源归属及具体操作者。
+- [ ] 使用 [PRODUCTION_RUNBOOK.md](PRODUCTION_RUNBOOK.md) 和私有发布记录，写清当前 commit、schema lock、Worker version、资源归属及具体操作者。
 - [ ] 核实生产 Environment 的真实分支/审批保护能力；不能以 YAML 声明替代真实权限检查。未启用部署模板前确认 main 普通 push 仅验证。
 - [ ] Secret 交接只记录名称与受控托管位置；pepper 单独安全备份，明确它与已有 verifier 的依赖，不能当普通 CI token 无损轮换。
 - [ ] 首次 bootstrap 关闭并移除一次性 Token；确认第二管理员和紧急应用账号恢复路径。

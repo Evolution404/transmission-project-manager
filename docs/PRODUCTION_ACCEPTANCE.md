@@ -1,32 +1,32 @@
-# P7 真实数据与正式环境验收
+# 生产真实数据与正式环境验收
 
 版本：2026-09-14。
 
-P7 不新增另一套核心业务模型，目标是用真实业务资料、真实 Cloudflare 资源/配置、真实通知链路、真实恢复和目标地区网络证明当前系统可以正式使用、恢复和移交。
+生产验收不新增另一套核心业务模型，目标是用真实业务资料、真实 Cloudflare 资源/配置、真实通知链路、真实恢复和目标地区网络证明当前系统可以正式使用、恢复和移交。
 
-## 1. P7 入口基线
+## 1. 生产验收入口基线
 
 截至 2026-09-14，后端可移植化和云端生产 workflow 均已合入 `main@bc4774767c159068d59e16d6726444c5c1525dd6`，合并后 [CI #37](https://github.com/Evolution404/transmission-project-manager/actions/runs/34811093528) 完整门禁 PASS。此代码基线不构成生产验收通过。
 
-GitHub `production` Environment 已创建且只允许 `main` 受控发布。正式 Worker `transmission-project-manager`、自定义域名 `project.980923.xyz`、独立 production D1 和 Notion 对象存储已经完成发布与线上健康验收；基础台账后续 schema reconciliation 也已完成，首管理员已创建，一次性 `BOOTSTRAP_TOKEN` 已删除。P7-01～13 的逐项验收仍必须以实际证据判定，不能因“生产已可用”自动全部标记完成；最新状态以 `AI_HANDOFF.md` 和实际 GitHub/Cloudflare 证据为准。
+GitHub `production` Environment 已创建且只允许 `main` 受控发布。正式 Worker `transmission-project-manager`、自定义域名 `project.980923.xyz`、独立 production D1 和 Notion 对象存储已经完成发布与线上健康验收；基础台账后续 schema reconciliation 也已完成，首管理员已创建，一次性 `BOOTSTRAP_TOKEN` 已删除。`PROD-01`～`PROD-13` 的逐项验收仍必须以实际证据判定，不能因“生产已可用”自动全部标记完成；最新状态以 `AI_HANDOFF.md` 和实际 GitHub/Cloudflare 证据为准。
 
 ## 2. 验收矩阵
 
 | 编号 | 领域 | 验收内容 | 完成标准 |
 |---|---|---|---|
-| P7-01 | 标准需求模板、基础台账与真实需求 | 用真实电压等级/线路/杆塔清单维护基础台账；下载标准 `.xlsx` 模板，用代表性真实业务值填报并回导；核对位置解析、来源行、0..N 物资、疑似重复和错误阻断 | 台账对照 + 模板版本/哈希 + 业务抽检表 + 源行反查；未知台账对象必须阻断而非自动创建 |
-| P7-02 | 一年工作早知道 | 按真实资料核对年度事项，验证 `month/day/unknown` 日期精度和提醒 | 事项抽检表 + 提醒结果；没有日期不得补造 |
-| P7-03 | 储备类别 | 按真实分类规则维护需求类别→储备大类映射，核对当前项目物资分类、缺价和金额守恒 | 映射对照 + 分类金额对账 |
-| P7-04 | 项目与资金 | 使用真实框架、协议、预算、预算发生、实际费用、任务结算核对归属、版本、阈值和逐笔对账 | 框架/协议/项目/流水对账表 |
-| P7-05 | 项目储备与任务执行 | 使用真实项目核对需求来源与项目物资分离、项目级一次出库、多任务、供应/实施/结算三线和四状态 | 项目逐项抽检 + 项目物资修订记录 + 任务状态/数量对照 |
-| P7-06 | Cloudflare 资源、对象存储与 schema | 读取并确认正式 Worker、独立 D1、Static Assets、Cron、自定义域名与当前对象存储 provider；Notion 模式确认专用 Data Source/Integration 权限，R2 模式才核对 bucket；确认正式 D1 migration 与代码要求一致 | 资源清单 + 非敏感配置 + `/api/health` + migration 记录 |
-| P7-07 | Secret / bootstrap / 会话 | 核对 `AUTH_CREDENTIAL_PEPPER`、bootstrap 状态、Secure Cookie、账号停用/改密失效 | 只记录 Secret 名称/状态，不记录值；登录与会话验收记录 |
-| P7-08 | 真实 CPU / 配额 / 性能 | 在正式部署上测 Worker CPU、D1 read/write、对象存储调用/用量、错误率和常用页面耗时；Notion 模式观察 429/5xx | Cloudflare/对象存储指标 + 测试记录；不得用本地 wall time 冒充 Worker CPU |
-| P7-09 | 正式通知 | 配置真实通知 provider/域名/收件方式，验证 sent/failed/unknown/retry | 测试消息、outbox 和 provider 对账 |
-| P7-10 | 目标地区网络 | 在真实用户网络验证登录、首页、基础台账、需求列表、附件和通知 | 时间/网络/设备/操作/耗时/错误记录 |
-| P7-11 | 正式备份恢复 | 可靠停写后备份正式 D1 + 当前对象存储，在隔离环境恢复并对账 | manifest + 对账表 + 恢复记录；不恢复 auth_sessions |
-| P7-12 | 发布与回退 | 使用受保护发布环境/服务身份执行 migration、部署和代码/配置回退演练 | 发布记录 + migration 记录 + 回退记录 |
-| P7-13 | 运维移交与 CI/CD | 受托维护人使用自己的 Cloudflare/GitHub 身份，CI 使用专用服务身份；轮换 Token、撤销旧维护人后仍可运维 | 移交检查表 + 发布/迁移/回退演练记录 |
+| PROD-01 | 标准需求模板、基础台账与真实需求 | 用真实电压等级/线路/杆塔清单维护基础台账；下载标准 `.xlsx` 模板，用代表性真实业务值填报并回导；核对位置解析、来源行、0..N 物资、疑似重复和错误阻断 | 台账对照 + 模板版本/哈希 + 业务抽检表 + 源行反查；未知台账对象必须阻断而非自动创建 |
+| PROD-02 | 一年工作早知道 | 按真实资料核对年度事项，验证 `month/day/unknown` 日期精度和提醒 | 事项抽检表 + 提醒结果；没有日期不得补造 |
+| PROD-03 | 储备类别 | 按真实分类规则维护需求类别→储备大类映射，核对当前项目物资分类、缺价和金额守恒 | 映射对照 + 分类金额对账 |
+| PROD-04 | 项目与资金 | 使用真实框架、协议、预算、预算发生、实际费用、任务结算核对归属、版本、阈值和逐笔对账 | 框架/协议/项目/流水对账表 |
+| PROD-05 | 项目储备与任务执行 | 使用真实项目核对需求来源与项目物资分离、项目级一次出库、多任务、供应/实施/结算三线和四状态 | 项目逐项抽检 + 项目物资修订记录 + 任务状态/数量对照 |
+| PROD-06 | Cloudflare 资源、对象存储与 schema | 读取并确认正式 Worker、独立 D1、Static Assets、Cron、自定义域名与当前对象存储 provider；Notion 模式确认专用 Data Source/Integration 权限，R2 模式才核对 bucket；确认正式 D1 migration 与代码要求一致 | 资源清单 + 非敏感配置 + `/api/health` + migration 记录 |
+| PROD-07 | Secret / bootstrap / 会话 | 核对 `AUTH_CREDENTIAL_PEPPER`、bootstrap 状态、Secure Cookie、账号停用/改密失效 | 只记录 Secret 名称/状态，不记录值；登录与会话验收记录 |
+| PROD-08 | 真实 CPU / 配额 / 性能 | 在正式部署上测 Worker CPU、D1 read/write、对象存储调用/用量、错误率和常用页面耗时；Notion 模式观察 429/5xx | Cloudflare/对象存储指标 + 测试记录；不得用本地 wall time 冒充 Worker CPU |
+| PROD-09 | 正式通知 | 配置真实通知 provider/域名/收件方式，验证 sent/failed/unknown/retry | 测试消息、outbox 和 provider 对账 |
+| PROD-10 | 目标地区网络 | 在真实用户网络验证登录、首页、基础台账、需求列表、附件和通知 | 时间/网络/设备/操作/耗时/错误记录 |
+| PROD-11 | 正式备份恢复 | 可靠停写后备份正式 D1 + 当前对象存储，在隔离环境恢复并对账 | manifest + 对账表 + 恢复记录；不恢复 auth_sessions |
+| PROD-12 | 发布与回退 | 使用受保护发布环境/服务身份执行 migration、部署和代码/配置回退演练 | 发布记录 + migration 记录 + 回退记录 |
+| PROD-13 | 运维移交与 CI/CD | 受托维护人使用自己的 Cloudflare/GitHub 身份，CI 使用专用服务身份；轮换 Token、撤销旧维护人后仍可运维 | 移交检查表 + 发布/迁移/回退演练记录 |
 
 所有项目初始状态均视为“待真实证据确认”。若旧记录存在，也必须核对其是否仍对应当前代码、资源和日期后才能标记完成。
 
@@ -103,4 +103,4 @@ Secret 值、Global API Key、长期个人 Token 不得写入验收文档。
 
 ## 8. 完成判定
 
-P7 只有在上述 13 项均有真实、当前、可复核证据后才能标记完成。JSON 结构检查、自动测试、截图模板或旧部署记录本身都不能替代真实验收。
+生产验收只有在上述 13 项均有真实、当前、可复核证据后才能标记完成。JSON 结构检查、自动测试、截图模板或旧部署记录本身都不能替代真实验收。

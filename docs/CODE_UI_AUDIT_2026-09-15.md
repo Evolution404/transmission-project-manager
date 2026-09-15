@@ -110,7 +110,7 @@
 
 两项均先补行为测试再修改实现；`MasterDataView.test.ts` 当前 **14/14 PASS**，Web typecheck 与 `git diff --check` PASS。`f60e64e` 对应 PR #12 GitHub CI run `34935199606` 已完整 PASS，PR 仍为 OPEN，未合并、未发布。
 
-本阶段没有立即机械拆 `MasterDataView.vue` / `p9.ts`，而是先把“物理杆塔”与“线路上的杆塔位置/编号”边界定稿。该边界已经在第三阶段落地，后续可以在不改变模型的前提下继续按领域拆文件。
+本阶段没有在领域边界未定时机械拆 `MasterDataView.vue` / API 路由，而是先把“物理杆塔”与“线路上的杆塔位置/编号”边界定稿。该边界已经落地，后端路由随后按业务语义完成模块化拆分。
 
 ## 6. 第三阶段：模型收口与技术债清理
 
@@ -137,7 +137,7 @@
 ## 7. 继续保留的技术债
 
 - `packages/shared/src/index.ts` 继续按领域拆模块，减少 1300+ 行入口文件。
-- `p9.ts` 当前约 1200+ 行，后续按 master-data config / physical-tower / line-position / demand-location 拆 route module；拆分必须是无行为变化的独立 commit。
+- 原单体基础台账路由已拆为 `transmission-grid.ts`、`master-data-config.ts`、`physical-towers.ts`、`structured-demand.ts`，并抽出 HTTP 幂等/输入辅助和杆塔排序领域逻辑；禁止恢复阶段编号模块名。
 - `MasterDataView.vue` 当前约 1100+ 行，后续按线路列表、配置管理、物理杆塔/线路节点编辑、顺序编辑器、导入弹窗及 composable 拆分；不与 schema 或业务规则修改混在同一提交。
 - 常规“移动一基杆塔”后续可评估直接调用专用 `/move`，避免为了简单移动总是加载并提交完整线路顺序；完整清单重排和导入仍保留全量稳定 ID 合同。
 - 线路列表在数据规模扩大后评估虚拟滚动；当前优先保证分页筛选语义正确。

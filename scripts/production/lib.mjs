@@ -66,14 +66,15 @@ export function validateConfig(c) {
 
 export function validateAcceptance(record) {
   const errors = [], pending = [];
-  const ids = Array.from({ length: 13 }, (_, i) => `P7-${String(i + 1).padStart(2, '0')}`);
+  const ids = Array.from({ length: 13 }, (_, i) => `PROD-${String(i + 1).padStart(2, '0')}`);
   if (!object(record) || record.version !== 1 || !Array.isArray(record.items)) return { errors: ['Invalid evidence record'], pending: ids, complete: false };
-  if (!same(record.items.map(i => i?.id).sort(), ids)) errors.push('Exactly 13 distinct P7 IDs required');
+  if (!same(record.items.map(i => i?.id).sort(), ids)) errors.push('Exactly 13 distinct production acceptance IDs required');
   for (const item of record.items) {
     if (!object(item) || !ids.includes(item.id)) { errors.push('Unknown acceptance item'); continue; }
     if (!['blocked', 'pending', 'failed', 'passed'].includes(item.status)) errors.push(`${item.id}: invalid status`);
     if (item.status !== 'passed') { pending.push(item.id); continue; }
-    const expectedEnvironment = Number(item.id.slice(3)) <= 5 ? 'real-data' : 'production';
+    const acceptanceNumber = Number(item.id.slice('PROD-'.length));
+    const expectedEnvironment = acceptanceNumber <= 5 ? 'real-data' : 'production';
     if (item.environment !== expectedEnvironment || !nonempty(item.reviewer) || !nonempty(item.observedAt) || !Number.isFinite(Date.parse(item.observedAt))) errors.push(`${item.id}: real environment, reviewer and timestamp required`);
     if (!Array.isArray(item.evidence) || !item.evidence.length || item.evidence.some(e => !object(e) || !nonempty(e.reference) || !shaPattern.test(e.sha256))) errors.push(`${item.id}: evidence references and SHA-256 required`);
   }
@@ -96,7 +97,7 @@ export async function inspectInputs(paths) {
 
 export async function verifyBackup(manifest, directory) {
   const errors = [], rowsByTable = {}, seenKeys = new Set(), indices = new Map();
-  if (!object(manifest) || manifest.version !== 1 || !nonempty(manifest.backupId) || !Array.isArray(manifest.chunks) || !Array.isArray(manifest.attachmentKeys)) return { errors: ['Invalid P6 manifest'], rowsByTable, restored: false };
+  if (!object(manifest) || manifest.version !== 1 || !nonempty(manifest.backupId) || !Array.isArray(manifest.chunks) || !Array.isArray(manifest.attachmentKeys)) return { errors: ['Invalid backup manifest'], rowsByTable, restored: false };
   const root = await realpath(directory);
   async function safePath(key) {
     if (!nonempty(key) || key.startsWith('/') || key.includes('\\') || key.split('/').some(p => !p || p === '.' || p === '..')) throw new Error('unsafe key');

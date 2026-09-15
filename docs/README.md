@@ -17,8 +17,8 @@
 
 - `DEPLOYMENT.md`：Cloudflare、本地运行、构建和部署边界。
 - `OPERATIONS_HANDOVER.md`：业务管理员、技术运维、CI/CD 和资产所有者的责任分层。
-- `P7_ACCEPTANCE.md`：真实业务数据和正式环境验收矩阵。
-- `P7_RUNBOOK.md`：P7 预检、发布、恢复和回退操作手册。
+- `PRODUCTION_ACCEPTANCE.md`：真实业务数据和正式环境验收矩阵。
+- `PRODUCTION_RUNBOOK.md`：生产预检、发布、恢复和回退操作手册。
 
 ## 文档维护规则
 

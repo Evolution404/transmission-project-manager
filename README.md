@@ -11,7 +11,7 @@
 2. 当前代码交接只使用 [AI 交接说明](docs/AI_HANDOFF.md)，避免维护多份容易漂移的 handoff。
 3. 业务事实以 [当前业务基线](docs/BUSINESS_BASELINE.md)、[设计方案](docs/DESIGN.md)、[数据模型](docs/DATA_MODEL.md) 为准。
 4. 开发前阅读 [测试策略](docs/TESTING.md)：所有新阶段和缺陷修复必须先写验收/回归测试，再改生产代码。
-5. 正式环境按 [P7 验收矩阵](docs/P7_ACCEPTANCE.md) 和 [预检/发布/恢复手册](docs/P7_RUNBOOK.md) 执行；不可用合成数据代替真实验收。
+5. 正式环境按 [生产验收矩阵](docs/PRODUCTION_ACCEPTANCE.md) 和 [预检/发布/恢复手册](docs/PRODUCTION_RUNBOOK.md) 执行；不可用合成数据代替真实验收。
 
 ## 本地运行
 
@@ -35,7 +35,7 @@ npm run check
 
 该命令是统一质量门禁：运行生产代码和测试代码 TypeScript 检查、前端构建、Worker **dry-run** 打包、当前开发迁移基线检查、真实本地 workerd + D1 集成测试、production 认证、会话/权限/并发/原子性，以及 Vue 行为合同测试。Node 测试均使用独立临时 D1，不污染日常本地库。详细规则见 `docs/TESTING.md`。
 
-`npm run build` 不会发布网站。`npm run p7:preflight` 运行离线配置/验收工具守卫。普通 push 只测试；手工 production preflight 只校验非 Secret 配置并 dry-run，实际部署模板默认不启用，当前没有生产凭据。
+`npm run build` 不会发布网站。`npm run production:preflight` 运行离线配置/验收工具守卫。普通 push 只测试；手工 production preflight 只校验非 Secret 配置并 dry-run，实际部署模板默认不启用，当前没有生产凭据。
 
 ## 目录
 
