@@ -6,10 +6,10 @@
 默认分支：`main`
 当前施工状态：基础台账第二轮重构已合入并上线；当前主线是 2026-09-15 代码质量与操作界面加固。
 当前施工分支：`refactor/master-data-ux-hardening-20260915`。
-当前加固代码 HEAD：`c7e5b23e9ccb15a906b8ab08ac2df6bc2762829a`。
+当前加固代码 HEAD：`f60e64e40161aea702ad5ea063bfe57499541f8c`。
 最近一次正式发布代码 SHA：`5f1eb178557b1f2e0b998a1b2ce5c09b867cf7f8`。
 
-2026-09-15 当前加固已完成：服务端线路状态筛选、线路杆塔数聚合查询、删除旧 `/towers/batch`、共享 Web API client、线路/杆塔操作区收敛、移动端上移/下移、同号排序目标辨识、手机杆塔卡片清单、删除后的 `towerCount/towerOrderVersion` 精确同步、首次加载失败重试和杆塔独立 loading。`c7e5b23` 对应 PR #12 的 GitHub CI run `34933984417` 已完整 PASS；PR 当前仍为 OPEN，尚未合并。此前本地完整 `npm run check`：Node **264/264 PASS**、Web **111/111 PASS（19 文件）**，TypeScript、Web build、Worker dry-run、Node+SQLite+Filesystem 均 PASS。详细问题和后续候选见 `CODE_UI_AUDIT_2026-09-15.md`。
+2026-09-15 当前加固已完成：服务端线路状态筛选、线路杆塔数聚合查询、删除旧 `/towers/batch`、共享 Web API client、线路/杆塔操作区收敛、移动端上移/下移、同号排序目标辨识、手机杆塔卡片清单、删除后的 `towerCount/towerOrderVersion` 精确同步、首次加载失败重试和杆塔独立 loading。后续小改又补齐基础台账危险删除二次确认和更名历史 `Asia/Shanghai` 业务时间显示，提交分别为 `2783742`、`f60e64e`；`MasterDataView.test.ts` **14/14 PASS**。`f60e64e` 对应 PR #12 GitHub CI run `34935199606` 已完整 PASS；PR 当前仍为 OPEN，尚未合并或发布。此前完整 `npm run check` 基线：Node **264/264 PASS**、Web **111/111 PASS（19 文件）**，TypeScript、Web build、Worker dry-run、Node+SQLite+Filesystem 均 PASS。详细问题和后续候选见 `CODE_UI_AUDIT_2026-09-15.md`。
 
 生产已完成上一轮基础台账 schema reconciliation 和正式发布；`BOOTSTRAP_TOKEN` 已删除，长期 Worker Secret 只保留 `AUTH_CREDENTIAL_PEPPER`、`NOTION_API_TOKEN`。本加固分支尚未合入/发布，禁止把“本地全绿”写成“已上线”。
 

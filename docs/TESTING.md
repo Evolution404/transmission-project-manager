@@ -40,7 +40,7 @@ npm run check
 - Vue/Vitest：**111/111 PASS（19 个测试文件）**；
 - Node：**264/264 PASS**。
 
-本轮在既有基础台账业务门禁上新增/强化：服务端状态筛选后分页、废弃技术 batch 接口 404、统一 Web API client、移动端上移/下移、同号排序目标可辨识、手机杆塔卡片清单、删除后 `towerCount/towerOrderVersion` 本地同步，以及首次加载失败的可见重试恢复。PR #12 在 `c7e5b23e9ccb15a906b8ab08ac2df6bc2762829a` 上的 GitHub CI run `34933984417` 已完整 PASS；PR 尚未合并或发布。
+本轮在既有基础台账业务门禁上新增/强化：服务端状态筛选后分页、废弃技术 batch 接口 404、统一 Web API client、移动端上移/下移、同号排序目标可辨识、手机杆塔卡片清单、删除后 `towerCount/towerOrderVersion` 本地同步、首次加载失败的可见重试恢复，以及危险删除确认前不得发 DELETE、历史 UTC 时间按 `Asia/Shanghai` 转换。`MasterDataView.test.ts` 当前 **14/14 PASS**。PR #12 在 `f60e64e40161aea702ad5ea063bfe57499541f8c` 上的 GitHub CI run `34935199606` 已完整 PASS；PR 尚未合并或发布。
 
 ## 3. 迁移与仓库守卫
 
