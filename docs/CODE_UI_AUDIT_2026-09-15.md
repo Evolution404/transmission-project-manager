@@ -99,6 +99,8 @@
 - Worker `wrangler deploy --dry-run`：PASS；
 - Node + SQLite + Filesystem 第二运行时：PASS。
 
+随后追加手机杆塔卡片清单提交 `c7e5b23`；PR #12 GitHub CI run `34933984417` 已在该 HEAD 完整 PASS。PR #12 当前仍为 OPEN，尚未合并或发布。
+
 ## 5. 后续候选，不在本批强行完成
 
 - `packages/shared/src/index.ts` 继续按领域拆模块，减少 1300+ 行入口文件。

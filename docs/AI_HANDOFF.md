@@ -6,10 +6,10 @@
 默认分支：`main`
 当前施工状态：基础台账第二轮重构已合入并上线；当前主线是 2026-09-15 代码质量与操作界面加固。
 当前施工分支：`refactor/master-data-ux-hardening-20260915`。
-当前加固代码 HEAD：`4d0d5eb`（其后仅允许追加已验证小提交）。
+当前加固代码 HEAD：`c7e5b23e9ccb15a906b8ab08ac2df6bc2762829a`。
 最近一次正式发布代码 SHA：`5f1eb178557b1f2e0b998a1b2ce5c09b867cf7f8`。
 
-2026-09-15 当前加固已完成并本地全绿：服务端线路状态筛选、线路杆塔数聚合查询、删除旧 `/towers/batch`、共享 Web API client、线路/杆塔操作区收敛、移动端上移/下移、同号排序目标辨识、手机杆塔卡片清单、删除后的 `towerCount/towerOrderVersion` 精确同步、首次加载失败重试和杆塔独立 loading。完整 `npm run check`：Node **264/264 PASS**、Web **111/111 PASS（19 文件）**，TypeScript、Web build、Worker dry-run、Node+SQLite+Filesystem 均 PASS。详细问题和后续候选见 `CODE_UI_AUDIT_2026-09-15.md`。
+2026-09-15 当前加固已完成：服务端线路状态筛选、线路杆塔数聚合查询、删除旧 `/towers/batch`、共享 Web API client、线路/杆塔操作区收敛、移动端上移/下移、同号排序目标辨识、手机杆塔卡片清单、删除后的 `towerCount/towerOrderVersion` 精确同步、首次加载失败重试和杆塔独立 loading。`c7e5b23` 对应 PR #12 的 GitHub CI run `34933984417` 已完整 PASS；PR 当前仍为 OPEN，尚未合并。此前本地完整 `npm run check`：Node **264/264 PASS**、Web **111/111 PASS（19 文件）**，TypeScript、Web build、Worker dry-run、Node+SQLite+Filesystem 均 PASS。详细问题和后续候选见 `CODE_UI_AUDIT_2026-09-15.md`。
 
 生产已完成上一轮基础台账 schema reconciliation 和正式发布；`BOOTSTRAP_TOKEN` 已删除，长期 Worker Secret 只保留 `AUTH_CREDENTIAL_PEPPER`、`NOTION_API_TOKEN`。本加固分支尚未合入/发布，禁止把“本地全绿”写成“已上线”。
 
@@ -161,7 +161,7 @@ main CI run `34844921647` PASS。
 
 ## 下一步
 
-1. 当前加固分支完成文档收口后提交/push，创建 PR 并由 GitHub CI 复现完整 `npm run check`；在 CI 全绿前不得合并。
+1. 当前加固 PR #12 已创建，并在 `c7e5b23` 上通过 GitHub CI（run `34933984417`）。不要重复施工；下一位 AI 先核对 PR、分支和工作区状态，再根据用户授权决定是否合并。未经明确授权不要合并 `main`、不要发布生产。
 2. 本轮没有 schema 变化，不需要新的 production reconciliation/migration。继续保持唯一 `0001_initial_schema.sql` 开发策略，禁止无明确兼容需求的 `0002+`。
 3. 后续结构优化优先级：拆分 `MasterDataView.vue` 稳定业务边界；再评估 `p9.ts` master-data / demand-location 路由拆分和 `packages/shared/src/index.ts` 领域拆分。不要一次做巨型重构。
 4. UI 后续候选：危险删除二次确认、历史时间按 `Asia/Shanghai` 业务格式展示、超大线路的常规单塔移动改为更轻量的专用 move 流程。

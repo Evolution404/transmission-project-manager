@@ -32,7 +32,7 @@ npm run check
 - 全部 `tests/*.test.mjs` Node/workerd+D1 测试；
 - 全部 `apps/web/tests/*.test.ts` Vue/Vitest 行为测试。
 
-`refactor/master-data-ux-hardening-20260915` 最近一次完整 `npm run check`（2026-09-15，基础台账代码/UI 审查第一阶段收口）：
+`refactor/master-data-ux-hardening-20260915` 最近一次完整门禁（2026-09-15，基础台账代码/UI 审查第一阶段收口）：
 
 - TypeScript（Cloudflare + Node）：PASS；
 - Web production build：PASS；
@@ -40,7 +40,7 @@ npm run check
 - Vue/Vitest：**111/111 PASS（19 个测试文件）**；
 - Node：**264/264 PASS**。
 
-本轮在既有基础台账业务门禁上新增/强化：服务端状态筛选后分页、废弃技术 batch 接口 404、统一 Web API client、移动端上移/下移、同号排序目标可辨识、删除后 `towerCount/towerOrderVersion` 本地同步，以及首次加载失败的可见重试恢复。完整 `npm run check` 仍属于本地门禁；合入前仍要求 GitHub CI 复现。
+本轮在既有基础台账业务门禁上新增/强化：服务端状态筛选后分页、废弃技术 batch 接口 404、统一 Web API client、移动端上移/下移、同号排序目标可辨识、手机杆塔卡片清单、删除后 `towerCount/towerOrderVersion` 本地同步，以及首次加载失败的可见重试恢复。PR #12 在 `c7e5b23e9ccb15a906b8ab08ac2df6bc2762829a` 上的 GitHub CI run `34933984417` 已完整 PASS；PR 尚未合并或发布。
 
 ## 3. 迁移与仓库守卫
 
