@@ -1,6 +1,6 @@
 # 数据关系与接口约定
 
-这是一份实现约定。长期业务事实见 `BUSINESS_BASELINE.md`。当前模型先以 `voltage_levels → transmission_lines → transmission_towers` 形成统一基础台账，再由 `demands` 保存结构化位置引用；需求本体仍是纯抽象业务事项，可带 0..N 条需求物资子明细。项目储备通过 `project_demand_links` 记录需求来源，同时用独立的 `project_material_requirements` 维护项目当前物资；项目通过一次 `project_releases` 项目级出库进入执行阶段，随后拆分为 1..N 个 `project_tasks`，每个任务的物资供应、现场实施、结算三条线独立推进，并由任务事实回投需求四状态。旧 `demand_allocations`、`release_batches/release_lines`、旧 implementation/settlement 表仅保留历史兼容与旧数据备份，不再是最终业务主模型。使用 D1/SQLite，不依赖 PostgreSQL 专有语法。
+这是一份实现约定。长期业务事实见 `BUSINESS_BASELINE.md`。当前基础台账明确区分**物理设备身份**与**线路逻辑位置**：`voltage_levels → transmission_lines → line_tower_positions → physical_towers`。一基 `physical_tower` 可以同时承载 A线#001、B线#003 等多个 `line_tower_positions`，自然支持同塔双回、三回、四回及更多回路；需求位置引用稳定的线路杆塔节点，而不是直接引用物理塔。需求本体仍是纯抽象业务事项，可带 0..N 条需求物资子明细。项目储备通过 `project_demand_links` 记录需求来源，同时用独立的 `project_material_requirements` 维护项目当前物资；项目通过一次 `project_releases` 项目级出库进入执行阶段，随后拆分为 1..N 个 `project_tasks`，每个任务的物资供应、现场实施、结算三条线独立推进，并由任务事实回投需求四状态。旧 `demand_allocations`、`release_batches/release_lines`、旧 implementation/settlement 表仅保留历史兼容与旧数据备份，不再是最终业务主模型。使用 D1/SQLite，不依赖 PostgreSQL 专有语法。
 
 ## 1. 通用约定
 
@@ -23,11 +23,17 @@
 | voltage_levels | 电压等级编码、显示名、交流/直流制式、标称 kV、排序、启停、版本 | 统一电压对象；名称/编码唯一；被业务引用后制式/标称电压受保护 |
 | transmission_lines | 所属电压等级、当前线路名称/编码、名称有效期起点、启停、版本、`tower_order_version` | `VoltageLevel 1:N TransmissionLine`；稳定 `line_id` 才是身份；名称允许重名/复用/更名；被需求引用后不能换所属电压等级 |
 | transmission_line_name_history | 线路ID、历史名称、有效起止、修改人、原因 | 更名历史可多条、可与其他线路重名；用于旧名搜索和时间轴追溯 |
-| transmission_towers | 所属线路、规范化当前杆塔编号、编号有效期起点、独立 `sort_rank`、类型、启停、版本 | `TransmissionLine 1:N TransmissionTower`；稳定 `tower_id` 才是身份；编号允许重名/复用/更名；同线路当前 `sort_rank` 唯一 |
-| transmission_tower_no_history | 杆塔ID、当时所属线路、历史编号、有效起止、修改人、原因 | 旧编号可搜索、多对象可命中；更名不改变 `tower_id` 或既有业务引用 |
+| teams | 班组编码、名称、启停、版本 | 稳定配置对象；被物理杆塔等业务对象引用后不能硬删除，可停用 |
+| tower_types | 杆塔类型编码、名称、排序、启停、版本 | 稳定配置对象；杆塔类型属于物理塔，不属于某条线路编号 |
+| physical_towers | 物理资产编号、杆塔类型、运维班组、启停、版本 | 一条记录代表一基真实物理杆塔；可被 1..N 个线路杆塔节点引用；线路编号变化不改变物理塔身份 |
+| line_tower_positions | 所属线路、物理杆塔ID、规范化当前杆塔编号、编号有效期起点、`sort_rank`、同塔位置标识、启停、版本 | `TransmissionLine 1:N LineTowerPosition`、`PhysicalTower 1:N LineTowerPosition`；稳定 `position_id` 才是需求位置身份；同线路 `sort_rank` 唯一，编号允许重名/复用/更名 |
+| line_tower_position_no_history | 线路杆塔节点ID、当时所属线路、历史编号、有效起止、修改人、原因 | 旧编号可搜索、多对象可命中；更名不改变线路节点ID、物理塔ID或既有需求引用 |
+| custom_field_definitions | 所属对象类型、字段键、显示名、数据类型、必填/可筛选、选项、校验、排序、启停、版本 | 支持物理塔、线路、线路节点、需求、项目、执行任务；对象类型/字段键/数据类型创建后不可变，变更语义需新建字段并停用旧字段 |
+| custom_field_value_sets / custom_field_values | 对象级自定义字段集合版本、字段定义ID、JSON值 | 每个业务对象的自定义字段集合有独立乐观锁版本；新增用户字段不需要 `ALTER TABLE` |
+| custom_field_index / custom_field_multi_select_index | 可筛选标量值、多选选项倒排值 | 仅为 `filterable` 字段建立索引；业务真值仍来自 `custom_field_values` |
 | import_batches / import_rows | 文件哈希、工作表、映射版本、源行、原始JSON、错误、发布状态 | 批次分片幂等；未发布行不得计入正式报表 |
 | demand_categories / field_definitions | 需求类别、模板/扩展字段定义、字段类型、版本 | 当前需求成立必填核心为序号和结构化位置；物资是 0..N 子明细，不能因旧字段定义把物资重新变成需求成立前提 |
-| demands | 抽象业务事项：`source_type=import/manual`、业务年份、类别、负责人，以及 `voltage_level_id`、`line_id`、`location_type`、起止杆塔对象；同时保留对象生成的显示快照 | 需求无需物资即可成立；正式位置只能来自基础台账；同一业务事项可由多个 Excel 来源行共同形成 |
+| demands | 抽象业务事项：`source_type=import/manual`、业务年份、类别、负责人，以及 `voltage_level_id`、`line_id`、`location_type`、起止线路杆塔节点；同时保留对象生成的显示快照 | 需求无需物资即可成立；正式位置只能来自基础台账；同一业务事项可由多个 Excel 来源行共同形成 |
 | demand_source_rows | 需求ID、源 import_row、文件哈希、工作表、物理行、原始JSON | 多个来源行可归到同一个抽象需求；保留完整来源追溯 |
 | materials | 标准编码、名称、型号、单位 | 原始型号通过人工确认映射；单位不同时不能直接汇总 |
 | demand_materials | 需求ID、原始型号、标准物资ID、数量、单位、来源行、版本 | 一需求可有 0..N 条物资子明细；这些只是需求阶段已知信息，不构成项目物资上限 |
@@ -58,10 +64,12 @@
 ## 3. 基础台账与需求位置不变量
 
 - `transmission_lines.voltage_level_id` 必须指向存在的电压等级；启用新线路时父电压必须启用。
-- `transmission_towers.line_id` 必须指向存在的线路；启用新杆塔时线路和父电压都必须启用。
-- 正式需求的 `line_id` 必须属于 `voltage_level_id`；`whole_line` 起止为空，`tower` 起止相同，`tower_range` 起止不同且在创建/发布时满足 `start.sort_rank < end.sort_rank`。正式需求保存稳定 `line_id/start_tower_id/end_tower_id`，后续名称/编号/排序变化不能替换对象身份。
+- `line_tower_positions.line_id` 必须指向存在的线路，`physical_tower_id` 必须指向存在的物理杆塔；启用新线路节点时线路和父电压都必须启用。一个物理杆塔允许被不同线路的多个节点共同引用。
+- 正式需求的 `line_id` 必须属于 `voltage_level_id`；`whole_line` 起止为空，`tower` 起止相同，`tower_range` 起止不同且在创建/发布时满足 `start.sort_rank < end.sort_rank`。正式需求保存稳定 `line_id/start_tower_position_id/end_tower_position_id`，后续名称、编号、排序或物理塔重新关联都不能替换需求位置对象身份。
 - 手工创建和 Excel 发布都必须在同一写事务中重新校验父子关系、启用状态和显示快照，避免“校验后停用/改名”的竞态。
-- 线路已有需求引用后不能更换电压等级；杆塔不允许通过普通编辑切换所属线路。线路/杆塔更名必须走专用历史化动作，杆塔排序通过独立 `tower_order_version` 控制并允许调整；删除仍按业务引用保护。历史需求依赖稳定 ID 和来源/显示快照追溯，而不是冻结当前名称或顺序。
+- 线路已有需求引用后不能更换电压等级；线路杆塔节点不允许通过普通编辑切换所属线路。线路/杆塔更名必须走专用历史化动作；线路节点重新关联物理杆塔必须走专用 rebind 动作；杆塔排序通过独立 `tower_order_version` 控制并允许调整；删除仍按实际业务引用保护。历史需求依赖稳定线路节点 ID 和来源/显示快照追溯，而不是冻结当前名称、顺序或物理塔关系。
+- 班组、杆塔类型和自定义字段定义都是版本化配置对象。已被业务对象引用的配置不能硬删除；停用只阻止新的选择，不破坏历史读取。
+- 自定义字段值与业务对象本体采用独立 `custom_field_value_sets.version`，避免两个互不相关的字段编辑静默覆盖。可筛选字段同步维护类型化索引；多选字段按选项建立倒排索引，禁止依赖 JSON 全表扫描作为常规查询路径。
 - 停用不破坏历史读取；新需求和导入发布不得选择停用对象。
 - 当前开发阶段数据库只有 `0001_initial_schema.sql` 一个可重建基线；除非用户明确要求兼容已有数据/保留升级路径，否则 schema 变化直接修改 `0001` 并重建开发/测试数据库，禁止新增 `0002+` migration。
 
@@ -138,6 +146,22 @@ GET /api/master/voltage-levels
 POST /api/master/voltage-levels
 PATCH /api/master/voltage-levels/:id
 DELETE /api/master/voltage-levels/:id
+GET /api/master/teams
+POST /api/master/teams
+PATCH /api/master/teams/:id
+DELETE /api/master/teams/:id
+GET /api/master/tower-types
+POST /api/master/tower-types
+PATCH /api/master/tower-types/:id
+DELETE /api/master/tower-types/:id
+GET /api/master/custom-fields?entityType=...
+POST /api/master/custom-fields
+PATCH /api/master/custom-fields/:id
+DELETE /api/master/custom-fields/:id
+GET /api/master/custom-values/:entityType/:entityId
+PUT /api/master/custom-values/:entityType/:entityId
+GET /api/master/physical-towers?query=...
+PATCH /api/master/physical-towers/:id
 GET /api/master/lines?voltageLevelId=...
 POST /api/master/lines
 PATCH /api/master/lines/:id
@@ -149,6 +173,7 @@ POST /api/master/towers
 PATCH /api/master/towers/:id
 DELETE /api/master/towers/:id
 POST /api/master/towers/:id/rename
+POST /api/master/towers/:id/rebind-physical
 GET /api/master/towers/:id/number-history
 POST /api/master/lines/:lineId/towers/:towerId/move
 POST /api/master/lines/:id/towers/import-chunk

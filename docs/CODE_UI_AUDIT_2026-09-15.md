@@ -37,7 +37,7 @@
 
 ### P1：允许同号后，排序目标无法区分
 
-顺序编辑两个下拉框只显示 `tower_no`。当两个稳定 `tower_id` 当前编号相同时，用户无法判断选中了哪一个。
+顺序编辑两个下拉框只显示 `tower_no`。当两个稳定 `line_tower_position_id` 当前编号相同时，用户无法判断选中了哪一个。
 
 改法：选项显示当前物理序号 + 杆塔编号 + 类型，稳定 ID 仍作为 value。
 
@@ -110,14 +110,36 @@
 
 两项均先补行为测试再修改实现；`MasterDataView.test.ts` 当前 **14/14 PASS**，Web typecheck 与 `git diff --check` PASS。`f60e64e` 对应 PR #12 GitHub CI run `34935199606` 已完整 PASS，PR 仍为 OPEN，未合并、未发布。
 
-本阶段暂不继续拆 `MasterDataView.vue` / `p9.ts`：新增业务要求已经暴露出“物理杆塔”与“线路上的杆塔位置/编号”需要分离，后续 master-data 领域边界很可能随数据模型调整。先机械拆文件会形成二次返工，待该模型定稿后再按最终领域边界拆分。
+本阶段没有立即机械拆 `MasterDataView.vue` / `p9.ts`，而是先把“物理杆塔”与“线路上的杆塔位置/编号”边界定稿。该边界已经在第三阶段落地，后续可以在不改变模型的前提下继续按领域拆文件。
 
-## 6. 后续候选，不在本批强行完成
+## 6. 第三阶段：模型收口与技术债清理
+
+继续审计后确认，旧模型把“线路杆塔编号节点”和“真实物理杆塔”混为一个对象，无法正确表达同塔双回、三回、四回，也使班组、杆塔类型等物理属性和线路编号/排序耦合。第三阶段完成以下收口：
+
+- 新增 `physical_towers` 作为真实物理资产；`line_tower_positions` 只保存线路节点、当前杆塔编号、顺序、同塔位置标签，并以 `physical_tower_id` 关联物理塔。
+- 需求起止端点改为稳定 `start_tower_position_id / end_tower_position_id`；线路编号更名、线路排序、物理塔属性变更都不会替换需求位置身份。
+- 新增专用 `rebind-physical` API。普通线路节点 PATCH 继续禁止跨线路、改编号、改顺序或偷偷替换物理塔。
+- 班组和杆塔类型改为稳定配置对象；物理塔引用配置 ID，不再把自由文本类型直接混在线路节点上。
+- 通用自定义字段落地为定义、对象值集合独立版本、业务真值、标量索引和多选倒排索引；避免未来为每个长尾属性持续加数据库列。
+- 自定义字段定义创建后锁定对象类型/字段键/数据类型；已产生业务值的字段禁止直接删除，只能停用。
+- 台账设置 UI 扩展到电压等级、班组、杆塔类型、自定义字段；线路节点 UI 明确区分节点属性、物理塔属性、同塔重新关联和自定义字段。
+- 批量导入不依据线路编号猜同塔关系；默认新建独立物理塔，同塔必须显式确认。
+
+第三阶段定向结果：基础台账 API **25/25 PASS**；migration + master-data repository 定向 PASS；相关 Web **30/30 PASS**。最终完整 `npm run check` 已 PASS：Node **270/270**、Web **114/114（19 文件）**，Cloudflare/Node/Web/shared TypeScript、Web production build、Worker dry-run、Node+SQLite+Filesystem 第二运行时和全部静态门禁均 PASS。
+
+### 本轮删除的危险/冗余资产
+
+- 删除旧 `ops/production/master-data-schema-reconcile.sql` 与 `tests/schema-reconcile.test.mjs`。该脚本只适用于旧 `transmission_towers` schema，继续保留会制造“可以拿旧脚本对齐当前生产”的错误信号。
+- 删除已经完成并被长期规范吸收的 `MASTER_DATA_REDESIGN_PLAN.md`，避免 `BUSINESS_BASELINE / DESIGN / DATA_MODEL / 阶段计划` 四处重复维护同一业务事实。
+- P7 runbook 改为 fail-closed：既有生产 D1 与当前开发 `0001` 不一致时必须单独设计数据迁移，不得直接重放同名 `0001` 或恢复旧 reconcile 脚本。
+- 备份表清单补齐自定义字段定义、值集合版本、业务值、标量索引、多选索引；恢复夹具同步新 schema。
+
+## 7. 继续保留的技术债
 
 - `packages/shared/src/index.ts` 继续按领域拆模块，减少 1300+ 行入口文件。
-- `p9.ts` 按 master-data / demand-location 拆 route module，降低 800 行单文件复杂度。
-- `MasterDataView.vue` 继续按稳定业务边界拆为线路列表、属性/更名弹窗、顺序编辑器、导入弹窗及 composable；当前不为减少行数做机械拆分。
+- `p9.ts` 当前约 1200+ 行，后续按 master-data config / physical-tower / line-position / demand-location 拆 route module；拆分必须是无行为变化的独立 commit。
+- `MasterDataView.vue` 当前约 1100+ 行，后续按线路列表、配置管理、物理杆塔/线路节点编辑、顺序编辑器、导入弹窗及 composable 拆分；不与 schema 或业务规则修改混在同一提交。
 - 常规“移动一基杆塔”后续可评估直接调用专用 `/move`，避免为了简单移动总是加载并提交完整线路顺序；完整清单重排和导入仍保留全量稳定 ID 合同。
 - 线路列表在数据规模扩大后评估虚拟滚动；当前优先保证分页筛选语义正确。
 - 统一全站空状态及日期时间显示组件；基础台账危险删除二次确认与历史时间业务时区格式化已完成，其他页面按真实业务需要逐步复用，不做一次性全站机械替换。
-- 待业务模型确认后重构基础台账：把“物理杆塔实体”与“线路杆塔位置/编号”分开，以支持同塔双回、三回、四回等 N 回线路关系；同时再决定班组、杆塔类型、字典和自定义字段的统一配置模型。
+- 生产 schema 迁移是独立发布工作，不属于“代码债顺手修复”。当前代码基线通过后仍不得直接发布，必须另行审核生产数据映射、停写、备份、对账和回退方案。

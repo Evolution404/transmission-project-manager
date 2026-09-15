@@ -1,194 +1,118 @@
 # 实施计划与验收清单
 
-版本：2026-09-14。长期业务事实见 `BUSINESS_BASELINE.md`。本文件维护当前阶段状态、已完成能力和下一步；详细云端接手状态见 `AI_HANDOFF.md`。
+版本：2026-09-15。长期业务事实见 `BUSINESS_BASELINE.md`，当前施工状态见 `AI_HANDOFF.md`。
 
 ## 1. 阶段总览
 
 | 阶段 | 范围 | 当前状态 |
 |---|---|---|
 | P0 | 仓库、CI、基础架构、文档 | 已完成 |
-| P1 / P1.1 | 身份权限、成员与运维分层 | 已完成；认证方式已由 P1.2 替代 |
-| P1.2 | 系统自维护 username/password、Argon2id 客户端派生、服务端会话 | 已完成 |
+| P1 / P1.2 | 系统自维护账号密码、权限、会话和成员管理 | 已完成 |
 | P2 | 抽象需求、标准模板/Excel 导入、0..N 需求物资、物资字典 | 已完成 |
-| P3 | 项目储备、需求来源关系、独立项目物资与修订历史 | 已完成 |
+| P3 | 项目储备、需求来源、独立项目物资与修订历史 | 已完成 |
 | P4 | 框架、协议、预算版本、预算发生与实际费用 | 已完成 |
-| P5 | 一次项目级出库、多执行任务、供应/实施/结算三线、四状态反馈 | 已完成 |
-| P6 | 月报、分析、预警、年度事项、通知 outbox、D1→对象存储逻辑备份 | 已完成 |
-| 基础台账重构 | 对象化、线路中心 UI、编号规范化、更名历史、可调顺序与大批导入 | **已完成并上线；2026-09-15 进入代码/UI 加固**，见 `MASTER_DATA_REDESIGN_PLAN.md` 与 `CODE_UI_AUDIT_2026-09-15.md` |
-| 后端可移植化 | Database/ObjectStore Ports；Cloudflare D1 + Notion/R2、Node SQLite/Filesystem 可替换运行时 | 已完成基础重构；Notion provider 当前在 `feat/notion-object-storage` 收口 |
-| 云端发布流水线 | GitHub Actions → Cloudflare 受控发布、D1 migration 分离 | PR #2 已合入 main；main CI #37 PASS，真实发布未执行 |
-| P7 | 真实业务数据、真实 Cloudflare/D1/对象存储/网络、恢复和运维移交 | 未完成，必须真实环境验收 |
+| P5 | 项目级出库、多执行任务、供应/实施/结算三线、四状态回投 | 已完成 |
+| P6 | 月报、分析、预警、年度事项、通知、对象存储逻辑备份 | 已完成 |
+| 后端可移植化 | Database/ObjectStore 等 Ports；Cloudflare 与 Node 第二运行时 | 已完成 |
+| 基础台账 M1–M5 | 线路中心 UI、编号规范化、更名历史、排序、大批导入 | 已完成并已在上一版本上线 |
+| 基础台账 M6 | 物理杆塔/线路节点分离、同塔 N 回、配置对象、通用自定义字段 | **当前施工，功能已落地，待完整门禁/提交/远端 CI** |
+| 生产 schema 升级 | 既有生产 D1 → 当前 M6 schema 的显式数据迁移 | **未设计/未授权，当前发布阻断项** |
+| P7 | 真实业务、恢复、性能、网络和运维移交 | 继续按真实环境逐项验收 |
 
 ## 2. 当前业务主路径
 
 ```text
-电压等级 → 线路 → 杆塔
-          ↓
-抽象需求（0..N 需求物资）
-          ↓
+电压等级 → 线路 → 线路杆塔节点 ──→ 物理杆塔
+                    ↓
+               抽象需求
+                    ↓
 项目储备（需求来源 + 独立项目物资）
-          ↓
-一次项目级出库
-          ↓
-多个执行任务
-          ↓
-物资供应 / 实施 / 结算三线并行
-          ↓
-需求四状态与进度回投
+                    ↓
+             一次项目级出库
+                    ↓
+              多个执行任务
+                    ↓
+      物资供应 / 实施 / 结算并行
+                    ↓
+          需求四状态与进度回投
 ```
 
-框架、协议、预算、预算发生、实际费用和任务结算独立核算。旧 `demand_allocations`、`release_lines` 等仅作历史兼容/回归，不得恢复为新 UI 或新 API 的主路径。
+线路节点与物理杆塔不是同一对象：一基物理塔可以关联多条线路节点；线路节点编号、更名历史、线路顺序和需求位置身份与物理资产属性分离。
 
-## 3. 已完成关键能力
+## 3. M6 当前范围
 
-### 认证与权限
+### 数据模型
 
-- 业务认证完全由系统维护 `username + password`，不使用 Cloudflare Access 或邮箱登录。
-- 浏览器 Web Worker 执行 Argon2id；服务端只做 HMAC verifier 和 HttpOnly 会话。
-- 支持管理员创建/停用成员、角色、业务范围、重置密码；最后一个启用管理员受保护。
-- 生产接口只信任系统会话，前端隐藏按钮不能替代后端授权。
+- `physical_towers`：真实物理杆塔资产。
+- `line_tower_positions`：线路上的稳定位置/编号节点；通过 `physical_tower_id` 指向物理塔。
+- `line_tower_position_no_history`：线路节点编号历史。
+- `demands.start_tower_position_id / end_tower_position_id`：需求保存稳定线路位置节点，不保存物理塔 ID。
+- 班组、杆塔类型为稳定配置对象。
+- 自定义字段采用定义 + 值集合版本 + 真值 + 类型化索引，不为长尾属性持续加表列。
 
-### 需求、基础台账与导入
+### API / 并发
 
-- `VoltageLevel 1:N TransmissionLine 1:N TransmissionTower` 已落地。
-- 需求是抽象事项，可无物资，也可带多条物资子明细。
-- 手工新增和标准 `.xlsx`/`.csv` 导入同时存在。
-- 手工需求使用电压 → 线路 → 位置类型 → 杆塔级联。
-- Excel 多行可归并为一个抽象需求并保留全部来源行。
-- Excel 发布前必须解析到已有且启用的台账对象；未知/停用对象阻断发布。
-- 完整文件解析在浏览器 Web Worker，服务端只接收小分片。
-- 当前开发数据库只维护 `0001_initial_schema.sql` 单一可重建基线；除非明确提出兼容/升级要求，否则禁止新增 `0002+` migration。
+- 普通线路节点 PATCH 不允许更名、跨线路、改顺序或隐式 rebind。
+- 更名、顺序移动、物理塔 rebind 均走专用 API。
+- 物理塔本体有自己的 `version`；自定义字段集合有独立 `custom_field_value_sets.version`。
+- 配置 CRUD、自定义字段值写入继续使用幂等键、版本检查、原子 batch 和审计事件。
+- 已使用字段定义不能直接删除；需要退出使用时停用。
 
-### 项目储备、执行与资金
+### UI
 
-- 项目需求来源与项目物资分开建模；项目物资可持续修订并保留历史。
-- 储备项目允许 0 条物资先建立。
-- 项目只做一次项目级出库；出库后可创建多个执行任务。
-- 任务物资供应、实施、结算分别使用独立版本推进。
-- 实施和结算允许任意先后，四状态由任务范围事实回投需求。
-- 框架、协议、预算、预算发生、实际费用、结算分别保存；预算确认不会自动产生预算发生。
-- 金额使用整数分，数量使用定点整数；缺价格不等于零价。
+- 台账设置：电压等级 / 班组 / 杆塔类型 / 自定义字段。
+- 杆塔行：线路节点编辑、物理塔编辑、重新关联物理塔、自定义字段、更名/历史、删除明确分离。
+- 新增/批量导入默认不猜同塔；用户显式选择已有物理塔或事后 rebind。
 
-### 分析、提醒与备份
+## 4. 当前门禁
 
-- 分析规则/月计划/月报快照版本化。
-- 服务端定时任务处理预警、通知 outbox 和备份；关闭浏览器不影响。
-- D1→`ObjectStorePort` 逻辑备份按表分片、带 SHA-256/manifest；`auth_sessions` 不恢复。当前正式方案写入 Notion，R2/Filesystem 保持可替换。
+完成本轮前必须同时通过：
 
-### 后端可移植化
-
-以下能力已完成并于 2026-09-14 通过 PR #1 合入 `main`：
-
-- `DatabasePort` / `TransactionPort`、`ObjectStorePort`、Queue/Scheduler/Clock ports；
-- Cloudflare D1 adapter、Notion/R2 object-store adapters、Node SQLite/Filesystem adapters；
-- `RuntimeBindings.PERSISTENCE` 作为 Hono 应用持久化注入边界；
-- P2/P3/P4/P5/P6/P8/P9 与认证层不再直接绑定 D1/R2/Notion；
-- Node + SQLite + Filesystem 真实 Hono app E2E；
-- `0001_initial_schema.sql` 单一开发基线从空库建库验证；
-- 静态 repository guards 防止重新耦合 Cloudflare persistence。
-
-PR #1 合并前 GitHub CI 全绿；合并后的 `main@7a49b44275038dddd3803cb17de9b7e4fe06ba33` CI #31 再次全绿。
-
-## 4. 当前自动门禁
-
-所有新功能和缺陷修复继续执行 test-first，详见 `TESTING.md`。
-
-当前 `npm run check` 覆盖：
-
-- Cloudflare TypeScript；
-- Node 完整 app TypeScript；
+- `git diff --check`；
+- API/Node/Web TypeScript；
+- 基础台账、需求导入、备份/恢复、migration 定向回归；
+- Vue/Vitest 全量；
+- Node tests 全量；
 - Web production build；
 - Worker `wrangler deploy --dry-run`；
-- Vue/Vitest；
-- Node tests；
-- Node SQLite + Filesystem application E2E；
-- 单一 `0001_initial_schema.sql` 的 SQLite + Wrangler 标准建库验证；
+- Node + SQLite + Filesystem 第二运行时；
+- 单一 `0001_initial_schema.sql` checksum / migration guard；
 - repository/static guards。
 
-云端发布施工新增 `tests/p7-preflight.test.mjs` 门禁，约束：
+本轮定向结果：基础台账 API **25/25 PASS**；相关 Web **30/30 PASS**。最终完整 `npm run check` 已 PASS：Node **270/270**、Web **114/114（19 文件）**，Cloudflare/Node/Web/shared TypeScript、Web production build、Worker dry-run、Node+SQLite+Filesystem 第二运行时和全部静态门禁均 PASS。
 
-- 普通 CI / preflight 不得携带 Cloudflare 凭据或产生远端变更；
-- 生产代码发布只能手工触发、绑定 `production` Environment、精确 `main` SHA；
-- D1 migration 必须使用独立手工 workflow，禁止混入 Worker deploy；
-- production config 必须保持 `workers_dev=false`、`preview_urls=false`、固定同域 API 路由、唯一 D1 binding，并显式选择一个对象存储 provider；当前正式 provider=`notion`，R2 方案不得与 Notion 配置混绑；
-- production config 使用 Wrangler `secrets.required` 长期要求 `AUTH_CREDENTIAL_PEPPER`。
+## 5. 技术债清理范围
 
-自动门禁只证明代码和流程定义，不等于生产环境已经配置或通过 P7。
+- 删除只适用于旧 `transmission_towers` schema 的一次性生产 reconciliation 脚本及测试。
+- 删除已完成且内容已并入长期规范的阶段性 `MASTER_DATA_REDESIGN_PLAN.md`。
+- 更新备份/恢复覆盖，使自定义字段定义、版本、真值和索引都进入 manifest/恢复表序列。
+- 清理生产源码和文档中的旧 `transmission_towers`、`start_tower_id/end_tower_id`、物理塔 `custom_values_json` schema 残留；负向 migration 断言除外。
+- `p9.ts`、`MasterDataView.vue`、`packages/shared/src/index.ts` 仍偏大；本轮优先完成最终领域边界后再做无行为变化拆分，不在功能未收口时做混合巨型重构。
 
-## 5. 当前施工与发布边界
+## 6. 生产发布阻断
 
-后端可移植化施工已经结束并合入 `main`。当前生产 workflow 已进入 `main@bc4774767c159068d59e16d6726444c5c1525dd6`。
+本轮修改了开发阶段唯一 `0001_initial_schema.sql`，但既有 production D1 已运行过早期同名 `0001`。因此代码通过并不代表可以发布。
 
-PR #2 已合并；当前云端配置记录分支为 `ops/production-environment-handoff-20260914`。
+在生产发布前必须另行完成：
 
-PR #2 建立了独立 production workflows；当前分支进一步收敛配置来源：
+1. 盘点当前 production D1 的真实 schema 和数据量；
+2. 停写并完成可恢复备份/Time Travel 证据；
+3. 设计旧 `transmission_towers` → `physical_towers + line_tower_positions` 的确定性映射；
+4. 迁移 demand 端点到 `*_tower_position_id`；
+5. 建立配置/自定义字段新表，不丢既有数据；
+6. 外键检查、数量/业务对账、应用 smoke；
+7. 明确失败回退步骤；
+8. 用户审核并明确授权后，才通过受控云端流程执行。
 
-- `.github/workflows/production-deploy.yml`：代码发布，发布后真实 `/api/health` 校验；
-- `.github/workflows/production-migrate.yml`：独立 D1 migration，并要求人工再次确认目标 D1 UUID；
-- 非敏感 production 配置唯一来源为受审 `apps/api/wrangler.production.jsonc`；
-- GitHub `production` Environment 长期 **0 个 Variables、3 个 Secrets**：`CLOUDFLARE_API_TOKEN`、`AUTH_CREDENTIAL_PEPPER`、`NOTION_API_TOKEN`；
-- deploy 使用 `--secrets-file` 将 Worker Secrets 与代码、bindings 同一版本发布，缺失任一 required secret 都 fail-closed。
+禁止直接重放当前 `0001`，也禁止恢复旧 reconcile 脚本临时顶上。
 
-一次性 `BOOTSTRAP_TOKEN` 不属于永久 `secrets.required`；首次管理员初始化完成后应删除。
+## 7. 本轮完成标准
 
-2026-09-14 GitHub 云端 UI 已建立 `production` Environment，只允许 `main` 部署。旧的 enable/config Variables 已被架构废弃；仓库后续只维护 3 个长期 Secrets。以下事项仍需真实核对，不能伪造完成状态：
-
-- GitHub `production` Environment 的审核策略；
-- 3 个长期 GitHub Secrets 是否齐全；
-- Cloudflare 永久/一次性 Worker Secrets 的真实发布结果；
-- 正式 D1/Worker/对象存储资源核对或创建；当前对象存储为 Notion data source，R2 未启用不构成当前生产阻塞；
-- 正式 migration；
-- 正式 Worker 发布。
-
-后续不得退回 Mac、本地 shell、本地 Wrangler 或本地测试环境解决上述事项。
-
-## 6. P7 剩余工作
-
-P7 重点是证明当前系统在真实环境可正式使用：
-
-- PR #2 与合并后的 main CI #37 已全绿；继续以实际最新 main SHA 为发布输入；
-- 在 GitHub 实际配置受保护 `production` Environment 和 3 个长期 Secrets；不再维护 production Variables；
-- 核对/建立正式 Worker、D1、自定义域名和当前对象存储；Notion 模式配置 `NOTION_STORAGE_DATA_SOURCE_ID` 与 `NOTION_API_TOKEN`，R2 保留为可选替换方案；
-- 对正式 D1 做备份/停写/目标 ID 核对后，通过独立 workflow 执行 migration；
-- 通过 `Production release` 发布准确 `main` SHA；
-- 真实 `/api/health`、登录、首管理员/bootstrap 关闭、核心业务、附件/当前对象存储、Cron、静态资源、自定义域名验收；
-- 测真实 Workers CPU/配额、D1/对象存储用量和目标地区网络体验；Notion 模式同时观察 API 429/5xx 与上传下载行为；
-- 核对 Cloudflare Logs / Workers Analytics / 错误率和 CPU 指标；
-- 使用系统标准模板填报代表性真实需求并抽样核对；
-- 执行正式停写备份、隔离恢复、对账、回退演练；
-- 完成 Cloudflare/GitHub 运维移交和 CI/CD 服务身份演练；
-- 为每项真实验收保留证据，不能用本地或合成结果代替。
-
-详细矩阵见 `P7_ACCEPTANCE.md`，操作步骤见 `P7_RUNBOOK.md`，最新云端状态见 `AI_HANDOFF.md`。
-
-## 6A. 当前施工：基础台账第二轮重构
-
-原 M1–M5 施工分支：`feat/master-data-line-centric-history-20260914`，已完成并合入。当前加固分支：`refactor/master-data-ux-hardening-20260915`。
-
-执行顺序：
-
-1. M1 编号规范化与单一基线 schema；
-2. M2 线路/杆塔专用更名与历史搜索；
-3. M3 杆塔稀疏排序、拖拽/移动和独立 `tower_order_version`；
-4. M4 大批杆塔导入预检、自动内部切片和断点继续；
-5. M5 线路中心式桌面/移动 UI。
-
-具体数据规则、交互和验收项以 `MASTER_DATA_REDESIGN_PLAN.md` 为准。每一里程碑必须测试先行、小提交、及时 push，并同步本文件和 `AI_HANDOFF.md`。
-
-当前进度（2026-09-14）：**M1–M5 已完成，本地与远端门禁均全绿。** M1 已完成编号规范化与单基线 schema；M2 已完成专用更名、历史追踪和歧义搜索；M3 已完成按杆塔编号自动初始插位、专用移动/完整重排、稀疏排序与 `tower_order_version`；M4 已完成 Excel/CSV/粘贴全量预检、用户侧不限行、内部幂等分片/断点继续，以及“完整清单才允许按文件顺序原子重排”；M5 已彻底移除三栏 UI，改为线路中心首页和全宽线路详情，显式呈现线路/杆塔更名、历史、导入及拖拽/目标前后调序。最终本地 `npm run check`：Node **264/264 PASS**、Web **102/102 PASS**，TypeScript、Web production build、Worker dry-run、Node+SQLite+Filesystem 第二运行时均 PASS。PR #10 首轮 CI run `34856165305` 的完整 `npm run check` 也 PASS。
-
-2026-09-15 加固进度：修复线路状态筛选分页语义，线路杆塔计数改为聚合查询，删除旧技术 `/towers/batch`，统一主要业务页面 API client；线路/杆塔操作区收敛为高频动作 + 更多菜单，排序器增加触屏上移/下移与同号辨识；删除杆塔改为精确本地同步，首次加载失败增加可见重试。当前本地完整 `npm run check`：Node **264/264 PASS**、Web **111/111 PASS（19 文件）**，TypeScript、Web production build、Worker dry-run、Node+SQLite+Filesystem 均 PASS。
-
-## 7. 完成标准
-
-任何后续阶段或缺陷修复只有同时满足以下条件才算完成：
-
-1. 先有自动测试约束目标行为；
-2. 相关定向测试通过；
-3. GitHub Actions 完整 `npm run check` 或等价全覆盖门禁通过；
-4. migration/共享类型/文档同步；
-5. 无密钥/真实业务数据进入 Git；
-6. 提交到远端施工分支并通过 PR；
-7. 合并后 `main` CI 通过；
-8. 需要发布时通过受保护的 GitHub/Cloudflare 云端 workflow 完成，不得把本地电脑作为必要前置条件；
-9. 生产相关结论必须有真实云端证据。
+1. 目标行为有自动测试；
+2. 定向与完整 `npm run check` 全绿；
+3. migration lock、共享类型、备份表清单和长期文档同步；
+4. 旧模型/死代码/重复文档完成扫描并合理删除；
+5. 修改拆成可审查的小 commit 并 push 当前施工分支；
+6. PR 远端 CI 全绿；
+7. 工作区 clean；
+8. 不把“代码收口”误写为“生产已升级”；生产迁移和发布另行授权。

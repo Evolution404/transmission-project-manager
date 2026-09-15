@@ -1,6 +1,6 @@
 # 测试策略与开发门禁
 
-版本：2026-09-14。适用于所有业务功能、基础台账、认证、后端可移植化、数据迁移、缺陷修复和正式环境准备。
+版本：2026-09-15。适用于所有业务功能、基础台账、认证、后端可移植化、数据迁移、缺陷修复和正式环境准备。
 
 ## 1. 核心规则：测试先于生产代码
 
@@ -32,15 +32,17 @@ npm run check
 - 全部 `tests/*.test.mjs` Node/workerd+D1 测试；
 - 全部 `apps/web/tests/*.test.ts` Vue/Vitest 行为测试。
 
-`refactor/master-data-ux-hardening-20260915` 最近一次完整门禁（2026-09-15，基础台账代码/UI 审查第一阶段收口）：
+`refactor/master-data-ux-hardening-20260915` 最近一次完整门禁（2026-09-15，物理杆塔/线路节点与配置模型收口）：
 
-- TypeScript（Cloudflare + Node）：PASS；
+- TypeScript（Cloudflare API + Node runtime + Web + shared）：PASS；
 - Web production build：PASS；
 - Worker `wrangler deploy --dry-run`：PASS；
-- Vue/Vitest：**111/111 PASS（19 个测试文件）**；
-- Node：**264/264 PASS**。
+- Vue/Vitest：**114/114 PASS（19 个测试文件）**；
+- Node：**270/270 PASS**；
+- Node + SQLite + Filesystem 第二运行时：PASS；
+- migration checksum/单基线与 repository/static guards：PASS。
 
-本轮在既有基础台账业务门禁上新增/强化：服务端状态筛选后分页、废弃技术 batch 接口 404、统一 Web API client、移动端上移/下移、同号排序目标可辨识、手机杆塔卡片清单、删除后 `towerCount/towerOrderVersion` 本地同步、首次加载失败的可见重试恢复，以及危险删除确认前不得发 DELETE、历史 UTC 时间按 `Asia/Shanghai` 转换。`MasterDataView.test.ts` 当前 **14/14 PASS**。PR #12 在 `f60e64e40161aea702ad5ea063bfe57499541f8c` 上的 GitHub CI run `34935199606` 已完整 PASS；PR 尚未合并或发布。
+本轮继续在既有基础台账门禁上新增/强化：物理杆塔与线路杆塔节点分离、同一物理塔被多条线路节点复用、专用物理塔 rebind、需求端点使用稳定 `tower_position_id`、班组/杆塔类型/自定义字段配置 CRUD、自定义字段独立版本和类型化索引、已使用字段禁止误删，以及备份/恢复覆盖新增配置和值表。`MasterDataView.test.ts` 当前 **16/16 PASS**。远端 CI 仍需在本轮提交 push 后重新验证，历史 CI 不能替代当前 SHA。
 
 ## 3. 迁移与仓库守卫
 
@@ -78,13 +80,16 @@ npm run check
 
 必须覆盖：
 
-- 管理员才可写电压等级、线路、杆塔；读取按既有业务权限开放。
+- 管理员才可写电压等级、线路节点、物理杆塔、班组、杆塔类型和自定义字段配置；读取按既有业务权限开放。
 - 电压等级唯一性、线路/杆塔父级关系、启停状态、稳定 ID 与版本冲突；线路名称和杆塔编号允许重名。
-- `VoltageLevel 1:N TransmissionLine 1:N TransmissionTower` 严格成立。
-- `tower_no` 必须规范为 `#001` / `#010-1` / `#3058` 等；稳定 `tower_id` 是身份真源；同线路当前 `sort_rank` 唯一并与编号解耦。
+- `VoltageLevel 1:N TransmissionLine 1:N LineTowerPosition` 严格成立；`LineTowerPosition N:1 PhysicalTower`，同一物理塔允许被多条线路节点引用。
+- `tower_no` 必须规范为 `#001` / `#010-1` / `#3058` 等；稳定 `line_tower_position_id` 是线路位置身份真源；同线路当前 `sort_rank` 唯一并与编号解耦。
 - `whole_line / tower / tower_range` 三种位置形状及严格正向区段。
 - 跨线路杆塔、倒序区段、停用父级/杆塔必须拒绝。
-- 线路被需求引用后不能换电压等级；杆塔不能通过普通编辑换线。线路/杆塔正式更名和杆塔顺序调整允许发生并必须保留历史/审计；引用对象删除仍受保护。
+- 线路被需求引用后不能换电压等级；线路节点不能通过普通编辑换线、改编号、改顺序或替换物理塔。线路/杆塔正式更名、杆塔顺序调整和物理塔 rebind 必须走专用动作并保留审计；引用对象删除仍受保护。
+- 物理杆塔资产编号、塔型、班组使用独立 `version`；线路节点 rebind 后稳定线路节点 ID、编号和需求位置引用保持不变。
+- 自定义字段值使用独立 `custom_field_value_sets.version`，与业务对象本体版本分开；标量与多选筛选索引必须和真值原子更新。
+- 自定义字段定义创建后不得改变对象类型、字段键和数据类型；产生业务值后不能直接删除字段定义，只能停用。
 - 未引用对象可删除；引用对象删除拒绝；停用后历史需求仍可读取，新需求不可使用。
 - 杆塔导入用户侧不限行数；浏览器全量预检后自动切为内部安全分片。覆盖 65 行自动分片、非法编号/状态、文件内重复、同号歧义、版本竞争、幂等重放、失败断点继续，以及内部 chunk 不允许绕过更名/排序门禁。
 - 完整清单重排必须覆盖当前线路全部稳定杆塔对象且无重复，文件行顺序成为最终顺序；缺项、重复、跨线路 ID、stale `tower_order_version` 均拒绝，成功后 ID/编号保持不变。
