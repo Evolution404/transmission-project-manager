@@ -146,6 +146,14 @@ test('transmission grid, master-data configuration, physical tower, and structur
   }
 });
 
+test('master-data write repository facade delegates mutation SQL to focused modules', () => {
+  const source = readFileSync(resolve(root, 'apps/api/src/repositories/sql-master-data-write-repository.ts'), 'utf8');
+  assert.match(source, /master-data-write\/single-master-write/);
+  assert.match(source, /master-data-write\/transmission-grid-write/);
+  assert.match(source, /master-data-write\/master-config-write/);
+  assert.doesNotMatch(source, /\b(?:INSERT|UPDATE|DELETE)\s+(?:INTO\s+|FROM\s+)?/i, 'master-data write facade must not absorb mutation SQL again');
+});
+
 test('demand import flows do not reach D1 directly', () => {
   const source = readFileSync(resolve(root, 'apps/api/src/demand-import.ts'), 'utf8');
   assert.doesNotMatch(source, /c\.env\.DB|\bD1(?:Database|PreparedStatement)\b/, 'demand import routes must use portable repositories instead of D1 APIs directly');
