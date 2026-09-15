@@ -89,7 +89,11 @@
 - 删除已完成且内容已并入长期规范的阶段性 `MASTER_DATA_REDESIGN_PLAN.md`。
 - 更新备份/恢复覆盖，使自定义字段定义、版本、真值和索引都进入 manifest/恢复表序列。
 - 清理生产源码和文档中的旧 `transmission_towers`、`start_tower_id/end_tower_id`、物理塔 `custom_values_json` schema 残留；负向 migration 断言除外。
-- 原阶段编号 API 模块已改为业务语义模块，并把台账配置、物理杆塔、结构化需求、输电网台账路由拆开；`MasterDataView.vue`、`packages/shared/src/index.ts` 仍偏大，后续继续做无行为变化拆分。
+- 原阶段编号 API 模块已改为业务语义模块，并把台账配置、物理杆塔、结构化需求、输电网台账路由拆开。
+- 后续已继续完成 HTTP/API 职责收口：顶层 `app.ts` 只做装配；幂等 helper 和 API error builder 已集中；项目执行域拆为“储备生命周期 / 项目交付 / 任务进度 / 聚合查询”四个清晰边界。最新已验证代码提交为 `106c1f7`。
+- `project-execution.ts` 已由约 850 行降至约 334 行；最新完整门禁基线为 Node **278/278 PASS**、Web **114/114 PASS**，双运行时 typecheck、Web build、Worker dry-run 全绿。
+- 当前下一处结构债是 `analysis-operations.ts`：计划拆为“纯分析计算”“分析 HTTP”“通知/告警”“备份/系统任务”。当前 `analysis-calculations.ts` 抽取仍是**未提交、未验证 WIP**，必须保持原 BigInt 计算、季度状态、计划口径和 lagging 边界完全不变后再提交。
+- 后续候选热点仍包括 `reserve-planning.ts`、`demand-import.ts`、`finance.ts`、`project-lifecycle.ts`、`MasterDataView.vue`、`packages/shared/src/index.ts`；按职责耦合收益排序拆分，禁止仅按文件行数机械拆分。
 
 ## 6. 生产发布阻断
 
