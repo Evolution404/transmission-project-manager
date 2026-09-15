@@ -14,7 +14,7 @@ import {
   type VoltageLevelSummary,
   type VoltageSystemType,
 } from '@tpm/shared';
-import { parseApiResponse } from '../api/response';
+import { apiRequest, jsonRequestInit } from '../api/client';
 import { parseFileInWorker } from '../imports/workerClient';
 import {
   buildTowerImportPreview,
@@ -64,17 +64,6 @@ const lineStatusOptions = [
   { label: '停用', value: 'disabled' },
 ];
 const systemOptions = [{ label: '交流', value: 'AC' }, { label: '直流', value: 'DC' }];
-
-async function apiRequest<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, init);
-  const result = await parseApiResponse<T>(response);
-  if (!response.ok || !result.ok) throw new Error(result.ok ? `HTTP ${response.status}` : result.error.message);
-  return result.data;
-}
-
-function jsonInit(method: 'POST' | 'PATCH' | 'DELETE', body: unknown, idempotencyKey: string = crypto.randomUUID()): RequestInit {
-  return { method, headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey }, body: JSON.stringify(body) };
-}
 
 async function loadVoltageLevels() {
   voltageLevels.value = (await apiRequest<{ items: VoltageLevelSummary[] }>('/api/master/voltage-levels')).items;
@@ -154,7 +143,7 @@ async function setStatusFilter(value: 'all' | 'enabled' | 'disabled') {
 async function removeObject(kind: string, item: { id: string; version: number }) {
   saving.value = true;
   try {
-    await apiRequest(`/api/master/${kind}/${item.id}`, jsonInit('DELETE', { expectedVersion: item.version }));
+    await apiRequest(`/api/master/${kind}/${item.id}`, jsonRequestInit('DELETE', { expectedVersion: item.version }));
     if (kind === 'lines' && activeLine.value?.id === item.id) backToLines();
     await loadAll();
     message.success('已删除未引用的台账对象');
@@ -191,8 +180,8 @@ async function saveVoltage() {
   saving.value = true;
   try {
     const body = { ...voltageForm.value, displayName: voltageForm.value.displayName.trim(), code: voltageForm.value.code.trim(), nominalKv, sortOrder };
-    if (editingVoltage.value) await apiRequest(`/api/master/voltage-levels/${editingVoltage.value.id}`, jsonInit('PATCH', { ...body, expectedVersion: editingVoltage.value.version }));
-    else await apiRequest('/api/master/voltage-levels', jsonInit('POST', body));
+    if (editingVoltage.value) await apiRequest(`/api/master/voltage-levels/${editingVoltage.value.id}`, jsonRequestInit('PATCH', { ...body, expectedVersion: editingVoltage.value.version }));
+    else await apiRequest('/api/master/voltage-levels', jsonRequestInit('POST', body));
     voltageModal.value = false;
     await loadVoltageLevels();
     await loadLines();
@@ -216,9 +205,9 @@ async function saveLine() {
   try {
     const body = { ...lineForm.value, lineName: lineForm.value.lineName.trim(), lineCode: lineForm.value.lineCode.trim() || null };
     if (editingLine.value) {
-      await apiRequest(`/api/master/lines/${editingLine.value.id}`, jsonInit('PATCH', { ...body, expectedVersion: editingLine.value.version }));
+      await apiRequest(`/api/master/lines/${editingLine.value.id}`, jsonRequestInit('PATCH', { ...body, expectedVersion: editingLine.value.version }));
       if (activeLine.value?.id === editingLine.value.id) activeLine.value = { ...activeLine.value, ...body, lineCode: body.lineCode, version: activeLine.value.version + 1 };
-    } else await apiRequest('/api/master/lines', jsonInit('POST', body));
+    } else await apiRequest('/api/master/lines', jsonRequestInit('POST', body));
     lineModal.value = false;
     await loadLines();
     message.success('线路属性已保存');
@@ -240,9 +229,9 @@ async function saveTower() {
   saving.value = true;
   try {
     const body = { ...towerForm.value, towerNo, towerType: towerForm.value.towerType.trim() || null };
-    if (editingTower.value) await apiRequest(`/api/master/towers/${editingTower.value.id}`, jsonInit('PATCH', { ...body, expectedVersion: editingTower.value.version }));
+    if (editingTower.value) await apiRequest(`/api/master/towers/${editingTower.value.id}`, jsonRequestInit('PATCH', { ...body, expectedVersion: editingTower.value.version }));
     else {
-      await apiRequest('/api/master/towers', jsonInit('POST', body));
+      await apiRequest('/api/master/towers', jsonRequestInit('POST', body));
       if (activeLine.value) activeLine.value = { ...activeLine.value, towerOrderVersion: activeLine.value.towerOrderVersion + 1, towerCount: (activeLine.value.towerCount ?? towers.value.length) + 1 };
     }
     towerModal.value = false;
@@ -264,7 +253,7 @@ async function saveLineRename() {
   if (!line || !lineName) return;
   saving.value = true;
   try {
-    const data = await apiRequest<TransmissionLineSummary>(`/api/master/lines/${line.id}/rename`, jsonInit('POST', {
+    const data = await apiRequest<TransmissionLineSummary>(`/api/master/lines/${line.id}/rename`, jsonRequestInit('POST', {
       expectedVersion: line.version, lineName, reason: lineRenameForm.value.reason.trim() || null,
     }));
     activeLine.value = data;
@@ -289,7 +278,7 @@ async function saveTowerRename() {
   if (!target || !towerNo) { message.warning('请输入可识别的杆塔编号'); return; }
   saving.value = true;
   try {
-    await apiRequest<TransmissionTowerSummary>(`/api/master/towers/${target.id}/rename`, jsonInit('POST', {
+    await apiRequest<TransmissionTowerSummary>(`/api/master/towers/${target.id}/rename`, jsonRequestInit('POST', {
       expectedVersion: target.version, towerNo, reason: towerRenameForm.value.reason.trim() || null,
     }));
     towerRenameModal.value = false;
@@ -367,7 +356,7 @@ async function saveOrder() {
   const line = activeLine.value; if (!line) return;
   saving.value = true;
   try {
-    const data = await apiRequest<{ towerOrderVersion: number }>(`/api/master/lines/${line.id}/towers/reorder`, jsonInit('POST', {
+    const data = await apiRequest<{ towerOrderVersion: number }>(`/api/master/lines/${line.id}/towers/reorder`, jsonRequestInit('POST', {
       expectedTowerOrderVersion: orderVersion.value, towerIds: orderDraft.value.map((item) => item.id),
     }));
     activeLine.value = { ...line, towerOrderVersion: data.towerOrderVersion };
@@ -446,7 +435,7 @@ async function saveBulk() {
         ...(row.action === 'update' ? { id: row.id, expectedVersion: row.expectedVersion } : {}),
         towerNo: row.towerNo, towerType: row.towerType, enabled: row.enabled,
       }));
-      const result: { towerOrderVersion: number } = await apiRequest(`/api/master/lines/${line.id}/towers/import-chunk`, jsonInit('POST', {
+      const result: { towerOrderVersion: number } = await apiRequest(`/api/master/lines/${line.id}/towers/import-chunk`, jsonRequestInit('POST', {
         expectedTowerOrderVersion: bulkOrderVersion.value, items,
       }, bulkChunkKeys.value[index]!));
       bulkOrderVersion.value = result.towerOrderVersion; bulkProcessed.value += chunk.length; bulkNextChunk.value += 1;
@@ -455,7 +444,7 @@ async function saveBulk() {
       const current = await loadCompleteTowers(line.id);
       const towerIds = towerIdsInSourceOrder(preview, current);
       if (!towerIds) throw new Error('完整清单与当前线路对象无法唯一对应，请重新生成预览');
-      const result: { towerOrderVersion: number } = await apiRequest(`/api/master/lines/${line.id}/towers/reorder`, jsonInit('POST', {
+      const result: { towerOrderVersion: number } = await apiRequest(`/api/master/lines/${line.id}/towers/reorder`, jsonRequestInit('POST', {
         expectedTowerOrderVersion: bulkOrderVersion.value, towerIds,
       }, bulkReorderKey.value));
       bulkOrderVersion.value = result.towerOrderVersion;
