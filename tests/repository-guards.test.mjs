@@ -99,7 +99,7 @@ test('portable backend core cannot depend on Cloudflare runtime types', () => {
 test('HTTP business and authentication modules resolve persistence without importing Cloudflare adapters', () => {
   const files = [
     'app.ts', 'account.ts', 'administration.ts', 'auth.ts', 'authentication-context.ts', 'public-authentication.ts', 'session.ts', 'demand-import.ts', 'reserve-planning.ts', 'finance.ts',
-    'project-lifecycle.ts', 'analysis-operations.ts', 'project-execution.ts', 'project-execution-query.ts', 'project-execution-shared.ts', 'project-task-progress.ts', 'transmission-grid.ts', 'transmission-grid-operations.ts', 'master-data-config.ts', 'physical-towers.ts', 'structured-demand.ts',
+    'project-lifecycle.ts', 'analysis-operations.ts', 'project-execution.ts', 'project-execution-query.ts', 'project-execution-shared.ts', 'project-delivery.ts', 'project-task-progress.ts', 'transmission-grid.ts', 'transmission-grid-operations.ts', 'master-data-config.ts', 'physical-towers.ts', 'structured-demand.ts',
   ];
   for (const name of files) {
     const source = readFileSync(resolve(root, 'apps/api/src', name), 'utf8');
@@ -155,7 +155,7 @@ test('master-data write repository facade delegates mutation SQL to focused modu
 });
 
 test('HTTP modules share one idempotency request/replay implementation', () => {
-  const modules = ['administration.ts', 'demand-import.ts', 'reserve-planning.ts', 'finance.ts', 'project-lifecycle.ts', 'analysis-operations.ts', 'project-execution.ts', 'project-task-progress.ts'];
+  const modules = ['administration.ts', 'demand-import.ts', 'reserve-planning.ts', 'finance.ts', 'project-lifecycle.ts', 'analysis-operations.ts', 'project-execution.ts', 'project-delivery.ts', 'project-task-progress.ts'];
   for (const name of modules) {
     const source = readFileSync(resolve(root, 'apps/api/src', name), 'utf8');
     assert.match(source, /http\/idempotent-mutation/, `${name} must use the shared idempotency helper`);
@@ -165,7 +165,7 @@ test('HTTP modules share one idempotency request/replay implementation', () => {
 });
 
 test('HTTP modules share the common API error response builder', () => {
-  const modules = ['app.ts', 'account.ts', 'administration.ts', 'public-authentication.ts', 'demand-import.ts', 'reserve-planning.ts', 'finance.ts', 'project-lifecycle.ts', 'analysis-operations.ts', 'project-execution.ts', 'project-execution-query.ts', 'project-task-progress.ts'];
+  const modules = ['app.ts', 'account.ts', 'administration.ts', 'public-authentication.ts', 'demand-import.ts', 'reserve-planning.ts', 'finance.ts', 'project-lifecycle.ts', 'analysis-operations.ts', 'project-execution.ts', 'project-execution-query.ts', 'project-delivery.ts', 'project-task-progress.ts'];
   for (const name of modules) {
     const source = readFileSync(resolve(root, 'apps/api/src', name), 'utf8');
     assert.match(source, /http\/request-values/, `${name} must use the shared API error builder`);
@@ -213,7 +213,7 @@ test('analysis, notification, and backup flows do not reach Cloudflare persisten
 });
 
 test('project execution flows do not reach D1 directly', () => {
-  const routeSources = ['project-execution.ts', 'project-execution-query.ts', 'project-task-progress.ts'].map((name) => readFileSync(resolve(root, 'apps/api/src', name), 'utf8'));
+  const routeSources = ['project-execution.ts', 'project-execution-query.ts', 'project-delivery.ts', 'project-task-progress.ts'].map((name) => readFileSync(resolve(root, 'apps/api/src', name), 'utf8'));
   assert.match(routeSources.join('\n'), /Sql(?:ReserveProject|ProjectRelease|ProjectTask|TaskSupply|TaskImplementation|TaskSettlement|ExecutionQuery)Repository/, 'project execution routes must use portable business repositories');
   for (const source of routeSources) {
     assert.doesNotMatch(source, /c\.env\.DB|\bD1(?:Database|PreparedStatement)\b|\.prepare\(/, 'project execution routes must use portable repositories instead of D1 APIs directly');
@@ -237,6 +237,16 @@ test('task-stage progress mutations stay isolated from reserve and task-definiti
     assert.equal(progress.includes(path), true, `project-task-progress.ts must own ${path}`);
   }
   assert.doesNotMatch(progress, /\/reserve-projects|\/project-releases|\/project-tasks['"]/, 'task progress module must not absorb reserve, release, or task-definition routes');
+});
+
+test('project delivery routes stay isolated from reserve-project lifecycle routes', () => {
+  const reserve = readFileSync(resolve(root, 'apps/api/src/project-execution.ts'), 'utf8');
+  const delivery = readFileSync(resolve(root, 'apps/api/src/project-delivery.ts'), 'utf8');
+  for (const path of ['/project-releases', '/project-tasks']) {
+    assert.equal(reserve.includes(path), false, `project-execution.ts must not absorb ${path} again`);
+    assert.equal(delivery.includes(path), true, `project-delivery.ts must own ${path}`);
+  }
+  assert.doesNotMatch(delivery, /\/reserve-projects/, 'delivery module must not absorb reserve-project lifecycle routes');
 });
 
 test('authentication middleware uses portable session and member repositories', () => {
