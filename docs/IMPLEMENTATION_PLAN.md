@@ -15,8 +15,8 @@
 | P6 | 月报、分析、预警、年度事项、通知、对象存储逻辑备份 | 已完成 |
 | 后端可移植化 | Database/ObjectStore 等 Ports；Cloudflare 与 Node 第二运行时 | 已完成 |
 | 基础台账 M1–M5 | 线路中心 UI、编号规范化、更名历史、排序、大批导入 | 已完成并已在上一版本上线 |
-| 基础台账 M6 | 物理杆塔/线路节点分离、同塔 N 回、配置对象、通用自定义字段 | **代码已收口；本地与 PR #12 远端 CI 全绿，尚未合并/发布** |
-| 生产 schema 升级 | 既有生产 D1 → 当前 M6 schema 的显式数据迁移 | **未设计/未授权，当前发布阻断项** |
+| 基础台账 M6 | 物理杆塔/线路节点分离、同塔 N 回、配置对象、通用自定义字段 | **已合入 main 并发布生产** |
+| 生产 schema 升级 | 既有生产 D1 → 当前 M6 schema | **已完成：按用户授权重建空 D1，仅保留 zhangsan 账号及原密码凭据，旧 D1 已删除** |
 | P7 | 真实业务、恢复、性能、网络和运维移交 | 继续按真实环境逐项验收 |
 
 ## 2. 当前业务主路径
@@ -83,7 +83,7 @@ M6 基础台账定向结果：基础台账 API **25/25 PASS**；相关 Web **30/
 
 后续后端职责拆分继续推进后，当前最新完整 `npm run check`（代码基线 `8c8f7ef`）已 PASS：Node **279/279**、Web **114/114（19 文件）**，Cloudflare/Node/Web/shared TypeScript、Web production build、Worker dry-run、Node+SQLite+Filesystem 第二运行时和全部静态门禁均 PASS。
 
-远端证据：PR #12 `c87fc04`，GitHub CI run `34941209241` 的完整 `npm run check` 已 PASS。该结论仅表示施工分支代码门禁通过，不表示 production schema 已升级或当前分支已发布。
+远端证据：PR #12 与后续 `main` CI 均 PASS；生产重建 run `34952233283`、正式 release run `34952547151`、旧 D1 删除 run `34953255900` 均 PASS。当前 production schema 已为当前唯一 `0001_initial_schema.sql` 基线。
 
 ## 5. 技术债清理范围
 
@@ -99,22 +99,14 @@ M6 基础台账定向结果：基础台账 API **25/25 PASS**；相关 Web **30/
 - 当前最新完整门禁基线为 Node **279/279 PASS**、Web **114/114 PASS**，双运行时 typecheck、Web build、Worker dry-run 全绿。
 - 后续候选热点仍包括 `reserve-planning.ts`、`demand-import.ts`、`finance.ts`、`project-lifecycle.ts`、`MasterDataView.vue`、`packages/shared/src/index.ts`；按职责耦合收益排序拆分，禁止仅按文件行数机械拆分。
 
-## 6. 生产发布阻断
+## 6. 当前生产状态
 
-本轮修改了开发阶段唯一 `0001_initial_schema.sql`，但既有 production D1 已运行过早期同名 `0001`。因此代码通过并不代表可以发布。
-
-在生产发布前必须另行完成：
-
-1. 盘点当前 production D1 的真实 schema 和数据量；
-2. 停写并完成可恢复备份/Time Travel 证据；
-3. 设计旧 `transmission_towers` → `physical_towers + line_tower_positions` 的确定性映射；
-4. 迁移 demand 端点到 `*_tower_position_id`；
-5. 建立配置/自定义字段新表，不丢既有数据；
-6. 外键检查、数量/业务对账、应用 smoke；
-7. 明确失败回退步骤；
-8. 用户审核并明确授权后，才通过受控云端流程执行。
-
-禁止直接重放当前 `0001`，也禁止恢复旧 reconcile 脚本临时顶上。
+- 2026-09-15 用户明确允许清空除 `zhangsan` 账号/密码外的生产数据，因此没有做旧业务数据的原位兼容迁移，而是创建全新 D1 并应用当前单一 `0001_initial_schema.sql`。
+- 当前 production D1：`transmission-project-manager-production-20260915` / `913b6387-46b0-40c6-b0b1-11f070b99f08`。
+- 新 D1 上业务数据为空，仅保留 `zhangsan` 账号及原密码验证数据；旧 D1 已在切换验收成功后删除。
+- 生产 Notion 对象存储已通过 run `34953724187` 核对：active 对象索引为 0，没有应用可见的旧附件/备份对象需要清理；Notion FileUpload 物理删除能力仍以平台 API 为边界。
+- Cloudflare Worker 已通过正式 `Production release` 发布，公网 health 与认证初始化状态通过复核。
+- 以后若生产已经产生正式业务数据，不得复用本次“清空重建”路径，除非用户再次明确授权删除这些数据；正常 schema 变更应按当时真实数据设计迁移与回退。
 
 ## 7. 本轮完成标准
 
@@ -122,7 +114,7 @@ M6 基础台账定向结果：基础台账 API **25/25 PASS**；相关 Web **30/
 2. 定向与完整 `npm run check` 全绿；
 3. migration lock、共享类型、备份表清单和长期文档同步；
 4. 旧模型/死代码/重复文档完成扫描并合理删除；
-5. 修改拆成可审查的小 commit 并 push 当前施工分支；
+5. 修改拆成可审查的小 commit，并按当次任务约定 push 到施工分支或 `main`；
 6. PR 远端 CI 全绿；
 7. 工作区 clean；
 8. 不把“代码收口”误写为“生产已升级”；生产迁移和发布另行授权。

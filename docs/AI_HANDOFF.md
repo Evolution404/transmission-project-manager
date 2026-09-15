@@ -4,18 +4,18 @@
 
 - 仓库：`Evolution404/transmission-project-manager`
 - 默认分支：`main`
-- 当前施工分支：`refactor/master-data-ux-hardening-20260915`
-- 当前最新已验证代码基线：`8c8f7ef`（`refactor(api): isolate backup and system tasks`）；其后的交接文档提交不改变该代码基线。
-- 最近完整门禁基线：在 `8c8f7ef` 对应代码状态执行 `npm run check`，Node **279/279 PASS**、Web/Vitest **114/114 PASS（19 个测试文件）**，Cloudflare/Node/Web/shared TypeScript、Web production build、Worker dry-run、Node + SQLite + Filesystem 第二运行时均 PASS。
-- 当前分析模块结构拆分已完成并提交，原 `analysis-operations.ts` / `analysis-calculations.ts` WIP 已收口；本轮文档提交后工作区应保持 clean。
-- 当前任务：继续纯结构性技术债清理时，从 `reserve-planning.ts`、`demand-import.ts`、`finance.ts`、`project-lifecycle.ts`、`MasterDataView.vue`、`packages/shared/src/index.ts` 中按真实职责耦合收益选择下一处，保持业务行为、接口 URL、权限、幂等、版本锁和事务边界不变。生产 schema 迁移仍另行设计、另行授权。
-- 禁止 `reset/clean`，不要覆盖当前工作区；未经用户明确授权，不合并 `main`、不执行 production migration/reconciliation、不触发 Production release。
+- 当前分支：`main`；M6、后端职责拆分和分析模块拆分均已合入并发布生产。
+- 最近完整代码门禁基线：Node **279/279 PASS**、Web/Vitest **114/114 PASS（19 个测试文件）**，Cloudflare/Node/Web/shared TypeScript、Web production build、Worker dry-run、Node + SQLite + Filesystem 第二运行时均 PASS；合入/生产切库期间的 `main` CI 也持续全绿。
+- 2026-09-15 用户明确授权保留 `zhangsan` 账号及原密码凭据、清空其余生产数据并发布。生产 D1 已重建为当前单一 `0001_initial_schema.sql` 基线，只保留 `zhangsan`，旧 D1 已删除。
+- 当前生产 D1：`transmission-project-manager-production-20260915`，UUID `913b6387-46b0-40c6-b0b1-11f070b99f08`；生产域名仍为 `project.980923.xyz`，对象存储仍为 Notion。
+- 当前任务：后续继续纯结构性技术债清理时，从 `reserve-planning.ts`、`demand-import.ts`、`finance.ts`、`project-lifecycle.ts`、`MasterDataView.vue`、`packages/shared/src/index.ts` 中按真实职责耦合收益选择下一处，保持业务行为、接口 URL、权限、幂等、版本锁和事务边界不变。
+- 禁止 `reset/clean`；后续任何新的生产数据清理、migration 或 release 仍需用户当次明确授权。
 
 长期业务事实只看 `BUSINESS_BASELINE.md`、`DESIGN.md`、`DATA_MODEL.md`；测试门禁看 `TESTING.md`；生产步骤看 `PRODUCTION_RUNBOOK.md`。已完成阶段过程通过 Git 历史追溯，不再维护重复 WIP 文档。
 
 ## 本轮已完成并提交的结构重构
 
-在原 M6 基础台账收口之后，继续完成了一轮后端职责拆分。以下提交均已 push 到当前施工分支：
+在原 M6 基础台账收口之后，继续完成了一轮后端职责拆分。以下提交最终均已合入 `main`：
 
 - `dc81789`：统一 HTTP 幂等 mutation helper；
 - `05f33a3`：从顶层 `app.ts` 拆出认证与管理路由，`app.ts` 收缩为装配根；
@@ -134,26 +134,27 @@ M6 最终完整 `npm run check` 已 PASS：
 
 分析拆分定向回归还单独通过 API 双运行时 typecheck，以及分析/P6、通知仓储、备份仓储、repository guards 共 **53/53 PASS**。
 
-## 当前生产边界
+## 当前生产状态
 
-生产环境在本轮开始前已经有可用的上一版本；当前施工分支尚未合并或发布。
+2026-09-15 已完成一次经用户明确授权的生产重建与发布：
 
-本轮修改了唯一开发基线 `apps/api/migrations/0001_initial_schema.sql`，而生产 D1 之前已经执行过同名 `0001`。因此：
+1. `main@e288eda682c8982da814603135e203442b1b885f` 切换 production config 到新 D1；
+2. 临时受控 GitHub Actions run `34952233283` 创建新 D1、应用当前唯一 `0001_initial_schema.sql`，仅搬运 `members` 数据后删除除 `zhangsan` 外的所有账号，并确认需求/项目/线路业务数据为 0；
+3. `Production release` run `34952547151` 完整 PASS，正式 Worker publish、新 D1 binding、现有 Worker Secrets 和公网 health 校验均成功；
+4. 独立公网复核 `/api/health` 为 `schema.ready=true`、`currentMigration=requiredMigration=0001_initial_schema.sql`，`/api/auth/status` 为 `initialized=true`，匿名受保护 API 返回 401；
+5. 临时清理 run `34953255900` 在再次验证新 D1 后删除旧 D1 `32ab1d29-e720-41a1-a83f-11b579734a0e`；一次性 reset/delete workflow 随后从仓库删除。
+6. 生产 Notion 对象存储清理核对 run `34953724187` PASS：专用 data source 中 `State=active` 的对象索引页原本即为 **0**，复核后仍为 0；没有应用可见的旧附件/备份对象残留。Notion FileUpload 历史物理删除仍受平台公开 API 能力限制。
 
-1. 不得把 Wrangler migration 文件名状态当成“生产 schema 已兼容”；
-2. 不得直接对生产运行当前改写后的 `0001`；
-3. 不得恢复已删除的旧 reconcile 脚本；
-4. 合并/发布前必须另开生产数据迁移设计，明确旧生产 schema → 当前物理塔/线路节点/需求位置/自定义字段 schema 的数据映射、停写、备份、对账和回退；
-5. 未经用户明确授权，只做本地代码、测试、文档和远端施工分支/PR，不操作正式 D1。
+本轮所有临时 destructive workflow 均在完成后从仓库删除，不作为日常运维入口保留。
 
-生产发布继续通过 GitHub `production` Environment 与受控 Cloudflare workflow；长期 Secret 和具体资源以当前受审 production config / GitHub Environment / Cloudflare 实际状态为准，不从历史文档猜测。
+生产现在不再存在“旧同名 0001 与 M6 schema 不一致”的发布阻断。后续生产发布仍统一走 GitHub `production` Environment 与受控 Cloudflare workflow；长期 Secret 和具体资源以当前受审 production config / GitHub Environment / Cloudflare 实际状态为准。
 
 ## 接下来执行顺序
 
-1. 接手先确认分支仍为 `refactor/master-data-ux-hardening-20260915`、工作区 clean、HEAD 已包含本轮文档提交；禁止 `reset/clean` 覆盖他人修改。
+1. 接手先确认分支为 `main`、工作区 clean、HEAD 已包含本轮生产重建/发布收尾文档；禁止 `reset/clean` 覆盖他人修改。
 2. 下一轮从 `reserve-planning.ts`、`demand-import.ts`、`finance.ts`、`project-lifecycle.ts`、`MasterDataView.vue`、`packages/shared/src/index.ts` 中按真实职责耦合收益继续审查，只在收益明确时拆分，不为行数机械切文件。
 3. 继续测试先行；每个职责边界先加/调整 guard 或行为回归，再修改实现，小 commit、及时 push，最终完整 `npm run check`。
-4. 不合并 `main`、不发布生产，除非用户随后明确授权；生产 schema 迁移必须单独设计和审核。
+4. 新一轮生产变更仍需用户当次明确授权；不要因为本轮已经重建过 D1 就把后续 destructive reset 当作常规发布步骤。
 
 ## 必须继续保持的工程约束
 

@@ -167,7 +167,7 @@ preflight 通过只证明配置结构和构建，不证明真实资源/Secret �
 
 开发阶段允许直接改写唯一 `0001_initial_schema.sql`，但已执行过旧版 `0001` 的生产 D1 **不会**因为同名文件内容变化而自动升级。当前基础台账已经进一步拆成 `physical_towers + line_tower_positions`，需求位置也改为引用线路杆塔节点，并新增班组、杆塔类型和通用自定义字段表。旧的 2026-09-14 一次性 reconciliation 脚本只适用于更早的数据模型，已经从仓库删除，禁止继续使用。
 
-因此，在用户明确授权生产 schema 迁移前：
+因此，未来若再次出现“生产 D1 已执行旧内容的同名 `0001`、而代码基线已改写”的情形，在用户明确授权生产 schema 迁移前：
 
 1. **不得**把当前开发基线直接应用到已经存在的生产 D1；
 2. **不得**仅凭 `d1_migrations` 中存在 `0001` 就判断生产 schema ready；
@@ -177,7 +177,7 @@ preflight 通过只证明配置结构和构建，不证明真实资源/Secret �
 6. 迁移方案必须覆盖物理塔与线路杆塔节点拆分、需求端点 ID 转换、配置表和自定义字段表，且必须有独立恢复演练和 `PRAGMA foreign_key_check` 证据；
 7. 若生产已有正式业务数据，不允许把“开发阶段可重建”规则解释成“可以清空生产重建”。
 
-当前本节是**发布阻断条件**，不是待执行脚本。只有在用户明确授权并形成新的生产迁移方案后，才允许继续 5.4。
+上述情形一旦出现，本节即构成**发布阻断条件**，不是待执行脚本。2026-09-15 的旧库不一致问题已按下方记录完成受控重建并解除；后续只有再次发生 schema 不一致时，才需要重新进入本节的阻断流程。
 
 ### 5.4 Production release
 
@@ -218,6 +218,20 @@ Wrangler publish 均 PASS；唯一失败步骤是紧随发布后的 health 验�
 Worker publish、语义 health 验证和临时 Secret 清理全部 PASS，最终 conclusion=`success`。
 发布后独立公网复核 `/api/health` 仍满足 schema ready；`/api/auth/status` 为
 `initialized=false`，因此下一步已从“修发布流水线”转为“首管理员 bootstrap 与后续认证/业务验收”。
+
+### 2026-09-15 M6 生产重建与 release 记录
+
+用户明确授权：保留 `zhangsan` 账号及其原密码凭据，清空其余生产数据，并发布当前 `main` 到 Cloudflare。由于旧 D1 已执行过早期同名 `0001`，且用户不要求保留旧业务数据，本次没有做高风险的旧 schema 原位转换，而是采用受控新库切换：
+
+1. 临时 GitHub `production` Environment workflow run `34952233283` 从旧库把 `members` 数据导入 runner 临时文件，新建 D1 `transmission-project-manager-production-20260915`（UUID `913b6387-46b0-40c6-b0b1-11f070b99f08`），应用当前 `0001_initial_schema.sql`，恢复成员后立即删除除 `zhangsan` 外的账号；runner 临时成员文件任务结束即删除。
+2. 新 D1 验证：仅 1 个 `zhangsan` 账号；需求、项目、线路业务数据均为空；`d1_migrations` 最新值为 `0001_initial_schema.sql`。
+3. `main@e288eda682c8982da814603135e203442b1b885f` 更新 production D1 binding 后，CI PASS；`Production release` run `34952547151` 的完整 `npm run check`、config validator、dry-run、SHA 二次绑定、正式 Worker publish、health 语义校验和临时 Secret 清理全部 PASS。
+4. 独立公网复核：`/api/health` 返回 `schema.ready=true` 且 current/required migration 都是 `0001_initial_schema.sql`；`/api/auth/status` 返回 `initialized=true`；匿名受保护 API 返回 401。
+5. 切换确认后，临时 cleanup run `34953255900` 再次验证新 D1 状态并删除旧 D1 `32ab1d29-e720-41a1-a83f-11b579734a0e`。
+6. 生产 Notion 对象存储另经临时 run `34953724187` 核对并执行 active 对象清理逻辑；该专用 data source 原本即为 0 个 active 对象索引，复核后仍为 0，因此不存在应用可见的旧附件/备份对象残留。Notion FileUpload 已进回收站对象的底层物理删除不在当前公开 API 能力范围内。
+7. 为本次操作临时加入的 destructive reset/delete/object-storage-purge workflow 在任务完成后全部从仓库删除，不保留为日常运维入口。
+
+这次“重建空库”只适用于用户明确允许删除现有业务数据的情形。未来一旦生产数据需要保留，仍必须回到 5.3A 的迁移/备份/对账/回退要求，不能把本次流程当作默认升级方案。
 
 ## 6. 首次管理员和认证验收
 
