@@ -81,7 +81,7 @@
 
 M6 基础台账定向结果：基础台账 API **25/25 PASS**；相关 Web **30/30 PASS**。M6 收口时完整 `npm run check` 为 Node **270/270**、Web **114/114（19 文件）**。
 
-后续后端职责拆分继续推进后，当前最新完整 `npm run check`（代码基线 `8c8f7ef`）已 PASS：Node **279/279**、Web **114/114（19 文件）**，Cloudflare/Node/Web/shared TypeScript、Web production build、Worker dry-run、Node+SQLite+Filesystem 第二运行时和全部静态门禁均 PASS。
+后续后端职责拆分与生产发布治理继续推进后，当前施工分支 `refactor/production-release-governance-20260915` 最新完整 `npm run check` 已 PASS：Node **293/293**、Web **114/114（19 文件）**，Cloudflare/Node/Web/shared TypeScript、Web production build、Worker dry-run、Node+SQLite+Filesystem 第二运行时和全部静态门禁均 PASS。
 
 远端证据：PR #12 与后续 `main` CI 均 PASS；生产重建 run `34952233283`、正式 release run `34952547151`、旧 D1 删除 run `34953255900` 均 PASS。当前 production schema 已为当前唯一 `0001_initial_schema.sql` 基线。
 
@@ -96,7 +96,7 @@ M6 基础台账定向结果：基础台账 API **25/25 PASS**；相关 Web **30/
 - `project-execution.ts` 已由约 850 行降至约 334 行；其职责回混已有 repository/static guard。
 - `analysis-operations.ts` 的混合职责已经完成拆分：`analysis-calculations.ts` 承载纯分析计算/查询编排，`analysis-operations.ts` 仅保留分析/计划/月报/里程碑 HTTP，`notification-operations.ts` 承载通知/告警/outbox，`backup-operations.ts` 承载逻辑备份，`system-tasks.ts` 承载定时任务编排。最新已验证代码提交为 `8c8f7ef`。
 - 分析计算抽取前已逐项对照旧实现并由测试锁定 BigInt 四舍五入、季度状态、默认/自定义计划、ratio/gap lagging 边界和里程碑提醒语义；分析/P6、通知仓储、备份仓储和 repository guards 定向合计 **53/53 PASS**。
-- 当前最新完整门禁基线为 Node **279/279 PASS**、Web **114/114 PASS**，双运行时 typecheck、Web build、Worker dry-run 全绿。
+- 当前最新完整门禁基线为 Node **293/293 PASS**、Web **114/114 PASS**，双运行时 typecheck、Web build、Worker dry-run 全绿。
 - 后续候选热点仍包括 `reserve-planning.ts`、`demand-import.ts`、`finance.ts`、`project-lifecycle.ts`、`MasterDataView.vue`、`packages/shared/src/index.ts`；按职责耦合收益排序拆分，禁止仅按文件行数机械拆分。
 
 ## 6. 当前生产状态
@@ -107,6 +107,7 @@ M6 基础台账定向结果：基础台账 API **25/25 PASS**；相关 Web **30/
 - 生产 Notion 对象存储已通过 run `34953724187` 核对：active 对象索引为 0，没有应用可见的旧附件/备份对象需要清理；Notion FileUpload 物理删除能力仍以平台 API 为边界。
 - Cloudflare Worker 已通过正式 `Production release` 发布，公网 health 与认证初始化状态通过复核。
 - 以后若生产已经产生正式业务数据，默认走统一 `Production promote`：先只读评估并自动搬运结构兼容的数据；结构变化时在临时 SQLite 中转换到当前 `0001` 新模型并校验；无法确定性转换则在生产变更前停止并由用户决定。只有用户再次明确授权删除时才允许清空数据。
+- 当前标准化发布重构只在施工分支完成并测试，**尚未合并 `main`、尚未再次触发生产发布**；不要把“流程代码已完成”写成“线上已切换到新流程”。
 
 ## 7. 本轮完成标准
 

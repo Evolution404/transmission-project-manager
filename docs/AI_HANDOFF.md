@@ -4,14 +4,42 @@
 
 - 仓库：`Evolution404/transmission-project-manager`
 - 默认分支：`main`
-- 当前分支：`main`；M6、后端职责拆分和分析模块拆分均已合入并发布生产。
-- 最近完整代码门禁基线：Node **279/279 PASS**、Web/Vitest **114/114 PASS（19 个测试文件）**，Cloudflare/Node/Web/shared TypeScript、Web production build、Worker dry-run、Node + SQLite + Filesystem 第二运行时均 PASS；合入/生产切库期间的 `main` CI 也持续全绿。
+- 当前分支：`refactor/production-release-governance-20260915`；基于已发布的 `main@146769cef34f9be4fab1f35654e67b7073a4ede7` 继续规范生产发布流程。本分支尚未合并 `main`、尚未再次发布生产。
+- 本分支最近完整代码门禁基线：Node **293/293 PASS**、Web/Vitest **114/114 PASS（19 个测试文件）**，Cloudflare/Node/Web/shared TypeScript、Web production build、Worker dry-run、Node + SQLite + Filesystem 第二运行时均 PASS。
 - 2026-09-15 用户明确授权保留 `zhangsan` 账号及原密码凭据、清空其余生产数据并发布。生产 D1 已重建为当前单一 `0001_initial_schema.sql` 基线，只保留 `zhangsan`，旧 D1 已删除。
 - 当前生产 D1：`transmission-project-manager-production-20260915`，UUID `913b6387-46b0-40c6-b0b1-11f070b99f08`；生产域名仍为 `project.980923.xyz`，对象存储仍为 Notion。
 - 当前施工分支 `refactor/production-release-governance-20260915` 正在把生产发布收口成单一 `Production promote`：普通发布直接 deploy；schema 不一致时优先迁移历史数据到当前 `0001` 新模型；无法确定性迁移则 `DECISION_REQUIRED`，在任何生产 D1 修改前停止并等待用户决定。
 - 禁止 `reset/clean`；后续任何新的生产数据清理、migration 或 release 仍需用户当次明确授权。
 
 长期业务事实只看 `BUSINESS_BASELINE.md`、`DESIGN.md`、`DATA_MODEL.md`；测试门禁看 `TESTING.md`；生产步骤看 `PRODUCTION_RUNBOOK.md`。已完成阶段过程通过 Git 历史追溯，不再维护重复 WIP 文档。
+
+## 本轮生产发布治理重构
+
+本轮已 push 三个小提交：
+
+- `fa22294` `feat(ops): preserve data across schema rebuilds`：新增维护模式、生产数据转换核心、远端结果校验和数据保留测试；
+- `78b622b` `ops: unify production promotion workflow`：删除独立 `Production D1 migration`，把生产变更收口为单一 `Production promote`；
+- `de1a2d1` `docs: define development-stage data migration policy`：把“开发期单 `0001` + 发布期历史数据迁移”的边界写入长期规范。
+
+随后又补强了尚未提交的最终收口：schema 指纹覆盖 CHECK/UNIQUE/显式索引；自动搬运只允许按目标主键 upsert，新增 UNIQUE 冲突必须 `DECISION_REQUIRED`；生成的数据导入按外键依赖顺序写入；远端验证器增加成功/行数不一致行为测试；repository guard 的文字已改为“只有用户明确宣布进入运行阶段/正式维护升级链才允许 `0002+`”。
+
+标准流程为：
+
+```text
+main + 用户发布授权
+→ Production promote
+→ 完整 check / config / dry-run
+→ 只读导出生产 D1，在临时 SQLite 对当前 0001 做数据迁移演练
+→ 结构一致：直接 deploy
+→ 结构变化且可确定性迁移：进入维护模式，冻结 API/Cron 写入
+→ 再次导出权威快照
+→ 同一生产 D1 重建当前 0001 + 导入已验证历史数据
+→ 行数 / foreign_key_check / integrity_check
+→ 发布正常 Worker 并退出维护模式
+→ 任一步失败：恢复维护前完整导出 + 回滚维护前 Worker version
+```
+
+若旧表/旧字段仍有数据、字段/主键语义变化、新必填字段无法推导、约束冲突或显式转换规则与旧 schema 指纹不匹配，必须在生产变更前输出 `DECISION_REQUIRED`。用户决定映射/舍弃方式后，才允许增加绑定该旧 schema 指纹的一次性 `scripts/production/data-transform.mjs`。该转换脚本是发布工具，不是旧数据模型兼容层。
 
 ## 本轮已完成并提交的结构重构
 
