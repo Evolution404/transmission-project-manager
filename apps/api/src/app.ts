@@ -33,6 +33,7 @@ import {
   revokeSessionToken,
 } from './session.ts';
 import { transmissionGridApp } from './transmission-grid.ts';
+import { transmissionGridOperationsApp } from './transmission-grid-operations.ts';
 import { masterDataConfigApp } from './master-data-config.ts';
 import { physicalTowersApp } from './physical-towers.ts';
 import { structuredDemandApp } from './structured-demand.ts';
@@ -656,6 +657,7 @@ app.get('/api/scopes/:scopeType/:scopeId/check', async (c) => {
 });
 
 app.route('/api', transmissionGridApp);
+app.route('/api', transmissionGridOperationsApp);
 app.route('/api', masterDataConfigApp);
 app.route('/api', physicalTowersApp);
 app.route('/api', structuredDemandApp);

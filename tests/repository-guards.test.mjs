@@ -99,7 +99,7 @@ test('portable backend core cannot depend on Cloudflare runtime types', () => {
 test('HTTP business and authentication modules resolve persistence without importing Cloudflare adapters', () => {
   const files = [
     'app.ts', 'auth.ts', 'session.ts', 'demand-import.ts', 'reserve-planning.ts', 'finance.ts',
-    'project-lifecycle.ts', 'analysis-operations.ts', 'project-execution.ts', 'transmission-grid.ts', 'master-data-config.ts', 'physical-towers.ts', 'structured-demand.ts',
+    'project-lifecycle.ts', 'analysis-operations.ts', 'project-execution.ts', 'transmission-grid.ts', 'transmission-grid-operations.ts', 'master-data-config.ts', 'physical-towers.ts', 'structured-demand.ts',
   ];
   for (const name of files) {
     const source = readFileSync(resolve(root, 'apps/api/src', name), 'utf8');
@@ -140,7 +140,7 @@ test('project lifecycle attachment metadata goes through AttachmentRepository in
 });
 
 test('transmission grid, master-data configuration, physical tower, and structured demand flows do not reach D1 directly', () => {
-  for (const name of ['transmission-grid.ts', 'master-data-config.ts', 'physical-towers.ts', 'structured-demand.ts']) {
+  for (const name of ['transmission-grid.ts', 'transmission-grid-operations.ts', 'master-data-config.ts', 'physical-towers.ts', 'structured-demand.ts']) {
     const source = readFileSync(resolve(root, 'apps/api/src', name), 'utf8');
     assert.doesNotMatch(source, /c\.env\.DB|\bD1(?:Database|PreparedStatement)\b/, `${name} must use portable repositories instead of D1 APIs directly`);
   }

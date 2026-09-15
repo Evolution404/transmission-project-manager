@@ -19,6 +19,8 @@
     "src/analysis-operations.ts",
     "src/project-execution.ts",
     "src/transmission-grid.ts",
+    "src/transmission-grid-operations.ts",
+    "src/transmission-grid-errors.ts",
     "src/master-data-config.ts",
     "src/physical-towers.ts",
     "src/structured-demand.ts",
