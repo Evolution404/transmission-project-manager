@@ -167,20 +167,19 @@ preflight 通过只证明配置结构和构建，不证明真实资源/Secret �
 统一发布流程：
 
 1. 手工触发 `Production promote`；
-2. 输入准确当前 `main` SHA；
-3. 输入 release/backup/schema evidence reference；
-4. workflow 重新执行完整 `npm run check`；
-5. production config validator；
-6. runner 从 GitHub Environment Secrets 生成 0600 的临时 `worker-secrets.json`；
-7. Wrangler dry-run 使用同一 `--secrets-file`；
-8. 再次 fetch `origin/main` 并要求仍等于批准 SHA；
-9. workflow 只读导出生产 D1 并运行数据转换演练；结构一致则直接 deploy；结构不一致且可迁移才进入维护模式；
-10. 维护模式下 `/api/health` 仍可用，其余 API 返回 503，Cron 停止写入；workflow 再次导出权威快照；
-11. 同一生产 D1 重建当前 `0001` 并导入转换后的历史数据，核对逐表行数、外键和 integrity；
-12. `wrangler deploy --config wrangler.production.jsonc --secrets-file <runner-temp>` 退出维护模式并发布代码、bindings 与 Worker Secrets；
-13. GitHub runner 请求 `https://<domain>/api/health`，只有 `ok=true`、service 正确、`schema.ready=true` 才通过；
-14. 结构迁移后的任一步失败都会尝试恢复维护前完整 D1 导出并回滚维护前 Worker version；
-15. 无论成功失败都删除 runner 临时数据库导出、转换结果和 secret 文件。
+2. 保持默认 `main`，直接运行；workflow **没有必填输入**，自动用触发时 `github.sha` 锁定准确版本；
+3. workflow 重新执行完整 `npm run check`；
+4. production config validator；
+5. runner 从 GitHub Environment Secrets 生成 0600 的临时 `worker-secrets.json`；
+6. Wrangler dry-run 使用同一 `--secrets-file`；
+7. 再次 fetch `origin/main` 并要求仍等于触发时 SHA；如果 `main` 在执行期间已有新提交，本次自动停止，重新触发即可；
+8. workflow 只读导出生产 D1 并运行数据转换演练；结构一致则直接 deploy；结构不一致且可迁移才进入维护模式；
+9. 维护模式下 `/api/health` 仍可用，其余 API 返回 503，Cron 停止写入；workflow 再次导出权威快照；
+10. 同一生产 D1 重建当前 `0001` 并导入转换后的历史数据，核对逐表行数、外键和 integrity；
+11. `wrangler deploy --config wrangler.production.jsonc --secrets-file <runner-temp>` 退出维护模式并发布代码、bindings 与 Worker Secrets；
+12. GitHub runner 请求 `https://<domain>/api/health`，只有 `ok=true`、service 正确、`schema.ready=true` 才通过；
+13. 结构迁移后的任一步失败都会尝试恢复维护前完整 D1 导出并回滚维护前 Worker version；
+14. 无论成功失败都删除 runner 临时数据库导出、转换结果和 secret 文件。
 
 `Production promote` 在开发阶段可能**重建当前 `0001` 数据模型**，但绝不因此新增 `0002+` migration。
 

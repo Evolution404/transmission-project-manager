@@ -113,7 +113,7 @@ YAML 中写 `environment: production` 不能替代真实 Environment protection 
 2. PR 最新 HEAD 的 GitHub Actions `npm run check` 必须全绿；
 3. 通过 GitHub 合入 `main`；
 4. 合并后的 `main` CI 再次通过；
-5. 后续生产 workflow 输入的 `release_sha` 必须等于当前准确 `main` SHA。
+5. `Production promote` 不要求人工复制 SHA；workflow 自动绑定触发时的 `github.sha`，且在生产变更前再次要求 `origin/main` 仍等于该 SHA。若 `main` 在运行期间前进，本次发布自动停止。
 
 ### 6.2 资源与身份核对
 
@@ -144,7 +144,7 @@ YAML 中写 `environment: production` 不能替代真实 Environment protection 
 
 如正式 D1 尚未达到代码要求的 schema：
 
-1. 手工触发 `Production promote` 并输入准确 `main` SHA；
+1. 在 `main` 上手工触发 `Production promote`；无需填写参数，workflow 自动锁定触发时的准确 `main` SHA；
 2. workflow 先只读导出生产 D1，在 runner 临时 SQLite 中评估旧数据能否迁移到当前 `0001`；
 3. 若结构兼容则无需重建 D1，直接发布；若结构变化但可确定性迁移，则短暂进入维护模式、冻结 API/Cron 写入并再次导出权威快照；
 4. 在同一生产 D1 中重建当前 `0001`、导入已验证历史数据并核对行数/外键/integrity；
@@ -157,12 +157,12 @@ YAML 中写 `environment: production` 不能替代真实 Environment protection 
 
 统一通过 `Production promote` 发布：
 
-1. 输入准确当前 `main` SHA；
-2. 输入已审核的发布/备份/schema 证据引用；
+1. 在 GitHub Actions 点开 `Production promote`，保持默认 `main`，直接点击运行；**没有任何必填输入**；
+2. workflow 自动把触发时的 `github.sha` 作为本次唯一发布 SHA；
 3. workflow 再执行完整 `npm run check`；
 4. validation + dry-run；
 5. runner 将 `AUTH_CREDENTIAL_PEPPER` 与 `NOTION_API_TOKEN` 写入仅存在于 `$RUNNER_TEMP` 的 0600 临时 secret 文件；
-6. 再次确认 `origin/main` 仍等于批准 SHA；
+6. 再次确认 `origin/main` 仍等于触发时 SHA；若期间有新提交进入 `main`，本次发布 fail-closed，重新点一次即可；
 7. `wrangler deploy --config wrangler.production.jsonc --secrets-file <runner-temp>`，代码、bindings 与 Worker Secrets 同一版本发布；
 8. GitHub runner 从 production config 提取真实自定义域名；
 9. 请求 `https://<domain>/api/health`；

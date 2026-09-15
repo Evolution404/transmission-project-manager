@@ -135,12 +135,14 @@ test('production promote is the single manual production mutation entry point', 
   const source = readFileSync(new URL('../.github/workflows/production-promote.yml', import.meta.url), 'utf8');
   assert.match(source, /workflow_dispatch:/);
   assert.match(source, /environment: production/);
-  assert.match(source, /release_sha/);
+  assert.match(source, /RELEASE_SHA:\s*\$\{\{ github\.sha \}\}/);
+  assert.doesNotMatch(source, /inputs:|inputs\./);
   assert.match(source, /secrets\.CLOUDFLARE_API_TOKEN/);
   assert.match(source, /secrets\.AUTH_CREDENTIAL_PEPPER/);
   assert.match(source, /secrets\.NOTION_API_TOKEN/);
   assert.match(source, /npm run check/);
   assert.match(source, /scripts\/production\/promote\.sh/);
+  assert.match(source, /git rev-parse origin\/main/);
   assert.doesNotMatch(source, /PRODUCTION_DEPLOY_ENABLED|PRODUCTION_CONFIG_JSON|vars\./);
   assert.doesNotMatch(source, /\n  (push|pull_request|schedule|workflow_run):/);
 });

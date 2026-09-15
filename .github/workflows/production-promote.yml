@@ -2,15 +2,6 @@ name: Production promote
 
 on:
   workflow_dispatch:
-    inputs:
-      release_sha:
-        description: Exact current main commit (40 hexadecimal characters)
-        required: true
-        type: string
-      release_record:
-        description: Reviewed release/data-transfer evidence reference (no secrets)
-        required: true
-        type: string
 
 permissions:
   contents: read
@@ -27,19 +18,17 @@ jobs:
     timeout-minutes: 45
     env:
       WRANGLER_SEND_METRICS: 'false'
+      RELEASE_SHA: ${{ github.sha }}
     steps:
       - uses: actions/checkout@v7
 
       - name: Bind approval to exact main revision and required secrets
         env:
-          RELEASE_SHA: ${{ inputs.release_sha }}
-          RELEASE_RECORD: ${{ inputs.release_record }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           AUTH_CREDENTIAL_PEPPER: ${{ secrets.AUTH_CREDENTIAL_PEPPER }}
           NOTION_API_TOKEN: ${{ secrets.NOTION_API_TOKEN }}
         run: |
           set -euo pipefail
-          test -n "$RELEASE_RECORD"
           [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]
           test -n "$CLOUDFLARE_API_TOKEN"
           test -n "$AUTH_CREDENTIAL_PEPPER"
@@ -72,8 +61,6 @@ jobs:
         run: npm exec -- wrangler deploy --dry-run --config wrangler.production.jsonc --secrets-file "$WORKER_SECRETS_FILE" --outdir dist-production-promote
 
       - name: Recheck approved main revision before production mutation
-        env:
-          RELEASE_SHA: ${{ inputs.release_sha }}
         run: |
           set -euo pipefail
           git fetch origin main
@@ -82,7 +69,6 @@ jobs:
 
       - name: Preserve data and promote production
         env:
-          RELEASE_SHA: ${{ inputs.release_sha }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: bash scripts/production/promote.sh
 
