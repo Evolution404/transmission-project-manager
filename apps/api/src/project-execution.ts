@@ -1,8 +1,20 @@
-import { Hono, type Context } from 'hono';
-import type { LifecycleState } from '@tpm/shared';
-import { hasScope, requireRoles, type AppEnv } from './auth.ts';
+import { Hono } from 'hono';
+import { requireRoles, type AppEnv } from './auth.ts';
 import { replayIdempotentResponse, requestHash, requireIdempotencyKey } from './http/idempotent-mutation.ts';
 import { apiError } from './http/request-values.ts';
+import {
+  MAX_EXECUTION_ITEMS as MAX_ITEMS,
+  addExecutionDays as addDays,
+  cleanExecutionText as cleanText,
+  expectedExecutionVersion as expectedVersion,
+  hasExecutionProjectAccess as hasProjectAccess,
+  nonNegativeExecutionInteger as nonNegativeInteger,
+  nullableExecutionText as nullableText,
+  parseExecutionQuantityScaled as parseQuantityScaled,
+  positiveExecutionInteger as positiveInteger,
+  validExecutionDate as validDate,
+  validExecutionYear as validYear,
+} from './project-execution-shared.ts';
 import { SqlProjectReleaseRepository } from './repositories/sql-project-release-repository.ts';
 import { SqlProjectTaskRepository } from './repositories/sql-project-task-repository.ts';
 import { SqlTaskSupplyRepository } from './repositories/sql-task-supply-repository.ts';
@@ -16,76 +28,6 @@ import { SqlDemandMaterialWriteRepository } from './repositories/sql-demand-mate
 import { SqlReserveProjectQueryRepository } from './repositories/sql-reserve-project-query-repository.ts';
 import { SqlReserveProjectWriteRepository } from './repositories/sql-reserve-project-write-repository.ts';
 import { resolvePersistence as createCloudflarePersistence } from './runtime/persistence.ts';
-
-const MAX_ITEMS = 100;
-
-function cleanText(value: unknown): string {
-  if (value === null || value === undefined) return '';
-  return String(value).trim();
-}
-
-function nullableText(value: unknown, max: number): string | null | undefined {
-  if (value === null || value === undefined || value === '') return null;
-  const text = cleanText(value);
-  return text && text.length <= max ? text : undefined;
-}
-
-function positiveInteger(value: unknown): number | null {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : null;
-}
-
-function nonNegativeInteger(value: unknown): number | null {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
-}
-
-function expectedVersion(value: unknown): number | null {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 1 ? value : null;
-}
-
-function validYear(value: unknown): number | null | undefined {
-  if (value === null || value === undefined || value === '') return null;
-  const year = Number(value);
-  return Number.isInteger(year) && year >= 1900 && year <= 2200 ? year : undefined;
-}
-
-function validDate(value: unknown): string | null | undefined {
-  if (value === null || value === undefined || value === '') return null;
-  const date = cleanText(value);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return undefined;
-  const parsed = new Date(`${date}T00:00:00Z`);
-  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === date ? date : undefined;
-}
-
-function parseQuantityScaled(value: unknown): number | null {
-  if (typeof value === 'number' && Number.isSafeInteger(value) && value > 0) return value;
-  const raw = cleanText(value);
-  const match = raw.match(/^(\d+)(?:\.(\d{1,4}))?$/);
-  if (!match) return null;
-  const scaled = Number(match[1]) * 10000 + Number((match[2] ?? '').padEnd(4, '0'));
-  return Number.isSafeInteger(scaled) && scaled > 0 ? scaled : null;
-}
-
-
-function addDays(date: string, days: number) {
-  const value = new Date(`${date}T00:00:00Z`);
-  value.setUTCDate(value.getUTCDate() + days);
-  return value.toISOString().slice(0, 10);
-}
-
-function lifecycleState(implemented: boolean, settled: boolean): LifecycleState {
-  if (implemented && settled) return 'implemented_settled';
-  if (implemented) return 'implemented_unsettled';
-  if (settled) return 'unimplemented_settled';
-  return 'unimplemented_unsettled';
-}
-
-function hasProjectAccess(c: Context<AppEnv>, projectId: string, frameworkId: string | null) {
-  const user = c.get('currentUser');
-  return user.role === 'admin'
-    || hasScope(user.scopes, 'project', projectId)
-    || user.scopes.some((scope) => scope.type === 'all')
-    || Boolean(frameworkId && hasScope(user.scopes, 'framework', frameworkId));
-}
 
 function normalizeDemandMaterials(body: Record<string, unknown>): Array<{ rawModel: string; materialId: string | null; quantityScaled: number; unit: string | null }> | null {
   const source = Array.isArray(body.materials)
@@ -205,7 +147,6 @@ projectExecutionApp.post('/demands/:id/materials', requireRoles('admin', 'projec
   }
   return c.json(response);
 });
-
 projectExecutionApp.post('/reserve-projects', requireRoles('admin', 'project_manager'), async (c) => {
   const key = requireIdempotencyKey(c); if (key instanceof Response) return key;
   let body: Record<string, unknown>; try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
@@ -252,17 +193,11 @@ projectExecutionApp.post('/reserve-projects', requireRoles('admin', 'project_man
   const actual = await queryRepository.find(id);
   return c.json({ ok: true as const, data: actual! }, 201);
 });
-
 projectExecutionApp.get('/reserve-projects', async (c) => {
-  const user = c.get('currentUser');
   const limit = Math.min(100, Math.max(1, Number(c.req.query('limit') ?? '50')));
   const { database } = createCloudflarePersistence(c.env);
-  const items = (await new SqlReserveProjectQueryRepository(database).list(limit)).filter((project) => (
-    user.role === 'admin'
-    || user.scopes.some((scope) => scope.type === 'all')
-    || hasScope(user.scopes, 'project', project.id)
-    || Boolean(project.frameworkId && hasScope(user.scopes, 'framework', project.frameworkId))
-  ));
+  const items = (await new SqlReserveProjectQueryRepository(database).list(limit))
+    .filter((project) => hasProjectAccess(c, project.id, project.frameworkId));
   return c.json({ ok: true as const, data: { items, nextCursor: null } });
 });
 
@@ -313,7 +248,6 @@ projectExecutionApp.put('/reserve-projects/:id/demands', requireRoles('admin', '
   }
   return c.json(response);
 });
-
 projectExecutionApp.put('/reserve-projects/:id/materials', requireRoles('admin', 'project_manager'), async (c) => {
   const key = requireIdempotencyKey(c); if (key instanceof Response) return key;
   let body: Record<string, unknown>; try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
@@ -812,40 +746,4 @@ projectExecutionApp.post('/task-settlements/:id/void', requireRoles('admin', 'pr
     return c.json(apiError('VERSION_CONFLICT', '任务结算已被并发修改，请刷新后重试'), 409);
   }
   return c.json(response);
-});
-
-projectExecutionApp.get('/demands/:id/execution', async (c) => {
-  const { database } = createCloudflarePersistence(c.env);
-  const repository = new SqlExecutionQueryRepository(database);
-  const result = await repository.findDemandExecution(c.req.param('id'));
-  if (!result) return c.json(apiError('DEMAND_NOT_FOUND', '需求不存在'), 404);
-  if (c.get('currentUser').role !== 'admin' && !c.get('currentUser').scopes.some((scope) => scope.type === 'all')) {
-    const allowed = result.projects.some((project) => hasProjectAccess(c, project.id, project.frameworkId));
-    if (!allowed && result.projects.length) return c.json(apiError('SCOPE_FORBIDDEN', '无权查看该需求执行反馈'), 403);
-  }
-  return c.json({ ok: true as const, data: result.summary });
-});
-
-projectExecutionApp.get('/projects/:id/execution', async (c) => {
-  const { database } = createCloudflarePersistence(c.env);
-  const repository = new SqlExecutionQueryRepository(database);
-  const project = await repository.findProjectHeader(c.req.param('id'));
-  if (!project) return c.json(apiError('PROJECT_NOT_FOUND', '项目不存在'), 404);
-  if (!hasProjectAccess(c, project.id, project.frameworkId)) return c.json(apiError('SCOPE_FORBIDDEN', '无权查看该项目执行状态'), 403);
-  const [tasks, demands] = await Promise.all([
-    repository.listProjectTasks(project.id),
-    repository.listProjectDemands(project.id),
-  ]);
-  const implementationComplete = demands.length > 0 && demands.every((item) => item.implementationComplete);
-  const settlementComplete = demands.length > 0 && demands.every((item) => item.settlementComplete);
-  return c.json({ ok: true as const, data: {
-    projectId: project.id,
-    projectVersion: project.version,
-    released: project.released,
-    tasks,
-    demands,
-    implementationComplete,
-    settlementComplete,
-    projectState: lifecycleState(implementationComplete, settlementComplete),
-  } });
 });

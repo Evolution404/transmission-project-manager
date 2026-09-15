@@ -99,7 +99,7 @@ test('portable backend core cannot depend on Cloudflare runtime types', () => {
 test('HTTP business and authentication modules resolve persistence without importing Cloudflare adapters', () => {
   const files = [
     'app.ts', 'account.ts', 'administration.ts', 'auth.ts', 'authentication-context.ts', 'public-authentication.ts', 'session.ts', 'demand-import.ts', 'reserve-planning.ts', 'finance.ts',
-    'project-lifecycle.ts', 'analysis-operations.ts', 'project-execution.ts', 'transmission-grid.ts', 'transmission-grid-operations.ts', 'master-data-config.ts', 'physical-towers.ts', 'structured-demand.ts',
+    'project-lifecycle.ts', 'analysis-operations.ts', 'project-execution.ts', 'project-execution-query.ts', 'project-execution-shared.ts', 'transmission-grid.ts', 'transmission-grid-operations.ts', 'master-data-config.ts', 'physical-towers.ts', 'structured-demand.ts',
   ];
   for (const name of files) {
     const source = readFileSync(resolve(root, 'apps/api/src', name), 'utf8');
@@ -165,7 +165,7 @@ test('HTTP modules share one idempotency request/replay implementation', () => {
 });
 
 test('HTTP modules share the common API error response builder', () => {
-  const modules = ['app.ts', 'account.ts', 'administration.ts', 'public-authentication.ts', 'demand-import.ts', 'reserve-planning.ts', 'finance.ts', 'project-lifecycle.ts', 'analysis-operations.ts', 'project-execution.ts'];
+  const modules = ['app.ts', 'account.ts', 'administration.ts', 'public-authentication.ts', 'demand-import.ts', 'reserve-planning.ts', 'finance.ts', 'project-lifecycle.ts', 'analysis-operations.ts', 'project-execution.ts', 'project-execution-query.ts'];
   for (const name of modules) {
     const source = readFileSync(resolve(root, 'apps/api/src', name), 'utf8');
     assert.match(source, /http\/request-values/, `${name} must use the shared API error builder`);
@@ -213,9 +213,20 @@ test('analysis, notification, and backup flows do not reach Cloudflare persisten
 });
 
 test('project execution flows do not reach D1 directly', () => {
-  const source = readFileSync(resolve(root, 'apps/api/src/project-execution.ts'), 'utf8');
-  assert.match(source, /Sql(?:ReserveProject|ProjectRelease|ProjectTask|TaskSupply|TaskImplementation|TaskSettlement|ExecutionQuery)Repository/, 'project execution routes must use portable business repositories');
-  assert.doesNotMatch(source, /c\.env\.DB|\bD1(?:Database|PreparedStatement)\b|\.prepare\(/, 'project execution routes must use portable repositories instead of D1 APIs directly');
+  const routeSources = ['project-execution.ts', 'project-execution-query.ts'].map((name) => readFileSync(resolve(root, 'apps/api/src', name), 'utf8'));
+  assert.match(routeSources.join('\n'), /Sql(?:ReserveProject|ProjectRelease|ProjectTask|TaskSupply|TaskImplementation|TaskSettlement|ExecutionQuery)Repository/, 'project execution routes must use portable business repositories');
+  for (const source of routeSources) {
+    assert.doesNotMatch(source, /c\.env\.DB|\bD1(?:Database|PreparedStatement)\b|\.prepare\(/, 'project execution routes must use portable repositories instead of D1 APIs directly');
+  }
+});
+
+test('project execution aggregate query routes stay isolated from mutation routes', () => {
+  const facade = readFileSync(resolve(root, 'apps/api/src/project-execution.ts'), 'utf8');
+  const queries = readFileSync(resolve(root, 'apps/api/src/project-execution-query.ts'), 'utf8');
+  assert.doesNotMatch(facade, /\/demands\/:id\/execution|\/projects\/:id\/execution/, 'mutation route module must not absorb aggregate execution queries again');
+  assert.match(queries, /\/demands\/:id\/execution/);
+  assert.match(queries, /\/projects\/:id\/execution/);
+  assert.doesNotMatch(queries, /\.post\(|\.put\(|\.patch\(|\.delete\(/, 'aggregate execution query module must stay read-only');
 });
 
 test('authentication middleware uses portable session and member repositories', () => {
