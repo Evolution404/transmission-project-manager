@@ -204,12 +204,16 @@ test('legacy project lifecycle flows do not reach D1 directly', () => {
   assert.doesNotMatch(source, /c\.env\.DB|\bD1(?:Database|PreparedStatement)\b|\.prepare\(/, 'project lifecycle routes must use portable repositories instead of D1 APIs directly');
 });
 
-test('analysis, notification, and backup flows do not reach Cloudflare persistence directly', () => {
-  const source = readFileSync(resolve(root, 'apps/api/src/analysis-operations.ts'), 'utf8');
-  assert.match(source, /SqlAnalysisRepository/, 'analysis flows must use AnalysisRepository');
-  assert.match(source, /SqlNotificationRepository/, 'notification flows must use NotificationRepository');
-  assert.match(source, /SqlBackupRepository/, 'backup flows must use BackupRepository');
-  assert.doesNotMatch(source, /c\.env\.DB|env\.DB|env\.FILES|\bD1(?:Database|PreparedStatement)\b|\.prepare\(/, 'analysis and operations routes must use portable persistence ports instead of Cloudflare bindings directly');
+test('analysis and notification flows stay isolated and do not reach Cloudflare persistence directly', () => {
+  const analysis = readFileSync(resolve(root, 'apps/api/src/analysis-operations.ts'), 'utf8');
+  const notifications = readFileSync(resolve(root, 'apps/api/src/notification-operations.ts'), 'utf8');
+  assert.match(analysis, /SqlAnalysisRepository/, 'analysis flows must use AnalysisRepository');
+  assert.doesNotMatch(analysis, /SqlNotificationRepository|analysisOperationsApp\.(?:get|post|put|patch|delete)\(['"]\/(?:notification-|alerts)/, 'analysis routes must not absorb notification and alert operations');
+  assert.match(notifications, /SqlNotificationRepository/, 'notification flows must use NotificationRepository');
+  assert.doesNotMatch(notifications, /SqlBackupRepository|\/backups|\/system\/tasks/, 'notification routes must not absorb backup or scheduled-task operations');
+  for (const source of [analysis, notifications]) {
+    assert.doesNotMatch(source, /c\.env\.DB|env\.DB|env\.FILES|\bD1(?:Database|PreparedStatement)\b|\.prepare\(/, 'analysis and notification routes must use portable persistence ports instead of Cloudflare bindings directly');
+  }
 });
 
 test('project execution flows do not reach D1 directly', () => {

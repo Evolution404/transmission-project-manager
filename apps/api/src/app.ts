@@ -8,6 +8,7 @@ import { demandImportApp } from './demand-import.ts';
 import { financeApp } from './finance.ts';
 import { apiError } from './http/request-values.ts';
 import { masterDataConfigApp } from './master-data-config.ts';
+import { notificationOperationsApp } from './notification-operations.ts';
 import { physicalTowersApp } from './physical-towers.ts';
 import { projectExecutionApp } from './project-execution.ts';
 import { projectExecutionQueryApp } from './project-execution-query.ts';
@@ -86,5 +87,6 @@ app.route('/api', reservePlanningApp);
 app.route('/api', financeApp);
 app.route('/api', projectLifecycleApp);
 app.route('/api', analysisOperationsApp);
+app.route('/api', notificationOperationsApp);
 
 app.notFound((c) => c.json(apiError('NOT_FOUND', '接口不存在或尚未实现'), 404));
