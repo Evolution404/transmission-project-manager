@@ -14,8 +14,7 @@ PR #1 合并前 CI 与合并后的 `main` CI #31 均通过。Cloudflare Workers 
 
 - `CI`：push `main` / PR / 手工，仅执行完整代码门禁；
 - `Production preflight (no deployment)`：手工，仅校验 production config + dry-run，不携带云凭据；
-- `Production D1 migration`：手工、`production` Environment 绑定，只执行正式 D1 migration；
-- `Production release`：手工、`production` Environment 绑定，只发布 Worker/Static Assets/已审核绑定，并在发布后验证真实 `/api/health`。
+- `Production promote`：唯一生产变更入口，手工、`production` Environment 绑定；自动完成数据保留评估、必要的数据结构转换、Worker 发布和真实 `/api/health` 验证。
 
 **代码中存在 workflow 不等于生产已经发布。** 2026-09-14 已建立 GitHub `production` Environment，并限制生产 workflow 仅从 `main` 运行。生产非敏感配置现在直接受 Git 管理于 `apps/api/wrangler.production.jsonc`；GitHub 不再保存重复的 production Variables。正式发布长期只依赖 3 个 Environment Secrets：`CLOUDFLARE_API_TOKEN`、`AUTH_CREDENTIAL_PEPPER`、`NOTION_API_TOKEN`。`BOOTSTRAP_TOKEN` 仅在首次管理员初始化时临时使用，不属于长期配置。
 
@@ -27,9 +26,8 @@ PR #1 合并前 CI 与合并后的 `main` CI #31 均通过。Cloudflare Workers 
 - 代码通过施工分支 → PR → GitHub Actions → 合并 `main`；
 - 生产变更只通过受保护的 GitHub Actions / Cloudflare 云端流程；
 - Cloudflare API Token、认证 Secret、bootstrap Secret 不进入 Git、PR、前端或 Actions 日志；
-- 普通 push/PR 不允许自动执行 D1 migration 或正式 Worker deploy；
-- D1 migration 与 Worker deploy 分离，分别显式批准；
-- 当前仍处开发阶段，D1 只允许 `0001_initial_schema.sql` 单一可重建基线；除非用户明确要求兼容已有数据/保留升级路径，否则禁止新增 `0002+` migration 或兼容补丁，schema 变化直接修改 `0001` 并重建开发/测试数据库。
+- 普通 push/PR 不允许自动执行生产数据替换或正式 Worker deploy；
+- 当前仍处开发阶段，D1 只允许 `0001_initial_schema.sql` 单一可重建基线；生产历史数据需要保留时由 `Production promote` 转换到当前 `0001`，不新增 `0002+`，不让应用保留旧 schema 兼容层；只有用户明确宣布进入运行阶段/正式维护升级链后才改变此规则。
 
 ## 3. 生产拓扑
 
@@ -142,22 +140,22 @@ YAML 中写 `environment: production` 不能替代真实 Environment protection 
 - Wrangler production dry-run；
 - 不携带 Cloudflare Token，不产生云端变更。
 
-### 6.4 D1 migration
+### 6.4 开发期生产数据重建
 
 如正式 D1 尚未达到代码要求的 schema：
 
-1. 核对当前 `d1 migrations list`；
-2. 已有正式数据时先停写、暂停会写库的 Cron/任务并完成可恢复备份；空库也记录“空库无业务数据”证据；
-3. 手工触发 `Production D1 migration`；
-4. 输入准确 `main` SHA、migration evidence reference、目标正式 D1 UUID；
-5. workflow 会要求输入 UUID 与受审 `apps/api/wrangler.production.jsonc` 中的 `database_id` 完全相同；
-6. 执行前后分别 `wrangler d1 migrations list DB --remote`；
-7. 执行 `wrangler d1 migrations apply DB --remote`；
-8. migration 失败立即停止，不继续 Worker 发布，也不修改历史 migration 规避失败。
+1. 手工触发 `Production promote` 并输入准确 `main` SHA；
+2. workflow 先只读导出生产 D1，在 runner 临时 SQLite 中评估旧数据能否迁移到当前 `0001`；
+3. 若结构兼容则无需重建 D1，直接发布；若结构变化但可确定性迁移，则短暂进入维护模式、冻结 API/Cron 写入并再次导出权威快照；
+4. 在同一生产 D1 中重建当前 `0001`、导入已验证历史数据并核对行数/外键/integrity；
+5. 任意无法自动或显式转换的数据都会返回 `DECISION_REQUIRED`，在 D1 变更前停止并等待用户决定；迁移后任一步失败则恢复维护前数据库导出并回滚到维护前 Worker version。
+6. `wrangler d1 migrations apply DB --remote` 只用于在已清空的同一 D1 中重新应用**当前唯一 `0001`**，不是推进 migration 版本；
+7. 数据导入后必须逐表核对目标行数，并通过 `PRAGMA foreign_key_check` 与 `PRAGMA integrity_check`；
+8. 任一步失败立即恢复维护前完整导出并回滚维护前 Worker version，不通过修改 migration 历史规避失败。
 
 ### 6.5 Worker 发布
 
-migration/schema ready 后手工触发 `Production release`：
+统一通过 `Production promote` 发布：
 
 1. 输入准确当前 `main` SHA；
 2. 输入已审核的发布/备份/schema 证据引用；
@@ -171,7 +169,7 @@ migration/schema ready 后手工触发 `Production release`：
 10. 只有 `ok=true`、service 正确、`schema.ready=true` 才判定发布后的基础健康检查通过；
 11. 无论成功失败都删除 runner 临时 secret 文件。
 
-代码 deploy **不自动执行 migration**。
+当生产数据结构与当前 `0001` 已一致时，`Production promote` 只执行普通 deploy；只有检测到数据结构确实不同且历史数据可确定性迁移时，才进入同库重建流程。该过程不会新增 migration 版本。
 
 ## 7. 首管理员与登录验收
 
@@ -229,8 +227,8 @@ Workers/D1 配额与价格必须在正式上线前再次按 Cloudflare 官方页
 - 回退 Worker 前先确认旧代码兼容当前 schema；
 - D1 数据恢复只先恢复到隔离库并对账，不能直接覆盖有新写入的正式库；
 - 对象存储中的附件需要独立核对，不以 D1 manifest checksum 代替附件本体完整性；Notion 的应用删除是逻辑删除，底层 FileUpload 当前无法通过 API 物理撤销，敏感数据治理必须单独考虑这一边界；
-- `auth_sessions` 不恢复；
-- 只有用户明确宣布进入“兼容已有数据/保留升级路径”阶段后，才冻结当前基线并开始追加 migration；在此之前仍执行单基线重建策略；
+- 开发期数据重建默认保留所有结构兼容的数据（包括账号、权限、审计及仍有效的会话状态）；若某类运行态数据需要显式舍弃，必须作为一次性转换规则或用户决定记录，不能隐式丢弃；
+- 只有用户明确宣布进入“运行阶段/正式维护升级链”后，才冻结当前基线并开始追加 migration；仅要求保留历史数据不构成这一授权；
 - 保留前一 Worker version/deployment ID、准确 schema 状态、备份引用和回退证据。
 
 详细步骤见 `PRODUCTION_RUNBOOK.md`。

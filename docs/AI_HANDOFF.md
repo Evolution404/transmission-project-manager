@@ -8,7 +8,7 @@
 - 最近完整代码门禁基线：Node **279/279 PASS**、Web/Vitest **114/114 PASS（19 个测试文件）**，Cloudflare/Node/Web/shared TypeScript、Web production build、Worker dry-run、Node + SQLite + Filesystem 第二运行时均 PASS；合入/生产切库期间的 `main` CI 也持续全绿。
 - 2026-09-15 用户明确授权保留 `zhangsan` 账号及原密码凭据、清空其余生产数据并发布。生产 D1 已重建为当前单一 `0001_initial_schema.sql` 基线，只保留 `zhangsan`，旧 D1 已删除。
 - 当前生产 D1：`transmission-project-manager-production-20260915`，UUID `913b6387-46b0-40c6-b0b1-11f070b99f08`；生产域名仍为 `project.980923.xyz`，对象存储仍为 Notion。
-- 当前任务：后续继续纯结构性技术债清理时，从 `reserve-planning.ts`、`demand-import.ts`、`finance.ts`、`project-lifecycle.ts`、`MasterDataView.vue`、`packages/shared/src/index.ts` 中按真实职责耦合收益选择下一处，保持业务行为、接口 URL、权限、幂等、版本锁和事务边界不变。
+- 当前施工分支 `refactor/production-release-governance-20260915` 正在把生产发布收口成单一 `Production promote`：普通发布直接 deploy；schema 不一致时优先迁移历史数据到当前 `0001` 新模型；无法确定性迁移则 `DECISION_REQUIRED`，在任何生产 D1 修改前停止并等待用户决定。
 - 禁止 `reset/clean`；后续任何新的生产数据清理、migration 或 release 仍需用户当次明确授权。
 
 长期业务事实只看 `BUSINESS_BASELINE.md`、`DESIGN.md`、`DATA_MODEL.md`；测试门禁看 `TESTING.md`；生产步骤看 `PRODUCTION_RUNBOOK.md`。已完成阶段过程通过 Git 历史追溯，不再维护重复 WIP 文档。
@@ -158,7 +158,7 @@ M6 最终完整 `npm run check` 已 PASS：
 
 ## 必须继续保持的工程约束
 
-- 当前开发阶段数据库只允许 `0001_initial_schema.sql` 一个基线；无明确兼容需求不得新增 `0002+`。
+- 当前开发阶段数据库只允许 `0001_initial_schema.sql` 一个基线；历史数据保留也不允许新增 `0002+` 或保留旧数据模型。只有用户明确宣布进入运行阶段/正式维护升级链后才允许推进 migration 版本。
 - 业务认证保持系统自维护 username/password；浏览器 Web Worker Argon2id，服务端 HMAC verifier + HttpOnly 会话。
 - 业务核心保持 Database/ObjectStore 等 Port 边界，不重新绑定 D1/R2/Notion。
 - Cloudflare Free 为部署基线，同时保持 Node + SQLite + Filesystem 第二运行时。
