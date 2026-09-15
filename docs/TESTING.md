@@ -52,7 +52,7 @@ npm run check
 必须保持：
 
 - `tests/migrations.lock.json` 锁定当前开发基线 checksum。
-- 当前开发阶段只允许 `0001_initial_schema.sql` 单一可重建基线；除非用户明确要求兼容已投产业务数据或设计升级路径，否则禁止新增 `0002+` migration。
+- 当前开发阶段只允许 `0001_initial_schema.sql` 单一可重建基线，历史数据迁移也不得新增 `0002+` migration。发布工具必须测试“可自动搬运 / 需要显式转换 / 无法迁移需用户决定”三种路径；只有用户明确宣布进入运行阶段/正式维护升级链后才允许推进 migration 版本。
 - 空库可按顺序应用全部 migration，重复 apply 不破坏当前 schema。
 - schema readiness 必须指向最新 migration；数据库落后时业务接口统一 fail-closed 为 `SCHEMA_OUTDATED`。
 - 本地开发启动器先验证 migration 文件与 checksum lock 稳定，再从不可变临时快照执行。

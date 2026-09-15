@@ -14,10 +14,9 @@ PR #2 合入后使用以下 Actions：
 |---|---|---|
 | `CI` | PR / `main` 完整 `npm run check` | 否 |
 | `Production preflight (no deployment)` | production config validation + dry-run | 否 |
-| `Production D1 migration` | 正式 D1 migration | 是，仅 D1 migration |
-| `Production release` | Worker / Static Assets / 绑定发布 | 是，不执行 D1 migration |
+| `Production promote` | 数据保留评估 + 必要的数据模型重建 + Worker 发布 | 是 |
 
-`Production D1 migration` 与 `Production release` 都只能手工触发、绑定 `production` Environment，并要求精确当前 `main` SHA。
+`Production promote` 是唯一日常生产变更入口，只能手工触发、绑定 `production` Environment，并要求精确当前 `main` SHA。
 
 ## 2. GitHub production Environment
 
@@ -147,43 +146,27 @@ PR #2 合入后使用以下 Actions：
 
 preflight 通过只证明配置结构和构建，不证明真实资源/Secret 存在。
 
-### 5.3 Production D1 migration
+### 5.3 开发期生产数据迁移
 
-仅在 schema 不满足当前代码要求时执行：
+当前仍处开发阶段，只允许单一 `0001_initial_schema.sql` 基线。生产已有历史数据并不改变该规则：旧数据模型只作为发布时的临时输入，最终生产库只保留当前 `0001` 数据模型。
 
-1. 手工触发 `Production D1 migration`；
-2. 输入准确 `release_sha`；
-3. 输入 migration/backup evidence reference；
-4. 人工再次输入目标 D1 UUID；
-5. workflow 校验输入 UUID 与受审 `apps/api/wrangler.production.jsonc` 中 `database_id` 完全一致；
-6. 执行迁移前 `wrangler d1 migrations list DB --remote`；
-7. 执行 `wrangler d1 migrations apply DB --remote`；
-8. 再次 `list`；
-9. 核对关键表、金额、数量、状态和错误。
+`Production promote` 先只读导出生产 D1，并在 runner 临时 SQLite 中建立当前 `0001` 目标库：同名兼容字段自动搬运；旧字段/旧表仍有数据或新增必填字段无法推导时必须有绑定旧 schema 指纹的一次性显式转换规则。没有规则或验证失败时输出 `DECISION_REQUIRED`，在生产 D1 变更前停止并等待用户决定。
 
-任何 migration 失败都立即停止；不得盲目重跑。当前仍处开发阶段，只允许单一 `0001_initial_schema.sql` 基线；除非用户明确要求兼容已有数据/保留升级路径，否则不得新增补丁 migration。
+确认可迁后才进入维护模式：API 除 health 外统一 503，Cron 不执行写任务；重新导出权威快照后，在同一 D1 中重建当前 `0001`、导入历史数据并核对行数、外键与 integrity。任一步失败都恢复维护前完整导出并回滚 Worker。只有用户明确宣布进入运行阶段/正式维护升级链后，才允许冻结基线并新增 `0002+`。
 
-### 5.3A 开发期单基线与既有生产 D1 的边界
+### 5.3A 无法自动迁移时的决策路径
 
-开发阶段允许直接改写唯一 `0001_initial_schema.sql`，但已执行过旧版 `0001` 的生产 D1 **不会**因为同名文件内容变化而自动升级。当前基础台账已经进一步拆成 `physical_towers + line_tower_positions`，需求位置也改为引用线路杆塔节点，并新增班组、杆塔类型和通用自定义字段表。旧的 2026-09-14 一次性 reconciliation 脚本只适用于更早的数据模型，已经从仓库删除，禁止继续使用。
+开发阶段允许直接改写唯一 `0001_initial_schema.sql`，但生产旧库不会因为同名文件变化自动变成新模型。`Production promote` 因此先做纯只读的数据转换演练，不允许直接对旧库重放改写后的 `0001`。
 
-因此，未来若再次出现“生产 D1 已执行旧内容的同名 `0001`、而代码基线已改写”的情形，在用户明确授权生产 schema 迁移前：
+自动搬运只覆盖不会丢失旧字段语义的情况：同名表中的旧字段必须都能在目标表中找到，新增目标字段必须可空或有默认值。旧表被删除但仍有数据、旧字段被删除/改名、主键或类型变化、目标新增必填字段无法推导等情况，都必须使用一次性 `scripts/production/data-transform.mjs` 显式转换；该脚本必须绑定旧生产 schema 的精确指纹，并提供转换后验证。
 
-1. **不得**把当前开发基线直接应用到已经存在的生产 D1；
-2. **不得**仅凭 `d1_migrations` 中存在 `0001` 就判断生产 schema ready；
-3. **不得**重新使用或临时改造旧 `master-data-schema-reconcile.sql`；
-4. PR 可以继续做代码、测试和 dry-run，但不能因此推导“可发布生产”；
-5. 真正进入生产迁移时，必须先只读盘点目标 D1 当前表结构、行数、正式业务数据、Time Travel bookmark 和当前 Worker SHA，再根据当时实际数据另行设计并审查一次性迁移/导入方案；
-6. 迁移方案必须覆盖物理塔与线路杆塔节点拆分、需求端点 ID 转换、配置表和自定义字段表，且必须有独立恢复演练和 `PRAGMA foreign_key_check` 证据；
-7. 若生产已有正式业务数据，不允许把“开发阶段可重建”规则解释成“可以清空生产重建”。
+如果没有匹配的显式转换规则，或转换验证仍存在歧义，workflow 输出 `DECISION_REQUIRED` 并在生产 D1 和 Worker 发生任何维护切换前停止。此时由用户决定映射、舍弃或人工补充哪些数据；工具和 AI 均不得自行猜测。
 
-上述情形一旦出现，本节即构成**发布阻断条件**，不是待执行脚本。2026-09-15 的旧库不一致问题已按下方记录完成受控重建并解除；后续只有再次发生 schema 不一致时，才需要重新进入本节的阻断流程。
+### 5.4 Production promote
 
-### 5.4 Production release
+统一发布流程：
 
-确认 schema ready 后：
-
-1. 手工触发 `Production release`；
+1. 手工触发 `Production promote`；
 2. 输入准确当前 `main` SHA；
 3. 输入 release/backup/schema evidence reference；
 4. workflow 重新执行完整 `npm run check`；
@@ -191,13 +174,15 @@ preflight 通过只证明配置结构和构建，不证明真实资源/Secret �
 6. runner 从 GitHub Environment Secrets 生成 0600 的临时 `worker-secrets.json`；
 7. Wrangler dry-run 使用同一 `--secrets-file`；
 8. 再次 fetch `origin/main` 并要求仍等于批准 SHA；
-9. `wrangler deploy --config wrangler.production.jsonc --secrets-file <runner-temp>`，代码、bindings 与 Worker Secrets 同一版本发布；
-10. 从 production config 提取真实自定义域名；
-11. GitHub runner 请求 `https://<domain>/api/health`；Cloudflare 新 deployment 可能存在短暂传播窗口，因此不能只对网络错误做 `curl --retry`，必须在有限窗口内重复执行“HTTP 请求 + JSON 语义校验”；
-12. 只有实际响应满足 `ok=true`、service=`transmission-project-manager`、`schema.ready=true` 才通过基础发布验收；如果首次 HTTP 200 仍返回旧 deployment 的业务语义，应继续等待并重试，而不是立即把已经成功的 Worker 发布误判为失败；
-13. 无论成功失败都删除 runner 临时 secret 文件。
+9. workflow 只读导出生产 D1 并运行数据转换演练；结构一致则直接 deploy；结构不一致且可迁移才进入维护模式；
+10. 维护模式下 `/api/health` 仍可用，其余 API 返回 503，Cron 停止写入；workflow 再次导出权威快照；
+11. 同一生产 D1 重建当前 `0001` 并导入转换后的历史数据，核对逐表行数、外键和 integrity；
+12. `wrangler deploy --config wrangler.production.jsonc --secrets-file <runner-temp>` 退出维护模式并发布代码、bindings 与 Worker Secrets；
+13. GitHub runner 请求 `https://<domain>/api/health`，只有 `ok=true`、service 正确、`schema.ready=true` 才通过；
+14. 结构迁移后的任一步失败都会尝试恢复维护前完整 D1 导出并回滚维护前 Worker version；
+15. 无论成功失败都删除 runner 临时数据库导出、转换结果和 secret 文件。
 
-代码发布不会自动执行 migration。
+`Production promote` 在开发阶段可能**重建当前 `0001` 数据模型**，但绝不因此新增 `0002+` migration。
 
 ### 2026-09-14 首次正式 release 记录
 

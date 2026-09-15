@@ -31,13 +31,13 @@
 - 所有业务接口在服务端做权限和数据校验；前端验证不能替代后端校验。
 - 变更使用幂等键和版本检查；金额与关联流水使用原子事务。D1 `batch()` 才是可用的事务入口之一，不要假定多次独立 `run()` 会整体回滚。
 - 默认按 Workers Free 的 CPU 10ms、D1 参数/查询数量限制设计；避免在 Worker 内解析大 Excel 或全量扫描。保持分片、索引、汇总快照和重试能力。
-- **开发阶段数据库禁止推进 migration 版本。** 当前只允许 `apps/api/migrations/0001_initial_schema.sql` 一个基线文件；除非用户明确要求“兼容已有数据/保留升级路径”，否则任何 schema 变更都必须直接修改该 `0001` 并重建开发/测试数据库，严禁新增 `0002+`、兼容旧 schema、补丁 migration 或特殊升级 workaround。只有用户明确进入数据兼容阶段后，才允许冻结基线并追加 migration。使用合成测试数据，不提交真实 Excel、合同或备份。
+- **开发阶段数据库禁止推进 migration 版本。** 当前只允许 `apps/api/migrations/0001_initial_schema.sql` 一个基线文件；任何 schema 变更都直接修改该 `0001` 并重建开发/测试数据库，严禁新增 `0002+`、兼容旧 schema、补丁 migration 或特殊升级 workaround。即使生产已有历史数据，也只允许在发布工具中把历史数据迁移到当前 `0001` 新模型，不能因此保留旧数据模型或推进 migration 版本。只有用户明确宣布“进入运行阶段/正式维护升级链”后，才允许冻结基线并追加 migration。使用合成测试数据，不提交真实 Excel、合同或备份。
 - 只实现已领取的阶段，不把未实现的按钮或硬编码样本标成已完成功能。公共接口与共享类型同步更新。
 
 ## 完成一个阶段
 
 - 针对金额、数量守恒、权限、幂等、并发、状态与时间边界编写有意义的测试，不为纯样式添加镜像测试。
-- `tests/migrations.lock.json` 只允许锁定 `0001_initial_schema.sql`。开发阶段更新 schema 时同步更新该唯一 checksum；CI 必须拒绝第二个 migration 文件。只有用户明确要求兼容已有数据/升级路径时，才允许解除“单基线”门禁并设计追加 migration 与数据保留测试。
+- `tests/migrations.lock.json` 只允许锁定 `0001_initial_schema.sql`。开发阶段更新 schema 时同步更新该唯一 checksum；CI 必须拒绝第二个 migration 文件。历史数据保留通过生产发布期数据转换完成，不解除单基线门禁。只有用户明确宣布进入运行阶段/正式维护升级链时，才允许解除该门禁。
 - 禁止提交 `.skip` / `.only` / `test.todo` 等绕过门禁的测试占位。
 - 运行 `npm run check`，同时执行该阶段的验收用例；本地测试不证明大陆访问或免费 CPU 配额已通过。
 - 更新 `docs/IMPLEMENTATION_PLAN.md` 状态与 `docs/AI_HANDOFF.md` 的完成项、下一步及未验证事项。

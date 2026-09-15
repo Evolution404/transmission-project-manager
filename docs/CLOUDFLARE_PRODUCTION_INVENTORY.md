@@ -66,6 +66,6 @@ D1 `file_size` / `num_tables` 可用于初步判断数据库是否只是空资�
 4. 正式 Worker、独立 D1、自定义域名和对象存储 provider 的非敏感资源 ID 直接维护在 `apps/api/wrangler.production.jsonc`；当前 provider 为 Notion，R2 未启用不阻塞；
 5. 运行 `Production preflight (no deployment)`；
 6. 只有完成数据保护并确认 schema 需要升级时才运行独立 D1 migration；
-7. schema ready 后才进入 `Production release`。
+7. 正式变更统一进入 `Production promote`；workflow 自行判断结构一致直接发布，或在可保留历史数据时进入受控同库重建。
 
 盘点成功本身不能标记 `PROD-06` 或“生产发布完成”。
