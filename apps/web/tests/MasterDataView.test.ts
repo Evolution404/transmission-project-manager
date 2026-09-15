@@ -239,6 +239,34 @@ it('removes a tower locally without reloading unrelated voltage data and advance
   expect(JSON.parse(String(reorder![1]!.body)).expectedTowerOrderVersion).toBe(2);
 });
 
+it('recovers from an initial master-data load failure through one visible retry action', async () => {
+  let voltageAttempts = 0;
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    if (url === '/api/master/voltage-levels') {
+      voltageAttempts += 1;
+      if (voltageAttempts === 1) {
+        return new Response(JSON.stringify({ ok: false, error: { code: 'TEMPORARY_FAILURE', message: '基础台账暂时不可用' } }), {
+          status: 503,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return ok(voltages);
+    }
+    if (url.startsWith('/api/master/lines?')) return ok([line]);
+    if (url.startsWith('/api/master/towers?')) return ok([tower, tower2]);
+    throw new Error(`unexpected ${url}`);
+  }));
+
+  const w = mount(MasterDataView, { props: { currentUser: admin } }); await flushPromises();
+  expect(w.text()).toContain('基础台账暂时不可用');
+  expect(w.find('[data-test="retry-master-data"]').exists()).toBe(true);
+
+  await w.get('[data-test="retry-master-data"]').trigger('click'); await flushPromises();
+  expect(voltageAttempts).toBe(2);
+  expect(w.text()).not.toContain('基础台账暂时不可用');
+  expect(w.text()).toContain('甲线');
+});
+
 it('readonly users can inspect line detail without mutation controls', async () => {
   const w = mount(MasterDataView, { props: { currentUser: { ...admin, role: 'readonly' } } }); await flushPromises();
   await w.get('[data-test="select-line-l1"]').trigger('click'); await flushPromises();

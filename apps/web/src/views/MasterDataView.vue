@@ -43,6 +43,7 @@ const lineStatusFilter = ref<'all' | 'enabled' | 'disabled'>('all');
 const lineSearch = ref('');
 const towerSearch = ref('');
 const loading = ref(false);
+const towerLoading = ref(false);
 const error = ref('');
 let lineRequest = 0;
 let towerRequest = 0;
@@ -80,6 +81,7 @@ async function loadLines(append = false) {
     if (append && lineCursor.value) params.set('cursor', lineCursor.value);
     const data: { items: TransmissionLineSummary[]; nextCursor?: string | null } = await apiRequest(`/api/master/lines?${params.toString()}`);
     if (token !== lineRequest) return;
+    error.value = '';
     lines.value = append ? [...lines.value, ...data.items] : data.items;
     lineCursor.value = data.nextCursor ?? null;
   } catch (cause) {
@@ -93,24 +95,35 @@ async function loadTowers(append = false) {
   const line = activeLine.value;
   const token = ++towerRequest;
   if (!line) { towers.value = []; towerCursor.value = null; return; }
+  towerLoading.value = true;
   try {
     const params = new URLSearchParams({ lineId: line.id, limit: '100' });
     if (towerSearch.value.trim()) params.set('query', towerSearch.value.trim());
     if (append && towerCursor.value) params.set('cursor', towerCursor.value);
     const data: { items: TransmissionTowerSummary[]; nextCursor?: string | null } = await apiRequest(`/api/master/towers?${params.toString()}`);
     if (token !== towerRequest) return;
+    error.value = '';
     towers.value = append ? [...towers.value, ...data.items] : data.items;
     towerCursor.value = data.nextCursor ?? null;
   } catch (cause) {
     if (token === towerRequest) error.value = cause instanceof Error ? cause.message : '杆塔读取失败';
+  } finally {
+    if (token === towerRequest) towerLoading.value = false;
   }
 }
 
 async function loadAll() {
   error.value = '';
-  await loadVoltageLevels();
-  await loadLines();
-  if (activeLine.value) await loadTowers();
+  loading.value = true;
+  try {
+    await loadVoltageLevels();
+    await loadLines();
+    if (activeLine.value) await loadTowers();
+  } catch (cause) {
+    error.value = cause instanceof Error ? cause.message : '基础台账读取失败';
+  } finally {
+    loading.value = false;
+  }
 }
 
 async function openLineDetail(item: TransmissionLineSummary) {
@@ -545,7 +558,9 @@ onMounted(loadAll);
 
 <template>
   <div class="view-stack master-data-view">
-    <n-alert v-if="error" type="error" title="读取失败">{{ error }}</n-alert>
+    <n-alert v-if="error" type="error" title="读取失败">
+      <div class="error-recovery"><span>{{ error }}</span><n-button data-test="retry-master-data" size="small" @click="loadAll">重新加载</n-button></div>
+    </n-alert>
 
     <section v-if="!selectedLine" class="line-home" data-test="line-home">
       <header class="page-heading">
@@ -591,12 +606,12 @@ onMounted(loadAll);
       </header>
       <div class="tower-toolbar">
         <n-input v-model:value="towerSearch" placeholder="输入 10、10-1 等当前或曾用编号" @keyup.enter="loadTowers()" />
-        <n-button @click="loadTowers()">查找杆塔</n-button>
+        <n-button :loading="towerLoading" @click="loadTowers()">查找杆塔</n-button>
         <n-button v-if="towerSearch" @click="towerSearch='';loadTowers()">清除</n-button>
       </div>
-      <n-data-table v-if="towerRows.length" :columns="towerColumns" :data="towerRows" :pagination="false" :scroll-x="760" />
-      <n-empty v-else description="当前线路下暂无匹配杆塔" />
-      <n-button v-if="towerCursor" @click="loadTowers(true)">加载更多杆塔</n-button>
+      <n-data-table v-if="towerRows.length" :columns="towerColumns" :data="towerRows" :pagination="false" :loading="towerLoading" :scroll-x="760" />
+      <n-empty v-else-if="!towerLoading" description="当前线路下暂无匹配杆塔" />
+      <n-button v-if="towerCursor" :loading="towerLoading" @click="loadTowers(true)">加载更多杆塔</n-button>
     </section>
 
     <n-modal v-model:show="settingsModal" preset="card" title="台账设置" style="width:min(700px,calc(100vw - 32px))">
@@ -657,7 +672,7 @@ onMounted(loadAll);
 </template>
 
 <style scoped>
-.master-data-view{max-width:1480px;margin:0 auto}.page-heading,.detail-heading{display:flex;justify-content:space-between;gap:20px;align-items:flex-start;padding:20px 22px;border:1px solid #e5e9f0;border-radius:16px;background:#fff}.eyebrow{font-size:11px;font-weight:700;color:#315fd3;letter-spacing:.08em}.page-heading h2,.detail-heading h2{margin:4px 0 5px;font-size:24px}.page-heading p,.detail-heading p{margin:0;color:#7b8493}.line-toolbar,.tower-toolbar{display:grid;grid-template-columns:minmax(170px,220px) minmax(240px,1fr) minmax(150px,190px) auto;gap:10px;margin:16px 0}.tower-toolbar{grid-template-columns:minmax(260px,1fr) auto auto}.line-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.line-card{border:1px solid #e5e9f0;border-radius:14px;background:#fff;overflow:hidden}.line-open{display:block;width:100%;padding:17px;text-align:left;border:0;background:transparent;color:inherit;cursor:pointer}.line-open:hover{background:#f8faff}.line-card-title{display:flex;align-items:center;gap:10px;font-size:16px}.line-card-meta{display:flex;gap:16px;margin-top:12px;color:#737d8d;font-size:12px}.history-match{color:#7a5af8!important;font-size:12px}.line-card-actions{display:flex;gap:14px;padding:0 17px 13px}.back-button{border:0;background:transparent;color:#315fd3;cursor:pointer;padding:4px 0 10px}.detail-title-row{display:flex;align-items:center;gap:10px}.detail-actions{justify-content:flex-end}.actions{display:flex;justify-content:flex-end;gap:10px}.settings-head{display:flex;justify-content:space-between;align-items:center}.setting-row{display:flex;justify-content:space-between;gap:15px;align-items:center;padding:12px 0;border-top:1px solid #edf0f4}.setting-row div:first-child{display:flex;flex-direction:column;gap:3px}.setting-row small{color:#7b8493}.history-list>div{display:grid;grid-template-columns:minmax(120px,1fr) minmax(220px,1.6fr);gap:6px 14px;padding:11px 0;border-top:1px solid #edf0f4}.history-list small{grid-column:1/-1;color:#7b8493}.order-controls{display:grid;grid-template-columns:1fr 1fr 150px auto;gap:8px;margin:12px 0}.order-list{max-height:420px;overflow:auto;border:1px solid #e5e9f0;border-radius:10px}.order-row{display:grid;grid-template-columns:26px 42px 120px 1fr auto;gap:8px;align-items:center;padding:9px 12px;border-bottom:1px solid #edf0f4;background:#fff}.order-row-actions{display:flex;gap:6px}.drag-handle{cursor:grab;color:#8a94a4}.tower-import-source{display:flex;align-items:center;gap:10px;margin:12px 0}.tower-import-preview{margin-top:14px;padding:12px 14px;border-radius:10px;background:#f7f9fc;border:1px solid #e6eaf1}.tower-import-preview p{margin:5px 0}.tower-import-errors{max-height:180px;overflow:auto;color:#b42318}
+.master-data-view{max-width:1480px;margin:0 auto}.error-recovery{display:flex;align-items:center;justify-content:space-between;gap:12px}.page-heading,.detail-heading{display:flex;justify-content:space-between;gap:20px;align-items:flex-start;padding:20px 22px;border:1px solid #e5e9f0;border-radius:16px;background:#fff}.eyebrow{font-size:11px;font-weight:700;color:#315fd3;letter-spacing:.08em}.page-heading h2,.detail-heading h2{margin:4px 0 5px;font-size:24px}.page-heading p,.detail-heading p{margin:0;color:#7b8493}.line-toolbar,.tower-toolbar{display:grid;grid-template-columns:minmax(170px,220px) minmax(240px,1fr) minmax(150px,190px) auto;gap:10px;margin:16px 0}.tower-toolbar{grid-template-columns:minmax(260px,1fr) auto auto}.line-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.line-card{border:1px solid #e5e9f0;border-radius:14px;background:#fff;overflow:hidden}.line-open{display:block;width:100%;padding:17px;text-align:left;border:0;background:transparent;color:inherit;cursor:pointer}.line-open:hover{background:#f8faff}.line-card-title{display:flex;align-items:center;gap:10px;font-size:16px}.line-card-meta{display:flex;gap:16px;margin-top:12px;color:#737d8d;font-size:12px}.history-match{color:#7a5af8!important;font-size:12px}.line-card-actions{display:flex;gap:14px;padding:0 17px 13px}.back-button{border:0;background:transparent;color:#315fd3;cursor:pointer;padding:4px 0 10px}.detail-title-row{display:flex;align-items:center;gap:10px}.detail-actions{justify-content:flex-end}.actions{display:flex;justify-content:flex-end;gap:10px}.settings-head{display:flex;justify-content:space-between;align-items:center}.setting-row{display:flex;justify-content:space-between;gap:15px;align-items:center;padding:12px 0;border-top:1px solid #edf0f4}.setting-row div:first-child{display:flex;flex-direction:column;gap:3px}.setting-row small{color:#7b8493}.history-list>div{display:grid;grid-template-columns:minmax(120px,1fr) minmax(220px,1.6fr);gap:6px 14px;padding:11px 0;border-top:1px solid #edf0f4}.history-list small{grid-column:1/-1;color:#7b8493}.order-controls{display:grid;grid-template-columns:1fr 1fr 150px auto;gap:8px;margin:12px 0}.order-list{max-height:420px;overflow:auto;border:1px solid #e5e9f0;border-radius:10px}.order-row{display:grid;grid-template-columns:26px 42px 120px 1fr auto;gap:8px;align-items:center;padding:9px 12px;border-bottom:1px solid #edf0f4;background:#fff}.order-row-actions{display:flex;gap:6px}.drag-handle{cursor:grab;color:#8a94a4}.tower-import-source{display:flex;align-items:center;gap:10px;margin:12px 0}.tower-import-preview{margin-top:14px;padding:12px 14px;border-radius:10px;background:#f7f9fc;border:1px solid #e6eaf1}.tower-import-preview p{margin:5px 0}.tower-import-errors{max-height:180px;overflow:auto;color:#b42318}
 @media(max-width:900px){.line-list{grid-template-columns:1fr}.page-heading,.detail-heading{flex-direction:column}.line-toolbar{grid-template-columns:1fr 1fr}.detail-actions{justify-content:flex-start}.order-controls{grid-template-columns:1fr 1fr}.order-row{grid-template-columns:24px 34px 100px 1fr auto}}
-@media(max-width:600px){.line-toolbar,.tower-toolbar,.order-controls{grid-template-columns:1fr}.page-heading,.detail-heading{padding:16px}.page-heading h2,.detail-heading h2{font-size:20px}.line-card-meta{flex-wrap:wrap}.tower-import-source{align-items:flex-start;flex-direction:column}}
+@media(max-width:600px){.error-recovery{align-items:flex-start;flex-direction:column}.line-toolbar,.tower-toolbar,.order-controls{grid-template-columns:1fr}.page-heading,.detail-heading{padding:16px}.page-heading h2,.detail-heading h2{font-size:20px}.line-card-meta{flex-wrap:wrap}.tower-import-source{align-items:flex-start;flex-direction:column}}
 </style>
