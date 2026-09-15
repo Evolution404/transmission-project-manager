@@ -229,6 +229,10 @@ it('removes a tower locally without reloading unrelated voltage data and advance
   const voltageCallsBefore = vi.mocked(fetch).mock.calls.filter(([u]) => String(u) === '/api/master/voltage-levels').length;
 
   await w.get('[data-test="tower-more-t1"]').get('[data-dropdown-key="delete"]').trigger('click'); await flushPromises();
+  expect(w.find('[data-test="confirm-master-delete"]').exists()).toBe(true);
+  expect(vi.mocked(fetch).mock.calls.some(([u, init]) => String(u) === '/api/master/towers/t1' && init?.method === 'DELETE')).toBe(false);
+
+  await w.get('[data-test="confirm-master-delete"]').trigger('click'); await flushPromises();
 
   const voltageCallsAfter = vi.mocked(fetch).mock.calls.filter(([u]) => String(u) === '/api/master/voltage-levels').length;
   expect(voltageCallsAfter).toBe(voltageCallsBefore);

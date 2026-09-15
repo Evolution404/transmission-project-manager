@@ -153,6 +153,22 @@ async function setStatusFilter(value: 'all' | 'enabled' | 'disabled') {
   await loadLines();
 }
 
+type DeleteKind = 'voltage-levels' | 'lines' | 'towers';
+type DeleteTarget = { kind: DeleteKind; item: { id: string; version: number; lineId?: string }; label: string };
+const deleteConfirmModal = ref(false);
+const deleteTarget = ref<DeleteTarget | null>(null);
+function requestDelete(kind: DeleteKind, item: DeleteTarget['item'], label: string) {
+  deleteTarget.value = { kind, item, label };
+  deleteConfirmModal.value = true;
+}
+async function confirmDelete() {
+  const target = deleteTarget.value;
+  if (!target) return;
+  deleteConfirmModal.value = false;
+  deleteTarget.value = null;
+  await removeObject(target.kind, target.item);
+}
+
 async function removeObject(kind: 'voltage-levels' | 'lines' | 'towers', item: { id: string; version: number; lineId?: string }) {
   saving.value = true;
   try {
@@ -534,7 +550,7 @@ const towerMoreOptions = [
 function handleTowerMoreAction(key: string, row: TowerRow) {
   if (key === 'rename') openTowerRename(row);
   else if (key === 'history') void openTowerHistory(row);
-  else if (key === 'delete') void removeObject('towers', row);
+  else if (key === 'delete') requestDelete('towers', row, `杆塔“${row.towerNo}”`);
 }
 const towerColumns = computed(() => [
   { title: '序号', key: 'displayOrder', width: 64 },
@@ -580,7 +596,7 @@ onMounted(loadAll);
             <p v-if="item.matchedHistoricalName" class="history-match">曾用名匹配：{{ item.matchedHistoricalName }}</p>
             <div class="line-card-meta"><span>{{ item.towerCount ?? 0 }} 基杆塔</span><span>{{ item.enabled ? '启用' : '停用' }}</span><span v-if="item.lineCode">{{ item.lineCode }}</span></div>
           </button>
-          <div v-if="isAdmin" class="line-card-actions"><n-button text size="tiny" @click="openLine(item)">编辑属性</n-button><n-button text size="tiny" :disabled="saving" @click="removeObject('lines',item)">删除</n-button></div>
+          <div v-if="isAdmin" class="line-card-actions"><n-button text size="tiny" @click="openLine(item)">编辑属性</n-button><n-button text size="tiny" :disabled="saving" @click="requestDelete('lines',item,`线路“${item.lineName}”`)">删除</n-button></div>
         </article>
       </div>
       <n-empty v-if="!lines.length && !loading" description="没有符合条件的线路" />
@@ -637,7 +653,13 @@ onMounted(loadAll);
 
     <n-modal v-model:show="settingsModal" preset="card" title="台账设置" style="width:min(700px,calc(100vw - 32px))">
       <div class="settings-head"><p>维护全系统统一使用的电压等级。</p><n-button v-if="isAdmin" type="primary" @click="openVoltage()">新增电压等级</n-button></div>
-      <div class="setting-row" v-for="item in voltageLevels" :key="item.id"><div><strong>{{ item.displayName }}</strong><small>{{ item.code }} · {{ item.systemType==='AC' ? '交流' : '直流' }} · {{ item.enabled ? '启用' : '停用' }}</small></div><n-space><n-button size="small" @click="openVoltage(item)">编辑</n-button><n-button size="small" :disabled="saving" @click="removeObject('voltage-levels',item)">删除</n-button></n-space></div>
+      <div class="setting-row" v-for="item in voltageLevels" :key="item.id"><div><strong>{{ item.displayName }}</strong><small>{{ item.code }} · {{ item.systemType==='AC' ? '交流' : '直流' }} · {{ item.enabled ? '启用' : '停用' }}</small></div><n-space><n-button size="small" @click="openVoltage(item)">编辑</n-button><n-button size="small" :disabled="saving" @click="requestDelete('voltage-levels',item,`电压等级“${item.displayName}”`)">删除</n-button></n-space></div>
+    </n-modal>
+
+    <n-modal v-model:show="deleteConfirmModal" preset="card" title="确认删除" style="width:min(480px,calc(100vw - 32px))">
+      <n-alert type="warning" :bordered="false">删除只允许用于尚未被业务引用的台账对象，删除后不可通过界面恢复。</n-alert>
+      <p>确定删除{{ deleteTarget?.label }}吗？</p>
+      <template #footer><div class="actions"><n-button @click="deleteConfirmModal=false;deleteTarget=null">取消</n-button><n-button data-test="confirm-master-delete" type="error" :loading="saving" @click="confirmDelete">确认删除</n-button></div></template>
     </n-modal>
 
     <n-modal v-model:show="voltageModal" preset="card" title="电压等级" style="width:min(560px,calc(100vw - 32px))">
