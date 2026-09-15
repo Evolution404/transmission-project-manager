@@ -26,9 +26,9 @@ import type {
   ImportFieldMapping,
   ImportMappingTemplate,
   ImportRowSummary,
+  LineTowerPositionSummary,
   MaterialSummary,
   TransmissionLineSummary,
-  TransmissionTowerSummary,
   VoltageLevelSummary,
   DemandLocationType,
 } from '@tpm/shared';
@@ -58,7 +58,7 @@ const materials = ref<MaterialSummary[]>([]);
 const mappingTemplates = ref<ImportMappingTemplate[]>([]);
 const voltageLevels = ref<VoltageLevelSummary[]>([]);
 const transmissionLines = ref<TransmissionLineSummary[]>([]);
-const transmissionTowers = ref<TransmissionTowerSummary[]>([]);
+const transmissionTowers = ref<LineTowerPositionSummary[]>([]);
 
 const selectedFile = ref<File | null>(null);
 const parsedFile = ref<ParsedSpreadsheet | null>(null);
@@ -83,7 +83,7 @@ const savingDemandMaterial = ref(false);
 const demandMaterialForm = ref({ rawModel: '', quantity: '', unit: '' });
 const manualDemandForm = ref({
   sequenceNo: '', voltageLevelId: '', lineId: '', locationType: 'tower_range' as DemandLocationType,
-  startTowerId: '', endTowerId: '', year: '', category: '', owner: '',
+  startTowerPositionId: '', endTowerPositionId: '', year: '', category: '', owner: '',
 });
 const manualDemandMaterials = ref<Array<{ id: string; model: string; quantity: string; unit: string }>>([]);
 
@@ -180,23 +180,23 @@ async function loadGridTowers(append = false) {
   const token = ++towerLoad, id = manualDemandForm.value.lineId;
   if (!id) return;
   try {
-    const data = await apiRequest<{ items: TransmissionTowerSummary[]; nextCursor?: string | null }>(`/api/master/towers?lineId=${encodeURIComponent(id)}${append && gridTowerCursor.value ? '&cursor=' + encodeURIComponent(gridTowerCursor.value) : ''}`);
+    const data = await apiRequest<{ items: LineTowerPositionSummary[]; nextCursor?: string | null }>(`/api/master/towers?lineId=${encodeURIComponent(id)}${append && gridTowerCursor.value ? '&cursor=' + encodeURIComponent(gridTowerCursor.value) : ''}`);
     if (token !== towerLoad) return;
     transmissionTowers.value = append ? [...transmissionTowers.value, ...data.items] : data.items; gridTowerCursor.value = data.nextCursor ?? null;
   } catch (cause) { if (token === towerLoad) message.error(cause instanceof Error ? cause.message : '杆塔读取失败'); }
 }
 function chooseVoltage(value: string) {
   manualDemandForm.value.voltageLevelId = value; manualDemandForm.value.lineId = '';
-  manualDemandForm.value.startTowerId = ''; manualDemandForm.value.endTowerId = '';
+  manualDemandForm.value.startTowerPositionId = ''; manualDemandForm.value.endTowerPositionId = '';
   transmissionLines.value = []; transmissionTowers.value = []; gridLineCursor.value = null; gridTowerCursor.value = null;
   lineLoad++; towerLoad++; void loadGridLines();
 }
 function chooseLine(value: string) {
-  manualDemandForm.value.lineId = value; manualDemandForm.value.startTowerId = ''; manualDemandForm.value.endTowerId = '';
+  manualDemandForm.value.lineId = value; manualDemandForm.value.startTowerPositionId = ''; manualDemandForm.value.endTowerPositionId = '';
   transmissionTowers.value = []; gridTowerCursor.value = null; towerLoad++; void loadGridTowers();
 }
 function chooseLocationType(value: DemandLocationType) {
-  manualDemandForm.value.locationType = value; manualDemandForm.value.startTowerId = ''; manualDemandForm.value.endTowerId = '';
+  manualDemandForm.value.locationType = value; manualDemandForm.value.startTowerPositionId = ''; manualDemandForm.value.endTowerPositionId = '';
 }
 
 async function loadInitial() {
@@ -335,11 +335,11 @@ async function createManualDemand() {
     message.warning('序号、电压等级和线路不能为空');
     return;
   }
-  if (form.locationType !== 'whole_line' && !form.startTowerId) {
+  if (form.locationType !== 'whole_line' && !form.startTowerPositionId) {
     message.warning('请选择杆塔');
     return;
   }
-  if (form.locationType === 'tower_range' && !form.endTowerId) {
+  if (form.locationType === 'tower_range' && !form.endTowerPositionId) {
     message.warning('请选择终止杆塔');
     return;
   }
@@ -374,15 +374,15 @@ async function createManualDemand() {
       voltageLevelId: form.voltageLevelId,
       lineId: form.lineId,
       locationType: form.locationType,
-      startTowerId: form.locationType === 'whole_line' ? null : form.startTowerId,
-      endTowerId: form.locationType === 'tower_range' ? form.endTowerId : form.locationType === 'tower' ? form.startTowerId : null,
+      startTowerPositionId: form.locationType === 'whole_line' ? null : form.startTowerPositionId,
+      endTowerPositionId: form.locationType === 'tower_range' ? form.endTowerPositionId : form.locationType === 'tower' ? form.startTowerPositionId : null,
       materials,
       year,
       category: form.category.trim() || null,
       owner: form.owner.trim() || null,
     }));
     manualDemandForm.value = {
-      sequenceNo: '', voltageLevelId: '', lineId: '', locationType: 'tower_range', startTowerId: '', endTowerId: '', year: '', category: '', owner: '',
+      sequenceNo: '', voltageLevelId: '', lineId: '', locationType: 'tower_range', startTowerPositionId: '', endTowerPositionId: '', year: '', category: '', owner: '',
     };
     manualDemandMaterials.value = [];
     manualDemandModalOpen.value = false;
@@ -649,10 +649,10 @@ onMounted(loadInitial);
             <n-select :value="manualDemandForm.locationType" data-test="manual-location-type" :options="locationTypeOptions" :disabled="!manualDemandForm.lineId" @update:value="chooseLocationType" />
           </n-form-item>
           <n-form-item v-if="manualDemandForm.locationType !== 'whole_line'" :label="manualDemandForm.locationType === 'tower' ? '杆塔' : '起始杆塔'">
-            <n-select v-model:value="manualDemandForm.startTowerId" data-test="manual-start-tower" :options="towerOptions" :disabled="!manualDemandForm.lineId" filterable placeholder="请选择杆塔" />
+            <n-select v-model:value="manualDemandForm.startTowerPositionId" data-test="manual-start-tower" :options="towerOptions" :disabled="!manualDemandForm.lineId" filterable placeholder="请选择杆塔" />
           </n-form-item>
           <n-form-item v-if="manualDemandForm.locationType === 'tower_range'" label="终止杆塔">
-            <n-select v-model:value="manualDemandForm.endTowerId" data-test="manual-end-tower" :options="towerOptions" :disabled="!manualDemandForm.lineId" filterable placeholder="请选择终止杆塔" />
+            <n-select v-model:value="manualDemandForm.endTowerPositionId" data-test="manual-end-tower" :options="towerOptions" :disabled="!manualDemandForm.lineId" filterable placeholder="请选择终止杆塔" />
           </n-form-item>
           <n-button v-if="gridTowerCursor" @click="loadGridTowers(true)">加载更多杆塔</n-button>
           <n-form-item label="年度"><n-input v-model:value="manualDemandForm.year" data-test="manual-year" placeholder="例如：2026" /></n-form-item>

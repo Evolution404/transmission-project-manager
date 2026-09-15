@@ -9,7 +9,7 @@ function createRepository() {
   sqlite.exec(`
     CREATE TABLE voltage_levels (id TEXT PRIMARY KEY, display_name TEXT NOT NULL, enabled INTEGER NOT NULL);
     CREATE TABLE transmission_lines (id TEXT PRIMARY KEY, voltage_level_id TEXT NOT NULL, line_name TEXT NOT NULL, enabled INTEGER NOT NULL);
-    CREATE TABLE transmission_towers (id TEXT PRIMARY KEY, line_id TEXT NOT NULL, tower_no TEXT NOT NULL, sort_rank INTEGER NOT NULL, enabled INTEGER NOT NULL);
+    CREATE TABLE line_tower_positions (id TEXT PRIMARY KEY, line_id TEXT NOT NULL, tower_no TEXT NOT NULL, sort_rank INTEGER NOT NULL, enabled INTEGER NOT NULL);
     CREATE TABLE materials (id TEXT PRIMARY KEY, code TEXT, name TEXT NOT NULL, model TEXT NOT NULL, unit TEXT NOT NULL, enabled INTEGER NOT NULL, version INTEGER NOT NULL);
     CREATE TABLE master_data_guards (
       id INTEGER PRIMARY KEY CHECK(id=1),
@@ -27,7 +27,7 @@ function createRepository() {
       line_name TEXT NOT NULL, section_text TEXT NOT NULL, category_key TEXT, owner TEXT, business_signature TEXT NOT NULL,
       raw_json TEXT NOT NULL, extra_json TEXT NOT NULL, version INTEGER NOT NULL, created_by TEXT NOT NULL,
       created_at TEXT NOT NULL, updated_at TEXT NOT NULL, voltage_level_id TEXT, line_id TEXT, location_type TEXT,
-      start_tower_id TEXT, end_tower_id TEXT
+      start_tower_position_id TEXT, end_tower_position_id TEXT
     );
     CREATE TABLE demand_materials (
       id TEXT PRIMARY KEY, demand_id TEXT NOT NULL, raw_model TEXT NOT NULL, material_id TEXT,
@@ -44,7 +44,7 @@ function createRepository() {
     );
     INSERT INTO voltage_levels VALUES ('vl-110','110kV',1),('vl-off','220kV',0);
     INSERT INTO transmission_lines VALUES ('line-1','vl-110','Line A',1),('line-off','vl-off','Line B',1);
-    INSERT INTO transmission_towers VALUES ('t1','line-1','#001',1000,1),('t2','line-1','#002',2000,1),('t-off','line-1','#003',3000,0);
+    INSERT INTO line_tower_positions VALUES ('t1','line-1','#001',1000,1),('t2','line-1','#002',2000,1),('t-off','line-1','#003',3000,0);
     INSERT INTO materials VALUES ('m1','M-1','Material 1','Model 1','piece',1,3),('m2',NULL,'Material 2','Model 2','piece',0,1);
   `);
   return { sqlite, repository: new SqlDemandRepository(new SqliteDatabaseAdapter(sqlite)) };
@@ -60,17 +60,17 @@ test('demand repository resolves line with parent voltage state in one portable 
   } finally { sqlite.close(); }
 });
 
-test('demand repository resolves selected towers and only enabled materials in set queries', async () => {
+test('demand repository resolves selected line tower positions and only enabled materials in set queries', async () => {
   const { sqlite, repository } = createRepository();
   try {
-    assert.deepEqual(await repository.findTowers(['t2', 't1']), [
+    assert.deepEqual(await repository.findTowerPositions(['t2', 't1']), [
       { id: 't1', towerNo: '#001', sortRank: 1000, lineId: 'line-1', enabled: true },
       { id: 't2', towerNo: '#002', sortRank: 2000, lineId: 'line-1', enabled: true },
     ]);
     assert.deepEqual(await repository.findEnabledMaterials(['m1', 'm2']), [
       { id: 'm1', code: 'M-1', name: 'Material 1', model: 'Model 1', unit: 'piece', enabled: true, version: 3 },
     ]);
-    assert.deepEqual(await repository.findTowers([]), []);
+    assert.deepEqual(await repository.findTowerPositions([]), []);
     assert.deepEqual(await repository.findEnabledMaterials([]), []);
   } finally { sqlite.close(); }
 });
@@ -79,7 +79,7 @@ test('structured demand creation rechecks grid and material versions and commits
   const { sqlite, repository } = createRepository();
   const base = {
     id: 'd1', sourceKey: 'manual:d1', sequenceNo: '001', year: 2026,
-    voltageLevelId: 'vl-110', lineId: 'line-1', locationType: 'tower_range', startTowerId: 't1', endTowerId: 't2',
+    voltageLevelId: 'vl-110', lineId: 'line-1', locationType: 'tower_range', startTowerPositionId: 't1', endTowerPositionId: 't2',
     voltageName: '110kV', lineName: 'Line A', sectionText: '#001—#002', category: null, owner: null,
     businessSignature: 'sig-1', rawJson: '{"sequenceNo":"001"}', actorId: 'admin-1', now: '2026-09-14T01:00:00.000Z',
     materials: [{ id: 'dm1', rawModel: 'Model 1', materialId: 'm1', quantityScaled: 10000, unit: 'piece' }],

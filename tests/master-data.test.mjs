@@ -77,7 +77,7 @@ before(async () => {
     { lineId: lineB.id, towerNo: '10', sortRank: 1000 },
   ]) {
     const result = await jsonRequest('/api/master/towers', mutation('POST', idem('tower'), {
-      ...input, towerType: '测试塔', enabled: true,
+      ...input, positionLabel: null, enabled: true,
     }));
     assert.equal(result.response.status, 201);
     if (input.lineId === lineA.id && input.sortRank === 1000) towerA10 = result.body.data;
@@ -185,6 +185,116 @@ test('line and tower parent relations reject disabled parents while names/number
   assert.equal(ignoredManualOrder.body.data.towerNo, '#011');
 });
 
+test('one physical tower can serve multiple line tower positions without duplicating the physical asset', async () => {
+  const first = await jsonRequest('/api/master/towers', mutation('POST', idem('shared-physical-a'), {
+    lineId: lineA.id,
+    towerNo: '77',
+    assetCode: 'PT-SHARED-77',
+    positionLabel: '左回',
+    enabled: true,
+  }));
+  assert.equal(first.response.status, 201);
+  assert.ok(first.body.data.physicalTowerId);
+  assert.equal(first.body.data.physicalAssetCode, 'PT-SHARED-77');
+
+  const second = await jsonRequest('/api/master/towers', mutation('POST', idem('shared-physical-b'), {
+    lineId: lineB.id,
+    towerNo: '88',
+    physicalTowerId: first.body.data.physicalTowerId,
+    positionLabel: '右回',
+    enabled: true,
+  }));
+  assert.equal(second.response.status, 201);
+  assert.equal(second.body.data.physicalTowerId, first.body.data.physicalTowerId);
+
+  const physical = await jsonRequest('/api/master/physical-towers?query=PT-SHARED-77&limit=10');
+  assert.equal(physical.response.status, 200);
+  assert.equal(physical.body.data.items.length, 1);
+  assert.equal(physical.body.data.items[0].linePositionCount, 2);
+
+  const removed = await jsonRequest(`/api/master/towers/${first.body.data.id}`, mutation('DELETE', idem('shared-physical-delete-a'), { expectedVersion: first.body.data.version }));
+  assert.equal(removed.response.status, 200);
+  const after = await jsonRequest('/api/master/physical-towers?query=PT-SHARED-77&limit=10');
+  assert.equal(after.body.data.items.length, 1);
+  assert.equal(after.body.data.items[0].linePositionCount, 1);
+});
+
+test('configurable teams, tower types and custom fields drive physical-tower metadata without schema changes', async () => {
+  const team = await jsonRequest('/api/master/teams', mutation('POST', idem('team-create'), {
+    code: 'CB', name: '城北班', enabled: true,
+  }));
+  assert.equal(team.response.status, 201);
+  const towerType = await jsonRequest('/api/master/tower-types', mutation('POST', idem('tower-type-create'), {
+    code: 'ANGLE', label: '角钢塔', sortOrder: 10, enabled: true,
+  }));
+  assert.equal(towerType.response.status, 201);
+
+  const physicalBefore = (await jsonRequest(`/api/master/physical-towers?query=${encodeURIComponent(towerA10.physicalTowerId)}`)).body.data.items
+    .find((item) => item.id === towerA10.physicalTowerId);
+  assert.ok(physicalBefore);
+  const physicalUpdated = await jsonRequest(`/api/master/physical-towers/${towerA10.physicalTowerId}`, mutation('PATCH', idem('physical-update'), {
+    expectedVersion: physicalBefore.version,
+    assetCode: 'PT-MASTER-001',
+    towerTypeId: towerType.body.data.id,
+    maintenanceTeamId: team.body.data.id,
+    enabled: true,
+  }));
+  assert.equal(physicalUpdated.response.status, 200);
+  assert.equal(physicalUpdated.body.data.towerTypeLabel, '角钢塔');
+  assert.equal(physicalUpdated.body.data.maintenanceTeamName, '城北班');
+
+  const ownerField = await jsonRequest('/api/master/custom-fields', mutation('POST', idem('field-owner'), {
+    entityType: 'physical_tower', fieldKey: 'owner_unit', label: '产权单位', dataType: 'text',
+    required: true, filterable: true, validation: { maxLength: 80 }, sortOrder: 10, enabled: true,
+  }));
+  assert.equal(ownerField.response.status, 201);
+  const tagField = await jsonRequest('/api/master/custom-fields', mutation('POST', idem('field-tags'), {
+    entityType: 'physical_tower', fieldKey: 'tags', label: '标签', dataType: 'multi_select',
+    required: false, filterable: true, options: ['重要', '跨江', '密集通道'], validation: { maxItems: 3 }, sortOrder: 20, enabled: true,
+  }));
+  assert.equal(tagField.response.status, 201);
+
+  const values = await jsonRequest(`/api/master/custom-values/physical_tower/${towerA10.physicalTowerId}`, mutation('PUT', idem('custom-values'), {
+    expectedVersion: null,
+    values: { owner_unit: '南京供电公司', tags: ['重要', '跨江'] },
+  }));
+  assert.equal(values.response.status, 200);
+  assert.equal(values.body.data.version, 1);
+  assert.deepEqual(values.body.data.values, { owner_unit: '南京供电公司', tags: ['重要', '跨江'] });
+  const valuesRead = await jsonRequest(`/api/master/custom-values/physical_tower/${towerA10.physicalTowerId}`);
+  assert.deepEqual(valuesRead.body.data.values, values.body.data.values);
+
+  const stale = await jsonRequest(`/api/master/custom-values/physical_tower/${towerA10.physicalTowerId}`, mutation('PUT', idem('custom-values-stale'), {
+    expectedVersion: null,
+    values: { owner_unit: '其他单位' },
+  }));
+  assert.equal(stale.response.status, 409);
+
+  const usedDelete = await jsonRequest(`/api/master/custom-fields/${ownerField.body.data.id}`, mutation('DELETE', idem('used-field-delete'), {
+    expectedVersion: ownerField.body.data.version,
+  }));
+  assert.equal(usedDelete.response.status, 422);
+  assert.equal(usedDelete.body.error.code, 'MASTER_CONFIG_IN_USE');
+});
+
+test('an existing line position can be rebound to another physical tower without changing its line identity', async () => {
+  const target = await jsonRequest('/api/master/towers', mutation('POST', idem('rebind-target'), {
+    lineId: lineB.id, towerNo: '88', assetCode: 'PT-REBIND', positionLabel: '同塔目标', enabled: true,
+  }));
+  assert.equal(target.response.status, 201);
+  const before = (await jsonRequest(`/api/master/towers?lineId=${lineA.id}`)).body.data.items.find((item) => item.id === towerA20.id);
+  const rebound = await jsonRequest(`/api/master/towers/${towerA20.id}/rebind-physical`, mutation('POST', idem('rebind-position'), {
+    expectedVersion: before.version,
+    physicalTowerId: target.body.data.physicalTowerId,
+  }));
+  assert.equal(rebound.response.status, 200);
+  assert.equal(rebound.body.data.lineId, lineA.id);
+  assert.equal(rebound.body.data.physicalTowerId, target.body.data.physicalTowerId);
+  const after = (await jsonRequest(`/api/master/towers?lineId=${lineA.id}`)).body.data.items.find((item) => item.id === towerA20.id);
+  assert.equal(after.towerNo, '#020');
+  assert.equal(after.physicalTowerId, target.body.data.physicalTowerId);
+});
+
 test('structured demand supports whole-line, tower and tower-range locations and exposes object ids', async () => {
   const whole = await jsonRequest('/api/demands', mutation('POST', idem('demand-whole'), {
     sequenceNo: 'MD-WHOLE', voltageLevelId: 'vl-ac-220', lineId: lineA.id,
@@ -194,28 +304,28 @@ test('structured demand supports whole-line, tower and tower-range locations and
   assert.equal(whole.body.data.voltageLevelId, 'vl-ac-220');
   assert.equal(whole.body.data.lineId, lineA.id);
   assert.equal(whole.body.data.locationType, 'whole_line');
-  assert.equal(whole.body.data.startTowerId, null);
-  assert.equal(whole.body.data.endTowerId, null);
+  assert.equal(whole.body.data.startTowerPositionId, null);
+  assert.equal(whole.body.data.endTowerPositionId, null);
 
   const tower = await jsonRequest('/api/demands', mutation('POST', idem('demand-tower'), {
     sequenceNo: 'MD-TOWER', voltageLevelId: 'vl-ac-220', lineId: lineA.id,
-    locationType: 'tower', startTowerId: towerA10.id, materials: [], year: 2026,
+    locationType: 'tower', startTowerPositionId: towerA10.id, materials: [], year: 2026,
   }), managerCookie);
   assert.equal(tower.response.status, 201);
   assert.equal(tower.body.data.locationType, 'tower');
-  assert.equal(tower.body.data.startTowerId, towerA10.id);
-  assert.equal(tower.body.data.endTowerId, towerA10.id);
+  assert.equal(tower.body.data.startTowerPositionId, towerA10.id);
+  assert.equal(tower.body.data.endTowerPositionId, towerA10.id);
 
   const rangeKey = idem('demand-range');
   const rangePayload = {
     sequenceNo: 'MD-RANGE', voltageLevelId: 'vl-ac-220', lineId: lineA.id,
-    locationType: 'tower_range', startTowerId: towerA10.id, endTowerId: towerA20.id,
+    locationType: 'tower_range', startTowerPositionId: towerA10.id, endTowerPositionId: towerA20.id,
     materials: [], year: 2026,
   };
   const range = await jsonRequest('/api/demands', mutation('POST', rangeKey, rangePayload), managerCookie);
   assert.equal(range.response.status, 201);
-  assert.equal(range.body.data.startTowerId, towerA10.id);
-  assert.equal(range.body.data.endTowerId, towerA20.id);
+  assert.equal(range.body.data.startTowerPositionId, towerA10.id);
+  assert.equal(range.body.data.endTowerPositionId, towerA20.id);
 
   const replay = await jsonRequest('/api/demands', mutation('POST', rangeKey, rangePayload), managerCookie);
   assert.equal(replay.response.status, 201);
@@ -230,21 +340,21 @@ test('structured demand supports whole-line, tower and tower-range locations and
   assert.equal(detail.body.data.voltageLevelId, 'vl-ac-220');
   assert.equal(detail.body.data.lineId, lineA.id);
   assert.equal(detail.body.data.locationType, 'tower_range');
-  assert.equal(detail.body.data.startTowerId, towerA10.id);
-  assert.equal(detail.body.data.endTowerId, towerA20.id);
+  assert.equal(detail.body.data.startTowerPositionId, towerA10.id);
+  assert.equal(detail.body.data.endTowerPositionId, towerA20.id);
 });
 
 test('structured demand rejects cross-line, reversed and disabled tower locations', async () => {
   const crossLine = await jsonRequest('/api/demands', mutation('POST', idem('cross-line'), {
     sequenceNo: 'MD-CROSS', voltageLevelId: 'vl-ac-220', lineId: lineA.id,
-    locationType: 'tower_range', startTowerId: towerA10.id, endTowerId: towerB10.id, materials: [],
+    locationType: 'tower_range', startTowerPositionId: towerA10.id, endTowerPositionId: towerB10.id, materials: [],
   }), managerCookie);
   assert.equal(crossLine.response.status, 422);
   assert.equal(crossLine.body.error.code, 'INVALID_TOWER_RELATION');
 
   const reversed = await jsonRequest('/api/demands', mutation('POST', idem('reversed'), {
     sequenceNo: 'MD-REVERSED', voltageLevelId: 'vl-ac-220', lineId: lineA.id,
-    locationType: 'tower_range', startTowerId: towerA20.id, endTowerId: towerA10.id, materials: [],
+    locationType: 'tower_range', startTowerPositionId: towerA20.id, endTowerPositionId: towerA10.id, materials: [],
   }), managerCookie);
   assert.equal(reversed.response.status, 422);
   assert.equal(reversed.body.error.code, 'INVALID_TOWER_RANGE');
@@ -262,13 +372,24 @@ test('structured demand rejects cross-line, reversed and disabled tower location
 
   const disabledTower = await jsonRequest('/api/demands', mutation('POST', idem('disabled-tower-demand'), {
     sequenceNo: 'MD-DISABLED', voltageLevelId: 'vl-ac-220', lineId: lineB.id,
-    locationType: 'tower', startTowerId: towerB10.id, materials: [],
+    locationType: 'tower', startTowerPositionId: towerB10.id, materials: [],
   }), managerCookie);
   assert.equal(disabledTower.response.status, 422);
   assert.equal(disabledTower.body.error.code, 'INVALID_TOWER_RELATION');
 });
 
 test('referenced line cannot change parent and referenced tower cannot move to another line', async () => {
+  const referenceCount = queryLocalD1(stateDir, `SELECT COUNT(*) AS total FROM demands WHERE line_id='${lineA.id}'`).flatMap((entry) => entry.results ?? [])[0]?.total ?? 0;
+  assert.ok(Number(referenceCount) > 0, 'test precondition: line A must already be referenced by at least one demand');
+  const lineBefore = queryLocalD1(stateDir, `SELECT voltage_level_id,version FROM transmission_lines WHERE id='${lineA.id}'`).flatMap((entry) => entry.results ?? [])[0];
+  assert.equal(lineBefore?.voltage_level_id, 'vl-ac-220');
+  assert.equal(Number(lineBefore?.version), lineA.version);
+  const guard = queryLocalD1(stateDir, `SELECT CASE WHEN NOT EXISTS (
+    SELECT 1 FROM transmission_lines WHERE id='${lineA.id}' AND voltage_level_id IS NOT 'vl-ac-110'
+  ) OR NOT EXISTS (
+    SELECT 1 FROM demands WHERE line_id='${lineA.id}'
+  ) THEN 1 ELSE 0 END AS allowed`).flatMap((entry) => entry.results ?? [])[0];
+  assert.equal(Number(guard?.allowed), 0, 'test precondition: the atomic line-reference guard must reject the parent change');
   const moveLine = await jsonRequest(`/api/master/lines/${lineA.id}`, mutation('PATCH', idem('move-referenced-line'), {
     voltageLevelId: 'vl-ac-110',
     lineName: lineA.lineName,
@@ -279,13 +400,15 @@ test('referenced line cannot change parent and referenced tower cannot move to a
   assert.equal(moveLine.response.status, 422);
   assert.equal(moveLine.body.error.code, 'LINE_LOCATION_IN_USE');
 
+  const currentTower = (await jsonRequest(`/api/master/towers?lineId=${lineA.id}`)).body.data.items.find((item) => item.id === towerA20.id);
   const moveTower = await jsonRequest(`/api/master/towers/${towerA20.id}`, mutation('PATCH', idem('move-referenced-tower'), {
     lineId: lineB.id,
-    towerNo: towerA20.towerNo,
-    sortRank: towerA20.sortRank,
-    towerType: towerA20.towerType,
-    enabled: true,
-    expectedVersion: towerA20.version,
+    towerNo: currentTower.towerNo,
+    sortRank: currentTower.sortRank,
+    physicalTowerId: currentTower.physicalTowerId,
+    positionLabel: currentTower.positionLabel,
+    enabled: currentTower.enabled,
+    expectedVersion: currentTower.version,
   }));
   assert.equal(moveTower.response.status, 422);
   assert.equal(moveTower.body.error.code, 'TOWER_LINE_CHANGE_UNSUPPORTED');
@@ -313,9 +436,9 @@ test('structured demand with many material rows stays within the D1 invocation q
 test('location shapes and material references are validated without silently discarding input', async () => {
   const base = { sequenceNo: 'SHAPE', voltageLevelId: 'vl-ac-220', lineId: lineA.id, materials: [] };
   for (const location of [
-    { locationType: 'whole_line', startTowerId: towerA10.id },
-    { locationType: 'tower', startTowerId: towerA10.id, endTowerId: towerA20.id },
-    { locationType: 'tower_range', startTowerId: towerA10.id, endTowerId: towerA10.id },
+    { locationType: 'whole_line', startTowerPositionId: towerA10.id },
+    { locationType: 'tower', startTowerPositionId: towerA10.id, endTowerPositionId: towerA20.id },
+    { locationType: 'tower_range', startTowerPositionId: towerA10.id, endTowerPositionId: towerA10.id },
     { locationType: 'free_text' },
   ]) assert.equal((await jsonRequest('/api/demands', mutation('POST', idem('shape'), { ...base, ...location }))).response.status, 422);
   assert.equal((await jsonRequest('/api/demands', mutation('POST', idem('material'), { ...base, locationType: 'whole_line', materials: [{ rawModel: 'x', materialId: 'missing', quantityScaled: 10000 }] }))).response.status, 422);
@@ -344,7 +467,7 @@ test('unused objects can be deleted; referenced objects and parents with childre
   assert.deepEqual((await jsonRequest(path, mutation('DELETE', key, body))).body, deleted.body);
 });
 
-test('referenced-line tower can change current order while deletion remains protected and history stays readable', async () => {
+test('unreferenced interior line position can move and delete while referenced endpoints stay protected and history stays readable', async () => {
   const made = await jsonRequest('/api/master/towers', mutation('POST', idem('interior'), { lineId: lineA.id, towerNo: '15', sortRank: 15000 }));
   assert.equal(made.response.status, 201);
   const item = made.body.data;
@@ -354,15 +477,15 @@ test('referenced-line tower can change current order while deletion remains prot
     afterTowerId: towerA20.id,
   }));
   assert.equal(reordered.response.status, 200);
-  assert.equal((await jsonRequest(`/api/master/towers/${item.id}`, mutation('DELETE', idem('interior-delete'), { expectedVersion: item.version }))).response.status, 422);
+  assert.equal((await jsonRequest(`/api/master/towers/${item.id}`, mutation('DELETE', idem('interior-delete'), { expectedVersion: item.version }))).response.status, 200);
   const disabled = await jsonRequest(`/api/master/lines/${lineA.id}`, mutation('PATCH', idem('history-disable'), { ...lineA, expectedVersion: 1, enabled: false }));
   assert.equal(disabled.response.status, 200);
   const history = await jsonRequest('/api/demands?query=MD-RANGE');
   assert.equal(history.body.data.items[0].lineId, lineA.id);
   assert.equal(history.body.data.items[0].section, '#010—#020');
   assert.equal((await jsonRequest('/api/demands', mutation('POST', idem('new-disabled'), { sequenceNo: 'NEW', voltageLevelId: 'vl-ac-220', lineId: lineA.id, locationType: 'whole_line' }))).response.status, 422);
-  const currentItem = (await jsonRequest(`/api/master/towers?lineId=${lineA.id}`)).body.data.items.find((value) => value.id === item.id);
-  const disableChild = await jsonRequest(`/api/master/towers/${item.id}`, mutation('PATCH', idem('child-disable'), { ...currentItem, expectedVersion: currentItem.version, enabled: false }));
+  const currentItem = (await jsonRequest(`/api/master/towers?lineId=${lineA.id}`)).body.data.items.find((value) => value.id === towerA10.id);
+  const disableChild = await jsonRequest(`/api/master/towers/${towerA10.id}`, mutation('PATCH', idem('child-disable'), { ...currentItem, expectedVersion: currentItem.version, enabled: false }));
   assert.equal(disableChild.response.status, 200, 'must be able to disable children of a disabled parent');
 });
 
@@ -602,8 +725,8 @@ test('tower import chunk hides technical ranks, preserves stable updates and aut
   const line = (await jsonRequest('/api/master/lines', mutation('POST', idem('import-chunk-line'), {
     voltageLevelId: 'vl-ac-110', lineName: '杆塔导入线', enabled: true,
   }))).body.data;
-  const seed10 = await jsonRequest('/api/master/towers', mutation('POST', idem('import-seed-10'), { lineId: line.id, towerNo: '10', towerType: '旧类型', enabled: true }));
-  const seed20 = await jsonRequest('/api/master/towers', mutation('POST', idem('import-seed-20'), { lineId: line.id, towerNo: '20', towerType: null, enabled: true }));
+  const seed10 = await jsonRequest('/api/master/towers', mutation('POST', idem('import-seed-10'), { lineId: line.id, towerNo: '10', positionLabel: '旧位置', enabled: true }));
+  const seed20 = await jsonRequest('/api/master/towers', mutation('POST', idem('import-seed-20'), { lineId: line.id, towerNo: '20', positionLabel: null, enabled: true }));
   assert.equal(seed10.response.status, 201);
   assert.equal(seed20.response.status, 201);
 
@@ -613,9 +736,9 @@ test('tower import chunk hides technical ranks, preserves stable updates and aut
   const body = {
     expectedTowerOrderVersion: 3,
     items: [
-      { action: 'update', id: seed10.body.data.id, expectedVersion: seed10.body.data.version, towerNo: '#010', towerType: '新类型', enabled: false },
-      { action: 'create', towerNo: '#015', towerType: '角钢塔', enabled: true },
-      { action: 'create', towerNo: '#020-1', towerType: null, enabled: true },
+      { action: 'update', id: seed10.body.data.id, expectedVersion: seed10.body.data.version, towerNo: '#010', positionLabel: '右回', enabled: false },
+      { action: 'create', towerNo: '#015', positionLabel: '左回', enabled: true },
+      { action: 'create', towerNo: '#020-1', positionLabel: null, enabled: true },
     ],
   };
   const key = idem('tower-import-chunk');
@@ -624,8 +747,8 @@ test('tower import chunk hides technical ranks, preserves stable updates and aut
   assert.equal(first.body.data.towerOrderVersion, 4);
   assert.equal(first.body.data.created, 2);
   assert.equal(first.body.data.updated, 1);
-  assert.deepEqual((await jsonRequest(`/api/master/towers?lineId=${line.id}`)).body.data.items.map((item) => [item.towerNo, item.towerType, item.enabled]), [
-    ['#010', '新类型', false], ['#015', '角钢塔', true], ['#020', null, true], ['#020-1', null, true],
+  assert.deepEqual((await jsonRequest(`/api/master/towers?lineId=${line.id}`)).body.data.items.map((item) => [item.towerNo, item.positionLabel, item.enabled]), [
+    ['#010', '右回', false], ['#015', '左回', true], ['#020', null, true], ['#020-1', null, true],
   ]);
 
   const replay = await jsonRequest(path, mutation('POST', key, body));
@@ -644,14 +767,14 @@ test('tower import chunk is internal bounded protocol and never permits rename t
   const path = `/api/master/lines/${line.id}/towers/import-chunk`;
   const tooMany = await jsonRequest(path, mutation('POST', idem('import-too-many'), {
     expectedTowerOrderVersion: 2,
-    items: Array.from({ length: 21 }, (_, index) => ({ action: 'create', towerNo: `#${String(200 + index).padStart(3, '0')}`, towerType: null, enabled: true })),
+    items: Array.from({ length: 21 }, (_, index) => ({ action: 'create', towerNo: `#${String(200 + index).padStart(3, '0')}`, positionLabel: null, enabled: true })),
   }));
   assert.equal(tooMany.response.status, 422);
   assert.equal(tooMany.body.error.code, 'INVALID_TOWER_IMPORT_CHUNK');
 
   const rename = await jsonRequest(path, mutation('POST', idem('import-rename'), {
     expectedTowerOrderVersion: 2,
-    items: [{ action: 'update', id: tower.id, expectedVersion: tower.version, towerNo: '#101', towerType: null, enabled: true }],
+    items: [{ action: 'update', id: tower.id, expectedVersion: tower.version, towerNo: '#101', positionLabel: null, enabled: true }],
   }));
   assert.equal(rename.response.status, 422);
   assert.equal(rename.body.error.code, 'RENAME_REQUIRED');

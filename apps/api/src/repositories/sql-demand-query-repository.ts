@@ -25,8 +25,8 @@ type DemandRow = {
   voltage_level_id: string | null;
   line_id: string | null;
   location_type: DemandLocationType | null;
-  start_tower_id: string | null;
-  end_tower_id: string | null;
+  start_tower_position_id: string | null;
+  end_tower_position_id: string | null;
 };
 
 type DemandMaterialRow = {
@@ -53,7 +53,7 @@ type SourceRow = {
 
 const demandSelect = `id,source_type,source_key,source_batch_id,source_file_sha256,source_file_name,source_sheet,source_row_number,
   sequence_no,business_year,voltage_raw,voltage_verified,line_name,section_text,category_key,owner,raw_json,version,created_at,
-  voltage_level_id,line_id,location_type,start_tower_id,end_tower_id`;
+  voltage_level_id,line_id,location_type,start_tower_position_id,end_tower_position_id`;
 
 function parseObject(value: string): Record<string, unknown> {
   try {
@@ -72,8 +72,8 @@ function summary(row: DemandRow): DemandSummary {
     voltageLevelId: row.voltage_level_id,
     lineId: row.line_id,
     locationType: row.location_type,
-    startTowerId: row.start_tower_id,
-    endTowerId: row.end_tower_id,
+    startTowerPositionId: row.start_tower_position_id,
+    endTowerPositionId: row.end_tower_position_id,
     voltageRaw: row.voltage_raw,
     voltageVerified: row.voltage_verified,
     lineName: row.line_name,

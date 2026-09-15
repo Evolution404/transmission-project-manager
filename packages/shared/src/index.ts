@@ -185,8 +185,8 @@ export interface NormalizedImportRow {
   lineId: string | null;
   section: string;
   locationType: DemandLocationType | null;
-  startTowerId: string | null;
-  endTowerId: string | null;
+  startTowerPositionId: string | null;
+  endTowerPositionId: string | null;
   materialModel: string;
   quantityScaled: number | null;
   unit: string | null;
@@ -353,13 +353,76 @@ export interface TransmissionLineSummary {
   matchedHistoricalName?: string | null;
 }
 
-export interface TransmissionTowerSummary {
+export interface TeamSummary {
+  id: string;
+  code: string | null;
+  name: string;
+  enabled: boolean;
+  version: number;
+}
+
+export interface TowerTypeSummary {
+  id: string;
+  code: string | null;
+  label: string;
+  sortOrder: number;
+  enabled: boolean;
+  version: number;
+}
+
+export type CustomFieldDataType = 'text' | 'integer' | 'quantity' | 'year' | 'boolean' | 'date' | 'single_select' | 'multi_select';
+export const CUSTOM_FIELD_ENTITY_TYPES = ['physical_tower', 'transmission_line', 'line_tower_position', 'demand', 'project', 'project_task'] as const;
+export type CustomFieldEntityType = (typeof CUSTOM_FIELD_ENTITY_TYPES)[number];
+
+export interface CustomFieldDefinitionSummary {
+  id: string;
+  entityType: CustomFieldEntityType;
+  fieldKey: string;
+  label: string;
+  dataType: CustomFieldDataType;
+  required: boolean;
+  filterable: boolean;
+  options: unknown;
+  validation: Record<string, unknown>;
+  sortOrder: number;
+  enabled: boolean;
+  version: number;
+}
+
+export interface PhysicalTowerSummary {
+  id: string;
+  assetCode: string | null;
+  towerTypeId: string | null;
+  towerTypeLabel: string | null;
+  maintenanceTeamId: string | null;
+  maintenanceTeamName: string | null;
+  enabled: boolean;
+  version: number;
+  customValues: Record<string, unknown>;
+  customFieldsVersion: number | null;
+  linePositionCount?: number;
+}
+
+export interface CustomFieldValueSetSummary {
+  entityType: CustomFieldEntityType;
+  entityId: string;
+  version: number | null;
+  values: Record<string, unknown>;
+}
+
+export interface LineTowerPositionSummary {
   id: string;
   lineId: string;
   lineName: string;
+  physicalTowerId: string;
+  physicalAssetCode: string | null;
   towerNo: string;
   sortRank: number;
-  towerType: string | null;
+  positionLabel: string | null;
+  towerTypeId: string | null;
+  towerTypeLabel: string | null;
+  maintenanceTeamId: string | null;
+  maintenanceTeamName: string | null;
   enabled: boolean;
   version: number;
   matchedHistoricalNo?: string | null;
@@ -375,9 +438,9 @@ export interface TransmissionLineNameHistoryEntry {
   reason: string | null;
 }
 
-export interface TransmissionTowerNoHistoryEntry {
+export interface LineTowerPositionNoHistoryEntry {
   id: string;
-  towerId: string;
+  lineTowerPositionId: string;
   lineId: string;
   towerNo: string;
   validFrom: string;
@@ -390,8 +453,8 @@ export interface StructuredDemandLocationInput {
   voltageLevelId: string;
   lineId: string;
   locationType: DemandLocationType;
-  startTowerId?: string | null;
-  endTowerId?: string | null;
+  startTowerPositionId?: string | null;
+  endTowerPositionId?: string | null;
 }
 
 export interface CreateStructuredDemandRequest extends StructuredDemandLocationInput {
@@ -406,8 +469,8 @@ export interface DemandSummary {
   voltageLevelId: string | null;
   lineId: string | null;
   locationType: DemandLocationType | null;
-  startTowerId: string | null;
-  endTowerId: string | null;
+  startTowerPositionId: string | null;
+  endTowerPositionId: string | null;
   id: string;
   sequenceNo: string;
   year: number | null;

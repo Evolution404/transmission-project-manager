@@ -1,8 +1,14 @@
 import type {
+  CustomFieldEntityType,
+  CustomFieldDefinitionSummary,
+  CustomFieldValueSetSummary,
+  LineTowerPositionNoHistoryEntry,
+  LineTowerPositionSummary,
+  PhysicalTowerSummary,
+  TeamSummary,
   TransmissionLineNameHistoryEntry,
   TransmissionLineSummary,
-  TransmissionTowerNoHistoryEntry,
-  TransmissionTowerSummary,
+  TowerTypeSummary,
   VoltageLevelSummary,
   VoltageSystemType,
 } from '@tpm/shared';
@@ -37,12 +43,34 @@ type TowerRow = {
   id: string;
   line_id: string;
   line_name: string;
+  physical_tower_id: string;
+  physical_asset_code: string | null;
   tower_no: string;
   sort_rank: number;
-  tower_type: string | null;
+  position_label: string | null;
+  tower_type_id: string | null;
+  tower_type_label: string | null;
+  maintenance_team_id: string | null;
+  maintenance_team_name: string | null;
   enabled: number;
   version: number;
   matched_historical_no: string | null;
+};
+
+type TeamRow = { id: string; code: string | null; name: string; enabled: number; version: number };
+type TowerTypeRow = { id: string; code: string | null; label: string; sort_order: number; enabled: number; version: number };
+type PhysicalTowerRow = {
+  id: string;
+  asset_code: string | null;
+  tower_type_id: string | null;
+  tower_type_label: string | null;
+  maintenance_team_id: string | null;
+  maintenance_team_name: string | null;
+  enabled: number;
+  version: number;
+  custom_values_payload: string;
+  custom_fields_version: number | null;
+  line_position_count: number;
 };
 
 type LineHistoryRow = {
@@ -57,7 +85,7 @@ type LineHistoryRow = {
 
 type TowerHistoryRow = {
   id: string;
-  tower_id: string;
+  line_tower_position_id: string;
   line_id: string;
   tower_no: string;
   valid_from: string;
@@ -94,14 +122,20 @@ function lineSummary(row: LineRow): TransmissionLineSummary {
   };
 }
 
-function towerSummary(row: TowerRow): TransmissionTowerSummary {
+function towerSummary(row: TowerRow): LineTowerPositionSummary {
   return {
     id: row.id,
     lineId: row.line_id,
     lineName: row.line_name,
+    physicalTowerId: row.physical_tower_id,
+    physicalAssetCode: row.physical_asset_code,
     towerNo: row.tower_no,
     sortRank: row.sort_rank,
-    towerType: row.tower_type,
+    positionLabel: row.position_label,
+    towerTypeId: row.tower_type_id,
+    towerTypeLabel: row.tower_type_label,
+    maintenanceTeamId: row.maintenance_team_id,
+    maintenanceTeamName: row.maintenance_team_name,
     enabled: Boolean(row.enabled),
     version: row.version,
     matchedHistoricalNo: row.matched_historical_no,
@@ -121,6 +155,107 @@ export class SqlMasterDataRepository implements MasterDataRepository {
             FROM voltage_levels ORDER BY sort_order,nominal_kv,display_name`,
     });
     return rows.map(voltageSummary);
+  }
+
+  async listTeams(): Promise<readonly TeamSummary[]> {
+    const rows = await this.database.all<TeamRow>({ sql: 'SELECT id,code,name,enabled,version FROM teams ORDER BY enabled DESC,name COLLATE NOCASE,id' });
+    return rows.map((row) => ({ id: row.id, code: row.code, name: row.name, enabled: Boolean(row.enabled), version: row.version }));
+  }
+
+  async listTowerTypes(): Promise<readonly TowerTypeSummary[]> {
+    const rows = await this.database.all<TowerTypeRow>({ sql: 'SELECT id,code,label,sort_order,enabled,version FROM tower_types ORDER BY sort_order,label COLLATE NOCASE,id' });
+    return rows.map((row) => ({ id: row.id, code: row.code, label: row.label, sortOrder: row.sort_order, enabled: Boolean(row.enabled), version: row.version }));
+  }
+
+  async listCustomFieldDefinitions(entityType: CustomFieldEntityType | null): Promise<readonly CustomFieldDefinitionSummary[]> {
+    const rows = await this.database.all<{
+      id: string; entity_type: CustomFieldDefinitionSummary['entityType']; field_key: string; label: string; data_type: CustomFieldDefinitionSummary['dataType'];
+      required: number; filterable: number; options_json: string | null; validation_json: string;
+      sort_order: number; enabled: number; version: number;
+    }>({
+      sql: `SELECT id,entity_type,field_key,label,data_type,required,filterable,options_json,validation_json,sort_order,enabled,version
+            FROM custom_field_definitions
+            ${entityType ? 'WHERE entity_type=?' : ''}
+            ORDER BY entity_type,sort_order,field_key`,
+      params: entityType ? [entityType] : [],
+    });
+    return rows.map((row) => ({
+      id: row.id,
+      entityType: row.entity_type,
+      fieldKey: row.field_key,
+      label: row.label,
+      dataType: row.data_type,
+      required: Boolean(row.required),
+      filterable: Boolean(row.filterable),
+      options: row.options_json ? JSON.parse(row.options_json) : null,
+      validation: JSON.parse(row.validation_json || '{}') as Record<string, unknown>,
+      sortOrder: row.sort_order,
+      enabled: Boolean(row.enabled),
+      version: row.version,
+    }));
+  }
+
+  async getCustomFieldValues(entityType: CustomFieldEntityType, entityId: string): Promise<CustomFieldValueSetSummary> {
+    const versionRow = await this.database.first<{ version: number }>({
+      sql: 'SELECT version FROM custom_field_value_sets WHERE entity_type=? AND entity_id=? LIMIT 1',
+      params: [entityType, entityId],
+    });
+    const rows = await this.database.all<{ field_key: string; value_json: string }>({
+      sql: `SELECT d.field_key,v.value_json
+            FROM custom_field_values v
+            JOIN custom_field_definitions d ON d.id=v.field_definition_id
+            WHERE v.entity_type=? AND v.entity_id=?
+            ORDER BY d.sort_order,d.field_key`,
+      params: [entityType, entityId],
+    });
+    return {
+      entityType,
+      entityId,
+      version: versionRow ? Number(versionRow.version) : null,
+      values: Object.fromEntries(rows.map((row) => [row.field_key, JSON.parse(row.value_json) as unknown])),
+    };
+  }
+
+  async listPhysicalTowers(input: { query: string | null; limit: number }): Promise<readonly PhysicalTowerSummary[]> {
+    const params: DatabaseValue[] = [];
+    const where = input.query ? 'WHERE p.asset_code LIKE ? COLLATE NOCASE OR p.id=?' : '';
+    if (input.query) params.push(`%${input.query}%`, input.query);
+    const rows = await this.database.all<PhysicalTowerRow>({
+      sql: `SELECT p.id,p.asset_code,p.tower_type_id,tt.label AS tower_type_label,
+                   p.maintenance_team_id,tm.name AS maintenance_team_name,p.enabled,p.version,
+                   COALESCE(cf.custom_values_payload,'{}') AS custom_values_payload,
+                   cvs.version AS custom_fields_version,
+                   COUNT(lp.id) AS line_position_count
+            FROM physical_towers p
+            LEFT JOIN tower_types tt ON tt.id=p.tower_type_id
+            LEFT JOIN teams tm ON tm.id=p.maintenance_team_id
+            LEFT JOIN line_tower_positions lp ON lp.physical_tower_id=p.id
+            LEFT JOIN custom_field_value_sets cvs ON cvs.entity_type='physical_tower' AND cvs.entity_id=p.id
+            LEFT JOIN (
+              SELECT v.entity_id,json_group_object(d.field_key,json(v.value_json)) AS custom_values_payload
+              FROM custom_field_values v
+              JOIN custom_field_definitions d ON d.id=v.field_definition_id
+              WHERE v.entity_type='physical_tower'
+              GROUP BY v.entity_id
+            ) cf ON cf.entity_id=p.id
+            ${where}
+            GROUP BY p.id,p.asset_code,p.tower_type_id,tt.label,p.maintenance_team_id,tm.name,p.enabled,p.version,cf.custom_values_payload,cvs.version
+            ORDER BY COALESCE(p.asset_code,''),p.id LIMIT ?`,
+      params: [...params, input.limit],
+    });
+    return rows.map((row) => ({
+      id: row.id,
+      assetCode: row.asset_code,
+      towerTypeId: row.tower_type_id,
+      towerTypeLabel: row.tower_type_label,
+      maintenanceTeamId: row.maintenance_team_id,
+      maintenanceTeamName: row.maintenance_team_name,
+      enabled: Boolean(row.enabled),
+      version: row.version,
+      customValues: JSON.parse(row.custom_values_payload || '{}') as Record<string, unknown>,
+      customFieldsVersion: row.custom_fields_version,
+      linePositionCount: Number(row.line_position_count),
+    }));
   }
 
   async listLines(input: { voltageLevelId: string | null; enabled: boolean | null; query: string | null; cursor: { lineName: string; id: string } | null; limit: number }): Promise<readonly TransmissionLineSummary[]> {
@@ -159,7 +294,7 @@ export class SqlMasterDataRepository implements MasterDataRepository {
             JOIN voltage_levels v ON v.id=l.voltage_level_id
             LEFT JOIN (
               SELECT line_id,COUNT(*) AS tower_count
-              FROM transmission_towers
+              FROM line_tower_positions
               GROUP BY line_id
             ) tc ON tc.line_id=l.id
             ${conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''}
@@ -169,7 +304,7 @@ export class SqlMasterDataRepository implements MasterDataRepository {
     return rows.map(lineSummary);
   }
 
-  async listTowers(input: { lineId: string | null; query: string | null; cursor: { sortRank: number; id: string } | null; limit: number }): Promise<readonly TransmissionTowerSummary[]> {
+  async listLineTowerPositions(input: { lineId: string | null; query: string | null; cursor: { sortRank: number; id: string } | null; limit: number }): Promise<readonly LineTowerPositionSummary[]> {
     const conditions: string[] = [];
     const params: DatabaseValue[] = [];
     if (input.lineId) {
@@ -178,8 +313,8 @@ export class SqlMasterDataRepository implements MasterDataRepository {
     }
     if (input.query) {
       conditions.push(`(t.tower_no=? COLLATE NOCASE OR EXISTS (
-        SELECT 1 FROM transmission_tower_no_history h
-        WHERE h.tower_id=t.id AND h.tower_no=? COLLATE NOCASE
+        SELECT 1 FROM line_tower_position_no_history h
+        WHERE h.line_tower_position_id=t.id AND h.tower_no=? COLLATE NOCASE
       ))`);
       params.push(input.query, input.query);
     }
@@ -188,14 +323,18 @@ export class SqlMasterDataRepository implements MasterDataRepository {
       params.push(input.cursor.sortRank, input.cursor.sortRank, input.cursor.id);
     }
     const rows = await this.database.all<TowerRow>({
-      sql: `SELECT t.id,t.line_id,t.tower_no,t.sort_rank,t.tower_type,t.enabled,t.version,l.line_name,
+      sql: `SELECT t.id,t.line_id,t.physical_tower_id,p.asset_code AS physical_asset_code,t.tower_no,t.sort_rank,t.position_label,t.enabled,t.version,l.line_name,
+                   p.tower_type_id,tt.label AS tower_type_label,p.maintenance_team_id,tm.name AS maintenance_team_name,
                    ${input.query ? `(CASE WHEN t.tower_no=? COLLATE NOCASE THEN NULL ELSE (
-                     SELECT h.tower_no FROM transmission_tower_no_history h
-                     WHERE h.tower_id=t.id AND h.tower_no=? COLLATE NOCASE
+                     SELECT h.tower_no FROM line_tower_position_no_history h
+                     WHERE h.line_tower_position_id=t.id AND h.tower_no=? COLLATE NOCASE
                      ORDER BY h.valid_to DESC,h.id DESC LIMIT 1
                    ) END)` : 'NULL'} AS matched_historical_no
-            FROM transmission_towers t
+            FROM line_tower_positions t
             JOIN transmission_lines l ON l.id=t.line_id
+            JOIN physical_towers p ON p.id=t.physical_tower_id
+            LEFT JOIN tower_types tt ON tt.id=p.tower_type_id
+            LEFT JOIN teams tm ON tm.id=p.maintenance_team_id
             ${conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''}
             ORDER BY t.sort_rank,t.id LIMIT ?`,
       params: [...(input.query ? [input.query, input.query] : []), ...params, input.limit + 1],
@@ -215,14 +354,14 @@ export class SqlMasterDataRepository implements MasterDataRepository {
     }));
   }
 
-  async listTowerNoHistory(towerId: string): Promise<readonly TransmissionTowerNoHistoryEntry[]> {
+  async listTowerPositionNoHistory(lineTowerPositionId: string): Promise<readonly LineTowerPositionNoHistoryEntry[]> {
     const rows = await this.database.all<TowerHistoryRow>({
-      sql: `SELECT id,tower_id,line_id,tower_no,valid_from,valid_to,changed_by,change_reason
-            FROM transmission_tower_no_history WHERE tower_id=? ORDER BY valid_to DESC,id DESC`,
-      params: [towerId],
+      sql: `SELECT id,line_tower_position_id,line_id,tower_no,valid_from,valid_to,changed_by,change_reason
+            FROM line_tower_position_no_history WHERE line_tower_position_id=? ORDER BY valid_to DESC,id DESC`,
+      params: [lineTowerPositionId],
     });
     return rows.map((row) => ({
-      id: row.id, towerId: row.tower_id, lineId: row.line_id, towerNo: row.tower_no,
+      id: row.id, lineTowerPositionId: row.line_tower_position_id, lineId: row.line_id, towerNo: row.tower_no,
       validFrom: row.valid_from, validTo: row.valid_to, changedBy: row.changed_by, reason: row.change_reason,
     }));
   }

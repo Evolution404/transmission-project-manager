@@ -12,14 +12,14 @@ function setup() {
     CREATE TABLE idempotency_records(idempotency_key TEXT PRIMARY KEY,actor_member_id TEXT NOT NULL,operation TEXT NOT NULL,request_hash TEXT NOT NULL,response_json TEXT NOT NULL,status_code INTEGER NOT NULL,created_at TEXT NOT NULL);
     CREATE TABLE voltage_levels(id TEXT PRIMARY KEY,display_name TEXT,enabled INTEGER);
     CREATE TABLE transmission_lines(id TEXT PRIMARY KEY,voltage_level_id TEXT,line_name TEXT,enabled INTEGER);
-    CREATE TABLE transmission_towers(id TEXT PRIMARY KEY,line_id TEXT,tower_no TEXT,sort_rank INTEGER,enabled INTEGER);
+    CREATE TABLE line_tower_positions(id TEXT PRIMARY KEY,line_id TEXT,tower_no TEXT,sort_rank INTEGER,enabled INTEGER);
     CREATE TABLE materials(id TEXT PRIMARY KEY,model TEXT,unit TEXT,enabled INTEGER);
     CREATE TABLE demands(id TEXT PRIMARY KEY,business_signature TEXT);
     INSERT INTO import_batches VALUES('b','draft',1,0,0,0,1,'t');
     INSERT INTO import_rows VALUES('r','b',0,'S',2,'k','{}',NULL,'[]','[]','uploaded',NULL,'t');
     INSERT INTO voltage_levels VALUES('v','110kV',1);
     INSERT INTO transmission_lines VALUES('l','v','Line A',1);
-    INSERT INTO transmission_towers VALUES('t1','l','#001',1000,1),('t2','l','#002',2000,1);
+    INSERT INTO line_tower_positions VALUES('t1','l','#001',1000,1),('t2','l','#002',2000,1);
     INSERT INTO materials VALUES('m','Model','piece',1);
     INSERT INTO demands VALUES('d','sig');
   `);

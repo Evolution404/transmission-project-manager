@@ -202,8 +202,8 @@ test('manual demand creation is available alongside batch import and keeps a rea
     voltageLevelId: 'vl-ac-220',
     lineId: manualLineId,
     locationType: 'tower_range',
-    startTowerId: manualTower1,
-    endTowerId: manualTower2,
+    startTowerPositionId: manualTower1,
+    endTowerPositionId: manualTower2,
     materials: [{ rawModel: 'JX-01', quantityScaled: 25000, unit: '套' }],
     year: 2026,
     category: '临时补充',
@@ -222,7 +222,7 @@ test('manual demand creation is available alongside batch import and keeps a rea
   assert.equal(detail.body.data.materials[0].rawModel, 'JX-01');
 
   const invalid = await jsonRequest('/api/demands', mutation('POST', idem('manual-demand-invalid'), {
-    sequenceNo: 'M-002', voltageLevelId: 'vl-ac-220', lineId: manualLineId, locationType: 'tower', startTowerId: manualTower3,
+    sequenceNo: 'M-002', voltageLevelId: 'vl-ac-220', lineId: manualLineId, locationType: 'tower', startTowerPositionId: manualTower3,
     materials: [{ rawModel: 'JX-01', quantityScaled: -10000, unit: '套' }], year: 2026,
   }));
   assert.equal(invalid.response.status, 422);

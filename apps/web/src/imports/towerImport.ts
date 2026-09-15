@@ -1,11 +1,11 @@
-import { normalizeTowerNo, type TransmissionTowerSummary } from '@tpm/shared';
+import { normalizeTowerNo, type LineTowerPositionSummary } from '@tpm/shared';
 import type { ParsedSpreadsheet, ParsedSpreadsheetRow } from './parser';
 
 export interface TowerImportSourceRow {
   source: string;
   rowNumber: number;
   towerNoInput: string;
-  towerType: string | null;
+  positionLabel: string | null;
   enabled: boolean;
   parseError?: string | null;
 }
@@ -26,7 +26,7 @@ export interface TowerImportPreview {
 }
 
 const towerHeaders = ['杆塔编号', '杆塔号', '塔号'];
-const typeHeaders = ['杆塔类型', '类型', '塔型'];
+const positionHeaders = ['位置标识', '挂点', '同塔位置'];
 const stateHeaders = ['状态', '启用状态', '是否启用'];
 
 function clean(value: unknown): string {
@@ -47,7 +47,7 @@ export function parseTowerPaste(text: string): TowerImportSourceRow[] {
   const first = matrix[0] ?? [];
   const hasHeader = first.some((cell) => towerHeaders.includes(cell));
   const towerColumn = hasHeader ? first.findIndex((cell) => towerHeaders.includes(cell)) : 0;
-  const typeColumn = hasHeader ? first.findIndex((cell) => typeHeaders.includes(cell)) : 1;
+  const positionColumn = hasHeader ? first.findIndex((cell) => positionHeaders.includes(cell)) : 1;
   const stateColumn = hasHeader ? first.findIndex((cell) => stateHeaders.includes(cell)) : 2;
   return matrix.slice(hasHeader ? 1 : 0).map((cells, index) => {
     const state = parseEnabled(stateColumn >= 0 ? cells[stateColumn] : '');
@@ -55,7 +55,7 @@ export function parseTowerPaste(text: string): TowerImportSourceRow[] {
       source: '粘贴',
       rowNumber: index + (hasHeader ? 2 : 1),
       towerNoInput: clean(cells[towerColumn]),
-      towerType: typeColumn >= 0 ? clean(cells[typeColumn]) || null : null,
+      positionLabel: positionColumn >= 0 ? clean(cells[positionColumn]) || null : null,
       enabled: state.enabled,
       parseError: state.error,
     };
@@ -66,13 +66,13 @@ function columnName(headers: readonly string[], aliases: readonly string[]): str
   return headers.find((header) => aliases.includes(header.trim())) ?? null;
 }
 
-function fromSpreadsheetRow(source: string, row: ParsedSpreadsheetRow, towerColumn: string, typeColumn: string | null, stateColumn: string | null): TowerImportSourceRow {
+function fromSpreadsheetRow(source: string, row: ParsedSpreadsheetRow, towerColumn: string, positionColumn: string | null, stateColumn: string | null): TowerImportSourceRow {
   const state = parseEnabled(stateColumn ? row.cells[stateColumn] : null);
   return {
     source,
     rowNumber: row.rowNumber,
     towerNoInput: clean(row.cells[towerColumn]),
-    towerType: typeColumn ? clean(row.cells[typeColumn]) || null : null,
+    positionLabel: positionColumn ? clean(row.cells[positionColumn]) || null : null,
     enabled: state.enabled,
     parseError: state.error,
   };
@@ -83,16 +83,16 @@ export function towerRowsFromSpreadsheet(spreadsheet: ParsedSpreadsheet): TowerI
   for (const sheet of spreadsheet.sheets) {
     const towerColumn = columnName(sheet.headers, towerHeaders);
     if (!towerColumn) continue;
-    const typeColumn = columnName(sheet.headers, typeHeaders);
+    const positionColumn = columnName(sheet.headers, positionHeaders);
     const stateColumn = columnName(sheet.headers, stateHeaders);
-    rows.push(...sheet.rows.map((row) => fromSpreadsheetRow(sheet.name, row, towerColumn, typeColumn, stateColumn)));
+    rows.push(...sheet.rows.map((row) => fromSpreadsheetRow(sheet.name, row, towerColumn, positionColumn, stateColumn)));
   }
   if (!rows.length) throw new Error('未找到“杆塔编号/杆塔号”列');
   return rows;
 }
 
-export function buildTowerImportPreview(sourceRows: readonly TowerImportSourceRow[], existing: readonly TransmissionTowerSummary[]): TowerImportPreview {
-  const existingByNo = new Map<string, TransmissionTowerSummary[]>();
+export function buildTowerImportPreview(sourceRows: readonly TowerImportSourceRow[], existing: readonly LineTowerPositionSummary[]): TowerImportPreview {
+  const existingByNo = new Map<string, LineTowerPositionSummary[]>();
   for (const tower of existing) {
     const group = existingByNo.get(tower.towerNo) ?? [];
     group.push(tower);
@@ -112,7 +112,7 @@ export function buildTowerImportPreview(sourceRows: readonly TowerImportSourceRo
     if (matches.length > 1) return { ...row, towerNo, action: 'error', message: `${towerNo} 当前对应多个杆塔对象，请人工选择具体对象` };
     if (!matches.length) return { ...row, towerNo, action: 'create', message: '新增' };
     const current = matches[0]!;
-    if ((current.towerType ?? null) === row.towerType && current.enabled === row.enabled) {
+    if ((current.positionLabel ?? null) === row.positionLabel && current.enabled === row.enabled) {
       return { ...row, towerNo, action: 'unchanged', message: '无变化', id: current.id, expectedVersion: current.version };
     }
     return { ...row, towerNo, action: 'update', message: '更新属性', id: current.id, expectedVersion: current.version };
@@ -129,7 +129,7 @@ export function towerImportChunks(rows: readonly TowerImportPreviewRow[], size =
   return chunks;
 }
 
-export function completeTowerCoverageErrors(preview: TowerImportPreview, existing: readonly TransmissionTowerSummary[]): string[] {
+export function completeTowerCoverageErrors(preview: TowerImportPreview, existing: readonly LineTowerPositionSummary[]): string[] {
   const matched = new Set(preview.rows.filter((row) => row.id && row.action !== 'error').map((row) => row.id!));
   const missing = existing.filter((tower) => !matched.has(tower.id));
   if (!missing.length) return [];
@@ -137,8 +137,8 @@ export function completeTowerCoverageErrors(preview: TowerImportPreview, existin
   return [`完整清单缺少当前线路 ${missing.length} 个杆塔对象${sample ? `（如 ${sample}）` : ''}，不能整体重排`];
 }
 
-export function towerIdsInSourceOrder(preview: TowerImportPreview, current: readonly TransmissionTowerSummary[]): string[] | null {
-  const byNo = new Map<string, TransmissionTowerSummary[]>();
+export function towerIdsInSourceOrder(preview: TowerImportPreview, current: readonly LineTowerPositionSummary[]): string[] | null {
+  const byNo = new Map<string, LineTowerPositionSummary[]>();
   for (const tower of current) {
     const group = byNo.get(tower.towerNo) ?? [];
     group.push(tower); byNo.set(tower.towerNo, group);

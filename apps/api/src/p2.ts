@@ -182,8 +182,8 @@ async function resolveGridLocation(repository: ImportValidationRepository, norma
   const rawSection = normalized.section.trim();
   if (rawSection === '全线' || rawSection === '整线') {
     normalized.locationType = 'whole_line';
-    normalized.startTowerId = null;
-    normalized.endTowerId = null;
+    normalized.startTowerPositionId = null;
+    normalized.endTowerPositionId = null;
     normalized.section = '全线';
   } else {
     const exactTowerNo = normalizeTowerNo(rawSection);
@@ -222,8 +222,8 @@ async function resolveGridLocation(repository: ImportValidationRepository, norma
       return;
     }
     normalized.locationType = range ? 'tower_range' : 'tower';
-    normalized.startTowerId = start.id;
-    normalized.endTowerId = end.id;
+    normalized.startTowerPositionId = start.id;
+    normalized.endTowerPositionId = end.id;
     normalized.section = range ? `${start.towerNo}—${end.towerNo}` : start.towerNo;
   }
 
@@ -233,8 +233,8 @@ async function resolveGridLocation(repository: ImportValidationRepository, norma
     normalized.voltageLevelId,
     normalized.lineId,
     normalized.locationType,
-    normalized.startTowerId,
-    normalized.endTowerId,
+    normalized.startTowerPositionId,
+    normalized.endTowerPositionId,
     normalized.category,
   ]));
 }
@@ -284,8 +284,8 @@ async function normalizeRows(
       lineId: null,
       section,
       locationType: null,
-      startTowerId: null,
-      endTowerId: null,
+      startTowerPositionId: null,
+      endTowerPositionId: null,
       materialModel,
       quantityScaled: quantity.scaled,
       unit,
@@ -675,7 +675,7 @@ p2App.post('/imports/:id/publish', requireRoles('admin', 'project_manager'), asy
     else {
       const checked = { ...normalized };
       await resolveGridLocation(publishValidationRepository, checked, errors);
-      if (!errors.length && (checked.voltageLevelId !== normalized.voltageLevelId || checked.lineId !== normalized.lineId || checked.startTowerId !== normalized.startTowerId || checked.endTowerId !== normalized.endTowerId)) errors.push({ code: 'LOCATION_CHANGED', message: '台账对象已变化，请重新校验' });
+      if (!errors.length && (checked.voltageLevelId !== normalized.voltageLevelId || checked.lineId !== normalized.lineId || checked.startTowerPositionId !== normalized.startTowerPositionId || checked.endTowerPositionId !== normalized.endTowerPositionId)) errors.push({ code: 'LOCATION_CHANGED', message: '台账对象已变化，请重新校验' });
     }
     if (errors.length) gridErrors.push({ sheetName: row.sheetName, rowNumber: row.rowNumber, errors });
   }

@@ -13,7 +13,7 @@ function createRepository() {
       sequence_no TEXT NOT NULL, business_year INTEGER, voltage_raw TEXT NOT NULL, voltage_verified TEXT,
       line_name TEXT NOT NULL, section_text TEXT NOT NULL, category_key TEXT, owner TEXT, raw_json TEXT NOT NULL,
       version INTEGER NOT NULL, created_at TEXT NOT NULL,
-      voltage_level_id TEXT, line_id TEXT, location_type TEXT, start_tower_id TEXT, end_tower_id TEXT
+      voltage_level_id TEXT, line_id TEXT, location_type TEXT, start_tower_position_id TEXT, end_tower_position_id TEXT
     );
     CREATE TABLE materials (
       id TEXT PRIMARY KEY, code TEXT, name TEXT NOT NULL, model TEXT NOT NULL, unit TEXT NOT NULL,

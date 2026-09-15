@@ -1,6 +1,6 @@
 import type { MaterialSummary } from '@tpm/shared';
 import type { DatabasePort, DatabaseStatement } from '../ports/database.ts';
-import type { CreateStructuredDemandRecord, DemandRepository, ResolvedDemandLine, ResolvedDemandTower } from '../ports/demand-repository.ts';
+import type { CreateStructuredDemandRecord, DemandRepository, ResolvedDemandLine, ResolvedDemandTowerPosition } from '../ports/demand-repository.ts';
 
 type LineRow = {
   id: string;
@@ -55,11 +55,11 @@ export class SqlDemandRepository implements DemandRepository {
     } : null;
   }
 
-  async findTowers(ids: readonly string[]): Promise<readonly ResolvedDemandTower[]> {
+  async findTowerPositions(ids: readonly string[]): Promise<readonly ResolvedDemandTowerPosition[]> {
     if (!ids.length) return [];
     const rows = await this.database.all<TowerRow>({
       sql: `SELECT id,tower_no,sort_rank,line_id,enabled
-            FROM transmission_towers
+            FROM line_tower_positions
             WHERE id IN (${ids.map(() => '?').join(',')})
             ORDER BY sort_rank,id`,
       params: [...ids],
@@ -104,7 +104,7 @@ export class SqlDemandRepository implements DemandRepository {
               SELECT 1 FROM transmission_lines l JOIN voltage_levels v ON v.id=l.voltage_level_id
               WHERE l.id=? AND v.id=? AND l.enabled=1 AND v.enabled=1 AND v.display_name=? AND l.line_name=?
               AND ((? IS NULL AND ? IS NULL AND ?='全线') OR EXISTS (
-                SELECT 1 FROM transmission_towers s JOIN transmission_towers e ON e.line_id=s.line_id
+                SELECT 1 FROM line_tower_positions s JOIN line_tower_positions e ON e.line_id=s.line_id
                 WHERE s.id=? AND e.id=? AND s.line_id=l.id AND s.enabled=1 AND e.enabled=1 AND s.sort_rank<=e.sort_rank
                 AND (CASE WHEN s.id=e.id THEN s.tower_no ELSE s.tower_no || '—' || e.tower_no END)=?
               ))
@@ -112,20 +112,20 @@ export class SqlDemandRepository implements DemandRepository {
             ON CONFLICT(id) DO UPDATE SET invalid_grid_location=excluded.invalid_grid_location`,
       params: [
         input.lineId, input.voltageLevelId, input.voltageName, input.lineName,
-        input.startTowerId, input.endTowerId, input.sectionText,
-        input.startTowerId, input.endTowerId, input.sectionText,
+        input.startTowerPositionId, input.endTowerPositionId, input.sectionText,
+        input.startTowerPositionId, input.endTowerPositionId, input.sectionText,
       ],
     }, {
       sql: `INSERT INTO demands
             (id,source_type,source_key,source_batch_id,source_file_sha256,source_file_name,source_sheet,source_row_number,
              sequence_no,business_year,voltage_raw,voltage_verified,line_name,section_text,category_key,owner,business_signature,
-             raw_json,extra_json,version,created_by,created_at,updated_at,voltage_level_id,line_id,location_type,start_tower_id,end_tower_id)
+             raw_json,extra_json,version,created_by,created_at,updated_at,voltage_level_id,line_id,location_type,start_tower_position_id,end_tower_position_id)
             VALUES (?,'manual',?,NULL,NULL,NULL,NULL,NULL,?,?,?,?,?,?,?,?,?,?,'{}',1,?,?,?,?,?,?,?,?)`,
       params: [
         input.id, input.sourceKey, input.sequenceNo, input.year, input.voltageName, input.voltageName,
         input.lineName, input.sectionText, input.category, input.owner, input.businessSignature, input.rawJson,
         input.actorId, input.now, input.now, input.voltageLevelId, input.lineId, input.locationType,
-        input.startTowerId, input.endTowerId,
+        input.startTowerPositionId, input.endTowerPositionId,
       ],
     }];
 

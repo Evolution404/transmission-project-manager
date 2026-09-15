@@ -9,7 +9,7 @@ export interface ResolvedDemandLine {
   voltageEnabled: boolean;
 }
 
-export interface ResolvedDemandTower {
+export interface ResolvedDemandTowerPosition {
   id: string;
   towerNo: string;
   sortRank: number;
@@ -33,8 +33,8 @@ export interface CreateStructuredDemandRecord {
   voltageLevelId: string;
   lineId: string;
   locationType: DemandLocationType;
-  startTowerId: string | null;
-  endTowerId: string | null;
+  startTowerPositionId: string | null;
+  endTowerPositionId: string | null;
   voltageName: string;
   lineName: string;
   sectionText: string;
@@ -56,7 +56,7 @@ export interface CreateStructuredDemandRecord {
 
 export interface DemandRepository {
   findLine(lineId: string): Promise<ResolvedDemandLine | null>;
-  findTowers(ids: readonly string[]): Promise<readonly ResolvedDemandTower[]>;
+  findTowerPositions(ids: readonly string[]): Promise<readonly ResolvedDemandTowerPosition[]>;
   findEnabledMaterials(ids: readonly string[]): Promise<readonly MaterialSummary[]>;
   createStructured(input: CreateStructuredDemandRecord): Promise<void>;
 }

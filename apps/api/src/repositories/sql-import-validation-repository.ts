@@ -78,7 +78,7 @@ export class SqlImportValidationRepository implements ImportValidationRepository
   async findTowersByNumbers(lineId: string, towerNos: readonly string[]): Promise<readonly ImportTowerLookup[]> {
     if (!towerNos.length) return [];
     const rows = await this.database.all<{ id: string; tower_no: string; sort_rank: number }>({
-      sql: `SELECT id,tower_no,sort_rank FROM transmission_towers
+      sql: `SELECT id,tower_no,sort_rank FROM line_tower_positions
             WHERE enabled=1 AND line_id=? AND tower_no COLLATE NOCASE IN (${towerNos.map(() => '?').join(',')})
             ORDER BY sort_rank,id`,
       params: [lineId, ...towerNos],

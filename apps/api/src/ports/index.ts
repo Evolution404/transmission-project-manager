@@ -27,7 +27,7 @@ export type { CommitSingleMasterDataInput, MasterDataWriteKind, MasterDataWriteR
 export type { MemberRepository } from './member-repository';
 export type { AlertEnsureInput, AlertEnsureResult, NotificationDeliveryEvent, NotificationRepository, NotificationResultWrite } from './notification-repository';
 export type { DatabasePort, DatabaseRunResult, DatabaseStatement, DatabaseValue, TransactionPort } from './database';
-export type { DemandRepository, ResolvedDemandLine, ResolvedDemandTower } from './demand-repository';
+export type { DemandRepository, ResolvedDemandLine, ResolvedDemandTowerPosition } from './demand-repository';
 export type { AppendDemandMaterialsRecord, DemandMaterialWrite, DemandMaterialWriteRepository, DemandMaterialWriteState } from './demand-material-write-repository';
 export type { DemandPage, DemandPageCursor, DemandQueryRepository } from './demand-query-repository';
 export type { IdempotencyReplayRecord, IdempotencyRepository } from './idempotency-repository';

@@ -197,7 +197,7 @@ describe('DemandsView P2 behavior', () => {
     const call = fetchMock.mock.calls.find(([url, init]) => String(url) === '/api/demands' && init?.method === 'POST');
     expect(call).toBeTruthy();
     expect(JSON.parse(String(call![1]!.body))).toEqual({
-      sequenceNo: 'M-001', voltageLevelId: 'vl-ac-220', lineId: 'line-1', locationType: 'tower_range', startTowerId: 'tower-1', endTowerId: 'tower-2',
+      sequenceNo: 'M-001', voltageLevelId: 'vl-ac-220', lineId: 'line-1', locationType: 'tower_range', startTowerPositionId: 'tower-1', endTowerPositionId: 'tower-2',
       materials: [
         { rawModel: 'JX-01', quantityScaled: 25000, unit: '套' },
         { rawModel: 'JX-02', quantityScaled: 120000, unit: '只' },

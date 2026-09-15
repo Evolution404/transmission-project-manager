@@ -6,7 +6,7 @@ vi.mock('naive-ui', async () => {
   const { defineComponent, h } = await import('vue');
   const wrap = (name: string) => defineComponent({ name, setup(_, { slots }) { return () => h('div', [slots['header-extra']?.(), slots.default?.(), slots.footer?.()]); } });
   return {
-    NAlert: wrap('NAlert'), NCard: wrap('NCard'), NEmpty: wrap('NEmpty'), NForm: wrap('NForm'), NFormItem: wrap('NFormItem'), NSpace: wrap('NSpace'), NTag: wrap('NTag'),
+    NAlert: wrap('NAlert'), NCard: wrap('NCard'), NEmpty: wrap('NEmpty'), NForm: wrap('NForm'), NFormItem: wrap('NFormItem'), NSpace: wrap('NSpace'), NTabPane: wrap('NTabPane'), NTabs: wrap('NTabs'), NTag: wrap('NTag'),
     NButton: defineComponent({ props: { disabled: Boolean }, emits: ['click'], setup(p, { slots, emit }) { return () => h('button', { disabled: p.disabled, onClick: () => emit('click') }, slots.default?.()); } }),
     NInput: defineComponent({ props: ['value'], emits: ['update:value'], setup(p, { emit }) { return () => h('textarea', { value: p.value, onInput: (e: Event) => emit('update:value', (e.target as HTMLTextAreaElement).value) }); } }),
     NSelect: defineComponent({ props: ['value', 'options'], emits: ['update:value'], setup(p, { emit }) { return () => h('select', { value: p.value, onChange: (e: Event) => emit('update:value', (e.target as HTMLSelectElement).value) }, p.options?.map((o: { value: string; label: string }) => h('option', { value: o.value }, o.label))); } }),
@@ -21,8 +21,10 @@ import MasterDataView from '../src/views/MasterDataView.vue';
 const admin = { id: 'a', role: 'admin' } as CurrentUser;
 const voltages = [{ id: 'v1', displayName: '110kV', enabled: true, version: 1 }, { id: 'v2', displayName: '220kV', enabled: true, version: 1 }];
 const line = { id: 'l1', voltageLevelId: 'v1', voltageLevelName: '110kV', lineName: '甲线', enabled: true, version: 1, towerOrderVersion: 1 };
-const tower = { id: 't1', lineId: 'l1', lineName: '甲线', towerNo: '#020-1', sortRank: 2000, towerType: null, enabled: true, version: 3 };
-const tower2 = { id: 't2', lineId: 'l1', lineName: '甲线', towerNo: '#030', sortRank: 3000, towerType: null, enabled: true, version: 1 };
+const tower = { id: 't1', lineId: 'l1', lineName: '甲线', physicalTowerId: 'p1', physicalAssetCode: 'PT-001', towerNo: '#020-1', sortRank: 2000, positionLabel: '左回', towerTypeId: null, towerTypeLabel: null, maintenanceTeamId: null, maintenanceTeamName: null, enabled: true, version: 3 };
+const tower2 = { id: 't2', lineId: 'l1', lineName: '甲线', physicalTowerId: 'p2', physicalAssetCode: 'PT-002', towerNo: '#030', sortRank: 3000, positionLabel: null, towerTypeId: null, towerTypeLabel: null, maintenanceTeamId: null, maintenanceTeamName: null, enabled: true, version: 1 };
+const physicalTower = { id: 'p1', assetCode: 'PT-001', towerTypeId: null, towerTypeLabel: null, maintenanceTeamId: null, maintenanceTeamName: null, enabled: true, version: 1, customValues: {}, customFieldsVersion: null, linePositionCount: 1 };
+const physicalTower2 = { id: 'p2', assetCode: 'PT-002', towerTypeId: null, towerTypeLabel: null, maintenanceTeamId: null, maintenanceTeamName: null, enabled: true, version: 1, customValues: {}, customFieldsVersion: null, linePositionCount: 1 };
 const ok = (items: unknown[]) => new Response(JSON.stringify({ ok: true, data: { items } }), { headers: { 'Content-Type': 'application/json' } });
 const data = (value: unknown) => new Response(JSON.stringify({ ok: true, data: value }), { headers: { 'Content-Type': 'application/json' } });
 let importOrderVersion = 1;
@@ -49,6 +51,11 @@ beforeEach(() => {
   }
   if (init?.method) return ok([]);
   if (url === '/api/master/voltage-levels') return ok(voltages);
+  if (url === '/api/master/physical-towers?limit=100') return ok([physicalTower, physicalTower2]);
+  if (url.startsWith('/api/master/physical-towers?query=')) return ok([physicalTower]);
+  if (url === '/api/master/teams') return ok([]);
+  if (url === '/api/master/tower-types') return ok([]);
+  if (url === '/api/master/custom-fields') return ok([]);
   if (url === '/api/master/lines/l1/name-history') return ok([{ id: 'h1', lineId: 'l1', lineName: '甲线旧名', validFrom: '2026-09-15T00:30:00.000Z', validTo: '2026-09-15T01:45:00.000Z', reason: '规范名称' }]);
   if (url === '/api/master/towers/t1/number-history') return ok([]);
   if (url.startsWith('/api/master/lines?')) return url.includes('voltageLevelId=v2') ? ok([]) : ok([line]);
@@ -165,6 +172,44 @@ it('single tower creation sends no manual order and explains automatic numeric p
   const body = JSON.parse(String(call![1]!.body));
   expect(body.towerNo).toBe('#010-1');
   expect(body).not.toHaveProperty('sortRank');
+});
+
+it('master settings create configurable teams and custom fields instead of hard-coding them in tower forms', async () => {
+  const w = mount(MasterDataView, { props: { currentUser: admin } }); await flushPromises();
+  await w.get('[data-test="open-master-settings"]').trigger('click'); await flushPromises();
+  await w.get('[data-test="open-new-team"]').trigger('click');
+  await w.get('[data-test="team-name-input"]').setValue('城北班');
+  await w.get('[data-test="save-team"]').trigger('click'); await flushPromises();
+  const teamCall = vi.mocked(fetch).mock.calls.find(([u, init]) => String(u) === '/api/master/teams' && init?.method === 'POST');
+  expect(teamCall).toBeTruthy();
+  expect(JSON.parse(String(teamCall![1]!.body)).name).toBe('城北班');
+
+  await w.get('[data-test="open-new-custom-field"]').trigger('click');
+  await w.get('[data-test="custom-field-key"]').setValue('owner_unit');
+  await w.get('[data-test="custom-field-label"]').setValue('产权单位');
+  await w.get('[data-test="save-custom-field"]').trigger('click'); await flushPromises();
+  const fieldCall = vi.mocked(fetch).mock.calls.find(([u, init]) => String(u) === '/api/master/custom-fields' && init?.method === 'POST');
+  expect(fieldCall).toBeTruthy();
+  expect(JSON.parse(String(fieldCall![1]!.body))).toMatchObject({ entityType: 'physical_tower', fieldKey: 'owner_unit', label: '产权单位', dataType: 'text' });
+});
+
+it('physical tower metadata and shared-tower rebind use dedicated APIs and independent versions', async () => {
+  const w = mount(MasterDataView, { props: { currentUser: admin } }); await flushPromises();
+  await w.get('[data-test="select-line-l1"]').trigger('click'); await flushPromises();
+
+  await w.get('[data-test="tower-more-t1"]').get('[data-dropdown-key="physical"]').trigger('click'); await flushPromises();
+  await w.get('[data-test="physical-asset-code"]').setValue('PT-001A');
+  await w.get('[data-test="save-physical-tower"]').trigger('click'); await flushPromises();
+  const physicalCall = vi.mocked(fetch).mock.calls.find(([u, init]) => String(u) === '/api/master/physical-towers/p1' && init?.method === 'PATCH');
+  expect(physicalCall).toBeTruthy();
+  expect(JSON.parse(String(physicalCall![1]!.body))).toMatchObject({ expectedVersion: 1, assetCode: 'PT-001A' });
+
+  await w.get('[data-test="tower-more-t1"]').get('[data-dropdown-key="rebind"]').trigger('click'); await flushPromises();
+  await w.get('[data-test="rebind-physical-select"]').setValue('p2');
+  await w.get('[data-test="save-rebind-physical"]').trigger('click'); await flushPromises();
+  const rebindCall = vi.mocked(fetch).mock.calls.find(([u, init]) => String(u) === '/api/master/towers/t1/rebind-physical' && init?.method === 'POST');
+  expect(rebindCall).toBeTruthy();
+  expect(JSON.parse(String(rebindCall![1]!.body))).toEqual({ expectedVersion: 3, physicalTowerId: 'p2' });
 });
 
 it('uses dedicated line and tower rename actions instead of ordinary edit fields', async () => {

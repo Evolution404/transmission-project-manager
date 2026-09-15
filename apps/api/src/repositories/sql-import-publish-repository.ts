@@ -46,7 +46,7 @@ function gridGuard(input: CommitImportPublishInput['rows'][number]): DatabaseSta
             SELECT 1 FROM transmission_lines l JOIN voltage_levels v ON v.id=l.voltage_level_id
             WHERE l.id=? AND v.id=? AND l.enabled=1 AND v.enabled=1 AND v.display_name=? AND l.line_name=?
             AND ((? IS NULL AND ? IS NULL AND ?='全线') OR EXISTS (
-              SELECT 1 FROM transmission_towers s JOIN transmission_towers e ON e.line_id=s.line_id
+              SELECT 1 FROM line_tower_positions s JOIN line_tower_positions e ON e.line_id=s.line_id
               WHERE s.id=? AND e.id=? AND s.line_id=l.id AND s.enabled=1 AND e.enabled=1 AND s.sort_rank<=e.sort_rank
               AND (CASE WHEN s.id=e.id THEN s.tower_no ELSE s.tower_no || '—' || e.tower_no END)=?
             ))
@@ -54,8 +54,8 @@ function gridGuard(input: CommitImportPublishInput['rows'][number]): DatabaseSta
           ON CONFLICT(id) DO UPDATE SET invalid_grid_location=excluded.invalid_grid_location`,
     params: [
       item.lineId!, item.voltageLevelId!, item.voltageRaw, item.lineName,
-      item.startTowerId, item.endTowerId, item.section,
-      item.startTowerId, item.endTowerId, item.section,
+      item.startTowerPositionId, item.endTowerPositionId, item.section,
+      item.startTowerPositionId, item.endTowerPositionId, item.section,
     ],
   };
 }
@@ -121,14 +121,14 @@ export class SqlImportPublishRepository implements ImportPublishRepository {
           sql: `INSERT INTO demands
                 (id,source_type,source_key,source_batch_id,source_file_sha256,source_file_name,source_sheet,source_row_number,
                  sequence_no,business_year,voltage_raw,voltage_verified,line_name,section_text,category_key,owner,business_signature,
-                 raw_json,extra_json,version,created_by,created_at,updated_at,voltage_level_id,line_id,location_type,start_tower_id,end_tower_id)
+                 raw_json,extra_json,version,created_by,created_at,updated_at,voltage_level_id,line_id,location_type,start_tower_position_id,end_tower_position_id)
                 VALUES (?,'import',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'{}',1,?,?,?,?,?,?,?,?)`,
           params: [
             row.demandId, row.sourceKey, input.batchId, input.fileSha256, input.fileName, row.sheetName, row.rowNumber,
             normalized.sequenceNo, normalized.year, normalized.voltageRaw, normalized.voltageVerified, normalized.lineName,
             normalized.section, normalized.category, normalized.owner, normalized.businessSignature, row.rawJson,
             input.actorId, input.now, input.now,
-            normalized.voltageLevelId, normalized.lineId, normalized.locationType, normalized.startTowerId, normalized.endTowerId,
+            normalized.voltageLevelId, normalized.lineId, normalized.locationType, normalized.startTowerPositionId, normalized.endTowerPositionId,
           ],
         });
       }

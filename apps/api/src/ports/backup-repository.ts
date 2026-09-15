@@ -3,8 +3,9 @@ import type { DatabaseValue } from './database';
 
 export const BACKUP_TABLES = [
   'members', 'member_scopes', 'settings_versions', 'dictionary_items', 'audit_events', 'idempotency_records',
-  'voltage_levels', 'transmission_lines', 'transmission_towers',
+  'voltage_levels', 'transmission_lines', 'transmission_line_name_history', 'teams', 'tower_types', 'physical_towers', 'line_tower_positions', 'line_tower_position_no_history',
   'materials', 'import_mapping_templates', 'import_batches', 'import_rows', 'demands', 'demand_source_rows', 'demand_materials', 'field_definitions',
+  'custom_field_definitions', 'custom_field_value_sets', 'custom_field_values', 'custom_field_index', 'custom_field_multi_select_index',
   'projects', 'project_versions', 'demand_allocations', 'project_cost_lines', 'reserve_categories', 'category_mappings', 'category_cost_allocations',
   'project_demand_links', 'project_material_requirements', 'project_material_revisions',
   'frameworks', 'framework_versions', 'agreements', 'agreement_versions', 'project_budgets', 'budget_allocations', 'budget_versions',

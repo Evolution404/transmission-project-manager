@@ -1,8 +1,14 @@
 import type {
+  CustomFieldEntityType,
+  CustomFieldDefinitionSummary,
+  CustomFieldValueSetSummary,
+  LineTowerPositionNoHistoryEntry,
+  LineTowerPositionSummary,
+  PhysicalTowerSummary,
+  TeamSummary,
   TransmissionLineNameHistoryEntry,
   TransmissionLineSummary,
-  TransmissionTowerNoHistoryEntry,
-  TransmissionTowerSummary,
+  TowerTypeSummary,
   VoltageLevelSummary,
 } from '@tpm/shared';
 
@@ -18,8 +24,13 @@ export interface TowerPageCursor {
 
 export interface MasterDataRepository {
   listVoltageLevels(): Promise<readonly VoltageLevelSummary[]>;
+  listTeams(): Promise<readonly TeamSummary[]>;
+  listTowerTypes(): Promise<readonly TowerTypeSummary[]>;
+  listCustomFieldDefinitions(entityType: CustomFieldEntityType | null): Promise<readonly CustomFieldDefinitionSummary[]>;
+  getCustomFieldValues(entityType: CustomFieldEntityType, entityId: string): Promise<CustomFieldValueSetSummary>;
+  listPhysicalTowers(input: { query: string | null; limit: number }): Promise<readonly PhysicalTowerSummary[]>;
   listLines(input: { voltageLevelId: string | null; enabled: boolean | null; query: string | null; cursor: LinePageCursor | null; limit: number }): Promise<readonly TransmissionLineSummary[]>;
-  listTowers(input: { lineId: string | null; query: string | null; cursor: TowerPageCursor | null; limit: number }): Promise<readonly TransmissionTowerSummary[]>;
+  listLineTowerPositions(input: { lineId: string | null; query: string | null; cursor: TowerPageCursor | null; limit: number }): Promise<readonly LineTowerPositionSummary[]>;
   listLineNameHistory(lineId: string): Promise<readonly TransmissionLineNameHistoryEntry[]>;
-  listTowerNoHistory(towerId: string): Promise<readonly TransmissionTowerNoHistoryEntry[]>;
+  listTowerPositionNoHistory(lineTowerPositionId: string): Promise<readonly LineTowerPositionNoHistoryEntry[]>;
 }
