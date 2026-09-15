@@ -18,9 +18,9 @@ import {
   NTag,
   useMessage,
 } from 'naive-ui';
+import { apiRequest, jsonRequestInit } from '../api/client';
 import { parseApiResponse } from '../api/response';
 import type {
-  ApiResponse,
   AttachmentSummary,
   CurrentUser,
   LifecycleState,
@@ -106,17 +106,6 @@ function stateTagType(state: LifecycleState): 'success' | 'warning' | 'error' | 
   if (state === 'implemented_unsettled') return 'warning';
   if (state === 'unimplemented_settled') return 'info';
   return 'error';
-}
-
-async function apiRequest<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, init);
-  const result = await parseApiResponse<T>(response);
-  if (!response.ok || !result.ok) throw new Error(result.ok ? `HTTP ${response.status}` : result.error.message);
-  return result.data;
-}
-
-function writeInit(method: 'POST' | 'PUT', body: unknown): RequestInit {
-  return { method, headers: { 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() }, body: JSON.stringify(body) };
 }
 
 const projectOptions = computed(() => projects.value.map((item) => ({ label: `${item.name}${item.status === 'confirmed' ? ` · 储备v${item.reserveVersion}` : ' · 草稿'}`, value: item.id })));
@@ -221,7 +210,7 @@ async function createProjectRelease() {
   if (!project.value) return;
   saving.value = true;
   try {
-    await apiRequest<ProjectReleaseSummary>('/api/project-releases', writeInit('POST', {
+    await apiRequest<ProjectReleaseSummary>('/api/project-releases', jsonRequestInit('POST', {
       projectId: project.value.id,
       expectedProjectVersion: project.value.version,
       releaseDate: releaseDate.value,
@@ -253,7 +242,7 @@ async function createTask() {
   });
   saving.value = true;
   try {
-    const created = await apiRequest<ProjectTaskExecutionSummary>('/api/project-tasks', writeInit('POST', {
+    const created = await apiRequest<ProjectTaskExecutionSummary>('/api/project-tasks', jsonRequestInit('POST', {
       projectId: project.value.id,
       expectedProjectVersion: execution.value.projectVersion,
       name: taskForm.value.name.trim(),
@@ -285,7 +274,7 @@ async function addSupplyEvent() {
   if (!task || !material || quantityScaled === null || quantityScaled <= 0) { message.warning('请选择任务物资并填写正数数量'); return; }
   saving.value = true;
   try {
-    await apiRequest('/api/task-material-supply-events', writeInit('POST', {
+    await apiRequest('/api/task-material-supply-events', jsonRequestInit('POST', {
       taskMaterialRequirementId: material.id,
       expectedSupplyVersion: material.supplyVersion,
       stage: supplyForm.value.stage,
@@ -318,7 +307,7 @@ async function createImplementation() {
   });
   saving.value = true;
   try {
-    await apiRequest('/api/task-implementations', writeInit('POST', {
+    await apiRequest('/api/task-implementations', jsonRequestInit('POST', {
       taskId: task.id,
       expectedImplementationVersion: task.implementationVersion,
       recordDate: implementationDate.value,
@@ -346,7 +335,7 @@ async function createSettlement() {
   if (!coverageQuantityScaled) { message.warning('至少填写一条结算覆盖量'); return; }
   saving.value = true;
   try {
-    await apiRequest('/api/task-settlements', writeInit('POST', {
+    await apiRequest('/api/task-settlements', jsonRequestInit('POST', {
       taskId: task.id,
       expectedSettlementVersion: task.settlementVersion,
       settlementDate: settlementDate.value,

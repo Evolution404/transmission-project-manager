@@ -20,7 +20,6 @@ import {
   useMessage,
 } from 'naive-ui';
 import type {
-  ApiResponse,
   CreateMemberRequest,
   CurrentUser,
   MemberRole,
@@ -29,7 +28,7 @@ import type {
   SettingVersion,
   UpdateMemberRequest,
 } from '@tpm/shared';
-import { parseApiResponse } from '../api/response';
+import { apiRequest, jsonRequestInit } from '../api/client';
 import { createDerivedCredential, normalizeUsername, validatePasswordForClient } from '../auth/credentials';
 
 const props = defineProps<{ currentUser: CurrentUser }>();
@@ -94,13 +93,6 @@ function scopeLabel(row: MemberSummary) {
   const frameworks = row.scopes.filter((scope) => scope.type === 'framework').length;
   const projects = row.scopes.filter((scope) => scope.type === 'project').length;
   return [frameworks ? `${frameworks} 个框架` : '', projects ? `${projects} 个项目` : ''].filter(Boolean).join('、');
-}
-
-async function apiRequest<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, init);
-  const result = await parseApiResponse<T>(response);
-  if (!response.ok || !result.ok) throw new Error(result.ok ? '请求失败' : result.error.message);
-  return result.data;
 }
 
 async function load() {
@@ -205,11 +197,7 @@ async function saveMember() {
         enabled: memberForm.value.enabled,
         scopes,
       };
-      await apiRequest<MemberSummary>(`/api/members/${editing.value.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() },
-        body: JSON.stringify(body),
-      });
+      await apiRequest<MemberSummary>(`/api/members/${editing.value.id}`, jsonRequestInit('PATCH', body));
       message.success('成员信息已更新');
     } else {
       const derived = await createDerivedCredential(memberForm.value.initialPassword);
@@ -221,11 +209,7 @@ async function saveMember() {
         scopes,
         ...derived,
       };
-      await apiRequest<MemberSummary>('/api/members', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() },
-        body: JSON.stringify(body),
-      });
+      await apiRequest<MemberSummary>('/api/members', jsonRequestInit('POST', body));
       memberForm.value.initialPassword = '';
       message.success('账号已创建，首次登录必须修改密码');
     }
@@ -253,11 +237,7 @@ async function resetCredential() {
   saving.value = true;
   try {
     const derived = await createDerivedCredential(resetPassword.value);
-    await apiRequest<MemberSummary>(`/api/members/${resetTarget.value.id}/reset-password`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() },
-      body: JSON.stringify(derived),
-    });
+    await apiRequest<MemberSummary>(`/api/members/${resetTarget.value.id}/reset-password`, jsonRequestInit('POST', derived));
     resetPassword.value = '';
     resetPasswordConfirm.value = '';
     resetModalOpen.value = false;
@@ -272,11 +252,7 @@ async function resetCredential() {
 
 async function toggleMember(row: MemberSummary) {
   try {
-    await apiRequest<MemberSummary>(`/api/members/${row.id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() },
-      body: JSON.stringify({ expectedVersion: row.version, enabled: !row.enabled }),
-    });
+    await apiRequest<MemberSummary>(`/api/members/${row.id}`, jsonRequestInit('PATCH', { expectedVersion: row.version, enabled: !row.enabled }));
     message.success(row.enabled ? '账号已停用' : '账号已恢复');
     await load();
   } catch (cause) {

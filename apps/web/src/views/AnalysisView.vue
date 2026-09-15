@@ -21,11 +21,10 @@ import {
   useMessage,
 } from 'naive-ui';
 import type { EChartsType } from 'echarts/core';
-import { parseApiResponse } from '../api/response';
+import { apiRequest, jsonRequestInit } from '../api/client';
 import type {
   AlertEventSummary,
   AnalysisRuleSummary,
-  ApiResponse,
   BackupSummary,
   CurrentUser,
   FinanceProjectSummary,
@@ -99,16 +98,6 @@ function parsePercentBasisPoints(value: string): number | null {
 function formatMoney(fen: number | null | undefined) { return fen === null || fen === undefined ? '未配置' : `${(fen / 100).toFixed(2)} 元`; }
 function formatPercent(bp: number | null | undefined) { return bp === null || bp === undefined ? '未配置' : `${(bp / 100).toFixed(2)}%`; }
 function formatQuantity(value: number) { return (value / 10000).toFixed(4).replace(/\.?0+$/, ''); }
-
-async function apiRequest<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, init);
-  const result = await parseApiResponse<T>(response);
-  if (!response.ok || !result.ok) throw new Error(result.ok ? `HTTP ${response.status}` : result.error.message);
-  return result.data;
-}
-function writeInit(method: 'POST' | 'PUT', body: unknown): RequestInit {
-  return { method, headers: { 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() }, body: JSON.stringify(body) };
-}
 
 const frameworkOptions = computed(() => frameworks.value.map((item) => ({ label: `${item.code} · ${item.name}`, value: item.id })));
 const planProjectOptions = computed(() => projects.value.filter((item) => item.frameworkId === selectedFrameworkId.value).map((item) => ({ label: item.name, value: item.id })));
@@ -196,7 +185,7 @@ async function savePlan() {
   const current = plans.value.find((item) => item.projectId === planProjectId.value && item.month === Number(planMonth.value));
   saving.value = true;
   try {
-    await apiRequest(`/api/analysis/plans/${encodeURIComponent(planProjectId.value)}/${analysisYear.value}/${Number(planMonth.value)}`, writeInit('PUT', { expectedVersion: current?.version ?? null, targetAmountFen }));
+    await apiRequest(`/api/analysis/plans/${encodeURIComponent(planProjectId.value)}/${analysisYear.value}/${Number(planMonth.value)}`, jsonRequestInit('PUT', { expectedVersion: current?.version ?? null, targetAmountFen }));
     await loadFrameworkContext(); message.success('月计划已保存');
   } catch (cause) { message.error(cause instanceof Error ? cause.message : '月计划保存失败'); }
   finally { saving.value = false; }
@@ -206,7 +195,7 @@ async function saveRule() {
   const thresholdBasisPoints = parsePercentBasisPoints(ruleThresholdPercent.value); if (thresholdBasisPoints === null) { message.warning('阈值请输入 0–100%'); return; }
   saving.value = true;
   try {
-    rule.value = await apiRequest<AnalysisRuleSummary>('/api/analysis/rules', writeInit('PUT', { expectedVersion: rule.value.version, mode: ruleMode.value, thresholdBasisPoints }));
+    rule.value = await apiRequest<AnalysisRuleSummary>('/api/analysis/rules', jsonRequestInit('PUT', { expectedVersion: rule.value.version, mode: ruleMode.value, thresholdBasisPoints }));
     await loadFrameworkContext(); message.success('分析规则已更新');
   } catch (cause) { message.error(cause instanceof Error ? cause.message : '规则更新失败'); }
   finally { saving.value = false; }
@@ -215,7 +204,7 @@ async function generateReport() {
   if (!selectedFrameworkId.value) return;
   saving.value = true;
   try {
-    await apiRequest('/api/reports/monthly', writeInit('POST', { frameworkId: selectedFrameworkId.value, businessMonth: reportMonth.value, dataCutoffDate: asOfDate.value }));
+    await apiRequest('/api/reports/monthly', jsonRequestInit('POST', { frameworkId: selectedFrameworkId.value, businessMonth: reportMonth.value, dataCutoffDate: asOfDate.value }));
     await loadFrameworkContext(); message.success('月报修订已生成');
   } catch (cause) { message.error(cause instanceof Error ? cause.message : '月报生成失败'); }
   finally { saving.value = false; }
@@ -227,7 +216,7 @@ async function createMilestone() {
   const specificDate = precision === 'day' ? milestoneForm.value.specificDate : null;
   saving.value = true;
   try {
-    await apiRequest('/api/milestones', writeInit('POST', { businessYear: analysisYear.value, title, owner: milestoneForm.value.owner.trim() || null, projectId: null, datePrecision: precision, month, specificDate: specificDate || null, leadDays: [7, 3, 0] }));
+    await apiRequest('/api/milestones', jsonRequestInit('POST', { businessYear: analysisYear.value, title, owner: milestoneForm.value.owner.trim() || null, projectId: null, datePrecision: precision, month, specificDate: specificDate || null, leadDays: [7, 3, 0] }));
     milestoneForm.value = { title: '', owner: '', datePrecision: 'unknown', month: null, specificDate: '' };
     milestones.value = (await apiRequest<{ items: MilestoneDueSummary[] }>(`/api/milestones/due?asOf=${asOfDate.value}`)).items; message.success('年度事项已创建');
   } catch (cause) { message.error(cause instanceof Error ? cause.message : '事项创建失败'); }
@@ -235,31 +224,31 @@ async function createMilestone() {
 }
 async function setMilestoneStatus(item: MilestoneDueSummary, status: 'open' | 'completed') {
   try {
-    await apiRequest(`/api/milestones/${item.id}/status`, writeInit('PUT', { expectedVersion: item.version, status }));
+    await apiRequest(`/api/milestones/${item.id}/status`, jsonRequestInit('PUT', { expectedVersion: item.version, status }));
     milestones.value = (await apiRequest<{ items: MilestoneDueSummary[] }>(`/api/milestones/due?asOf=${asOfDate.value}`)).items;
   } catch (cause) { message.error(cause instanceof Error ? cause.message : '事项状态更新失败'); }
 }
 async function createContact() {
   const address = contactForm.value.address.trim(); if (!address) return;
   try {
-    await apiRequest('/api/notification-contacts', writeInit('POST', { memberId: contactForm.value.memberId, address, verified: true, enabled: true }));
+    await apiRequest('/api/notification-contacts', jsonRequestInit('POST', { memberId: contactForm.value.memberId, address, verified: true, enabled: true }));
     contacts.value = (await apiRequest<{ items: NotificationContactSummary[] }>('/api/notification-contacts')).items; contactForm.value.address = ''; message.success('通知地址已保存');
   } catch (cause) { message.error(cause instanceof Error ? cause.message : '通知地址保存失败'); }
 }
 async function createBackup() {
   saving.value = true;
   try {
-    await apiRequest('/api/backups', writeInit('POST', { backupDate: businessToday(), kind: 'daily' }));
+    await apiRequest('/api/backups', jsonRequestInit('POST', { backupDate: businessToday(), kind: 'daily' }));
     backups.value = (await apiRequest<{ items: BackupSummary[] }>('/api/backups')).items; message.success('备份任务已创建');
   } catch (cause) { message.error(cause instanceof Error ? cause.message : '备份创建失败'); }
   finally { saving.value = false; }
 }
 async function stepBackup(item: BackupSummary) {
-  try { await apiRequest(`/api/backups/${item.id}/step`, writeInit('POST', {})); backups.value = (await apiRequest<{ items: BackupSummary[] }>('/api/backups')).items; }
+  try { await apiRequest(`/api/backups/${item.id}/step`, jsonRequestInit('POST', {})); backups.value = (await apiRequest<{ items: BackupSummary[] }>('/api/backups')).items; }
   catch (cause) { message.error(cause instanceof Error ? cause.message : '备份推进失败'); }
 }
 async function verifyBackup(item: BackupSummary) {
-  try { await apiRequest(`/api/backups/${item.id}/verify`, writeInit('POST', {})); backups.value = (await apiRequest<{ items: BackupSummary[] }>('/api/backups')).items; }
+  try { await apiRequest(`/api/backups/${item.id}/verify`, jsonRequestInit('POST', {})); backups.value = (await apiRequest<{ items: BackupSummary[] }>('/api/backups')).items; }
   catch (cause) { message.error(cause instanceof Error ? cause.message : '备份校验失败'); }
 }
 

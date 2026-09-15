@@ -18,9 +18,8 @@ import {
   NTag,
   useMessage,
 } from 'naive-ui';
-import { parseApiResponse } from '../api/response';
+import { apiRequest, jsonRequestInit } from '../api/client';
 import type {
-  ApiResponse,
   CategoryMappingSummary,
   CurrentUser,
   DemandSummary,
@@ -66,21 +65,6 @@ const newCategoryLabel = ref('');
 const mappingDemandCategory = ref('');
 const mappingCategoryId = ref<string | null>(null);
 const savingRules = ref(false);
-
-async function apiRequest<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, init);
-  const result = await parseApiResponse<T>(response);
-  if (!response.ok || !result.ok) throw new Error(result.ok ? `HTTP ${response.status}` : result.error.message);
-  return result.data;
-}
-
-function writeInit(method: 'POST' | 'PUT', body: unknown): RequestInit {
-  return {
-    method,
-    headers: { 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() },
-    body: JSON.stringify(body),
-  };
-}
 
 function parseScaled(value: string, digits: number): number | null {
   const raw = value.trim();
@@ -179,7 +163,7 @@ async function createProject() {
   const demandIds = demands.value.filter((item) => selectedCreateDemands.value[item.id]).map((item) => item.id);
   creatingProject.value = true;
   try {
-    const created = await apiRequest<ReserveProjectSummary>('/api/reserve-projects', writeInit('POST', {
+    const created = await apiRequest<ReserveProjectSummary>('/api/reserve-projects', jsonRequestInit('POST', {
       name,
       year,
       owner: projectOwner.value.trim() || null,
@@ -205,7 +189,7 @@ async function saveDemandLinks() {
   const demandIds = demands.value.filter((item) => selectedProjectDemands.value[item.id]).map((item) => item.id);
   savingDemandLinks.value = true;
   try {
-    await apiRequest(`/api/reserve-projects/${encodeURIComponent(selectedProject.value.id)}/demands`, writeInit('PUT', {
+    await apiRequest(`/api/reserve-projects/${encodeURIComponent(selectedProject.value.id)}/demands`, jsonRequestInit('PUT', {
       expectedVersion: selectedProject.value.version,
       demandIds,
     }));
@@ -264,7 +248,7 @@ async function saveProjectMaterials() {
   }
   savingMaterials.value = true;
   try {
-    await apiRequest(`/api/reserve-projects/${encodeURIComponent(selectedProject.value.id)}/materials`, writeInit('PUT', {
+    await apiRequest(`/api/reserve-projects/${encodeURIComponent(selectedProject.value.id)}/materials`, jsonRequestInit('PUT', {
       expectedVersion: selectedProject.value.version,
       reason,
       materials,
@@ -283,7 +267,7 @@ async function confirmProject() {
   if (!selectedProject.value) return;
   confirming.value = true;
   try {
-    await apiRequest(`/api/reserve-projects/${encodeURIComponent(selectedProject.value.id)}/confirm`, writeInit('POST', {
+    await apiRequest(`/api/reserve-projects/${encodeURIComponent(selectedProject.value.id)}/confirm`, jsonRequestInit('POST', {
       expectedVersion: selectedProject.value.version,
       reason: confirmationReason.value.trim() || null,
     }));
@@ -301,7 +285,7 @@ async function createReserveCategory() {
   if (!newCategoryKey.value.trim() || !newCategoryLabel.value.trim()) { message.warning('请填写大类 key 和名称'); return; }
   savingRules.value = true;
   try {
-    await apiRequest('/api/reserve-categories', writeInit('POST', { key: newCategoryKey.value.trim(), label: newCategoryLabel.value.trim() }));
+    await apiRequest('/api/reserve-categories', jsonRequestInit('POST', { key: newCategoryKey.value.trim(), label: newCategoryLabel.value.trim() }));
     newCategoryKey.value = '';
     newCategoryLabel.value = '';
     await loadRules();
@@ -319,7 +303,7 @@ async function saveCategoryMapping() {
   const current = categoryMappings.value.find((item) => item.demandCategory.toLowerCase() === demandCategory.toLowerCase());
   savingRules.value = true;
   try {
-    await apiRequest(`/api/category-mappings/${encodeURIComponent(demandCategory)}`, writeInit('PUT', {
+    await apiRequest(`/api/category-mappings/${encodeURIComponent(demandCategory)}`, jsonRequestInit('PUT', {
       expectedVersion: current?.version ?? null,
       reserveCategoryId: mappingCategoryId.value,
     }));

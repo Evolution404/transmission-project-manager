@@ -20,7 +20,6 @@ import {
   useMessage,
 } from 'naive-ui';
 import type {
-  ApiResponse,
   CurrentUser,
   DemandDetail,
   DemandSummary,
@@ -33,7 +32,7 @@ import type {
   VoltageLevelSummary,
   DemandLocationType,
 } from '@tpm/shared';
-import { parseApiResponse } from '../api/response';
+import { apiRequest, jsonRequestInit } from '../api/client';
 import { downloadDemandImportTemplate } from '../imports/demandTemplate';
 import { parseFileInWorker } from '../imports/workerClient';
 import type { ParsedSpreadsheet } from '../imports/parser';
@@ -134,21 +133,6 @@ const importReady = computed(() => Boolean(
   mapping.value.sequenceNo && mapping.value.voltage && mapping.value.lineName && mapping.value.section &&
   mapping.value.materialModel && mapping.value.materialQuantity,
 ));
-
-async function apiRequest<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, init);
-  const result = await parseApiResponse<T>(response);
-  if (!response.ok || !result.ok) throw new Error(result.ok ? `HTTP ${response.status}` : result.error.message);
-  return result.data;
-}
-
-function writeInit(method: 'POST' | 'PATCH' | 'PUT', body: unknown): RequestInit {
-  return {
-    method,
-    headers: { 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() },
-    body: JSON.stringify(body),
-  };
-}
 
 function parseDecimalScaled(value: string, digits = 4): number | null {
   const raw = value.trim();
@@ -283,7 +267,7 @@ async function saveTemplate() {
   }
   savingTemplate.value = true;
   try {
-    const template = await apiRequest<ImportMappingTemplate>('/api/import-mappings', writeInit('POST', { name, mapping: mapping.value }));
+    const template = await apiRequest<ImportMappingTemplate>('/api/import-mappings', jsonRequestInit('POST', { name, mapping: mapping.value }));
     mappingTemplates.value = [...mappingTemplates.value, template].sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
     selectedTemplateId.value = template.id;
     templateName.value = '';
@@ -385,7 +369,7 @@ async function createManualDemand() {
 
   savingManualDemand.value = true;
   try {
-    await apiRequest<DemandDetail>('/api/demands', writeInit('POST', {
+    await apiRequest<DemandDetail>('/api/demands', jsonRequestInit('POST', {
       sequenceNo: form.sequenceNo.trim(),
       voltageLevelId: form.voltageLevelId,
       lineId: form.lineId,
@@ -421,7 +405,7 @@ async function addDemandMaterial() {
   }
   savingDemandMaterial.value = true;
   try {
-    const updated = await apiRequest<DemandDetail>(`/api/demands/${selectedDemand.value.id}/materials`, writeInit('POST', {
+    const updated = await apiRequest<DemandDetail>(`/api/demands/${selectedDemand.value.id}/materials`, jsonRequestInit('POST', {
       expectedVersion: selectedDemand.value.version,
       materials: [{ rawModel, quantityScaled, unit: demandMaterialForm.value.unit.trim() || null, materialId: null }],
     }));
@@ -449,7 +433,7 @@ async function addMaterial() {
   }
   savingMaterial.value = true;
   try {
-    await apiRequest<MaterialSummary>('/api/materials', writeInit('POST', payload));
+    await apiRequest<MaterialSummary>('/api/materials', jsonRequestInit('POST', payload));
     materialForm.value = { code: '', name: '', model: '', unit: '' };
     showMaterialForm.value = false;
     await loadMaterials();

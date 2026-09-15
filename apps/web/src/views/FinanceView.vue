@@ -17,10 +17,9 @@ import {
   NTag,
   useMessage,
 } from 'naive-ui';
-import { parseApiResponse } from '../api/response';
+import { apiRequest, jsonRequestInit } from '../api/client';
 import type {
   AgreementSummary,
-  ApiResponse,
   CurrentUser,
   FinanceProjectSummary,
   FinancialEntryPage,
@@ -82,16 +81,6 @@ function formatMoney(value: number) {
 }
 function formatPercent(value: number | null) {
   return value === null ? '未配置' : `${(value / 100).toFixed(2)}%`;
-}
-
-async function apiRequest<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, init);
-  const result = await parseApiResponse<T>(response);
-  if (!response.ok || !result.ok) throw new Error(result.ok ? `HTTP ${response.status}` : result.error.message);
-  return result.data;
-}
-function writeInit(method: 'POST' | 'PUT', body: unknown): RequestInit {
-  return { method, headers: { 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() }, body: JSON.stringify(body) };
 }
 
 const frameworkOptions = computed(() => frameworks.value.map((item) => ({ label: `${item.code} · ${item.name}`, value: item.id })));
@@ -201,7 +190,7 @@ async function createFramework() {
   }
   saving.value = true;
   try {
-    await apiRequest('/api/frameworks', writeInit('POST', {
+    await apiRequest('/api/frameworks', jsonRequestInit('POST', {
       code: frameworkForm.value.code.trim(), name: frameworkForm.value.name.trim(), totalAmountFen, annualTargetFen,
       startDate: frameworkForm.value.startDate, endDate: frameworkForm.value.endDate,
     }));
@@ -216,7 +205,7 @@ async function createAgreement() {
   if (!frameworkId || !agreementForm.value.code.trim() || !agreementForm.value.name.trim() || amountFen === null) { message.warning('请完整填写协议信息'); return; }
   saving.value = true;
   try {
-    await apiRequest('/api/agreements', writeInit('POST', {
+    await apiRequest('/api/agreements', jsonRequestInit('POST', {
       frameworkId, code: agreementForm.value.code.trim(), name: agreementForm.value.name.trim(), amountFen,
       validFrom: agreementForm.value.validFrom, validTo: agreementForm.value.validTo, status: agreementForm.value.status,
     }));
@@ -231,7 +220,7 @@ async function bindProject() {
   if (!project || !bindingFrameworkId.value) { message.warning('请选择项目和框架'); return; }
   saving.value = true;
   try {
-    await apiRequest(`/api/projects/${project.id}/framework`, writeInit('PUT', { expectedVersion: project.version, frameworkId: bindingFrameworkId.value }));
+    await apiRequest(`/api/projects/${project.id}/framework`, jsonRequestInit('PUT', { expectedVersion: project.version, frameworkId: bindingFrameworkId.value }));
     await loadBase(); message.success('项目框架归属已更新');
   } catch (cause) { message.error(cause instanceof Error ? cause.message : '项目绑定失败'); }
   finally { saving.value = false; }
@@ -250,9 +239,9 @@ async function saveBudget() {
   try {
     if (currentBudget.value) {
       const { projectId: _ignored, ...update } = payload;
-      await apiRequest(`/api/budgets/${currentBudget.value.id}`, writeInit('PUT', { expectedVersion: currentBudget.value.version, ...update }));
+      await apiRequest(`/api/budgets/${currentBudget.value.id}`, jsonRequestInit('PUT', { expectedVersion: currentBudget.value.version, ...update }));
     } else {
-      await apiRequest('/api/budgets', writeInit('POST', payload));
+      await apiRequest('/api/budgets', jsonRequestInit('POST', payload));
     }
     await loadBudgetProject(projectId); await loadFrameworkContext(); message.success('预算草稿已保存');
   } catch (cause) { message.error(cause instanceof Error ? cause.message : '预算保存失败'); }
@@ -263,7 +252,7 @@ async function confirmBudget() {
   const budget = currentBudget.value; if (!budget) return;
   saving.value = true;
   try {
-    await apiRequest(`/api/budgets/${budget.id}/confirm`, writeInit('POST', { expectedVersion: budget.version }));
+    await apiRequest(`/api/budgets/${budget.id}/confirm`, jsonRequestInit('POST', { expectedVersion: budget.version }));
     await loadBudgetProject(budget.projectId); await loadFrameworkContext(); message.success('预算已确认；不会自动生成预算发生流水');
   } catch (cause) { message.error(cause instanceof Error ? cause.message : '预算确认失败'); }
   finally { saving.value = false; }
@@ -279,7 +268,7 @@ async function postEntry() {
   if (allocations.some((item) => !item.agreementId || item.amountFen === null)) { message.warning('流水协议分配需完整填写'); return; }
   saving.value = true;
   try {
-    await apiRequest('/api/financial-entries', writeInit('POST', {
+    await apiRequest('/api/financial-entries', jsonRequestInit('POST', {
       type: entryType.value, projectId: project.id, amountFen, businessDate: entryBusinessDate.value, note: entryNote.value.trim() || null,
       allocations: allocations.map((item) => ({ agreementId: item.agreementId, amountFen: item.amountFen! })),
     }));
