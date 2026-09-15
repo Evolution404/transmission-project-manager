@@ -32,7 +32,10 @@ import {
   getSessionToken,
   revokeSessionToken,
 } from './session.ts';
-import { masterDataApp } from './master-data.ts';
+import { transmissionGridApp } from './transmission-grid.ts';
+import { masterDataConfigApp } from './master-data-config.ts';
+import { physicalTowersApp } from './physical-towers.ts';
+import { structuredDemandApp } from './structured-demand.ts';
 import { projectExecutionApp } from './project-execution.ts';
 import { demandImportApp } from './demand-import.ts';
 import { reservePlanningApp } from './reserve-planning.ts';
@@ -138,7 +141,6 @@ app.get('/api/health', async (c) => {
     ok: true,
     data: {
       service: 'transmission-project-manager',
-      stage: 'p6',
       schema: await schemaReadiness(database),
     },
   };
@@ -653,7 +655,10 @@ app.get('/api/scopes/:scopeType/:scopeId/check', async (c) => {
   return c.json({ ok: true as const, data: { allowed: true } });
 });
 
-app.route('/api', masterDataApp);
+app.route('/api', transmissionGridApp);
+app.route('/api', masterDataConfigApp);
+app.route('/api', physicalTowersApp);
+app.route('/api', structuredDemandApp);
 app.route('/api', projectExecutionApp);
 app.route('/api', demandImportApp);
 app.route('/api', reservePlanningApp);

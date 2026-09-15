@@ -18,7 +18,6 @@ export interface SchemaReadinessSummary {
 
 export type HealthResponse = ApiSuccess<{
   service: 'transmission-project-manager';
-  stage: 'p6';
   schema: SchemaReadinessSummary;
 }>;
 

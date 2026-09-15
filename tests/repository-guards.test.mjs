@@ -66,7 +66,7 @@ function collectSourceFiles(directory) {
   return files;
 }
 
-test('P1.2 runtime authentication does not depend on Cloudflare Access or email identity headers', () => {
+test('runtime authentication does not depend on Cloudflare Access or email identity headers', () => {
   const runtimeFiles = [
     resolve(root, 'apps/api/src/auth.ts'),
     resolve(root, 'apps/api/src/env.ts'),
@@ -99,7 +99,7 @@ test('portable backend core cannot depend on Cloudflare runtime types', () => {
 test('HTTP business and authentication modules resolve persistence without importing Cloudflare adapters', () => {
   const files = [
     'app.ts', 'auth.ts', 'session.ts', 'demand-import.ts', 'reserve-planning.ts', 'finance.ts',
-    'project-lifecycle.ts', 'analysis-operations.ts', 'project-execution.ts', 'master-data.ts',
+    'project-lifecycle.ts', 'analysis-operations.ts', 'project-execution.ts', 'transmission-grid.ts', 'master-data-config.ts', 'physical-towers.ts', 'structured-demand.ts',
   ];
   for (const name of files) {
     const source = readFileSync(resolve(root, 'apps/api/src', name), 'utf8');
@@ -111,10 +111,12 @@ test('HTTP business and authentication modules resolve persistence without impor
 
 test('production code and tests use semantic module names instead of numbered implementation stages', () => {
   const numberedFileName = /^p\d+(?:-\d+)?(?:[-_.]|$)/i;
-  for (const directory of [resolve(root, 'apps'), resolve(root, 'packages'), resolve(root, 'tests')]) {
+  const numberedPathSegment = /[\\/]p\d+(?:-\d+)?(?:[\\/]|$)/i;
+  for (const directory of [resolve(root, 'apps'), resolve(root, 'packages'), resolve(root, 'tests'), resolve(root, 'scripts')]) {
     for (const file of collectSourceFiles(directory)) {
       const name = file.split('/').at(-1) ?? '';
       assert.equal(numberedFileName.test(name), false, `${file} 使用阶段编号作为代码文件名；请改成业务语义名称`);
+      assert.equal(numberedPathSegment.test(file), false, `${file} 使用阶段编号作为代码目录；请改成业务语义名称`);
     }
   }
 
@@ -122,6 +124,7 @@ test('production code and tests use semantic module names instead of numbered im
     const source = readFileSync(file, 'utf8');
     assert.doesNotMatch(source, /\b(?:p\d+App|runP\d+[A-Z]\w*)\b/, `${file} 使用阶段编号作为生产代码标识符`);
     assert.doesNotMatch(source, /from\s+['"]\.\/p\d+(?:-\d+)?\.ts['"]/, `${file} 仍导入阶段编号模块`);
+    assert.doesNotMatch(source, /\bstage\s*:\s*['"]p\d+['"]/i, `${file} 把实现阶段编号暴露为生产合同`);
   }
 });
 
@@ -136,9 +139,11 @@ test('project lifecycle attachment metadata goes through AttachmentRepository in
   assert.doesNotMatch(source, /\b(?:FROM|INTO)\s+attachments\b/i, 'project lifecycle routes must not inline attachment metadata SQL');
 });
 
-test('master data and structured demand flows do not reach D1 directly', () => {
-  const source = readFileSync(resolve(root, 'apps/api/src/master-data.ts'), 'utf8');
-  assert.doesNotMatch(source, /c\.env\.DB|\bD1(?:Database|PreparedStatement)\b/, 'master data routes must use portable repositories instead of D1 APIs directly');
+test('transmission grid, master-data configuration, physical tower, and structured demand flows do not reach D1 directly', () => {
+  for (const name of ['transmission-grid.ts', 'master-data-config.ts', 'physical-towers.ts', 'structured-demand.ts']) {
+    const source = readFileSync(resolve(root, 'apps/api/src', name), 'utf8');
+    assert.doesNotMatch(source, /c\.env\.DB|\bD1(?:Database|PreparedStatement)\b/, `${name} must use portable repositories instead of D1 APIs directly`);
+  }
 });
 
 test('demand import flows do not reach D1 directly', () => {
@@ -217,7 +222,7 @@ test('business batch import is never the only creation path for demand data', ()
   const apiSource = readFileSync(resolve(root, 'apps/api/src/demand-import.ts'), 'utf8');
   const webSource = readFileSync(resolve(root, 'apps/web/src/views/DemandsView.vue'), 'utf8');
   assert.match(apiSource, /post\('\/imports'/, '需求存在批量导入时必须保留导入接口');
-  assert.match(readFileSync(resolve(root, 'apps/api/src/master-data.ts'), 'utf8'), /post\('\/demands'/, '需求支持批量导入时必须同时支持服务端手工新增');
+  assert.match(readFileSync(resolve(root, 'apps/api/src/structured-demand.ts'), 'utf8'), /post\('\/demands'/, '需求支持批量导入时必须同时支持服务端手工新增');
   assert.match(webSource, /data-test="manual-demand-form"/, '需求支持批量导入时必须同时支持服务端手工新增入口');
   assert.match(webSource, /data-test="open-manual-demand"/, '手工新增需求必须由明确操作打开，不能把整张新增表单常驻主页面');
 });

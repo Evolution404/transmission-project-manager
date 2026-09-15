@@ -52,14 +52,13 @@ test('built SPA is served by the local Workers asset binding', async () => {
   assert.match(await response.text(), /输电项目全流程管理台/);
 });
 
-test('API health reports P6 after analysis, reminders, notifications, and backups are completed', async () => {
+test('API health reports service and schema readiness without implementation-stage labels', async () => {
   const response = await runtime.request('/api/health');
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), {
     ok: true,
     data: {
       service: 'transmission-project-manager',
-      stage: 'p6',
       schema: {
         ready: true,
         currentMigration: '0001_initial_schema.sql',
