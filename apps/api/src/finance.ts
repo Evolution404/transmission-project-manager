@@ -140,22 +140,22 @@ function parseEntryCursor(value: string | undefined): { businessDate: string; cr
   } catch { return null; }
 }
 
-export const p4App = new Hono<AppEnv>();
+export const financeApp = new Hono<AppEnv>();
 
-p4App.get('/finance/projects', async (c) => {
+financeApp.get('/finance/projects', async (c) => {
   const { database } = createCloudflarePersistence(c.env);
   const items: FinanceProjectSummary[] = (await new SqlFinanceQueryRepository(database).listProjects())
     .filter((row) => canProject(c, row.id) || (row.frameworkId !== null && canFramework(c, row.frameworkId)));
   return c.json({ ok: true as const, data: { items } });
 });
 
-p4App.get('/frameworks', async (c) => {
+financeApp.get('/frameworks', async (c) => {
   const { database } = createCloudflarePersistence(c.env);
   const items = (await new SqlFinanceQueryRepository(database).listFrameworks()).filter((row) => canFramework(c, row.id));
   return c.json({ ok: true as const, data: { items } });
 });
 
-p4App.post('/frameworks', requireRoles('admin', 'project_manager'), async (c) => {
+financeApp.post('/frameworks', requireRoles('admin', 'project_manager'), async (c) => {
   const key = requireIdempotencyKey(c); if (key instanceof Response) return key;
   if (!hasGlobalScope(c)) return c.json(apiError('SCOPE_FORBIDDEN', '创建框架需要全部业务范围'), 403);
   let body: Record<string, unknown>; try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
@@ -185,7 +185,7 @@ p4App.post('/frameworks', requireRoles('admin', 'project_manager'), async (c) =>
   return c.json(response, 201);
 });
 
-p4App.put('/frameworks/:id', requireRoles('admin', 'project_manager'), async (c) => {
+financeApp.put('/frameworks/:id', requireRoles('admin', 'project_manager'), async (c) => {
   const key = requireIdempotencyKey(c); if (key instanceof Response) return key;
   const { database } = createCloudflarePersistence(c.env);
   const queryRepository = new SqlFinanceQueryRepository(database);
@@ -225,7 +225,7 @@ p4App.put('/frameworks/:id', requireRoles('admin', 'project_manager'), async (c)
   return c.json(response);
 });
 
-p4App.get('/frameworks/:id/history', async (c) => {
+financeApp.get('/frameworks/:id/history', async (c) => {
   const { database } = createCloudflarePersistence(c.env);
   const repository = new SqlFinanceQueryRepository(database);
   const current = await repository.findFramework(c.req.param('id')); if (!current) return c.json(apiError('NOT_FOUND', '框架不存在'), 404);
@@ -234,7 +234,7 @@ p4App.get('/frameworks/:id/history', async (c) => {
   return c.json({ ok: true as const, data: { items: items ?? [] } });
 });
 
-p4App.get('/agreements', async (c) => {
+financeApp.get('/agreements', async (c) => {
   const frameworkId = cleanText(c.req.query('frameworkId'));
   if (frameworkId && !canFramework(c, frameworkId)) return c.json(apiError('SCOPE_FORBIDDEN', '无权查看该框架协议'), 403);
   const { database } = createCloudflarePersistence(c.env);
@@ -243,7 +243,7 @@ p4App.get('/agreements', async (c) => {
   return c.json({ ok: true as const, data: { items } });
 });
 
-p4App.post('/agreements', requireRoles('admin', 'project_manager'), async (c) => {
+financeApp.post('/agreements', requireRoles('admin', 'project_manager'), async (c) => {
   const key = requireIdempotencyKey(c); if (key instanceof Response) return key;
   let body: Record<string, unknown>; try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
   const frameworkId = cleanText(body.frameworkId), code = cleanText(body.code), name = cleanText(body.name), amount = safeNonNegative(body.amountFen);
@@ -273,7 +273,7 @@ p4App.post('/agreements', requireRoles('admin', 'project_manager'), async (c) =>
   return c.json(response, 201);
 });
 
-p4App.put('/agreements/:id', requireRoles('admin', 'project_manager'), async (c) => {
+financeApp.put('/agreements/:id', requireRoles('admin', 'project_manager'), async (c) => {
   const key = requireIdempotencyKey(c); if (key instanceof Response) return key;
   const { database } = createCloudflarePersistence(c.env);
   const queryRepository = new SqlFinanceQueryRepository(database);
@@ -311,7 +311,7 @@ p4App.put('/agreements/:id', requireRoles('admin', 'project_manager'), async (c)
   return c.json(response);
 });
 
-p4App.get('/agreements/:id/history', async (c) => {
+financeApp.get('/agreements/:id/history', async (c) => {
   const { database } = createCloudflarePersistence(c.env);
   const repository = new SqlFinanceQueryRepository(database);
   const current = await repository.findAgreement(c.req.param('id')); if (!current) return c.json(apiError('NOT_FOUND', '协议不存在'), 404);
@@ -320,7 +320,7 @@ p4App.get('/agreements/:id/history', async (c) => {
   return c.json({ ok: true as const, data: { items: items ?? [] } });
 });
 
-p4App.put('/projects/:id/framework', requireRoles('admin', 'project_manager'), async (c) => {
+financeApp.put('/projects/:id/framework', requireRoles('admin', 'project_manager'), async (c) => {
   const key = requireIdempotencyKey(c); if (key instanceof Response) return key;
   const { database } = createCloudflarePersistence(c.env);
   const queryRepository = new SqlFinanceQueryRepository(database);
@@ -362,7 +362,7 @@ p4App.put('/projects/:id/framework', requireRoles('admin', 'project_manager'), a
   return c.json(response);
 });
 
-p4App.get('/budgets', async (c) => {
+financeApp.get('/budgets', async (c) => {
   const projectId = cleanText(c.req.query('projectId'));
   const { database } = createCloudflarePersistence(c.env);
   const items = (await new SqlFinanceBudgetRepository(database).listBudgets(projectId || null))
@@ -370,7 +370,7 @@ p4App.get('/budgets', async (c) => {
   return c.json({ ok: true as const, data: { items } });
 });
 
-p4App.post('/budgets', requireRoles('admin', 'project_manager', 'finance'), async (c) => {
+financeApp.post('/budgets', requireRoles('admin', 'project_manager', 'finance'), async (c) => {
   const key = requireIdempotencyKey(c); if (key instanceof Response) return key;
   let body: Partial<CreateBudgetRequest>; try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
   const projectId = cleanText(body.projectId), total = safeNonNegative(body.totalAmountFen), allocations = normalizeAllocations(body.allocations), note = nullableText(body.note, 1000);
@@ -411,7 +411,7 @@ p4App.post('/budgets', requireRoles('admin', 'project_manager', 'finance'), asyn
   return c.json(response, 201);
 });
 
-p4App.put('/budgets/:id', requireRoles('admin', 'project_manager', 'finance'), async (c) => {
+financeApp.put('/budgets/:id', requireRoles('admin', 'project_manager', 'finance'), async (c) => {
   const key = requireIdempotencyKey(c); if (key instanceof Response) return key;
   const { database } = createCloudflarePersistence(c.env);
   const queryRepository = new SqlFinanceQueryRepository(database);
@@ -459,7 +459,7 @@ p4App.put('/budgets/:id', requireRoles('admin', 'project_manager', 'finance'), a
   return c.json(response);
 });
 
-p4App.post('/budgets/:id/confirm', requireRoles('admin', 'project_manager', 'finance'), async (c) => {
+financeApp.post('/budgets/:id/confirm', requireRoles('admin', 'project_manager', 'finance'), async (c) => {
   const key = requireIdempotencyKey(c); if (key instanceof Response) return key;
   const { database } = createCloudflarePersistence(c.env);
   const queryRepository = new SqlFinanceQueryRepository(database);
@@ -503,7 +503,7 @@ p4App.post('/budgets/:id/confirm', requireRoles('admin', 'project_manager', 'fin
   return c.json(response);
 });
 
-p4App.get('/budgets/:id/history', async (c) => {
+financeApp.get('/budgets/:id/history', async (c) => {
   const { database } = createCloudflarePersistence(c.env);
   const budgetRepository = new SqlFinanceBudgetRepository(database);
   const budget = await budgetRepository.findBudget(c.req.param('id')); if (!budget) return c.json(apiError('NOT_FOUND', '预算不存在'), 404);
@@ -512,7 +512,7 @@ p4App.get('/budgets/:id/history', async (c) => {
   return c.json({ ok: true as const, data: { items: items ?? [] } });
 });
 
-p4App.get('/financial-entries', async (c) => {
+financeApp.get('/financial-entries', async (c) => {
   const frameworkId = cleanText(c.req.query('frameworkId')), projectId = cleanText(c.req.query('projectId'));
   const limit = Number(c.req.query('limit') ?? '50');
   if (!Number.isInteger(limit) || limit < 1 || limit > MAX_PAGE_SIZE) return c.json(apiError('INVALID_PAGE_LIMIT', 'limit 必须在 1 到 100 之间'), 400);
@@ -538,7 +538,7 @@ p4App.get('/financial-entries', async (c) => {
   return c.json({ ok: true as const, data });
 });
 
-p4App.post('/financial-entries', requireRoles('admin', 'project_manager', 'finance'), async (c) => {
+financeApp.post('/financial-entries', requireRoles('admin', 'project_manager', 'finance'), async (c) => {
   const key = requireIdempotencyKey(c); if (key instanceof Response) return key;
   let body: Partial<CreateFinancialEntryRequest>; try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
   const type = cleanText(body.type) as FinancialEntryType, projectId = cleanText(body.projectId), amount = safePositive(body.amountFen), businessDate = dateValue(body.businessDate), allocations = normalizeEntryAllocations(body.allocations), note = nullableText(body.note, 1000);
@@ -576,7 +576,7 @@ p4App.post('/financial-entries', requireRoles('admin', 'project_manager', 'finan
   return c.json(response, 201);
 });
 
-p4App.post('/financial-entries/:id/reverse', requireRoles('admin', 'finance'), async (c) => {
+financeApp.post('/financial-entries/:id/reverse', requireRoles('admin', 'finance'), async (c) => {
   const key = requireIdempotencyKey(c); if (key instanceof Response) return key;
   const { database } = createCloudflarePersistence(c.env);
   const entryRepository = new SqlFinanceEntryRepository(database);
@@ -612,7 +612,7 @@ p4App.post('/financial-entries/:id/reverse', requireRoles('admin', 'finance'), a
   return c.json(response, 201);
 });
 
-p4App.get('/finance/summary', async (c) => {
+financeApp.get('/finance/summary', async (c) => {
   const frameworkId = cleanText(c.req.query('frameworkId')), asOf = dateValue(c.req.query('asOf'));
   if (!frameworkId || !asOf) return c.json(apiError('INVALID_SUMMARY_QUERY', 'frameworkId 和 asOf 必须有效'), 400);
   const { database } = createCloudflarePersistence(c.env);

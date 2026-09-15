@@ -97,7 +97,10 @@ test('portable backend core cannot depend on Cloudflare runtime types', () => {
 });
 
 test('HTTP business and authentication modules resolve persistence without importing Cloudflare adapters', () => {
-  const files = ['app.ts','auth.ts','session.ts','p2.ts','p3.ts','p4.ts','p5.ts','p6.ts','p8.ts','p9.ts'];
+  const files = [
+    'app.ts', 'auth.ts', 'session.ts', 'demand-import.ts', 'reserve-planning.ts', 'finance.ts',
+    'project-lifecycle.ts', 'analysis-operations.ts', 'project-execution.ts', 'master-data.ts',
+  ];
   for (const name of files) {
     const source = readFileSync(resolve(root, 'apps/api/src', name), 'utf8');
     assert.doesNotMatch(source, /runtime\/cloudflare\/persistence/, `${name} must resolve runtime-neutral persistence`);
@@ -106,56 +109,72 @@ test('HTTP business and authentication modules resolve persistence without impor
   assert.doesNotMatch(appSource, /c\.env\.DB|\bD1(?:Database|PreparedStatement)\b|\.prepare\(/, 'top-level HTTP app must not reach D1 directly');
 });
 
-test('P5 attachment content no longer reaches the R2 binding directly', () => {
-  const source = readFileSync(resolve(root, 'apps/api/src/p5.ts'), 'utf8');
-  assert.doesNotMatch(source, /c\.env\.FILES/, 'P5 attachment content must use ObjectStorePort instead of the R2 binding directly');
+test('production code and tests use semantic module names instead of numbered implementation stages', () => {
+  const numberedFileName = /^p\d+(?:-\d+)?(?:[-_.]|$)/i;
+  for (const directory of [resolve(root, 'apps'), resolve(root, 'packages'), resolve(root, 'tests')]) {
+    for (const file of collectSourceFiles(directory)) {
+      const name = file.split('/').at(-1) ?? '';
+      assert.equal(numberedFileName.test(name), false, `${file} 使用阶段编号作为代码文件名；请改成业务语义名称`);
+    }
+  }
+
+  for (const file of collectSourceFiles(resolve(root, 'apps/api/src'))) {
+    const source = readFileSync(file, 'utf8');
+    assert.doesNotMatch(source, /\b(?:p\d+App|runP\d+[A-Z]\w*)\b/, `${file} 使用阶段编号作为生产代码标识符`);
+    assert.doesNotMatch(source, /from\s+['"]\.\/p\d+(?:-\d+)?\.ts['"]/, `${file} 仍导入阶段编号模块`);
+  }
 });
 
-test('P5 attachment metadata goes through AttachmentRepository instead of inline SQL', () => {
-  const source = readFileSync(resolve(root, 'apps/api/src/p5.ts'), 'utf8');
-  assert.match(source, /SqlAttachmentRepository/, 'P5 attachments must use the shared repository contract');
-  assert.doesNotMatch(source, /\b(?:FROM|INTO)\s+attachments\b/i, 'P5 must not inline attachment metadata SQL');
+test('project lifecycle attachment content no longer reaches the R2 binding directly', () => {
+  const source = readFileSync(resolve(root, 'apps/api/src/project-lifecycle.ts'), 'utf8');
+  assert.doesNotMatch(source, /c\.env\.FILES/, 'project lifecycle attachment content must use ObjectStorePort instead of the R2 binding directly');
 });
 
-test('P9 master data and structured demand flows do not reach D1 directly', () => {
-  const source = readFileSync(resolve(root, 'apps/api/src/p9.ts'), 'utf8');
-  assert.doesNotMatch(source, /c\.env\.DB|\bD1(?:Database|PreparedStatement)\b/, 'P9 must use portable repositories instead of D1 APIs directly');
+test('project lifecycle attachment metadata goes through AttachmentRepository instead of inline SQL', () => {
+  const source = readFileSync(resolve(root, 'apps/api/src/project-lifecycle.ts'), 'utf8');
+  assert.match(source, /SqlAttachmentRepository/, 'project lifecycle attachments must use the shared repository contract');
+  assert.doesNotMatch(source, /\b(?:FROM|INTO)\s+attachments\b/i, 'project lifecycle routes must not inline attachment metadata SQL');
 });
 
-test('P2 import and demand flows do not reach D1 directly', () => {
-  const source = readFileSync(resolve(root, 'apps/api/src/p2.ts'), 'utf8');
-  assert.doesNotMatch(source, /c\.env\.DB|\bD1(?:Database|PreparedStatement)\b/, 'P2 must use portable repositories instead of D1 APIs directly');
+test('master data and structured demand flows do not reach D1 directly', () => {
+  const source = readFileSync(resolve(root, 'apps/api/src/master-data.ts'), 'utf8');
+  assert.doesNotMatch(source, /c\.env\.DB|\bD1(?:Database|PreparedStatement)\b/, 'master data routes must use portable repositories instead of D1 APIs directly');
 });
 
-test('P3 reserve project flows do not reach D1 directly', () => {
-  const source = readFileSync(resolve(root, 'apps/api/src/p3.ts'), 'utf8');
-  assert.doesNotMatch(source, /c\.env\.DB|\bD1(?:Database|PreparedStatement)\b/, 'P3 must use portable repositories instead of D1 APIs directly');
+test('demand import flows do not reach D1 directly', () => {
+  const source = readFileSync(resolve(root, 'apps/api/src/demand-import.ts'), 'utf8');
+  assert.doesNotMatch(source, /c\.env\.DB|\bD1(?:Database|PreparedStatement)\b/, 'demand import routes must use portable repositories instead of D1 APIs directly');
 });
 
-test('P4 finance flows do not reach D1 directly', () => {
-  const source = readFileSync(resolve(root, 'apps/api/src/p4.ts'), 'utf8');
-  assert.match(source, /SqlFinance(?:Budget|Entry|Query|Summary|Write)Repository/, 'P4 must use portable finance repositories');
-  assert.doesNotMatch(source, /c\.env\.DB|\bD1(?:Database|PreparedStatement)\b/, 'P4 must use portable repositories instead of D1 APIs directly');
+test('reserve planning flows do not reach D1 directly', () => {
+  const source = readFileSync(resolve(root, 'apps/api/src/reserve-planning.ts'), 'utf8');
+  assert.doesNotMatch(source, /c\.env\.DB|\bD1(?:Database|PreparedStatement)\b/, 'reserve planning routes must use portable repositories instead of D1 APIs directly');
 });
 
-test('P5 legacy delivery flows do not reach D1 directly', () => {
-  const source = readFileSync(resolve(root, 'apps/api/src/p5.ts'), 'utf8');
-  assert.match(source, /SqlLegacyExecutionRepository/, 'P5 legacy delivery flows must use the portable compatibility repository');
-  assert.doesNotMatch(source, /c\.env\.DB|\bD1(?:Database|PreparedStatement)\b|\.prepare\(/, 'P5 must use portable repositories instead of D1 APIs directly');
+test('finance flows do not reach D1 directly', () => {
+  const source = readFileSync(resolve(root, 'apps/api/src/finance.ts'), 'utf8');
+  assert.match(source, /SqlFinance(?:Budget|Entry|Query|Summary|Write)Repository/, 'finance routes must use portable finance repositories');
+  assert.doesNotMatch(source, /c\.env\.DB|\bD1(?:Database|PreparedStatement)\b/, 'finance routes must use portable repositories instead of D1 APIs directly');
 });
 
-test('P6 analysis, notification, and backup flows do not reach Cloudflare persistence directly', () => {
-  const source = readFileSync(resolve(root, 'apps/api/src/p6.ts'), 'utf8');
-  assert.match(source, /SqlAnalysisRepository/, 'P6 analysis flows must use AnalysisRepository');
-  assert.match(source, /SqlNotificationRepository/, 'P6 notification flows must use NotificationRepository');
-  assert.match(source, /SqlBackupRepository/, 'P6 backup flows must use BackupRepository');
-  assert.doesNotMatch(source, /c\.env\.DB|env\.DB|env\.FILES|\bD1(?:Database|PreparedStatement)\b|\.prepare\(/, 'P6 must use portable persistence ports instead of Cloudflare bindings directly');
+test('legacy project lifecycle flows do not reach D1 directly', () => {
+  const source = readFileSync(resolve(root, 'apps/api/src/project-lifecycle.ts'), 'utf8');
+  assert.match(source, /SqlLegacyExecutionRepository/, 'legacy project lifecycle flows must use the portable compatibility repository');
+  assert.doesNotMatch(source, /c\.env\.DB|\bD1(?:Database|PreparedStatement)\b|\.prepare\(/, 'project lifecycle routes must use portable repositories instead of D1 APIs directly');
 });
 
-test('P8 final business flows do not reach D1 directly', () => {
-  const source = readFileSync(resolve(root, 'apps/api/src/p8.ts'), 'utf8');
-  assert.match(source, /Sql(?:ReserveProject|ProjectRelease|ProjectTask|TaskSupply|TaskImplementation|TaskSettlement|ExecutionQuery)Repository/, 'P8 must use portable business repositories');
-  assert.doesNotMatch(source, /c\.env\.DB|\bD1(?:Database|PreparedStatement)\b|\.prepare\(/, 'P8 must use portable repositories instead of D1 APIs directly');
+test('analysis, notification, and backup flows do not reach Cloudflare persistence directly', () => {
+  const source = readFileSync(resolve(root, 'apps/api/src/analysis-operations.ts'), 'utf8');
+  assert.match(source, /SqlAnalysisRepository/, 'analysis flows must use AnalysisRepository');
+  assert.match(source, /SqlNotificationRepository/, 'notification flows must use NotificationRepository');
+  assert.match(source, /SqlBackupRepository/, 'backup flows must use BackupRepository');
+  assert.doesNotMatch(source, /c\.env\.DB|env\.DB|env\.FILES|\bD1(?:Database|PreparedStatement)\b|\.prepare\(/, 'analysis and operations routes must use portable persistence ports instead of Cloudflare bindings directly');
+});
+
+test('project execution flows do not reach D1 directly', () => {
+  const source = readFileSync(resolve(root, 'apps/api/src/project-execution.ts'), 'utf8');
+  assert.match(source, /Sql(?:ReserveProject|ProjectRelease|ProjectTask|TaskSupply|TaskImplementation|TaskSettlement|ExecutionQuery)Repository/, 'project execution routes must use portable business repositories');
+  assert.doesNotMatch(source, /c\.env\.DB|\bD1(?:Database|PreparedStatement)\b|\.prepare\(/, 'project execution routes must use portable repositories instead of D1 APIs directly');
 });
 
 test('authentication middleware uses portable session and member repositories', () => {
@@ -195,10 +214,10 @@ test('Notion object storage adapter depends inward on the portable ObjectStorePo
 });
 
 test('business batch import is never the only creation path for demand data', () => {
-  const apiSource = readFileSync(resolve(root, 'apps/api/src/p2.ts'), 'utf8');
+  const apiSource = readFileSync(resolve(root, 'apps/api/src/demand-import.ts'), 'utf8');
   const webSource = readFileSync(resolve(root, 'apps/web/src/views/DemandsView.vue'), 'utf8');
   assert.match(apiSource, /post\('\/imports'/, '需求存在批量导入时必须保留导入接口');
-  assert.match(readFileSync(resolve(root, 'apps/api/src/p9.ts'), 'utf8'), /post\('\/demands'/, '需求支持批量导入时必须同时支持服务端手工新增');
+  assert.match(readFileSync(resolve(root, 'apps/api/src/master-data.ts'), 'utf8'), /post\('\/demands'/, '需求支持批量导入时必须同时支持服务端手工新增');
   assert.match(webSource, /data-test="manual-demand-form"/, '需求支持批量导入时必须同时支持服务端手工新增入口');
   assert.match(webSource, /data-test="open-manual-demand"/, '手工新增需求必须由明确操作打开，不能把整张新增表单常驻主页面');
 });

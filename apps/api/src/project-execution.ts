@@ -179,11 +179,11 @@ function parseDemandIds(value: unknown) {
   return ids;
 }
 
-export const p8App = new Hono<AppEnv>();
+export const projectExecutionApp = new Hono<AppEnv>();
 
 
 
-p8App.post('/demands/:id/materials', requireRoles('admin', 'project_manager'), async (c) => {
+projectExecutionApp.post('/demands/:id/materials', requireRoles('admin', 'project_manager'), async (c) => {
   const key = requireIdempotencyKey(c); if (key instanceof Response) return key;
   let body: Record<string, unknown>; try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
   const version = expectedVersion(body.expectedVersion), materials = normalizeDemandMaterials(body);
@@ -234,7 +234,7 @@ p8App.post('/demands/:id/materials', requireRoles('admin', 'project_manager'), a
   return c.json(response);
 });
 
-p8App.post('/reserve-projects', requireRoles('admin', 'project_manager'), async (c) => {
+projectExecutionApp.post('/reserve-projects', requireRoles('admin', 'project_manager'), async (c) => {
   const key = requireIdempotencyKey(c); if (key instanceof Response) return key;
   let body: Record<string, unknown>; try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
   const name = cleanText(body.name), year = validYear(body.year), owner = nullableText(body.owner, 80);
@@ -281,7 +281,7 @@ p8App.post('/reserve-projects', requireRoles('admin', 'project_manager'), async 
   return c.json({ ok: true as const, data: actual! }, 201);
 });
 
-p8App.get('/reserve-projects', async (c) => {
+projectExecutionApp.get('/reserve-projects', async (c) => {
   const user = c.get('currentUser');
   const limit = Math.min(100, Math.max(1, Number(c.req.query('limit') ?? '50')));
   const { database } = createCloudflarePersistence(c.env);
@@ -294,7 +294,7 @@ p8App.get('/reserve-projects', async (c) => {
   return c.json({ ok: true as const, data: { items, nextCursor: null } });
 });
 
-p8App.get('/reserve-projects/:id', async (c) => {
+projectExecutionApp.get('/reserve-projects/:id', async (c) => {
   const { database } = createCloudflarePersistence(c.env);
   const project = await new SqlReserveProjectQueryRepository(database).find(c.req.param('id'));
   if (!project) return c.json(apiError('PROJECT_NOT_FOUND', '储备项目不存在'), 404);
@@ -302,7 +302,7 @@ p8App.get('/reserve-projects/:id', async (c) => {
   return c.json({ ok: true as const, data: project });
 });
 
-p8App.put('/reserve-projects/:id/demands', requireRoles('admin', 'project_manager'), async (c) => {
+projectExecutionApp.put('/reserve-projects/:id/demands', requireRoles('admin', 'project_manager'), async (c) => {
   const key = requireIdempotencyKey(c); if (key instanceof Response) return key;
   let body: Record<string, unknown>; try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
   const version = expectedVersion(body.expectedVersion), parsedDemandIds = parseDemandIds(body.demandIds);
@@ -342,7 +342,7 @@ p8App.put('/reserve-projects/:id/demands', requireRoles('admin', 'project_manage
   return c.json(response);
 });
 
-p8App.put('/reserve-projects/:id/materials', requireRoles('admin', 'project_manager'), async (c) => {
+projectExecutionApp.put('/reserve-projects/:id/materials', requireRoles('admin', 'project_manager'), async (c) => {
   const key = requireIdempotencyKey(c); if (key instanceof Response) return key;
   let body: Record<string, unknown>; try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
   const version = expectedVersion(body.expectedVersion), reason = cleanText(body.reason), parsedMaterials = parseProjectMaterials(body.materials, true);
@@ -395,7 +395,7 @@ p8App.put('/reserve-projects/:id/materials', requireRoles('admin', 'project_mana
   return c.json({ ok: true as const, data: (await queryRepository.find(project.id))! });
 });
 
-p8App.get('/reserve-projects/:id/material-revisions', async (c) => {
+projectExecutionApp.get('/reserve-projects/:id/material-revisions', async (c) => {
   const { database } = createCloudflarePersistence(c.env);
   const repository = new SqlReserveProjectQueryRepository(database);
   const project = await repository.findState(c.req.param('id'));
@@ -404,7 +404,7 @@ p8App.get('/reserve-projects/:id/material-revisions', async (c) => {
   return c.json({ ok: true as const, data: { items: await repository.listMaterialRevisions(project.id) } });
 });
 
-p8App.post('/reserve-projects/:id/confirm', requireRoles('admin', 'project_manager'), async (c) => {
+projectExecutionApp.post('/reserve-projects/:id/confirm', requireRoles('admin', 'project_manager'), async (c) => {
   const key = requireIdempotencyKey(c); if (key instanceof Response) return key;
   let body: Record<string, unknown>; try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
   const version = expectedVersion(body.expectedVersion), reason = nullableText(body.reason, 500);
@@ -436,7 +436,7 @@ p8App.post('/reserve-projects/:id/confirm', requireRoles('admin', 'project_manag
   return c.json(response);
 });
 
-p8App.post('/project-releases', requireRoles('admin', 'project_manager'), async (c) => {
+projectExecutionApp.post('/project-releases', requireRoles('admin', 'project_manager'), async (c) => {
   const key = requireIdempotencyKey(c); if (key instanceof Response) return key;
   let body: Record<string, unknown>; try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
   const projectId = cleanText(body.projectId), version = expectedVersion(body.expectedProjectVersion), releaseDate = validDate(body.releaseDate), note = nullableText(body.note, 1000);
@@ -476,7 +476,7 @@ p8App.post('/project-releases', requireRoles('admin', 'project_manager'), async 
   return c.json(response, 201);
 });
 
-p8App.get('/project-releases', async (c) => {
+projectExecutionApp.get('/project-releases', async (c) => {
   const projectId = cleanText(c.req.query('projectId'));
   if (!projectId) return c.json(apiError('PROJECT_REQUIRED', 'projectId 不能为空'), 400);
   const { database } = createCloudflarePersistence(c.env);
@@ -486,7 +486,7 @@ p8App.get('/project-releases', async (c) => {
   return c.json({ ok: true as const, data: { items: await repository.listReleases(projectId) } });
 });
 
-p8App.post('/project-tasks', requireRoles('admin', 'project_manager', 'implementation'), async (c) => {
+projectExecutionApp.post('/project-tasks', requireRoles('admin', 'project_manager', 'implementation'), async (c) => {
   const key = requireIdempotencyKey(c); if (key instanceof Response) return key;
   let body: Record<string, unknown>; try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
   const projectId = cleanText(body.projectId), projectVersion = expectedVersion(body.expectedProjectVersion), name = cleanText(body.name);
@@ -575,7 +575,7 @@ p8App.post('/project-tasks', requireRoles('admin', 'project_manager', 'implement
   return c.json(response, 201);
 });
 
-p8App.get('/project-tasks', async (c) => {
+projectExecutionApp.get('/project-tasks', async (c) => {
   const projectId = cleanText(c.req.query('projectId'));
   if (!projectId) return c.json(apiError('PROJECT_REQUIRED', 'projectId 不能为空'), 400);
   const { database } = createCloudflarePersistence(c.env);
@@ -585,7 +585,7 @@ p8App.get('/project-tasks', async (c) => {
   return c.json({ ok: true as const, data: { items: await repository.listProjectTasks(projectId) } });
 });
 
-p8App.post('/task-material-supply-events', requireRoles('admin', 'project_manager', 'implementation'), async (c) => {
+projectExecutionApp.post('/task-material-supply-events', requireRoles('admin', 'project_manager', 'implementation'), async (c) => {
   const key = requireIdempotencyKey(c); if (key instanceof Response) return key;
   let body: Record<string, unknown>; try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
   const taskMaterialId = cleanText(body.taskMaterialRequirementId), version = expectedVersion(body.expectedSupplyVersion), stage = cleanText(body.stage) as 'reported' | 'shipped' | 'arrived';
@@ -630,7 +630,7 @@ p8App.post('/task-material-supply-events', requireRoles('admin', 'project_manage
   return c.json(response, 201);
 });
 
-p8App.post('/task-implementations', requireRoles('admin', 'project_manager', 'implementation'), async (c) => {
+projectExecutionApp.post('/task-implementations', requireRoles('admin', 'project_manager', 'implementation'), async (c) => {
   const key = requireIdempotencyKey(c); if (key instanceof Response) return key;
   let body: Record<string, unknown>; try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
   const taskId = cleanText(body.taskId), version = expectedVersion(body.expectedImplementationVersion), recordDate = validDate(body.recordDate), note = nullableText(body.note, 1000);
@@ -713,7 +713,7 @@ p8App.post('/task-implementations', requireRoles('admin', 'project_manager', 'im
   return c.json(response, 201);
 });
 
-p8App.post('/task-settlements', requireRoles('admin', 'project_manager', 'finance'), async (c) => {
+projectExecutionApp.post('/task-settlements', requireRoles('admin', 'project_manager', 'finance'), async (c) => {
   const key = requireIdempotencyKey(c); if (key instanceof Response) return key;
   let body: Record<string, unknown>; try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
   const taskId = cleanText(body.taskId), version = expectedVersion(body.expectedSettlementVersion), settlementDate = validDate(body.settlementDate), amountFen = nonNegativeInteger(body.amountFen), final = body.final === true, note = nullableText(body.note, 1000);
@@ -801,7 +801,7 @@ p8App.post('/task-settlements', requireRoles('admin', 'project_manager', 'financ
   return c.json(response, 201);
 });
 
-p8App.post('/task-settlements/:id/void', requireRoles('admin', 'project_manager', 'finance'), async (c) => {
+projectExecutionApp.post('/task-settlements/:id/void', requireRoles('admin', 'project_manager', 'finance'), async (c) => {
   const key = requireIdempotencyKey(c); if (key instanceof Response) return key;
   let body: Record<string, unknown>; try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
   const expectedSettlementVersion = expectedVersion(body.expectedSettlementVersion), recordVersion = expectedVersion(body.expectedVersion), reason = cleanText(body.reason);
@@ -842,7 +842,7 @@ p8App.post('/task-settlements/:id/void', requireRoles('admin', 'project_manager'
   return c.json(response);
 });
 
-p8App.get('/demands/:id/execution', async (c) => {
+projectExecutionApp.get('/demands/:id/execution', async (c) => {
   const { database } = createCloudflarePersistence(c.env);
   const repository = new SqlExecutionQueryRepository(database);
   const result = await repository.findDemandExecution(c.req.param('id'));
@@ -854,7 +854,7 @@ p8App.get('/demands/:id/execution', async (c) => {
   return c.json({ ok: true as const, data: result.summary });
 });
 
-p8App.get('/projects/:id/execution', async (c) => {
+projectExecutionApp.get('/projects/:id/execution', async (c) => {
   const { database } = createCloudflarePersistence(c.env);
   const repository = new SqlExecutionQueryRepository(database);
   const project = await repository.findProjectHeader(c.req.param('id'));

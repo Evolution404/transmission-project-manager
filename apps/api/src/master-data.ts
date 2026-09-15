@@ -31,7 +31,7 @@ import { SqlMasterDataRepository } from './repositories/sql-master-data-reposito
 import { SqlMasterDataWriteRepository } from './repositories/sql-master-data-write-repository.ts';
 import { resolvePersistence as createCloudflarePersistence } from './runtime/persistence.ts';
 
-export const p9App = new Hono<AppEnv>();
+export const masterDataApp = new Hono<AppEnv>();
 
 function apiError(code: string, message: string, details?: unknown): ApiError {
   return { ok: false, error: { code, message, ...(details === undefined ? {} : { details }) } };
@@ -114,22 +114,22 @@ function idempotencyRepository(c: Context<AppEnv>) {
   return new SqlIdempotencyRepository(database);
 }
 
-p9App.get('/master/voltage-levels', async (c) => {
+masterDataApp.get('/master/voltage-levels', async (c) => {
   return c.json({ ok: true as const, data: { items: await masterDataRepository(c).listVoltageLevels() } });
 });
-p9App.get('/master/teams', async (c) => {
+masterDataApp.get('/master/teams', async (c) => {
   return c.json({ ok: true as const, data: { items: await masterDataRepository(c).listTeams() } });
 });
-p9App.get('/master/tower-types', async (c) => {
+masterDataApp.get('/master/tower-types', async (c) => {
   return c.json({ ok: true as const, data: { items: await masterDataRepository(c).listTowerTypes() } });
 });
-p9App.get('/master/physical-towers', async (c) => {
+masterDataApp.get('/master/physical-towers', async (c) => {
   const limit = Number(c.req.query('limit') ?? '100');
   if (!Number.isInteger(limit) || limit < 1 || limit > 100) return c.json(apiError('INVALID_PAGE_LIMIT', 'limit 必须在 1–100 之间'), 400);
   const query = cleanText(c.req.query('query'), 120) || null;
   return c.json({ ok: true as const, data: { items: await masterDataRepository(c).listPhysicalTowers({ query, limit }) } });
 });
-p9App.get('/master/custom-fields', async (c) => {
+masterDataApp.get('/master/custom-fields', async (c) => {
   const rawEntityType = cleanText(c.req.query('entityType'), 80) || null;
   const entityType = rawEntityType ? customFieldEntityType(rawEntityType) : null;
   if (rawEntityType && !entityType) return c.json(apiError('INVALID_CUSTOM_FIELD_ENTITY', '自定义字段对象类型无效'), 422);
@@ -197,7 +197,7 @@ function importedTowerRanks(
   }
   return ranks;
 }
-p9App.get('/master/lines', async (c) => {
+masterDataApp.get('/master/lines', async (c) => {
   const page = listPage(c); if (page instanceof Response) return page;
   const voltageLevelId = cleanText(c.req.query('voltageLevelId'), 120) || null;
   const query = cleanText(c.req.query('query'), 200) || null;
@@ -214,7 +214,7 @@ p9App.get('/master/lines', async (c) => {
   const selected = rows.slice(0, page.limit), last = selected.at(-1);
   return c.json({ ok: true as const, data: { items: selected, nextCursor: rows.length > page.limit && last ? pageCursor(last.lineName,last.id) : null } });
 });
-p9App.get('/master/towers', async (c) => {
+masterDataApp.get('/master/towers', async (c) => {
   const page = listPage(c); if (page instanceof Response) return page;
   const lineId = cleanText(c.req.query('lineId'), 120) || null;
   const rawQuery = cleanText(c.req.query('query'), 80) || null;
@@ -511,7 +511,7 @@ async function commitMasterConfig(
 
 for (const route of Object.keys(masterConfigKinds) as MasterConfigRoute[]) {
   for (const method of ['post', 'patch', 'delete'] as const) {
-    p9App[method](`/master/${route}${method === 'post' ? '' : '/:id'}`, requireRoles('admin'), async (c) => {
+    masterDataApp[method](`/master/${route}${method === 'post' ? '' : '/:id'}`, requireRoles('admin'), async (c) => {
       let body: Record<string, unknown>; try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
       const mutation = await beginMutation(c, body); if (mutation instanceof Response) return mutation;
       const repository = masterDataWriteRepository(c);
@@ -543,7 +543,7 @@ for (const route of Object.keys(masterConfigKinds) as MasterConfigRoute[]) {
 
 for (const kind of Object.keys(masterTables) as MasterKind[]) {
   for (const method of ['post', 'patch', 'delete'] as const) {
-    p9App[method](`/master/${kind}${method === 'post' ? '' : '/:id'}`, requireRoles('admin'), async (c) => {
+    masterDataApp[method](`/master/${kind}${method === 'post' ? '' : '/:id'}`, requireRoles('admin'), async (c) => {
       let body: Record<string, unknown>; try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
       const mutation = await beginMutation(c, body); if (mutation instanceof Response) return mutation;
       if (!body || typeof body !== 'object' || Array.isArray(body)) return c.json(apiError('INVALID_MASTER_DATA', '请求体必须为对象'), 422);
@@ -612,7 +612,7 @@ async function physicalTowerSummaryById(c: Context<AppEnv>, id: string): Promise
   return rows.find((item) => item.id === id) ?? null;
 }
 
-p9App.patch('/master/physical-towers/:id', requireRoles('admin'), async (c) => {
+masterDataApp.patch('/master/physical-towers/:id', requireRoles('admin'), async (c) => {
   let body: Record<string, unknown>; try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
   const mutation = await beginMutation(c, body); if (mutation instanceof Response) return mutation;
   const id = c.req.param('id'), repository = masterDataWriteRepository(c);
@@ -686,7 +686,7 @@ p9App.patch('/master/physical-towers/:id', requireRoles('admin'), async (c) => {
   return c.json(response);
 });
 
-p9App.post('/master/towers/:id/rebind-physical', requireRoles('admin'), async (c) => {
+masterDataApp.post('/master/towers/:id/rebind-physical', requireRoles('admin'), async (c) => {
   let body: Record<string, unknown>; try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
   const mutation = await beginMutation(c, body); if (mutation instanceof Response) return mutation;
   const id = c.req.param('id'), repository = masterDataWriteRepository(c);
@@ -782,7 +782,7 @@ function normalizeCustomFieldValue(definition: CustomFieldDefinitionSummary, raw
   };
 }
 
-p9App.get('/master/custom-values/:entityType/:entityId', async (c) => {
+masterDataApp.get('/master/custom-values/:entityType/:entityId', async (c) => {
   const entityType = customFieldEntityType(c.req.param('entityType'));
   const entityId = cleanText(c.req.param('entityId'), 120);
   if (!entityType || !entityId) return c.json(apiError('INVALID_CUSTOM_FIELD_ENTITY', '自定义字段对象类型或对象 ID 无效'), 422);
@@ -790,7 +790,7 @@ p9App.get('/master/custom-values/:entityType/:entityId', async (c) => {
   return c.json({ ok: true as const, data: await masterDataRepository(c).getCustomFieldValues(entityType, entityId) });
 });
 
-p9App.put('/master/custom-values/:entityType/:entityId', requireRoles('admin'), async (c) => {
+masterDataApp.put('/master/custom-values/:entityType/:entityId', requireRoles('admin'), async (c) => {
   let body: Record<string, unknown>; try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
   const mutation = await beginMutation(c, body); if (mutation instanceof Response) return mutation;
   const entityType = customFieldEntityType(c.req.param('entityType'));
@@ -844,21 +844,21 @@ p9App.put('/master/custom-values/:entityType/:entityId', requireRoles('admin'), 
   return c.json(response);
 });
 
-p9App.get('/master/lines/:id/name-history', async (c) => {
+masterDataApp.get('/master/lines/:id/name-history', async (c) => {
   const id = c.req.param('id');
   const record = await masterDataWriteRepository(c).findRecord('line', id);
   if (!record) return c.json(apiError('MASTER_DATA_NOT_FOUND', '线路不存在'), 404);
   return c.json({ ok: true as const, data: { items: await masterDataRepository(c).listLineNameHistory(id) } });
 });
 
-p9App.get('/master/towers/:id/number-history', async (c) => {
+masterDataApp.get('/master/towers/:id/number-history', async (c) => {
   const id = c.req.param('id');
   const record = await masterDataWriteRepository(c).findRecord('tower-position', id);
   if (!record) return c.json(apiError('MASTER_DATA_NOT_FOUND', '杆塔不存在'), 404);
   return c.json({ ok: true as const, data: { items: await masterDataRepository(c).listTowerPositionNoHistory(id) } });
 });
 
-p9App.post('/master/lines/:id/rename', requireRoles('admin'), async (c) => {
+masterDataApp.post('/master/lines/:id/rename', requireRoles('admin'), async (c) => {
   let body: Record<string, unknown>; try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
   const mutation = await beginMutation(c, body); if (mutation instanceof Response) return mutation;
   const id = c.req.param('id'), repository = masterDataWriteRepository(c);
@@ -899,7 +899,7 @@ p9App.post('/master/lines/:id/rename', requireRoles('admin'), async (c) => {
   return c.json(response, 200);
 });
 
-p9App.post('/master/towers/:id/rename', requireRoles('admin'), async (c) => {
+masterDataApp.post('/master/towers/:id/rename', requireRoles('admin'), async (c) => {
   let body: Record<string, unknown>; try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
   const mutation = await beginMutation(c, body); if (mutation instanceof Response) return mutation;
   const id = c.req.param('id'), repository = masterDataWriteRepository(c);
@@ -946,7 +946,7 @@ p9App.post('/master/towers/:id/rename', requireRoles('admin'), async (c) => {
   return c.json(response, 200);
 });
 
-p9App.post('/master/lines/:lineId/towers/:towerId/move', requireRoles('admin'), async (c) => {
+masterDataApp.post('/master/lines/:lineId/towers/:towerId/move', requireRoles('admin'), async (c) => {
   let body: Record<string, unknown>; try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
   const mutation = await beginMutation(c, body); if (mutation instanceof Response) return mutation;
   const lineId = c.req.param('lineId'), towerId = c.req.param('towerId');
@@ -996,7 +996,7 @@ p9App.post('/master/lines/:lineId/towers/:towerId/move', requireRoles('admin'), 
   return c.json(response, 200);
 });
 
-p9App.post('/master/lines/:id/towers/import-chunk', requireRoles('admin'), async (c) => {
+masterDataApp.post('/master/lines/:id/towers/import-chunk', requireRoles('admin'), async (c) => {
   let body: Record<string, unknown>;
   try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
   const mutation = await beginMutation(c, body); if (mutation instanceof Response) return mutation;
@@ -1151,7 +1151,7 @@ p9App.post('/master/lines/:id/towers/import-chunk', requireRoles('admin'), async
   return c.json(response, 201);
 });
 
-p9App.post('/master/lines/:id/towers/reorder', requireRoles('admin'), async (c) => {
+masterDataApp.post('/master/lines/:id/towers/reorder', requireRoles('admin'), async (c) => {
   let body: Record<string, unknown>;
   try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
   const mutation = await beginMutation(c, body); if (mutation instanceof Response) return mutation;
@@ -1213,7 +1213,7 @@ function locationType(value: unknown): DemandLocationType | null {
   return value === 'whole_line' || value === 'tower' || value === 'tower_range' ? value : null;
 }
 
-p9App.post('/demands', requireRoles('admin', 'project_manager'), async (c) => {
+masterDataApp.post('/demands', requireRoles('admin', 'project_manager'), async (c) => {
   let body: Partial<CreateStructuredDemandRequest> & Record<string, unknown>;
   try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
   const mutation = await beginMutation(c, body); if (mutation instanceof Response) return mutation;

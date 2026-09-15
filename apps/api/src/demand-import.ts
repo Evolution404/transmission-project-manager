@@ -346,9 +346,9 @@ function makeCursor(createdAt: string, id: string) {
   return btoa(JSON.stringify({ createdAt, id })).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-export const p2App = new Hono<AppEnv>();
+export const demandImportApp = new Hono<AppEnv>();
 
-p2App.post('/import-mappings', requireRoles('admin', 'project_manager'), async (c) => {
+demandImportApp.post('/import-mappings', requireRoles('admin', 'project_manager'), async (c) => {
   const key = requireIdempotencyKey(c);
   if (key instanceof Response) return key;
   let body: { name?: unknown; mapping?: unknown };
@@ -384,12 +384,12 @@ p2App.post('/import-mappings', requireRoles('admin', 'project_manager'), async (
   return c.json(response, 201);
 });
 
-p2App.get('/import-mappings', async (c) => {
+demandImportApp.get('/import-mappings', async (c) => {
   const { database } = createCloudflarePersistence(c.env);
   return c.json({ ok: true as const, data: { items: await new SqlImportMappingRepository(database).list() } });
 });
 
-p2App.post('/materials', requireRoles('admin', 'project_manager'), async (c) => {
+demandImportApp.post('/materials', requireRoles('admin', 'project_manager'), async (c) => {
   const key = requireIdempotencyKey(c);
   if (key instanceof Response) return key;
   let body: { code?: unknown; name?: unknown; model?: unknown; unit?: unknown };
@@ -426,7 +426,7 @@ p2App.post('/materials', requireRoles('admin', 'project_manager'), async (c) => 
   return c.json(response, 201);
 });
 
-p2App.get('/materials', async (c) => {
+demandImportApp.get('/materials', async (c) => {
   const limit = Number(c.req.query('limit') ?? '50');
   if (!Number.isInteger(limit) || limit < 1 || limit > 100) return c.json(apiError('INVALID_PAGE_LIMIT', 'limit 必须在 1 到 100 之间'), 400);
   const query = c.req.query('query')?.trim() ?? '';
@@ -436,7 +436,7 @@ p2App.get('/materials', async (c) => {
 
 
 
-p2App.post('/imports', requireRoles('admin', 'project_manager'), async (c) => {
+demandImportApp.post('/imports', requireRoles('admin', 'project_manager'), async (c) => {
   const key = requireIdempotencyKey(c);
   if (key instanceof Response) return key;
   let body: { fileName?: unknown; fileSha256?: unknown; fileType?: unknown; mapping?: unknown };
@@ -485,7 +485,7 @@ p2App.post('/imports', requireRoles('admin', 'project_manager'), async (c) => {
   return c.json(response, 201);
 });
 
-p2App.post('/imports/:id/chunks', requireRoles('admin', 'project_manager'), async (c) => {
+demandImportApp.post('/imports/:id/chunks', requireRoles('admin', 'project_manager'), async (c) => {
   const key = requireIdempotencyKey(c);
   if (key instanceof Response) return key;
   let body: Partial<ImportChunkRequest> & { expectedVersion?: unknown; chunkIndex?: unknown; rows?: unknown };
@@ -554,7 +554,7 @@ p2App.post('/imports/:id/chunks', requireRoles('admin', 'project_manager'), asyn
   return c.json(response);
 });
 
-p2App.post('/imports/:id/validate', requireRoles('admin', 'project_manager'), async (c) => {
+demandImportApp.post('/imports/:id/validate', requireRoles('admin', 'project_manager'), async (c) => {
   const key = requireIdempotencyKey(c);
   if (key instanceof Response) return key;
   let body: Partial<ImportValidateRequest> & { expectedVersion?: unknown };
@@ -631,7 +631,7 @@ p2App.post('/imports/:id/validate', requireRoles('admin', 'project_manager'), as
   return c.json(response);
 });
 
-p2App.get('/imports/:id', requireRoles('admin', 'project_manager'), async (c) => {
+demandImportApp.get('/imports/:id', requireRoles('admin', 'project_manager'), async (c) => {
   const { database } = createCloudflarePersistence(c.env);
   const repository = new SqlImportRepository(database);
   const batch = await repository.findById(c.req.param('id'));
@@ -640,7 +640,7 @@ p2App.get('/imports/:id', requireRoles('admin', 'project_manager'), async (c) =>
   return c.json({ ok: true as const, data: { ...batch, rows } });
 });
 
-p2App.post('/imports/:id/publish', requireRoles('admin', 'project_manager'), async (c) => {
+demandImportApp.post('/imports/:id/publish', requireRoles('admin', 'project_manager'), async (c) => {
   const key = requireIdempotencyKey(c);
   if (key instanceof Response) return key;
   let body: Partial<ImportPublishRequest> & { expectedVersion?: unknown; limit?: unknown };
@@ -743,7 +743,7 @@ p2App.post('/imports/:id/publish', requireRoles('admin', 'project_manager'), asy
   return c.json(response);
 });
 
-p2App.get('/demands', async (c) => {
+demandImportApp.get('/demands', async (c) => {
   const limit = Number(c.req.query('limit') ?? '50');
   if (!Number.isInteger(limit) || limit < 1 || limit > 100) return c.json(apiError('INVALID_PAGE_LIMIT', 'limit 必须在 1 到 100 之间'), 400);
   const query = c.req.query('query')?.trim() ?? '';
@@ -761,7 +761,7 @@ p2App.get('/demands', async (c) => {
   });
 });
 
-p2App.get('/demands/:id', async (c) => {
+demandImportApp.get('/demands/:id', async (c) => {
   const { database } = createCloudflarePersistence(c.env);
   const data = await new SqlDemandQueryRepository(database).getById(c.req.param('id'));
   if (!data) return c.json(apiError('DEMAND_NOT_FOUND', '需求不存在'), 404);

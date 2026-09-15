@@ -276,9 +276,9 @@ function attachmentSummary(record: AttachmentRecord): AttachmentSummary {
   };
 }
 
-export const p5App = new Hono<AppEnv>();
+export const projectLifecycleApp = new Hono<AppEnv>();
 
-p5App.post('/release-batches', requireRoles('admin', 'project_manager'), async (c) => {
+projectLifecycleApp.post('/release-batches', requireRoles('admin', 'project_manager'), async (c) => {
   const key = requireIdempotencyKey(c);
   if (key instanceof Response) return key;
   let body: Partial<CreateReleaseBatchRequest>;
@@ -326,7 +326,7 @@ p5App.post('/release-batches', requireRoles('admin', 'project_manager'), async (
   return c.json(response, 201);
 });
 
-p5App.get('/release-batches', async (c) => {
+projectLifecycleApp.get('/release-batches', async (c) => {
   const projectId = cleanText(c.req.query('projectId'));
   if (!projectId) return c.json(apiError('PROJECT_REQUIRED', 'projectId 不能为空'), 400);
   if (!canProject(c, projectId)) return c.json(apiError('SCOPE_FORBIDDEN', '无权查看该项目出库'), 403);
@@ -334,7 +334,7 @@ p5App.get('/release-batches', async (c) => {
   return c.json({ ok: true as const, data: { items: await new SqlLegacyExecutionRepository(database).listReleaseBatches(projectId) } });
 });
 
-p5App.post('/implementations', requireRoles('admin', 'project_manager', 'implementation'), async (c) => {
+projectLifecycleApp.post('/implementations', requireRoles('admin', 'project_manager', 'implementation'), async (c) => {
   const key = requireIdempotencyKey(c);
   if (key instanceof Response) return key;
   let body: Partial<CreateImplementationRequest>;
@@ -400,7 +400,7 @@ p5App.post('/implementations', requireRoles('admin', 'project_manager', 'impleme
   return c.json(response, 201);
 });
 
-p5App.get('/implementations', async (c) => {
+projectLifecycleApp.get('/implementations', async (c) => {
   const projectId = cleanText(c.req.query('projectId'));
   const unlinked = c.req.query('unlinked') === 'true';
   if (projectId && !canProject(c, projectId)) return c.json(apiError('SCOPE_FORBIDDEN', '无权查看该项目实施记录'), 403);
@@ -411,7 +411,7 @@ p5App.get('/implementations', async (c) => {
   return c.json({ ok: true as const, data: { items } });
 });
 
-p5App.put('/implementations/:id/link', requireRoles('admin', 'project_manager', 'implementation'), async (c) => {
+projectLifecycleApp.put('/implementations/:id/link', requireRoles('admin', 'project_manager', 'implementation'), async (c) => {
   const key = requireIdempotencyKey(c); if (key instanceof Response) return key;
   let body: Partial<LinkHistoricalImplementationRequest>;
   try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
@@ -479,7 +479,7 @@ p5App.put('/implementations/:id/link', requireRoles('admin', 'project_manager', 
   return c.json(response);
 });
 
-p5App.post('/settlements', requireRoles('admin', 'project_manager', 'finance'), async (c) => {
+projectLifecycleApp.post('/settlements', requireRoles('admin', 'project_manager', 'finance'), async (c) => {
   const key = requireIdempotencyKey(c); if (key instanceof Response) return key;
   let body: Partial<CreateSettlementRequest>;
   try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
@@ -536,7 +536,7 @@ p5App.post('/settlements', requireRoles('admin', 'project_manager', 'finance'), 
   return c.json(response, 201);
 });
 
-p5App.get('/settlements', async (c) => {
+projectLifecycleApp.get('/settlements', async (c) => {
   const projectId = cleanText(c.req.query('projectId'));
   if (!projectId) return c.json(apiError('PROJECT_REQUIRED', 'projectId 不能为空'), 400);
   if (!canProject(c, projectId)) return c.json(apiError('SCOPE_FORBIDDEN', '无权查看该项目结算'), 403);
@@ -546,7 +546,7 @@ p5App.get('/settlements', async (c) => {
   return c.json({ ok: true as const, data: { items: await repository.listSettlements(projectId) } });
 });
 
-p5App.post('/settlements/:id/void', requireRoles('admin', 'project_manager', 'finance'), async (c) => {
+projectLifecycleApp.post('/settlements/:id/void', requireRoles('admin', 'project_manager', 'finance'), async (c) => {
   const key = requireIdempotencyKey(c); if (key instanceof Response) return key;
   let body: Partial<VoidSettlementRequest>;
   try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
@@ -579,7 +579,7 @@ p5App.post('/settlements/:id/void', requireRoles('admin', 'project_manager', 'fi
   return c.json(response);
 });
 
-p5App.get('/projects/:id/lifecycle', async (c) => {
+projectLifecycleApp.get('/projects/:id/lifecycle', async (c) => {
   const { database } = createCloudflarePersistence(c.env);
   const repository = new SqlLegacyExecutionRepository(database);
   const data = await repository.lifecycle(c.req.param('id'));
@@ -588,7 +588,7 @@ p5App.get('/projects/:id/lifecycle', async (c) => {
   return c.json({ ok: true as const, data });
 });
 
-p5App.post('/attachments', requireRoles('admin', 'project_manager', 'implementation', 'finance'), async (c) => {
+projectLifecycleApp.post('/attachments', requireRoles('admin', 'project_manager', 'implementation', 'finance'), async (c) => {
   const key = requireIdempotencyKey(c); if (key instanceof Response) return key;
   const objectType = cleanText(c.req.query('objectType')) as AttachmentSummary['objectType'];
   const objectId = cleanText(c.req.query('objectId'));
@@ -635,7 +635,7 @@ p5App.post('/attachments', requireRoles('admin', 'project_manager', 'implementat
   return c.json(response, 201);
 });
 
-p5App.get('/attachments', async (c) => {
+projectLifecycleApp.get('/attachments', async (c) => {
   const objectType = cleanText(c.req.query('objectType')) as AttachmentSummary['objectType'];
   const objectId = cleanText(c.req.query('objectId'));
   if (!['project', 'release', 'implementation', 'settlement'].includes(objectType) || !objectId) return c.json(apiError('INVALID_ATTACHMENT_QUERY', '附件查询参数无效'), 400);
@@ -648,7 +648,7 @@ p5App.get('/attachments', async (c) => {
   return c.json({ ok: true as const, data: { items: records.map(attachmentSummary) } });
 });
 
-p5App.get('/attachments/:id/content', async (c) => {
+projectLifecycleApp.get('/attachments/:id/content', async (c) => {
   const { database, objectStore } = createCloudflarePersistence(c.env);
   const attachments = new SqlAttachmentRepository(database);
   const attachment = await attachments.findById(c.req.param('id'));

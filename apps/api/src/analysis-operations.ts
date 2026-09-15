@@ -362,7 +362,7 @@ function shanghaiParts(nowIso: string) {
   return { businessDate: `${get('year')}-${get('month')}-${get('day')}`, hour: Number(get('hour')), minute: Number(get('minute')) };
 }
 function isMonthEnd(date: string) { return date === monthEnd(date.slice(0, 7)); }
-export async function runP6Tick(env: RuntimeBindings, nowIso: string) {
+export async function runScheduledOperations(env: RuntimeBindings, nowIso: string) {
   const normalized = validIso(nowIso);
   if (!normalized) throw new Error('invalid scheduled time');
   const local = shanghaiParts(normalized);
@@ -453,27 +453,27 @@ async function dashboardSummary(c: Context<AppEnv>, asOf: string): Promise<Analy
   return { asOf, ...facts, activeAlertCount };
 }
 
-export const p6App = new Hono<AppEnv>();
+export const analysisOperationsApp = new Hono<AppEnv>();
 
-p6App.get('/analysis/dashboard', async (c) => {
+analysisOperationsApp.get('/analysis/dashboard', async (c) => {
   const asOf = validDate(c.req.query('asOf')); if (!asOf) return c.json(apiError('INVALID_AS_OF', 'asOf 必须为有效日期'), 400);
   return c.json({ ok: true as const, data: await dashboardSummary(c, asOf) });
 });
 
-p6App.get('/analysis/reserve-remaining', async (c) => {
+analysisOperationsApp.get('/analysis/reserve-remaining', async (c) => {
   const result = await currentReserveRemaining(c);
   if (result.error) return c.json(result.error, result.error.error.code === 'ANALYSIS_AMOUNT_OVERFLOW' ? 422 : 500);
   return c.json({ ok: true as const, data: result.data! });
 });
 
-p6App.get('/analysis/rules', async (c) => {
+analysisOperationsApp.get('/analysis/rules', async (c) => {
   const { database } = createCloudflarePersistence(c.env);
   const row = await currentRule(new SqlAnalysisRepository(database));
   if (!row) return c.json(apiError('ANALYSIS_RULE_MISSING', '分析规则未配置'), 500);
   return c.json({ ok: true as const, data: row });
 });
 
-p6App.put('/analysis/rules', requireRoles('admin'), async (c) => {
+analysisOperationsApp.put('/analysis/rules', requireRoles('admin'), async (c) => {
   const key = requireIdempotencyKey(c); if (key instanceof Response) return key;
   let body: Record<string, unknown>; try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
   const version = expectedVersion(body.expectedVersion), mode = cleanText(body.mode) as AnalysisLagMode, threshold = safeNonNegative(body.thresholdBasisPoints);
@@ -492,7 +492,7 @@ p6App.put('/analysis/rules', requireRoles('admin'), async (c) => {
   return c.json(response);
 });
 
-p6App.get('/analysis/plans', async (c) => {
+analysisOperationsApp.get('/analysis/plans', async (c) => {
   const frameworkId = cleanText(c.req.query('frameworkId')), year = Number(c.req.query('year'));
   if (!frameworkId || !Number.isInteger(year) || year < 2000 || year > 2200) return c.json(apiError('INVALID_QUERY', 'frameworkId 和 year 必须有效'), 400);
   if (!canFramework(c, frameworkId)) return c.json(apiError('SCOPE_FORBIDDEN', '无权查看该框架月计划'), 403);
@@ -501,7 +501,7 @@ p6App.get('/analysis/plans', async (c) => {
   return c.json({ ok: true as const, data: { items } });
 });
 
-p6App.put('/analysis/plans/:projectId/:year/:month', requireRoles('admin','project_manager'), async (c) => {
+analysisOperationsApp.put('/analysis/plans/:projectId/:year/:month', requireRoles('admin','project_manager'), async (c) => {
   const key = requireIdempotencyKey(c); if (key instanceof Response) return key;
   const projectId = cleanText(c.req.param('projectId')), year = Number(c.req.param('year')), month = Number(c.req.param('month'));
   if (!projectId || !Number.isInteger(year) || year < 2000 || year > 2200 || !Number.isInteger(month) || month < 1 || month > 12) return c.json(apiError('INVALID_PLAN_KEY', '计划项目、年份或月份无效'), 422);
@@ -524,7 +524,7 @@ p6App.put('/analysis/plans/:projectId/:year/:month', requireRoles('admin','proje
   return c.json(response);
 });
 
-p6App.get('/analysis/frameworks/:id/progress', async (c) => {
+analysisOperationsApp.get('/analysis/frameworks/:id/progress', async (c) => {
   const asOf = validDate(c.req.query('asOf')); if (!asOf) return c.json(apiError('INVALID_AS_OF', 'asOf 必须为有效日期'), 400);
   if (!canFramework(c, c.req.param('id'))) return c.json(apiError('SCOPE_FORBIDDEN', '无权查看该框架分析'), 403);
   const { database } = createCloudflarePersistence(c.env);
@@ -532,7 +532,7 @@ p6App.get('/analysis/frameworks/:id/progress', async (c) => {
   return c.json({ ok: true as const, data });
 });
 
-p6App.get('/analysis/projects/gaps', async (c) => {
+analysisOperationsApp.get('/analysis/projects/gaps', async (c) => {
   const frameworkId = cleanText(c.req.query('frameworkId')), asOf = validDate(c.req.query('asOf'));
   if (!frameworkId || !asOf) return c.json(apiError('INVALID_QUERY', 'frameworkId 和 asOf 必须有效'), 400);
   if (!canFramework(c, frameworkId)) return c.json(apiError('SCOPE_FORBIDDEN', '无权查看该框架分析'), 403);
@@ -540,7 +540,7 @@ p6App.get('/analysis/projects/gaps', async (c) => {
   return c.json({ ok: true as const, data: { items: await projectGaps(new SqlAnalysisRepository(database), frameworkId, asOf) } });
 });
 
-p6App.post('/reports/monthly', requireRoles('admin','project_manager'), async (c) => {
+analysisOperationsApp.post('/reports/monthly', requireRoles('admin','project_manager'), async (c) => {
   const key = requireIdempotencyKey(c); if (key instanceof Response) return key;
   let body: Record<string, unknown>; try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
   const frameworkId = cleanText(body.frameworkId), businessMonth = validMonth(body.businessMonth), dataCutoffDate = validDate(body.dataCutoffDate);
@@ -560,7 +560,7 @@ p6App.post('/reports/monthly', requireRoles('admin','project_manager'), async (c
   return c.json(response, 201);
 });
 
-p6App.get('/reports/monthly', async (c) => {
+analysisOperationsApp.get('/reports/monthly', async (c) => {
   const frameworkId = cleanText(c.req.query('frameworkId')), businessMonth = validMonth(c.req.query('businessMonth'));
   if (!frameworkId || !businessMonth) return c.json(apiError('INVALID_QUERY', 'frameworkId 和 businessMonth 必须有效'), 400);
   if (!canFramework(c, frameworkId)) return c.json(apiError('SCOPE_FORBIDDEN', '无权查看该框架月报'), 403);
@@ -568,7 +568,7 @@ p6App.get('/reports/monthly', async (c) => {
   return c.json({ ok: true as const, data: { items: await new SqlAnalysisRepository(database).listReports(frameworkId, businessMonth) } });
 });
 
-p6App.post('/milestones', requireRoles('admin','project_manager'), async (c) => {
+analysisOperationsApp.post('/milestones', requireRoles('admin','project_manager'), async (c) => {
   const key = requireIdempotencyKey(c); if (key instanceof Response) return key;
   let body: Record<string, unknown>; try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
   const businessYear = Number(body.businessYear), title = cleanText(body.title), owner = body.owner === null || body.owner === undefined || body.owner === '' ? null : cleanText(body.owner), projectId = body.projectId === null || body.projectId === undefined || body.projectId === '' ? null : cleanText(body.projectId), datePrecision = cleanText(body.datePrecision) as MilestoneDatePrecision;
@@ -589,20 +589,20 @@ p6App.post('/milestones', requireRoles('admin','project_manager'), async (c) => 
   return c.json(response, 201);
 });
 
-p6App.get('/milestones', async (c) => {
+analysisOperationsApp.get('/milestones', async (c) => {
   const { database } = createCloudflarePersistence(c.env);
   const items = (await new SqlAnalysisRepository(database).listMilestones()).filter((item) => !item.projectId || canProject(c, item.projectId));
   return c.json({ ok: true as const, data: { items } });
 });
 
-p6App.get('/milestones/due', async (c) => {
+analysisOperationsApp.get('/milestones/due', async (c) => {
   const asOf = validDate(c.req.query('asOf')); if (!asOf) return c.json(apiError('INVALID_AS_OF', 'asOf 必须为有效日期'), 400);
   const { database } = createCloudflarePersistence(c.env);
   const items = (await new SqlAnalysisRepository(database).listMilestones()).filter((item) => !item.projectId || canProject(c, item.projectId)).map((item) => milestoneDue(item, asOf));
   return c.json({ ok: true as const, data: { items } });
 });
 
-p6App.put('/milestones/:id/status', requireRoles('admin','project_manager'), async (c) => {
+analysisOperationsApp.put('/milestones/:id/status', requireRoles('admin','project_manager'), async (c) => {
   const key = requireIdempotencyKey(c); if (key instanceof Response) return key;
   let body: Record<string, unknown>; try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
   const version = expectedVersion(body.expectedVersion), status = cleanText(body.status) as MilestoneStatus;
@@ -626,7 +626,7 @@ p6App.put('/milestones/:id/status', requireRoles('admin','project_manager'), asy
   return c.json(response);
 });
 
-p6App.post('/notification-contacts', requireRoles('admin'), async (c) => {
+analysisOperationsApp.post('/notification-contacts', requireRoles('admin'), async (c) => {
   const key = requireIdempotencyKey(c); if (key instanceof Response) return key;
   let body: Record<string, unknown>; try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
   const memberId = cleanText(body.memberId), address = cleanText(body.address).toLowerCase(), verified = body.verified === true, enabled = body.enabled !== false;
@@ -642,12 +642,12 @@ p6App.post('/notification-contacts', requireRoles('admin'), async (c) => {
   return c.json(response, 201);
 });
 
-p6App.get('/notification-contacts', requireRoles('admin'), async (c) => {
+analysisOperationsApp.get('/notification-contacts', requireRoles('admin'), async (c) => {
   const { database } = createCloudflarePersistence(c.env);
   return c.json({ ok: true as const, data: { items: await new SqlNotificationRepository(database).listContacts() } });
 });
 
-p6App.post('/alerts/evaluate', requireRoles('admin','project_manager'), async (c) => {
+analysisOperationsApp.post('/alerts/evaluate', requireRoles('admin','project_manager'), async (c) => {
   const key = requireIdempotencyKey(c); if (key instanceof Response) return key;
   let body: Record<string, unknown>; try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
   const asOf = validDate(body.asOf); if (!asOf) return c.json(apiError('INVALID_AS_OF', 'asOf 必须为有效日期'), 422);
@@ -659,17 +659,17 @@ p6App.post('/alerts/evaluate', requireRoles('admin','project_manager'), async (c
   return c.json(response);
 });
 
-p6App.get('/alerts', async (c) => {
+analysisOperationsApp.get('/alerts', async (c) => {
   const { database } = createCloudflarePersistence(c.env);
   return c.json({ ok: true as const, data: { items: await new SqlNotificationRepository(database).listAlerts(200) } });
 });
 
-p6App.get('/notification-outbox', requireRoles('admin'), async (c) => {
+analysisOperationsApp.get('/notification-outbox', requireRoles('admin'), async (c) => {
   const { database } = createCloudflarePersistence(c.env);
   return c.json({ ok: true as const, data: { items: await new SqlNotificationRepository(database).listOutbox(200) } });
 });
 
-p6App.post('/notification-outbox/claim', requireRoles('admin'), async (c) => {
+analysisOperationsApp.post('/notification-outbox/claim', requireRoles('admin'), async (c) => {
   const key = requireIdempotencyKey(c); if (key instanceof Response) return key;
   let body: Record<string, unknown>; try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
   const now = validIso(body.now), limit = safePositive(body.limit), leaseSeconds = safePositive(body.leaseSeconds);
@@ -682,7 +682,7 @@ p6App.post('/notification-outbox/claim', requireRoles('admin'), async (c) => {
   return c.json(response);
 });
 
-p6App.post('/notification-outbox/:id/result', requireRoles('admin'), async (c) => {
+analysisOperationsApp.post('/notification-outbox/:id/result', requireRoles('admin'), async (c) => {
   const key = requireIdempotencyKey(c); if (key instanceof Response) return key;
   let body: Record<string, unknown>; try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
   const leaseToken = cleanText(body.leaseToken), outcome = cleanText(body.outcome), now = validIso(body.now), error = body.error === null || body.error === undefined || body.error === '' ? null : cleanText(body.error).slice(0, 1000);
@@ -702,7 +702,7 @@ p6App.post('/notification-outbox/:id/result', requireRoles('admin'), async (c) =
   return c.json(response);
 });
 
-p6App.post('/backups', requireRoles('admin'), async (c) => {
+analysisOperationsApp.post('/backups', requireRoles('admin'), async (c) => {
   const key = requireIdempotencyKey(c); if (key instanceof Response) return key;
   let body: Record<string, unknown>; try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
   const backupDate = validDate(body.backupDate), kind = cleanText(body.kind) as BackupKind;
@@ -715,12 +715,12 @@ p6App.post('/backups', requireRoles('admin'), async (c) => {
   return c.json(response, ensured.created ? 201 : 200);
 });
 
-p6App.get('/backups', requireRoles('admin'), async (c) => {
+analysisOperationsApp.get('/backups', requireRoles('admin'), async (c) => {
   const { database } = createCloudflarePersistence(c.env);
   return c.json({ ok: true as const, data: { items: await new SqlBackupRepository(database).list(100) } });
 });
 
-p6App.post('/backups/:id/step', requireRoles('admin'), async (c) => {
+analysisOperationsApp.post('/backups/:id/step', requireRoles('admin'), async (c) => {
   const key = requireIdempotencyKey(c); if (key instanceof Response) return key;
   const hash = await requestHash({}), operation = `backups.step:${c.req.param('id')}:${key}`; const replay = await replayIdempotentResponse(c, key, operation, hash); if (replay) return replay;
   const data = await processBackupStep(c.env, c.req.param('id')); if (!data) return c.json(apiError('NOT_FOUND', '备份任务不存在'), 404);
@@ -731,7 +731,7 @@ p6App.post('/backups/:id/step', requireRoles('admin'), async (c) => {
   return c.json(response);
 });
 
-p6App.post('/backups/:id/verify', requireRoles('admin'), async (c) => {
+analysisOperationsApp.post('/backups/:id/verify', requireRoles('admin'), async (c) => {
   const key = requireIdempotencyKey(c); if (key instanceof Response) return key;
   const hash = await requestHash({}), operation = `backups.verify:${c.req.param('id')}`; const replay = await replayIdempotentResponse(c, key, operation, hash); if (replay) return replay;
   const data = await verifyBackup(c.env, c.req.param('id')); if (!data) return c.json(apiError('BACKUP_NOT_READY', '备份不存在或尚未完成'), 422);
@@ -742,12 +742,12 @@ p6App.post('/backups/:id/verify', requireRoles('admin'), async (c) => {
   return c.json(response);
 });
 
-p6App.post('/system/tasks/run', requireRoles('admin'), async (c) => {
+analysisOperationsApp.post('/system/tasks/run', requireRoles('admin'), async (c) => {
   const key = requireIdempotencyKey(c); if (key instanceof Response) return key;
   let body: Record<string, unknown>; try { body = await c.req.json(); } catch { return c.json(apiError('INVALID_JSON', '请求体不是有效 JSON'), 400); }
   const nowInput = validIso(body.now); if (!nowInput) return c.json(apiError('INVALID_SCHEDULED_TIME', 'now 必须为有效 ISO 时间'), 422);
   const request = { now: nowInput }, hash = await requestHash(request), operation = `system.tasks.run:${nowInput}`; const replay = await replayIdempotentResponse(c, key, operation, hash); if (replay) return replay;
-  const data = await runP6Tick(c.env, nowInput), actor = c.get('currentUser'), storedAt = new Date().toISOString(), response = { ok: true as const, data };
+  const data = await runScheduledOperations(c.env, nowInput), actor = c.get('currentUser'), storedAt = new Date().toISOString(), response = { ok: true as const, data };
   const { database } = createCloudflarePersistence(c.env);
   try { await new SqlOperationJournalRepository(database).record({ auditId: crypto.randomUUID(), actorId: actor.id, action: 'system.tasks.run', objectType: 'scheduled_tick', objectId: nowInput, before: null, after: data, idempotencyKey: key, operation, requestHash: hash, responseJson: JSON.stringify(response), statusCode: 200, now: storedAt }); }
   catch { return c.json(apiError('TASK_RUN_CONFLICT', '后台任务运行记录冲突'), 409); }

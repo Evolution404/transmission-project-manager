@@ -146,9 +146,9 @@ function calculateAmountFen(quantityScaled: number, unitPriceScaled: number): nu
   return Number(rounded);
 }
 
-export const p3App = new Hono<AppEnv>();
+export const reservePlanningApp = new Hono<AppEnv>();
 
-p3App.get('/projects/candidates', async (c) => {
+reservePlanningApp.get('/projects/candidates', async (c) => {
   const limit = Number(c.req.query('limit') ?? '50');
   if (!Number.isInteger(limit) || limit < 1 || limit > MAX_PAGE_SIZE) return c.json(apiError('INVALID_PAGE_LIMIT', 'limit 必须在 1 到 100 之间'), 400);
   const cursorParam = c.req.query('cursor');
@@ -159,14 +159,14 @@ p3App.get('/projects/candidates', async (c) => {
   return c.json({ ok: true as const, data: { items: page.items, nextCursor: page.nextCursor ? makeCandidateCursor(page.nextCursor) : null } });
 });
 
-p3App.get('/projects/suggestions', async (c) => {
+reservePlanningApp.get('/projects/suggestions', async (c) => {
   const limit = Number(c.req.query('limit') ?? '50');
   if (!Number.isInteger(limit) || limit < 1 || limit > MAX_PAGE_SIZE) return c.json(apiError('INVALID_PAGE_LIMIT', 'limit 必须在 1 到 100 之间'), 400);
   const { database } = createCloudflarePersistence(c.env);
   return c.json({ ok: true as const, data: { items: await new SqlProjectQueryRepository(database).listSuggestions(limit) } });
 });
 
-p3App.post('/projects', requireRoles('admin', 'project_manager'), async (c) => {
+reservePlanningApp.post('/projects', requireRoles('admin', 'project_manager'), async (c) => {
   const key = requireIdempotencyKey(c);
   if (key instanceof Response) return key;
   let body: Partial<CreateProjectRequest>;
@@ -234,7 +234,7 @@ p3App.post('/projects', requireRoles('admin', 'project_manager'), async (c) => {
   return c.json(response, 201);
 });
 
-p3App.get('/projects', async (c) => {
+reservePlanningApp.get('/projects', async (c) => {
   const limit = Number(c.req.query('limit') ?? '50');
   if (!Number.isInteger(limit) || limit < 1 || limit > MAX_PAGE_SIZE) return c.json(apiError('INVALID_PAGE_LIMIT', 'limit 必须在 1 到 100 之间'), 400);
   const cursorParam = c.req.query('cursor');
@@ -252,7 +252,7 @@ p3App.get('/projects', async (c) => {
   return c.json({ ok: true as const, data: { items: page.items, nextCursor: page.nextCursor ? makeCursor(page.nextCursor.createdAt, page.nextCursor.id) : null } });
 });
 
-p3App.get('/projects/:id', async (c) => {
+reservePlanningApp.get('/projects/:id', async (c) => {
   const { database } = createCloudflarePersistence(c.env);
   const detail = await new SqlProjectQueryRepository(database).getProjectDetail(c.req.param('id'));
   if (!detail) return c.json(apiError('PROJECT_NOT_FOUND', '储备项目不存在'), 404);
@@ -260,7 +260,7 @@ p3App.get('/projects/:id', async (c) => {
   return c.json({ ok: true as const, data: detail });
 });
 
-p3App.put('/projects/:id/allocations', requireRoles('admin', 'project_manager'), async (c) => {
+reservePlanningApp.put('/projects/:id/allocations', requireRoles('admin', 'project_manager'), async (c) => {
   const key = requireIdempotencyKey(c);
   if (key instanceof Response) return key;
   let body: Partial<ReplaceProjectAllocationsRequest>;
@@ -341,7 +341,7 @@ p3App.put('/projects/:id/allocations', requireRoles('admin', 'project_manager'),
   return c.json(response);
 });
 
-p3App.put('/projects/:id/costs', requireRoles('admin', 'project_manager'), async (c) => {
+reservePlanningApp.put('/projects/:id/costs', requireRoles('admin', 'project_manager'), async (c) => {
   const key = requireIdempotencyKey(c);
   if (key instanceof Response) return key;
   let body: Partial<ReplaceProjectCostsRequest>;
@@ -490,12 +490,12 @@ p3App.put('/projects/:id/costs', requireRoles('admin', 'project_manager'), async
   return c.json(response);
 });
 
-p3App.get('/reserve-categories', async (c) => {
+reservePlanningApp.get('/reserve-categories', async (c) => {
   const { database } = createCloudflarePersistence(c.env);
   return c.json({ ok: true as const, data: { items: await new SqlProjectQueryRepository(database).listReserveCategories() } });
 });
 
-p3App.post('/reserve-categories', requireRoles('admin', 'project_manager'), async (c) => {
+reservePlanningApp.post('/reserve-categories', requireRoles('admin', 'project_manager'), async (c) => {
   const key = requireIdempotencyKey(c);
   if (key instanceof Response) return key;
   let body: { key?: unknown; label?: unknown };
@@ -534,12 +534,12 @@ p3App.post('/reserve-categories', requireRoles('admin', 'project_manager'), asyn
   return c.json(response, 201);
 });
 
-p3App.get('/category-mappings', async (c) => {
+reservePlanningApp.get('/category-mappings', async (c) => {
   const { database } = createCloudflarePersistence(c.env);
   return c.json({ ok: true as const, data: { items: await new SqlProjectQueryRepository(database).listCategoryMappings() } });
 });
 
-p3App.put('/category-mappings/:demandCategory', requireRoles('admin', 'project_manager'), async (c) => {
+reservePlanningApp.put('/category-mappings/:demandCategory', requireRoles('admin', 'project_manager'), async (c) => {
   const key = requireIdempotencyKey(c);
   if (key instanceof Response) return key;
   let body: { expectedVersion?: unknown; reserveCategoryId?: unknown };
@@ -590,7 +590,7 @@ p3App.put('/category-mappings/:demandCategory', requireRoles('admin', 'project_m
   return c.json(response);
 });
 
-p3App.put('/projects/:id/category-allocations', requireRoles('admin', 'project_manager'), async (c) => {
+reservePlanningApp.put('/projects/:id/category-allocations', requireRoles('admin', 'project_manager'), async (c) => {
   const key = requireIdempotencyKey(c);
   if (key instanceof Response) return key;
   let body: Partial<ReplaceCategoryAllocationsRequest>;
@@ -693,7 +693,7 @@ p3App.put('/projects/:id/category-allocations', requireRoles('admin', 'project_m
   return c.json(response);
 });
 
-p3App.post('/projects/:id/confirm', requireRoles('admin', 'project_manager'), async (c) => {
+reservePlanningApp.post('/projects/:id/confirm', requireRoles('admin', 'project_manager'), async (c) => {
   const key = requireIdempotencyKey(c);
   if (key instanceof Response) return key;
   let body: Partial<ConfirmProjectRequest>;
@@ -762,7 +762,7 @@ p3App.post('/projects/:id/confirm', requireRoles('admin', 'project_manager'), as
   return c.json(response);
 });
 
-p3App.get('/projects/:id/history', async (c) => {
+reservePlanningApp.get('/projects/:id/history', async (c) => {
   const projectId = c.req.param('id');
   const { database } = createCloudflarePersistence(c.env);
   const items = await new SqlProjectQueryRepository(database).getProjectHistory(projectId);

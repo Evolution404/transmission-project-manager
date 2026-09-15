@@ -32,13 +32,13 @@ import {
   getSessionToken,
   revokeSessionToken,
 } from './session.ts';
-import { p9App } from './p9.ts';
-import { p8App } from './p8.ts';
-import { p2App } from './p2.ts';
-import { p3App } from './p3.ts';
-import { p4App } from './p4.ts';
-import { p5App } from './p5.ts';
-import { p6App } from './p6.ts';
+import { masterDataApp } from './master-data.ts';
+import { projectExecutionApp } from './project-execution.ts';
+import { demandImportApp } from './demand-import.ts';
+import { reservePlanningApp } from './reserve-planning.ts';
+import { financeApp } from './finance.ts';
+import { projectLifecycleApp } from './project-lifecycle.ts';
+import { analysisOperationsApp } from './analysis-operations.ts';
 import { SqlCredentialRepository } from './repositories/sql-credential-repository.ts';
 import { SqlMemberAdminRepository } from './repositories/sql-member-admin-repository.ts';
 import { SqlMemberRepository } from './repositories/sql-member-repository.ts';
@@ -653,12 +653,12 @@ app.get('/api/scopes/:scopeType/:scopeId/check', async (c) => {
   return c.json({ ok: true as const, data: { allowed: true } });
 });
 
-app.route('/api', p9App);
-app.route('/api', p8App);
-app.route('/api', p2App);
-app.route('/api', p3App);
-app.route('/api', p4App);
-app.route('/api', p5App);
-app.route('/api', p6App);
+app.route('/api', masterDataApp);
+app.route('/api', projectExecutionApp);
+app.route('/api', demandImportApp);
+app.route('/api', reservePlanningApp);
+app.route('/api', financeApp);
+app.route('/api', projectLifecycleApp);
+app.route('/api', analysisOperationsApp);
 
 app.notFound((c) => c.json(apiError('NOT_FOUND', '接口不存在或尚未实现'), 404));

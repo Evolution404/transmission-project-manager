@@ -1,5 +1,5 @@
 import { app } from './app.ts';
-import { runP6Tick } from './p6.ts';
+import { runScheduledOperations } from './analysis-operations.ts';
 import type { WorkerBindings } from './env';
 import type { RuntimeBindings } from './runtime-env';
 import { createCloudflarePersistence } from './runtime/cloudflare/persistence.ts';
@@ -13,6 +13,6 @@ export default {
     return app.fetch(request, runtimeBindings(env), ctx);
   },
   scheduled(controller: ScheduledController, env: WorkerBindings, ctx: ExecutionContext) {
-    ctx.waitUntil(runP6Tick(runtimeBindings(env), new Date(controller.scheduledTime).toISOString()).then(() => undefined));
+    ctx.waitUntil(runScheduledOperations(runtimeBindings(env), new Date(controller.scheduledTime).toISOString()).then(() => undefined));
   },
 };
