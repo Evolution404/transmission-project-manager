@@ -4,6 +4,7 @@ import { accountApp } from './account.ts';
 import { administrationApp } from './administration.ts';
 import { analysisOperationsApp } from './analysis-operations.ts';
 import { requireAuthentication, type AppEnv } from './auth.ts';
+import { backupOperationsApp } from './backup-operations.ts';
 import { demandImportApp } from './demand-import.ts';
 import { financeApp } from './finance.ts';
 import { apiError } from './http/request-values.ts';
@@ -20,6 +21,7 @@ import { reservePlanningApp } from './reserve-planning.ts';
 import { resolvePersistence } from './runtime/persistence.ts';
 import { schemaReadiness } from './schema.ts';
 import { structuredDemandApp } from './structured-demand.ts';
+import { systemTasksApp } from './system-tasks.ts';
 import { transmissionGridApp } from './transmission-grid.ts';
 import { transmissionGridOperationsApp } from './transmission-grid-operations.ts';
 
@@ -88,5 +90,7 @@ app.route('/api', financeApp);
 app.route('/api', projectLifecycleApp);
 app.route('/api', analysisOperationsApp);
 app.route('/api', notificationOperationsApp);
+app.route('/api', backupOperationsApp);
+app.route('/api', systemTasksApp);
 
 app.notFound((c) => c.json(apiError('NOT_FOUND', '接口不存在或尚未实现'), 404));

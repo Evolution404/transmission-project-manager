@@ -1,5 +1,5 @@
 import { app } from './app.ts';
-import { runScheduledOperations } from './analysis-operations.ts';
+import { runScheduledOperations } from './system-tasks.ts';
 import type { WorkerBindings } from './env';
 import type { RuntimeBindings } from './runtime-env';
 import { createCloudflarePersistence } from './runtime/cloudflare/persistence.ts';

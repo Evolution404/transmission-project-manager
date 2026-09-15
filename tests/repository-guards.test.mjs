@@ -216,6 +216,21 @@ test('analysis and notification flows stay isolated and do not reach Cloudflare 
   }
 });
 
+test('backup and scheduled-task flows stay isolated from analysis routes and Cloudflare bindings', () => {
+  const analysis = readFileSync(resolve(root, 'apps/api/src/analysis-operations.ts'), 'utf8');
+  const backups = readFileSync(resolve(root, 'apps/api/src/backup-operations.ts'), 'utf8');
+  const tasks = readFileSync(resolve(root, 'apps/api/src/system-tasks.ts'), 'utf8');
+  assert.doesNotMatch(analysis, /SqlBackupRepository|analysisOperationsApp\.(?:get|post|put|patch|delete)\(['"]\/(?:backups|system\/tasks)/, 'analysis routes must not absorb backup or scheduled-task operations');
+  assert.match(backups, /SqlBackupRepository/, 'backup flows must use BackupRepository');
+  assert.match(backups, /backupOperationsApp\.(?:get|post)\(['"]\/backups/, 'backup HTTP routes must live in backup-operations.ts');
+  assert.doesNotMatch(backups, /\/notification-|\/alerts|\/system\/tasks/, 'backup routes must not absorb notifications, alerts, or scheduled-task HTTP routes');
+  assert.match(tasks, /systemTasksApp\.post\(['"]\/system\/tasks\/run/, 'scheduled-task HTTP route must live in system-tasks.ts');
+  assert.doesNotMatch(tasks, /SqlBackupRepository/, 'scheduled-task orchestration must call the backup module instead of reaching into backup persistence');
+  for (const source of [backups, tasks]) {
+    assert.doesNotMatch(source, /c\.env\.DB|env\.DB|env\.FILES|\bD1(?:Database|PreparedStatement)\b|\.prepare\(/, 'backup and scheduled-task modules must use portable persistence ports instead of Cloudflare bindings directly');
+  }
+});
+
 test('project execution flows do not reach D1 directly', () => {
   const routeSources = ['project-execution.ts', 'project-execution-query.ts', 'project-delivery.ts', 'project-task-progress.ts'].map((name) => readFileSync(resolve(root, 'apps/api/src', name), 'utf8'));
   assert.match(routeSources.join('\n'), /Sql(?:ReserveProject|ProjectRelease|ProjectTask|TaskSupply|TaskImplementation|TaskSettlement|ExecutionQuery)Repository/, 'project execution routes must use portable business repositories');
