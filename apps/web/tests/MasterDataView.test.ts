@@ -49,7 +49,7 @@ beforeEach(() => {
   }
   if (init?.method) return ok([]);
   if (url === '/api/master/voltage-levels') return ok(voltages);
-  if (url === '/api/master/lines/l1/name-history') return ok([]);
+  if (url === '/api/master/lines/l1/name-history') return ok([{ id: 'h1', lineId: 'l1', lineName: '甲线旧名', validFrom: '2026-09-15T00:30:00.000Z', validTo: '2026-09-15T01:45:00.000Z', reason: '规范名称' }]);
   if (url === '/api/master/towers/t1/number-history') return ok([]);
   if (url.startsWith('/api/master/lines?')) return url.includes('voltageLevelId=v2') ? ok([]) : ok([line]);
   if (url.startsWith('/api/master/towers?lineId=l1')) return ok([tower, tower2]);
@@ -221,6 +221,15 @@ it('keeps only frequent line and tower actions visible while secondary actions l
   expect(w.get('[data-test="line-detail"]').text()).not.toContain('线路更名');
   expect(w.get('[data-test="line-detail"]').text()).not.toContain('名称历史');
   expect(w.find('[data-test="tower-more-t1"]').exists()).toBe(true);
+});
+
+it('renders rename history timestamps in the Asia/Shanghai business timezone instead of raw ISO strings', async () => {
+  const w = mount(MasterDataView, { props: { currentUser: admin } }); await flushPromises();
+  await w.get('[data-test="select-line-l1"]').trigger('click'); await flushPromises();
+  await w.get('[data-test="line-more-actions"]').get('[data-dropdown-key="history"]').trigger('click'); await flushPromises();
+
+  expect(w.text()).toContain('2026-09-15 08:30 → 2026-09-15 09:45');
+  expect(w.text()).not.toContain('2026-09-15T00:30:00.000Z');
 });
 
 it('removes a tower locally without reloading unrelated voltage data and advances the order version', async () => {

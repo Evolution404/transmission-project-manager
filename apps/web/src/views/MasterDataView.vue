@@ -15,6 +15,7 @@ import {
   type VoltageSystemType,
 } from '@tpm/shared';
 import { apiRequest, jsonRequestInit } from '../api/client';
+import { formatBusinessDateTime } from '../businessTime';
 import { parseFileInWorker } from '../imports/workerClient';
 import {
   buildTowerImportPreview,
@@ -350,13 +351,13 @@ async function openLineHistory() {
   const line = activeLine.value; if (!line) return;
   const data = await apiRequest<{ items: TransmissionLineNameHistoryEntry[] }>(`/api/master/lines/${line.id}/name-history`);
   historyTitle.value = '线路名称历史'; historyCurrent.value = line.lineName;
-  historyRows.value = data.items.map((item) => ({ value: item.lineName, validFrom: item.validFrom, validTo: item.validTo, reason: item.reason }));
+  historyRows.value = data.items.map((item) => ({ value: item.lineName, validFrom: formatBusinessDateTime(item.validFrom), validTo: formatBusinessDateTime(item.validTo), reason: item.reason }));
   historyModal.value = true;
 }
 async function openTowerHistory(item: TransmissionTowerSummary) {
   const data = await apiRequest<{ items: TransmissionTowerNoHistoryEntry[] }>(`/api/master/towers/${item.id}/number-history`);
   historyTitle.value = '杆塔编号历史'; historyCurrent.value = item.towerNo;
-  historyRows.value = data.items.map((entry) => ({ value: entry.towerNo, validFrom: entry.validFrom, validTo: entry.validTo, reason: entry.reason }));
+  historyRows.value = data.items.map((entry) => ({ value: entry.towerNo, validFrom: formatBusinessDateTime(entry.validFrom), validTo: formatBusinessDateTime(entry.validTo), reason: entry.reason }));
   historyModal.value = true;
 }
 
