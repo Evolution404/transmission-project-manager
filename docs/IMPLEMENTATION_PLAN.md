@@ -79,7 +79,9 @@
 - 单一 `0001_initial_schema.sql` checksum / migration guard；
 - repository/static guards。
 
-本轮定向结果：基础台账 API **25/25 PASS**；相关 Web **30/30 PASS**。最终完整 `npm run check` 已 PASS：Node **270/270**、Web **114/114（19 文件）**，Cloudflare/Node/Web/shared TypeScript、Web production build、Worker dry-run、Node+SQLite+Filesystem 第二运行时和全部静态门禁均 PASS。
+M6 基础台账定向结果：基础台账 API **25/25 PASS**；相关 Web **30/30 PASS**。M6 收口时完整 `npm run check` 为 Node **270/270**、Web **114/114（19 文件）**。
+
+后续后端职责拆分继续推进后，当前最新完整 `npm run check`（代码基线 `8c8f7ef`）已 PASS：Node **279/279**、Web **114/114（19 文件）**，Cloudflare/Node/Web/shared TypeScript、Web production build、Worker dry-run、Node+SQLite+Filesystem 第二运行时和全部静态门禁均 PASS。
 
 远端证据：PR #12 `c87fc04`，GitHub CI run `34941209241` 的完整 `npm run check` 已 PASS。该结论仅表示施工分支代码门禁通过，不表示 production schema 已升级或当前分支已发布。
 
@@ -90,9 +92,11 @@
 - 更新备份/恢复覆盖，使自定义字段定义、版本、真值和索引都进入 manifest/恢复表序列。
 - 清理生产源码和文档中的旧 `transmission_towers`、`start_tower_id/end_tower_id`、物理塔 `custom_values_json` schema 残留；负向 migration 断言除外。
 - 原阶段编号 API 模块已改为业务语义模块，并把台账配置、物理杆塔、结构化需求、输电网台账路由拆开。
-- 后续已继续完成 HTTP/API 职责收口：顶层 `app.ts` 只做装配；幂等 helper 和 API error builder 已集中；项目执行域拆为“储备生命周期 / 项目交付 / 任务进度 / 聚合查询”四个清晰边界。最新已验证代码提交为 `106c1f7`。
-- `project-execution.ts` 已由约 850 行降至约 334 行；最新完整门禁基线为 Node **278/278 PASS**、Web **114/114 PASS**，双运行时 typecheck、Web build、Worker dry-run 全绿。
-- 当前下一处结构债是 `analysis-operations.ts`：计划拆为“纯分析计算”“分析 HTTP”“通知/告警”“备份/系统任务”。当前 `analysis-calculations.ts` 抽取仍是**未提交、未验证 WIP**，必须保持原 BigInt 计算、季度状态、计划口径和 lagging 边界完全不变后再提交。
+- 后续已继续完成 HTTP/API 职责收口：顶层 `app.ts` 只做装配；幂等 helper 和 API error builder 已集中；项目执行域拆为“储备生命周期 / 项目交付 / 任务进度 / 聚合查询”四个清晰边界。
+- `project-execution.ts` 已由约 850 行降至约 334 行；其职责回混已有 repository/static guard。
+- `analysis-operations.ts` 的混合职责已经完成拆分：`analysis-calculations.ts` 承载纯分析计算/查询编排，`analysis-operations.ts` 仅保留分析/计划/月报/里程碑 HTTP，`notification-operations.ts` 承载通知/告警/outbox，`backup-operations.ts` 承载逻辑备份，`system-tasks.ts` 承载定时任务编排。最新已验证代码提交为 `8c8f7ef`。
+- 分析计算抽取前已逐项对照旧实现并由测试锁定 BigInt 四舍五入、季度状态、默认/自定义计划、ratio/gap lagging 边界和里程碑提醒语义；分析/P6、通知仓储、备份仓储和 repository guards 定向合计 **53/53 PASS**。
+- 当前最新完整门禁基线为 Node **279/279 PASS**、Web **114/114 PASS**，双运行时 typecheck、Web build、Worker dry-run 全绿。
 - 后续候选热点仍包括 `reserve-planning.ts`、`demand-import.ts`、`finance.ts`、`project-lifecycle.ts`、`MasterDataView.vue`、`packages/shared/src/index.ts`；按职责耦合收益排序拆分，禁止仅按文件行数机械拆分。
 
 ## 6. 生产发布阻断

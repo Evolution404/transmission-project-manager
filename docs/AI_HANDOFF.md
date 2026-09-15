@@ -5,10 +5,10 @@
 - 仓库：`Evolution404/transmission-project-manager`
 - 默认分支：`main`
 - 当前施工分支：`refactor/master-data-ux-hardening-20260915`
-- 当前最新已验证代码基线：`106c1f7`（`refactor(api): isolate project delivery routes`）；其后的交接文档提交不改变该代码基线。
-- 最近完整门禁基线：在 `106c1f7` 提交前同一代码状态执行 `npm run check`，Node **278/278 PASS**、Web/Vitest **114/114 PASS**，Cloudflare/Node/Web/shared TypeScript、Web production build、Worker dry-run、Node + SQLite + Filesystem 第二运行时均 PASS。
-- 当前工作区**不是 clean**：保留尚未提交的 `apps/api/src/analysis-operations.ts` 与新增 `apps/api/src/analysis-calculations.ts`。这是正在进行的分析模块结构拆分 WIP，**尚未完成 typecheck / 回归 / 完整门禁，不得当作已完成成果**。
-- 当前任务：继续纯结构性技术债清理，优先完成分析模块拆分；保持业务行为、接口 URL、权限、幂等、版本锁和事务边界不变。生产 schema 迁移仍另行设计、另行授权。
+- 当前最新已验证代码基线：`8c8f7ef`（`refactor(api): isolate backup and system tasks`）；其后的交接文档提交不改变该代码基线。
+- 最近完整门禁基线：在 `8c8f7ef` 对应代码状态执行 `npm run check`，Node **279/279 PASS**、Web/Vitest **114/114 PASS（19 个测试文件）**，Cloudflare/Node/Web/shared TypeScript、Web production build、Worker dry-run、Node + SQLite + Filesystem 第二运行时均 PASS。
+- 当前分析模块结构拆分已完成并提交，原 `analysis-operations.ts` / `analysis-calculations.ts` WIP 已收口；本轮文档提交后工作区应保持 clean。
+- 当前任务：继续纯结构性技术债清理时，从 `reserve-planning.ts`、`demand-import.ts`、`finance.ts`、`project-lifecycle.ts`、`MasterDataView.vue`、`packages/shared/src/index.ts` 中按真实职责耦合收益选择下一处，保持业务行为、接口 URL、权限、幂等、版本锁和事务边界不变。生产 schema 迁移仍另行设计、另行授权。
 - 禁止 `reset/clean`，不要覆盖当前工作区；未经用户明确授权，不合并 `main`、不执行 production migration/reconciliation、不触发 Production release。
 
 长期业务事实只看 `BUSINESS_BASELINE.md`、`DESIGN.md`、`DATA_MODEL.md`；测试门禁看 `TESTING.md`；生产步骤看 `PRODUCTION_RUNBOOK.md`。已完成阶段过程通过 Git 历史追溯，不再维护重复 WIP 文档。
@@ -22,11 +22,14 @@
 - `3dee0c9`：统一 API error response helper；
 - `92e03c5`：把需求/项目执行聚合只读查询拆到 `project-execution-query.ts`，公共执行校验/权限辅助集中到 `project-execution-shared.ts`；
 - `c3247a2`：把任务物资供应、实施、结算、结算撤销拆到 `project-task-progress.ts`；
-- `106c1f7`：把项目级出库和执行任务定义/列表拆到 `project-delivery.ts`。
+- `106c1f7`：把项目级出库和执行任务定义/列表拆到 `project-delivery.ts`；
+- `43696aa`：逐项核对原算法后，把分析纯计算抽到 `analysis-calculations.ts`；
+- `a8e3514`：把通知联系人、告警评估、outbox 与通知投递拆到 `notification-operations.ts`；
+- `8c8f7ef`：把逻辑备份拆到 `backup-operations.ts`，把定时调度与系统任务 HTTP 拆到 `system-tasks.ts`。
 
 拆分后 `project-execution.ts` 从约 850 行收缩到约 **334 行**，当前只承担“需求补充 + 储备项目生命周期”；出库/任务定义、任务进度和聚合查询分别独立，并已有 repository/static guard 防止职责重新混回。
 
-## 当前未提交 WIP：分析模块拆分
+## 分析模块拆分已完成
 
 审计发现 `analysis-operations.ts` 同时混合三类职责：
 
@@ -34,12 +37,7 @@
 2. 通知联系人 / 告警 / outbox / 通知投递；
 3. 逻辑备份 / 校验 / 保留策略 / 系统定时任务。
 
-当前正在做第一步：把纯分析计算从 HTTP/运维代码中抽到 `analysis-calculations.ts`。工作区已有：
-
-- `apps/api/src/analysis-calculations.ts`：抽取 `currentRule`、框架进度、项目差距、里程碑到期判断、月份末日、BigInt 安全转换等纯计算/查询编排；
-- `apps/api/src/analysis-operations.ts`：已开始改为导入上述计算函数，并删除原文件内对应重复实现。
-
-**重要：这一 WIP 尚未验证。** 前一次抽取过程中已经主动发现并纠正过“用近似重写替代原算法”的风险。后续必须逐项对照原实现，尤其保持：
+本轮先逐项对照拆分前 `analysis-operations.ts`，确认计算函数保持原实现语义，再做后续职责迁移。已确认并由回归覆盖：
 
 - 比例计算使用原 BigInt 四舍五入口径；
 - `quarterStatus` 仍为 `upcoming / in_progress / ended`；
@@ -47,13 +45,15 @@
 - ratio / gap 两种 lagging 边界比较符号保持原语义；
 - 里程碑 month/day/unknown 精度和提醒边界不变。
 
-完成该前置后，再拆：
+当前职责边界为：
 
-1. 通知/告警 runtime 与 HTTP routes；
-2. 备份/系统任务 runtime 与 HTTP routes；
-3. 最后保留 `analysis-operations.ts` 只承载分析/计划/月报/里程碑 HTTP 层。
+1. `analysis-calculations.ts`：分析规则读取、框架进度、项目差距、里程碑到期、月份末日和 BigInt 安全转换等计算/查询编排；
+2. `analysis-operations.ts`：仅保留分析看板、储备分析、规则、计划、框架进度、项目差距、月报和里程碑 HTTP 层，约 **299 行**；
+3. `notification-operations.ts`：通知联系人、告警评估、outbox 租约/结果回写和通知投递；
+4. `backup-operations.ts`：逻辑备份创建、分块推进、完整性校验、保留策略以及下一待处理备份步进；
+5. `system-tasks.ts`：Asia/Shanghai 定时调度编排和 `/system/tasks/run`，只调用分析/通知/备份模块，不直接触达备份仓储。
 
-每一步先跑定向测试和 repository guards，完整 `npm run check` 全绿后独立小 commit + push；不要把当前两个 WIP 文件与无关修改混合提交。
+repository/static guard 已新增职责回混门禁；通知、备份、系统任务迁移前后接口 URL、权限、幂等键、版本/租约约束、审计写入和事务边界均保持不变。
 
 ## M6 已完成业务改动
 
@@ -123,16 +123,16 @@ M6 最终完整 `npm run check` 已 PASS：
 - Node + SQLite + Filesystem 第二运行时：PASS；
 - 单一 `0001_initial_schema.sql` checksum / migration guard、repository/static guards：PASS。
 
-随后结构重构最新完整门禁基线（`106c1f7` 对应代码状态）已提升为：
+随后分析模块结构拆分最新完整门禁基线（`8c8f7ef` 对应代码状态）已提升为：
 
-- Node：**278/278 PASS**；
+- Node：**279/279 PASS**；
 - Web/Vitest：**114/114 PASS（19 个测试文件）**；
 - Cloudflare API、Node runtime、Web、shared TypeScript：PASS；
 - Web production build：PASS；
 - Worker `wrangler deploy --dry-run`：PASS；
 - Node + SQLite + Filesystem 第二运行时：PASS。
 
-注意：当前未提交的 `analysis-calculations.ts` WIP **不包含在上述 278/278 结论中**。
+分析拆分定向回归还单独通过 API 双运行时 typecheck，以及分析/P6、通知仓储、备份仓储、repository guards 共 **53/53 PASS**。
 
 ## 当前生产边界
 
@@ -150,11 +150,10 @@ M6 最终完整 `npm run check` 已 PASS：
 
 ## 接下来执行顺序
 
-1. 先保护现有未提交 WIP，运行 `git diff --check`，逐项对照 `analysis-calculations.ts` 与拆分前算法，修正任何语义漂移。
-2. 先跑 `apps/api` typecheck + 分析/P6/repository guard 定向测试；通过后继续把通知/告警、备份/系统任务从 `analysis-operations.ts` 拆出。
-3. 每个边界独立跑回归、独立小 commit、及时 push；最终跑完整 `npm run check`，并更新本文件的 HEAD/门禁数字。
-4. 完成分析模块后，再审 `reserve-planning.ts`、`demand-import.ts`、`finance.ts`、`project-lifecycle.ts`、`MasterDataView.vue`、`packages/shared/src/index.ts`，只按真实职责边界拆，不为行数机械切文件。
-5. 不合并 `main`、不发布生产，除非用户随后明确授权；生产 schema 迁移必须单独设计和审核。
+1. 接手先确认分支仍为 `refactor/master-data-ux-hardening-20260915`、工作区 clean、HEAD 已包含本轮文档提交；禁止 `reset/clean` 覆盖他人修改。
+2. 下一轮从 `reserve-planning.ts`、`demand-import.ts`、`finance.ts`、`project-lifecycle.ts`、`MasterDataView.vue`、`packages/shared/src/index.ts` 中按真实职责耦合收益继续审查，只在收益明确时拆分，不为行数机械切文件。
+3. 继续测试先行；每个职责边界先加/调整 guard 或行为回归，再修改实现，小 commit、及时 push，最终完整 `npm run check`。
+4. 不合并 `main`、不发布生产，除非用户随后明确授权；生产 schema 迁移必须单独设计和审核。
 
 ## 必须继续保持的工程约束
 
