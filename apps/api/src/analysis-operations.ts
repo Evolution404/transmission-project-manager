@@ -7,9 +7,7 @@ import type {
   BackupKind,
   BackupSummary,
   BackupVerificationSummary,
-  FrameworkProgressSummary,
   MilestoneDatePrecision,
-  MilestoneDueSummary,
   MilestoneStatus,
   MilestoneSummary,
   MonthlyPlanSummary,
@@ -17,10 +15,16 @@ import type {
   NotificationContactSummary,
   NotificationOutboxStatus,
   NotificationOutboxSummary,
-  ProjectGapSummary,
-  QuarterProgressSummary,
   ReserveRemainingSummary,
 } from '@tpm/shared';
+import {
+  analysisMonthEnd as monthEnd,
+  bigintToSafeNumber as bigintToSafe,
+  calculateFrameworkProgress as frameworkProgress,
+  calculateMilestoneDue as milestoneDue,
+  calculateProjectGaps as projectGaps,
+  currentAnalysisRule as currentRule,
+} from './analysis-calculations.ts';
 import { hasScope, requireRoles, type AppEnv } from './auth.ts';
 import { replayIdempotentResponse, requestHash, requireIdempotencyKey } from './http/idempotent-mutation.ts';
 import { apiError } from './http/request-values.ts';
@@ -28,13 +32,10 @@ import type { RuntimeBindings } from './runtime-env';
 import { resolvePersistence as createCloudflarePersistence } from './runtime/persistence.ts';
 import { SqlOperationJournalRepository } from './repositories/sql-operation-journal-repository.ts';
 import { SqlAnalysisRepository } from './repositories/sql-analysis-repository.ts';
-import type { AnalysisRepository } from './ports/analysis-repository';
 import { SqlNotificationRepository } from './repositories/sql-notification-repository.ts';
 import { SqlBackupRepository } from './repositories/sql-backup-repository.ts';
 import { BACKUP_TABLES } from './ports/backup-repository.ts';
 
-const DEFAULT_RULE_MODE: AnalysisLagMode = 'ratio';
-const DEFAULT_RULE_THRESHOLD_BP = 8000;
 const BACKUP_CHUNK_ROWS = 100;
 const MAX_OUTBOX_CLAIM = 50;
 
@@ -73,97 +74,6 @@ function canProject(c: Context<AppEnv>, projectId: string) {
 }
 function canProjectOrFramework(c: Context<AppEnv>, projectId: string, frameworkId: string | null) {
   return canProject(c, projectId) || (frameworkId !== null && canFramework(c, frameworkId));
-}
-function bigintToSafe(value: bigint): number | null {
-  return value <= BigInt(Number.MAX_SAFE_INTEGER) && value >= BigInt(Number.MIN_SAFE_INTEGER) ? Number(value) : null;
-}
-function prorateFen(amountFen: number, remainingQuantityScaled: number, allocatedQuantityScaled: number) {
-  if (amountFen === 0 || remainingQuantityScaled <= 0 || allocatedQuantityScaled <= 0) return 0;
-  const numerator = BigInt(amountFen) * BigInt(remainingQuantityScaled);
-  return bigintToSafe((numerator + BigInt(Math.floor(allocatedQuantityScaled / 2))) / BigInt(allocatedQuantityScaled));
-}
-async function currentRule(repository: AnalysisRepository) {
-  return repository.currentRule();
-}
-function ratioBasisPoints(numerator: number, denominator: number): number | null {
-  if (denominator <= 0) return null;
-  const value = (BigInt(numerator) * 10000n + BigInt(Math.floor(denominator / 2))) / BigInt(denominator);
-  return value > BigInt(Number.MAX_SAFE_INTEGER) ? Number.MAX_SAFE_INTEGER : Number(value);
-}
-function elapsedMonths(businessYear: number, asOf: string) {
-  const year = Number(asOf.slice(0, 4));
-  if (year < businessYear) return 0;
-  if (year > businessYear) return 12;
-  return Number(asOf.slice(5, 7));
-}
-function quarterStatus(businessYear: number, quarter: 1 | 2 | 3 | 4, asOf: string): QuarterProgressSummary['status'] {
-  const startMonth = (quarter - 1) * 3 + 1;
-  const endMonth = startMonth + 2;
-  const start = `${businessYear}-${String(startMonth).padStart(2, '0')}-01`;
-  const end = monthEnd(`${businessYear}-${String(endMonth).padStart(2, '0')}`);
-  if (asOf < start) return 'upcoming';
-  if (asOf > end) return 'ended';
-  return 'in_progress';
-}
-function monthEnd(month: string) {
-  const year = Number(month.slice(0, 4));
-  const monthIndex = Number(month.slice(5, 7));
-  return new Date(Date.UTC(year, monthIndex, 0)).toISOString().slice(0, 10);
-}
-function addDays(date: string, days: number) {
-  const value = new Date(`${date}T00:00:00.000Z`);
-  value.setUTCDate(value.getUTCDate() + days);
-  return value.toISOString().slice(0, 10);
-}
-function dayDifference(from: string, to: string) {
-  return Math.round((Date.parse(`${to}T00:00:00.000Z`) - Date.parse(`${from}T00:00:00.000Z`)) / 86_400_000);
-}
-
-async function frameworkProgress(repository: AnalysisRepository, frameworkId: string, asOf: string): Promise<FrameworkProgressSummary | null> {
-  const framework = await repository.findFramework(frameworkId);
-  if (!framework) return null;
-  const storedRule = await currentRule(repository);
-  const rule = storedRule ?? { id: 'default', version: 1, mode: DEFAULT_RULE_MODE, thresholdBasisPoints: DEFAULT_RULE_THRESHOLD_BP, effectiveFrom: '1970-01-01T00:00:00.000Z', createdAt: '1970-01-01T00:00:00.000Z' };
-  const businessYear = Number(framework.startDate.slice(0, 4));
-  const months = elapsedMonths(businessYear, asOf);
-  const annualTargetFen = framework.annualTargetFen ?? framework.totalAmountFen;
-  const planMeta = await repository.planMeta(frameworkId, businessYear, months);
-  const hasCustom = planMeta.countAll > 0;
-  let plannedToDateFen = planMeta.cumulativeFen;
-  if (!hasCustom && annualTargetFen > 0) plannedToDateFen = Number((BigInt(annualTargetFen) * BigInt(months)) / 12n);
-  const actualToDateFen = await repository.actualFrameworkOccurrence(frameworkId, businessYear, asOf);
-  const annualTargetConfigured = annualTargetFen > 0;
-  const plannedProgressBasisPoints = annualTargetConfigured ? ratioBasisPoints(plannedToDateFen, annualTargetFen) : null;
-  const actualProgressBasisPoints = annualTargetConfigured ? ratioBasisPoints(actualToDateFen, annualTargetFen) : null;
-  const attainmentBasisPoints = plannedToDateFen > 0 ? ratioBasisPoints(actualToDateFen, plannedToDateFen) : null;
-  let lagging = false;
-  if (annualTargetConfigured && plannedToDateFen > 0) {
-    if (rule.mode === 'ratio') lagging = BigInt(actualToDateFen) * 10000n < BigInt(plannedToDateFen) * BigInt(rule.thresholdBasisPoints);
-    else if (plannedToDateFen > actualToDateFen) lagging = BigInt(plannedToDateFen - actualToDateFen) * 10000n >= BigInt(annualTargetFen) * BigInt(rule.thresholdBasisPoints);
-  }
-  const quarters: QuarterProgressSummary[] = ([1, 2, 3, 4] as const).map((quarter) => ({ quarter, cumulativeTargetBasisPoints: quarter * 2500, status: quarterStatus(businessYear, quarter, asOf) }));
-  return { frameworkId, frameworkCode: framework.code, frameworkName: framework.name, businessYear, asOf, annualTargetFen, annualTargetConfigured, plannedToDateFen, actualToDateFen, plannedProgressBasisPoints, actualProgressBasisPoints, attainmentBasisPoints, lagging, planSource: hasCustom ? 'custom' : 'default', rule, quarters };
-}
-
-async function projectGaps(repository: AnalysisRepository, frameworkId: string, asOf: string): Promise<ProjectGapSummary[]> {
-  const businessYear = Number(asOf.slice(0, 4));
-  const months = elapsedMonths(businessYear, asOf);
-  const rows = await repository.projectGapFacts(frameworkId, businessYear, months, asOf);
-  return rows.map((row) => ({ ...row, gapFen: Math.max(0, row.plannedToDateFen - row.actualToDateFen) })).sort((a, b) => b.gapFen - a.gapFen || a.projectName.localeCompare(b.projectName));
-}
-
-function milestoneDue(base: MilestoneSummary, asOf: string): MilestoneDueSummary {
-  if (base.status === 'completed') return { ...base, dueMonth: base.month ? `${base.businessYear}-${String(base.month).padStart(2, '0')}` : null, dueDate: base.specificDate, needsDate: base.datePrecision === 'unknown', reminderDue: false, reminderLeadDays: null, overdue: false };
-  if (base.datePrecision === 'unknown') return { ...base, dueMonth: null, dueDate: null, needsDate: true, reminderDue: false, reminderLeadDays: null, overdue: false };
-  const dueMonth = `${base.businessYear}-${String(base.month).padStart(2, '0')}`;
-  if (base.datePrecision === 'month') {
-    const first = `${dueMonth}-01`, end = monthEnd(dueMonth);
-    return { ...base, dueMonth, dueDate: null, needsDate: false, reminderDue: asOf >= first, reminderLeadDays: null, overdue: asOf > end };
-  }
-  const dueDate = base.specificDate!;
-  const diff = dayDifference(asOf, dueDate);
-  const leadDays = base.leadDays.find((item) => item === diff) ?? null;
-  return { ...base, dueMonth, dueDate, needsDate: false, reminderDue: diff < 0 || leadDays !== null, reminderLeadDays: leadDays, overdue: diff < 0 };
 }
 export async function evaluateAlerts(env: RuntimeBindings, asOf: string) {
   const { database } = createCloudflarePersistence(env);
