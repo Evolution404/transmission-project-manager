@@ -15,6 +15,7 @@ import {
   type UpdateSettingRequest,
 } from '@tpm/shared';
 import { hasScope, requireAuthentication, requireRoles, type AppEnv } from './auth.ts';
+import { replayIdempotentResponse, requestHash, requireIdempotencyKey } from './http/idempotent-mutation.ts';
 import {
   constantTimeEqualText,
   credentialDescriptor,
@@ -46,14 +47,12 @@ import { analysisOperationsApp } from './analysis-operations.ts';
 import { SqlCredentialRepository } from './repositories/sql-credential-repository.ts';
 import { SqlMemberAdminRepository } from './repositories/sql-member-admin-repository.ts';
 import { SqlMemberRepository } from './repositories/sql-member-repository.ts';
-import { SqlIdempotencyRepository } from './repositories/sql-idempotency-repository.ts';
 import { SqlSystemConfigRepository } from './repositories/sql-system-config-repository.ts';
 import { resolvePersistence as createCloudflarePersistence } from './runtime/persistence.ts';
 import { schemaReadiness } from './schema.ts';
 
 export const app = new Hono<AppEnv>();
 
-const jsonHeaders = { 'Content-Type': 'application/json; charset=UTF-8', 'Cache-Control': 'no-store' };
 const LOCK_AFTER_FAILURES = 5;
 const LOCK_DURATION_MS = 15 * 60 * 1000;
 
@@ -87,35 +86,10 @@ function normalizeScopes(value: unknown, role: MemberRole): MemberScope[] | null
   return scopes;
 }
 
-async function requestHash(value: unknown): Promise<string> {
-  const bytes = new TextEncoder().encode(JSON.stringify(value));
-  const digest = await crypto.subtle.digest('SHA-256', bytes);
-  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
-}
-
 function requireCredentialPepper(c: Context<AppEnv>): string | Response {
   const pepper = c.env.AUTH_CREDENTIAL_PEPPER?.trim();
   if (!pepper) return c.json(apiError('AUTH_CONFIG_MISSING', '系统认证密钥未配置'), 503);
   return pepper;
-}
-
-async function replayIdempotentResponse(c: Context<AppEnv>, key: string, operation: string, hash: string) {
-  const user = c.get('currentUser');
-  const { database } = createCloudflarePersistence(c.env);
-  const row = await new SqlIdempotencyRepository(database).findByKey(key);
-  if (!row) return null;
-  if (row.actorMemberId !== user.id || row.operation !== operation || row.requestHash !== hash) {
-    return c.json(apiError('IDEMPOTENCY_CONFLICT', '该 Idempotency-Key 已用于不同请求'), 409);
-  }
-  return new Response(row.responseJson, { status: row.statusCode, headers: jsonHeaders });
-}
-
-function requireIdempotencyKey(c: Context<AppEnv>): string | Response {
-  const key = c.req.header('Idempotency-Key')?.trim();
-  if (!key || key.length > 200) {
-    return c.json(apiError('IDEMPOTENCY_KEY_REQUIRED', '变更请求必须提供有效的 Idempotency-Key'), 400);
-  }
-  return key;
 }
 
 function currentUserData<T extends { mustChangePassword: boolean }>(member: T) {

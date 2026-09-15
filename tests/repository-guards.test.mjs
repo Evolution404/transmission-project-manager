@@ -154,6 +154,16 @@ test('master-data write repository facade delegates mutation SQL to focused modu
   assert.doesNotMatch(source, /\b(?:INSERT|UPDATE|DELETE)\s+(?:INTO\s+|FROM\s+)?/i, 'master-data write facade must not absorb mutation SQL again');
 });
 
+test('HTTP modules share one idempotency request/replay implementation', () => {
+  const modules = ['app.ts', 'demand-import.ts', 'reserve-planning.ts', 'finance.ts', 'project-lifecycle.ts', 'analysis-operations.ts', 'project-execution.ts'];
+  for (const name of modules) {
+    const source = readFileSync(resolve(root, 'apps/api/src', name), 'utf8');
+    assert.match(source, /http\/idempotent-mutation/, `${name} must use the shared idempotency helper`);
+    assert.doesNotMatch(source, /function\s+(?:requireIdempotencyKey|requestHash|replayIdempotentResponse)\b/, `${name} must not duplicate idempotency helpers`);
+    assert.doesNotMatch(source, /SqlIdempotencyRepository/, `${name} must not perform idempotency replay directly`);
+  }
+});
+
 test('demand import flows do not reach D1 directly', () => {
   const source = readFileSync(resolve(root, 'apps/api/src/demand-import.ts'), 'utf8');
   assert.doesNotMatch(source, /c\.env\.DB|\bD1(?:Database|PreparedStatement)\b/, 'demand import routes must use portable repositories instead of D1 APIs directly');

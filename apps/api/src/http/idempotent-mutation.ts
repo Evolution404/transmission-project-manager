@@ -6,6 +6,16 @@ import { apiError, hashValue } from './request-values.ts';
 
 export type IdempotentMutation = { key: string; operation: string; hash: string };
 
+export function requireIdempotencyKey(c: Context<AppEnv>): string | Response {
+  const key = c.req.header('Idempotency-Key')?.trim();
+  if (!key || key.length > 200) return c.json(apiError('IDEMPOTENCY_KEY_REQUIRED', '变更请求必须提供有效的 Idempotency-Key'), 400);
+  return key;
+}
+
+export function requestHash(value: unknown): Promise<string> {
+  return hashValue(value);
+}
+
 export async function replayIdempotentMutation(c: Context<AppEnv>, mutation: IdempotentMutation): Promise<Response | null> {
   const { database } = resolvePersistence(c.env);
   const row = await new SqlIdempotencyRepository(database).findByKey(mutation.key);
@@ -15,13 +25,17 @@ export async function replayIdempotentMutation(c: Context<AppEnv>, mutation: Ide
   }
   return new Response(row.responseJson, {
     status: row.statusCode,
-    headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+    headers: { 'Content-Type': 'application/json; charset=UTF-8', 'Cache-Control': 'no-store' },
   });
 }
 
+export function replayIdempotentResponse(c: Context<AppEnv>, key: string, operation: string, hash: string): Promise<Response | null> {
+  return replayIdempotentMutation(c, { key, operation, hash });
+}
+
 export async function beginIdempotentMutation(c: Context<AppEnv>, body: unknown): Promise<IdempotentMutation | Response> {
-  const key = c.req.header('Idempotency-Key')?.trim();
-  if (!key || key.length > 200) return c.json(apiError('IDEMPOTENCY_KEY_REQUIRED', '变更请求必须提供有效的 Idempotency-Key'), 400);
+  const key = requireIdempotencyKey(c);
+  if (key instanceof Response) return key;
   const mutation = { key, operation: `${c.req.method}:${c.req.path}`, hash: await hashValue(body) };
   return (await replayIdempotentMutation(c, mutation)) ?? mutation;
 }

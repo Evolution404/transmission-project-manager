@@ -23,9 +23,9 @@ import type {
 } from '@tpm/shared';
 import { deleteAttachmentContent, loadAttachmentContent, saveAttachmentContent } from './application/attachment-content.ts';
 import { hasScope, requireRoles, type AppEnv } from './auth.ts';
+import { replayIdempotentResponse, requestHash, requireIdempotencyKey } from './http/idempotent-mutation.ts';
 import type { AttachmentRecord } from './ports/attachment-repository';
 import { SqlAttachmentRepository } from './repositories/sql-attachment-repository.ts';
-import { SqlIdempotencyRepository } from './repositories/sql-idempotency-repository.ts';
 import { SqlLegacyExecutionRepository } from './repositories/sql-legacy-execution-repository.ts';
 import { SqlFinanceQueryRepository } from './repositories/sql-finance-query-repository.ts';
 import { resolvePersistence as createCloudflarePersistence } from './runtime/persistence.ts';
@@ -164,34 +164,9 @@ function canProject(c: Context<AppEnv>, projectId: string) {
   return user.role === 'admin' || hasScope(user.scopes, 'project', projectId);
 }
 
-function requireIdempotencyKey(c: Context<AppEnv>): string | Response {
-  const key = c.req.header('Idempotency-Key')?.trim();
-  if (!key || key.length > 200) return c.json(apiError('IDEMPOTENCY_KEY_REQUIRED', '变更请求必须提供有效的 Idempotency-Key'), 400);
-  return key;
-}
-
-async function requestHash(value: unknown) {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(value)));
-  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
-}
-
 async function bytesHash(bytes: ArrayBuffer) {
   const digest = await crypto.subtle.digest('SHA-256', bytes);
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
-}
-
-async function replayIdempotentResponse(c: Context<AppEnv>, key: string, operation: string, hash: string) {
-  const actor = c.get('currentUser');
-  const { database } = createCloudflarePersistence(c.env);
-  const row = await new SqlIdempotencyRepository(database).findByKey(key);
-  if (!row) return null;
-  if (row.actorMemberId !== actor.id || row.operation !== operation || row.requestHash !== hash) {
-    return c.json(apiError('IDEMPOTENCY_CONFLICT', '该 Idempotency-Key 已用于不同请求'), 409);
-  }
-  return new Response(row.responseJson, {
-    status: row.statusCode,
-    headers: { 'Content-Type': 'application/json; charset=UTF-8', 'Cache-Control': 'no-store' },
-  });
 }
 
 function normalizeReleaseLines(value: unknown): CreateReleaseBatchRequest['lines'] | null {

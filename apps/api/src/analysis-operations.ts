@@ -22,9 +22,9 @@ import type {
   ReserveRemainingSummary,
 } from '@tpm/shared';
 import { hasScope, requireRoles, type AppEnv } from './auth.ts';
+import { replayIdempotentResponse, requestHash, requireIdempotencyKey } from './http/idempotent-mutation.ts';
 import type { RuntimeBindings } from './runtime-env';
 import { resolvePersistence as createCloudflarePersistence } from './runtime/persistence.ts';
-import { SqlIdempotencyRepository } from './repositories/sql-idempotency-repository.ts';
 import { SqlOperationJournalRepository } from './repositories/sql-operation-journal-repository.ts';
 import { SqlAnalysisRepository } from './repositories/sql-analysis-repository.ts';
 import type { AnalysisRepository } from './ports/analysis-repository';
@@ -60,27 +60,10 @@ function validMonth(value: unknown): string | null {
   const month = Number(text.slice(5, 7));
   return month >= 1 && month <= 12 ? text : null;
 }
-function requireIdempotencyKey(c: Context<AppEnv>): string | Response {
-  const key = c.req.header('Idempotency-Key')?.trim();
-  if (!key || key.length > 200) return c.json(apiError('IDEMPOTENCY_KEY_REQUIRED', '变更请求必须提供有效的 Idempotency-Key'), 400);
-  return key;
-}
-async function requestHash(value: unknown) {
-  const bytes = new TextEncoder().encode(JSON.stringify(value));
-  return sha256Hex(bytes);
-}
 async function sha256Hex(data: ArrayBuffer | Uint8Array) {
   const input = data instanceof ArrayBuffer ? new Uint8Array(data) : new Uint8Array(data);
   const digest = await crypto.subtle.digest('SHA-256', input);
   return [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, '0')).join('');
-}
-async function replayIdempotentResponse(c: Context<AppEnv>, key: string, operation: string, hash: string) {
-  const actor = c.get('currentUser');
-  const { database } = createCloudflarePersistence(c.env);
-  const row = await new SqlIdempotencyRepository(database).findByKey(key);
-  if (!row) return null;
-  if (row.actorMemberId !== actor.id || row.operation !== operation || row.requestHash !== hash) return c.json(apiError('IDEMPOTENCY_CONFLICT', '该 Idempotency-Key 已用于不同请求'), 409);
-  return new Response(row.responseJson, { status: row.statusCode, headers: { 'Content-Type': 'application/json; charset=UTF-8', 'Cache-Control': 'no-store' } });
 }
 function canFramework(c: Context<AppEnv>, frameworkId: string) {
   const user = c.get('currentUser');

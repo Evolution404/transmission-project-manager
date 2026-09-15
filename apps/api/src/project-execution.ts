@@ -1,7 +1,7 @@
 import { Hono, type Context } from 'hono';
 import type { ApiError, LifecycleState } from '@tpm/shared';
 import { hasScope, requireRoles, type AppEnv } from './auth.ts';
-import { SqlIdempotencyRepository } from './repositories/sql-idempotency-repository.ts';
+import { replayIdempotentResponse, requestHash, requireIdempotencyKey } from './http/idempotent-mutation.ts';
 import { SqlProjectReleaseRepository } from './repositories/sql-project-release-repository.ts';
 import { SqlProjectTaskRepository } from './repositories/sql-project-task-repository.ts';
 import { SqlTaskSupplyRepository } from './repositories/sql-task-supply-repository.ts';
@@ -80,31 +80,6 @@ function lifecycleState(implemented: boolean, settled: boolean): LifecycleState 
   if (implemented) return 'implemented_unsettled';
   if (settled) return 'unimplemented_settled';
   return 'unimplemented_unsettled';
-}
-
-function requireIdempotencyKey(c: Context<AppEnv>): string | Response {
-  const key = c.req.header('Idempotency-Key')?.trim();
-  if (!key || key.length > 200) return c.json(apiError('IDEMPOTENCY_KEY_REQUIRED', '变更请求必须提供有效的 Idempotency-Key'), 400);
-  return key;
-}
-
-async function requestHash(value: unknown): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(value)));
-  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
-}
-
-async function replayIdempotentResponse(c: Context<AppEnv>, key: string, operation: string, hash: string) {
-  const actor = c.get('currentUser');
-  const { database } = createCloudflarePersistence(c.env);
-  const row = await new SqlIdempotencyRepository(database).findByKey(key);
-  if (!row) return null;
-  if (row.actorMemberId !== actor.id || row.operation !== operation || row.requestHash !== hash) {
-    return c.json(apiError('IDEMPOTENCY_CONFLICT', '该 Idempotency-Key 已用于不同请求'), 409);
-  }
-  return new Response(row.responseJson, {
-    status: row.statusCode,
-    headers: { 'Content-Type': 'application/json; charset=UTF-8', 'Cache-Control': 'no-store' },
-  });
 }
 
 function hasProjectAccess(c: Context<AppEnv>, projectId: string, frameworkId: string | null) {
