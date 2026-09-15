@@ -67,6 +67,8 @@ it('starts with a line-centric list and opens a full-width line detail without a
   await w.get('[data-test="select-line-l1"]').trigger('click'); await flushPromises();
   expect(w.text()).toContain('#020-1');
   expect(w.findAll('[data-test="line-detail"]')).toHaveLength(1);
+  expect(w.find('[data-test="tower-mobile-list"]').exists()).toBe(true);
+  expect(w.find('[data-test="tower-mobile-card-t1"]').exists()).toBe(true);
   expect(w.text()).toContain('110kV');
   await w.get('[data-test="back-lines"]').trigger('click');
   expect(w.findAll('[data-test="line-home"]')).toHaveLength(1);
