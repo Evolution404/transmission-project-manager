@@ -23,6 +23,7 @@ import type {
 } from '@tpm/shared';
 import { hasScope, requireRoles, type AppEnv } from './auth.ts';
 import { replayIdempotentResponse, requestHash, requireIdempotencyKey } from './http/idempotent-mutation.ts';
+import { apiError } from './http/request-values.ts';
 import type { RuntimeBindings } from './runtime-env';
 import { resolvePersistence as createCloudflarePersistence } from './runtime/persistence.ts';
 import { SqlOperationJournalRepository } from './repositories/sql-operation-journal-repository.ts';
@@ -37,9 +38,6 @@ const DEFAULT_RULE_THRESHOLD_BP = 8000;
 const BACKUP_CHUNK_ROWS = 100;
 const MAX_OUTBOX_CLAIM = 50;
 
-function apiError(code: string, message: string, details?: unknown): ApiError {
-  return { ok: false, error: { code, message, ...(details === undefined ? {} : { details }) } };
-}
 function cleanText(value: unknown) { return value === null || value === undefined ? '' : String(value).trim(); }
 function safeNonNegative(value: unknown): number | null { return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null; }
 function safePositive(value: unknown): number | null { return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : null; }

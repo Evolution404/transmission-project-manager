@@ -1,6 +1,5 @@
 import { Hono } from 'hono';
 import type {
-  ApiError,
   ImportBatchSummary,
   ImportChunkRequest,
   ImportChunkResult,
@@ -17,6 +16,7 @@ import type {
 import { normalizeTowerNo } from '@tpm/shared';
 import { requireRoles, type AppEnv } from './auth.ts';
 import { replayIdempotentResponse, requestHash, requireIdempotencyKey } from './http/idempotent-mutation.ts';
+import { apiError } from './http/request-values.ts';
 import { SqlDemandQueryRepository } from './repositories/sql-demand-query-repository.ts';
 import { SqlImportMappingRepository } from './repositories/sql-import-mapping-repository.ts';
 import { SqlImportRepository } from './repositories/sql-import-repository.ts';
@@ -45,10 +45,6 @@ const MANUAL_DEMAND_MAPPING: ImportFieldMapping = {
 const MAX_CHUNK_ROWS = 20;
 const MAX_VALIDATION_ROWS = 20;
 const MAX_PUBLISH_ROWS = 10;
-
-function apiError(code: string, message: string, details?: unknown): ApiError {
-  return { ok: false, error: { code, message, ...(details === undefined ? {} : { details }) } };
-}
 
 function parseJson<T>(value: string | null, fallback: T): T {
   if (value === null) return fallback;

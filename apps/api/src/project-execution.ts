@@ -1,7 +1,8 @@
 import { Hono, type Context } from 'hono';
-import type { ApiError, LifecycleState } from '@tpm/shared';
+import type { LifecycleState } from '@tpm/shared';
 import { hasScope, requireRoles, type AppEnv } from './auth.ts';
 import { replayIdempotentResponse, requestHash, requireIdempotencyKey } from './http/idempotent-mutation.ts';
+import { apiError } from './http/request-values.ts';
 import { SqlProjectReleaseRepository } from './repositories/sql-project-release-repository.ts';
 import { SqlProjectTaskRepository } from './repositories/sql-project-task-repository.ts';
 import { SqlTaskSupplyRepository } from './repositories/sql-task-supply-repository.ts';
@@ -17,10 +18,6 @@ import { SqlReserveProjectWriteRepository } from './repositories/sql-reserve-pro
 import { resolvePersistence as createCloudflarePersistence } from './runtime/persistence.ts';
 
 const MAX_ITEMS = 100;
-
-function apiError(code: string, message: string, details?: unknown): ApiError {
-  return { ok: false, error: { code, message, ...(details === undefined ? {} : { details }) } };
-}
 
 function cleanText(value: unknown): string {
   if (value === null || value === undefined) return '';

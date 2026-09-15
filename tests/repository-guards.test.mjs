@@ -164,6 +164,15 @@ test('HTTP modules share one idempotency request/replay implementation', () => {
   }
 });
 
+test('HTTP modules share the common API error response builder', () => {
+  const modules = ['app.ts', 'account.ts', 'administration.ts', 'public-authentication.ts', 'demand-import.ts', 'reserve-planning.ts', 'finance.ts', 'project-lifecycle.ts', 'analysis-operations.ts', 'project-execution.ts'];
+  for (const name of modules) {
+    const source = readFileSync(resolve(root, 'apps/api/src', name), 'utf8');
+    assert.match(source, /http\/request-values/, `${name} must use the shared API error builder`);
+    assert.doesNotMatch(source, /function\s+apiError\b/, `${name} must not duplicate apiError`);
+  }
+});
+
 test('top-level HTTP app remains an assembly root instead of absorbing account and administration routes', () => {
   const source = readFileSync(resolve(root, 'apps/api/src/app.ts'), 'utf8');
   assert.match(source, /publicAuthenticationApp/);

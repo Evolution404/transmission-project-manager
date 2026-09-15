@@ -2,7 +2,6 @@ import { Hono, type Context } from 'hono';
 import type {
   AgreementStatus,
   AgreementSummary,
-  ApiError,
   BindProjectFrameworkRequest,
   BudgetAllocationInput,
   BudgetAllocationSummary,
@@ -22,6 +21,7 @@ import type {
 } from '@tpm/shared';
 import { hasScope, requireRoles, type AppEnv } from './auth.ts';
 import { replayIdempotentResponse, requestHash, requireIdempotencyKey } from './http/idempotent-mutation.ts';
+import { apiError } from './http/request-values.ts';
 import { SqlFinanceBudgetRepository } from './repositories/sql-finance-budget-repository.ts';
 import { SqlFinanceEntryRepository } from './repositories/sql-finance-entry-repository.ts';
 import { SqlFinanceQueryRepository } from './repositories/sql-finance-query-repository.ts';
@@ -31,9 +31,6 @@ import { resolvePersistence as createCloudflarePersistence } from './runtime/per
 
 const MAX_PAGE_SIZE = 100;
 
-function apiError(code: string, message: string, details?: unknown): ApiError {
-  return { ok: false, error: { code, message, ...(details === undefined ? {} : { details }) } };
-}
 function cleanText(value: unknown): string {
   if (value === null || value === undefined) return '';
   return String(value).trim();

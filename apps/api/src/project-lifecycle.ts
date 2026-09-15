@@ -1,6 +1,5 @@
 import { Hono, type Context } from 'hono';
 import type {
-  ApiError,
   AttachmentSummary,
   BudgetAllocationSummary,
   CreateImplementationRequest,
@@ -24,6 +23,7 @@ import type {
 import { deleteAttachmentContent, loadAttachmentContent, saveAttachmentContent } from './application/attachment-content.ts';
 import { hasScope, requireRoles, type AppEnv } from './auth.ts';
 import { replayIdempotentResponse, requestHash, requireIdempotencyKey } from './http/idempotent-mutation.ts';
+import { apiError } from './http/request-values.ts';
 import type { AttachmentRecord } from './ports/attachment-repository';
 import { SqlAttachmentRepository } from './repositories/sql-attachment-repository.ts';
 import { SqlLegacyExecutionRepository } from './repositories/sql-legacy-execution-repository.ts';
@@ -112,10 +112,6 @@ type SettlementRow = {
   created_at: string;
   updated_at: string;
 };
-
-function apiError(code: string, message: string, details?: unknown): ApiError {
-  return { ok: false, error: { code, message, ...(details === undefined ? {} : { details }) } };
-}
 
 function cleanText(value: unknown): string {
   if (value === null || value === undefined) return '';

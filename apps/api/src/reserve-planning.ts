@@ -1,6 +1,5 @@
 import { Hono, type Context } from 'hono';
 import type {
-  ApiError,
   CategoryMappingSummary,
   ConfirmProjectRequest,
   CreateProjectRequest,
@@ -17,6 +16,7 @@ import type {
 } from '@tpm/shared';
 import { hasScope, requireRoles, type AppEnv } from './auth.ts';
 import { replayIdempotentResponse, requestHash, requireIdempotencyKey } from './http/idempotent-mutation.ts';
+import { apiError } from './http/request-values.ts';
 import { SqlProjectQueryRepository } from './repositories/sql-project-query-repository.ts';
 import { SqlProjectWriteRepository } from './repositories/sql-project-write-repository.ts';
 import { SqlReserveCategoryWriteRepository } from './repositories/sql-reserve-category-write-repository.ts';
@@ -24,10 +24,6 @@ import { resolvePersistence as createCloudflarePersistence } from './runtime/per
 
 const MAX_PROJECT_ALLOCATIONS = 100;
 const MAX_PAGE_SIZE = 100;
-
-function apiError(code: string, message: string, details?: unknown): ApiError {
-  return { ok: false, error: { code, message, ...(details === undefined ? {} : { details }) } };
-}
 
 function cleanText(value: unknown): string {
   if (value === null || value === undefined) return '';
