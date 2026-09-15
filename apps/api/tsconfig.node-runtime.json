@@ -7,8 +7,12 @@
   },
   "include": [
     "src/app.ts",
+    "src/account.ts",
+    "src/administration.ts",
     "src/auth.ts",
+    "src/authentication-context.ts",
     "src/credential.ts",
+    "src/public-authentication.ts",
     "src/runtime-env.ts",
     "src/schema.ts",
     "src/session.ts",

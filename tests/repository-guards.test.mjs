@@ -98,7 +98,7 @@ test('portable backend core cannot depend on Cloudflare runtime types', () => {
 
 test('HTTP business and authentication modules resolve persistence without importing Cloudflare adapters', () => {
   const files = [
-    'app.ts', 'auth.ts', 'session.ts', 'demand-import.ts', 'reserve-planning.ts', 'finance.ts',
+    'app.ts', 'account.ts', 'administration.ts', 'auth.ts', 'authentication-context.ts', 'public-authentication.ts', 'session.ts', 'demand-import.ts', 'reserve-planning.ts', 'finance.ts',
     'project-lifecycle.ts', 'analysis-operations.ts', 'project-execution.ts', 'transmission-grid.ts', 'transmission-grid-operations.ts', 'master-data-config.ts', 'physical-towers.ts', 'structured-demand.ts',
   ];
   for (const name of files) {
@@ -155,13 +155,22 @@ test('master-data write repository facade delegates mutation SQL to focused modu
 });
 
 test('HTTP modules share one idempotency request/replay implementation', () => {
-  const modules = ['app.ts', 'demand-import.ts', 'reserve-planning.ts', 'finance.ts', 'project-lifecycle.ts', 'analysis-operations.ts', 'project-execution.ts'];
+  const modules = ['administration.ts', 'demand-import.ts', 'reserve-planning.ts', 'finance.ts', 'project-lifecycle.ts', 'analysis-operations.ts', 'project-execution.ts'];
   for (const name of modules) {
     const source = readFileSync(resolve(root, 'apps/api/src', name), 'utf8');
     assert.match(source, /http\/idempotent-mutation/, `${name} must use the shared idempotency helper`);
     assert.doesNotMatch(source, /function\s+(?:requireIdempotencyKey|requestHash|replayIdempotentResponse)\b/, `${name} must not duplicate idempotency helpers`);
     assert.doesNotMatch(source, /SqlIdempotencyRepository/, `${name} must not perform idempotency replay directly`);
   }
+});
+
+test('top-level HTTP app remains an assembly root instead of absorbing account and administration routes', () => {
+  const source = readFileSync(resolve(root, 'apps/api/src/app.ts'), 'utf8');
+  assert.match(source, /publicAuthenticationApp/);
+  assert.match(source, /accountApp/);
+  assert.match(source, /administrationApp/);
+  assert.doesNotMatch(source, /Sql(?:Credential|Member|SystemConfig)Repository/, 'app.ts must not absorb account or administration repositories');
+  assert.doesNotMatch(source, /app\.(?:get|post|put|patch|delete)\(['"]\/api\/(?:auth|me|members|settings|dictionaries|scopes)/, 'app.ts must not absorb account or administration routes');
 });
 
 test('demand import flows do not reach D1 directly', () => {
