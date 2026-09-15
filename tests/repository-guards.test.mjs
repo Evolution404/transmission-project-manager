@@ -12,14 +12,14 @@ function sha256(path) {
   return createHash('sha256').update(readFileSync(path)).digest('hex');
 }
 
-test('development schema stays on one resettable baseline unless compatibility is explicitly requested', () => {
+test('development schema stays on one resettable baseline until the user explicitly enters operation stage', () => {
   const migrationFiles = readdirSync(migrationsDir)
     .filter((name) => /^\d{4}_.+\.sql$/.test(name))
     .sort();
   assert.deepEqual(
     migrationFiles,
     ['0001_initial_schema.sql'],
-    '当前仍是开发阶段：除非用户明确要求兼容已有数据/升级路径，否则禁止新增 0002+ migration；应直接重写 0001_initial_schema.sql 并重建开发数据库',
+    '当前仍是开发阶段：历史数据保留通过发布期数据迁移解决，不得因此新增 0002+ migration；只有用户明确宣布进入运行阶段/正式维护升级链后才允许推进版本',
   );
 
   const lockedFiles = Object.keys(lock).map((path) => basename(path)).sort();

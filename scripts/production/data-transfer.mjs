@@ -15,6 +15,24 @@ function tableNames(database) {
     .filter((name) => !INTERNAL_TABLES.has(name) && !name.startsWith('_cf_'));
 }
 
+function normalizedSchemaObjects(database) {
+  return database.prepare(`
+    SELECT type,name,tbl_name,sql
+    FROM sqlite_schema
+    WHERE sql IS NOT NULL
+      AND type IN ('table','index','trigger','view')
+      AND name NOT LIKE 'sqlite_%'
+      AND name NOT LIKE '_cf_%'
+      AND name != 'd1_migrations'
+    ORDER BY type,name
+  `).all().map((row) => ({
+    type: String(row.type),
+    name: String(row.name),
+    table: String(row.tbl_name),
+    sql: String(row.sql).replace(/\s+/g, ' ').trim(),
+  }));
+}
+
 function tableColumns(database, table) {
   return database.prepare(`PRAGMA table_info(${quoteIdentifier(table)})`).all().map((row) => ({
     name: String(row.name),
@@ -51,6 +69,33 @@ function rowCount(database, table) {
   return Number(database.prepare(`SELECT COUNT(*) AS count FROM ${quoteIdentifier(table)}`).get().count);
 }
 
+function dependencyOrder(database) {
+  const tables = tableNames(database);
+  const tableSet = new Set(tables);
+  const dependencies = new Map(tables.map((table) => [
+    table,
+    new Set(tableForeignKeys(database, table).map((item) => item.table).filter((parent) => parent !== table && tableSet.has(parent))),
+  ]));
+  return dependencyOrderFromMap(tables, dependencies);
+}
+
+function dependencyOrderFromMap(tables, dependencies) {
+  const order = [];
+  const visited = new Set();
+  const visiting = new Set();
+  function visit(table) {
+    if (visited.has(table)) return;
+    if (visiting.has(table)) return;
+    visiting.add(table);
+    for (const parent of dependencies.get(table) ?? []) visit(parent);
+    visiting.delete(table);
+    visited.add(table);
+    order.push(table);
+  }
+  for (const table of tables) visit(table);
+  return order;
+}
+
 function sourceFitsTarget(sourceColumns, targetColumns) {
   const targetByName = new Map(targetColumns.map((column) => [column.name, column]));
   for (const sourceColumn of sourceColumns) {
@@ -74,7 +119,16 @@ function copyRows(source, target, table, columns) {
   if (!columns.length) return;
   const names = columns.map((column) => column.name);
   const select = source.prepare(`SELECT ${names.map(quoteIdentifier).join(',')} FROM ${quoteIdentifier(table)}`);
-  const insert = target.prepare(`INSERT OR REPLACE INTO ${quoteIdentifier(table)} (${names.map(quoteIdentifier).join(',')}) VALUES (${names.map(() => '?').join(',')})`);
+  const targetColumns = tableColumns(target, table);
+  const primaryKeyNames = targetColumns
+    .filter((column) => column.primaryKey > 0)
+    .sort((a, b) => a.primaryKey - b.primaryKey)
+    .map((column) => column.name);
+  const updateNames = names.filter((name) => !primaryKeyNames.includes(name));
+  const conflict = primaryKeyNames.length
+    ? ` ON CONFLICT (${primaryKeyNames.map(quoteIdentifier).join(',')}) DO ${updateNames.length ? `UPDATE SET ${updateNames.map((name) => `${quoteIdentifier(name)}=excluded.${quoteIdentifier(name)}`).join(',')}` : 'NOTHING'}`
+    : '';
+  const insert = target.prepare(`INSERT INTO ${quoteIdentifier(table)} (${names.map(quoteIdentifier).join(',')}) VALUES (${names.map(() => '?').join(',')})${conflict}`);
   for (const row of select.all()) insert.run(...names.map((name) => row[name]));
 }
 
@@ -86,8 +140,8 @@ function sqlLiteral(value) {
 }
 
 function createDataSql(target) {
-  const statements = [];
-  for (const table of tableNames(target)) {
+  const statements = ['PRAGMA defer_foreign_keys=ON;'];
+  for (const table of dependencyOrder(target)) {
     const columns = tableColumns(target, table).map((column) => column.name);
     if (!columns.length) continue;
     const rows = target.prepare(`SELECT ${columns.map(quoteIdentifier).join(',')} FROM ${quoteIdentifier(table)}`).all();
@@ -99,17 +153,7 @@ function createDataSql(target) {
 }
 
 function createResetSql(source) {
-  const tables = tableNames(source);
-  const dependencies = new Map(tables.map((table) => [table, new Set(tableForeignKeys(source, table).map((item) => item.table).filter((name) => name !== table && tables.includes(name)))]));
-  const order = [];
-  const seen = new Set();
-  function visit(table) {
-    if (seen.has(table)) return;
-    seen.add(table);
-    order.push(table);
-    for (const parent of dependencies.get(table) ?? []) visit(parent);
-  }
-  for (const table of tables) visit(table);
+  const order = dependencyOrder(source).reverse();
   const statements = ['PRAGMA defer_foreign_keys=ON;'];
   for (const table of order) statements.push(`DROP TABLE IF EXISTS ${quoteIdentifier(table)};`);
   statements.push('DROP TABLE IF EXISTS d1_migrations;');
@@ -117,9 +161,18 @@ function createResetSql(source) {
 }
 
 function createCombinedResetSql(source, target) {
-  const sourceReset = createResetSql(source).split('\n').filter((line) => line.startsWith('DROP TABLE'));
-  const targetReset = createResetSql(target).split('\n').filter((line) => line.startsWith('DROP TABLE'));
-  return `PRAGMA defer_foreign_keys=ON;\n${[...new Set([...targetReset, ...sourceReset])].join('\n')}\n`;
+  const tables = [...new Set([...tableNames(source), ...tableNames(target)])].sort();
+  const tableSet = new Set(tables);
+  const dependencies = new Map(tables.map((table) => [table, new Set()]));
+  for (const database of [source, target]) {
+    for (const table of tableNames(database)) {
+      for (const foreignKey of tableForeignKeys(database, table)) {
+        if (foreignKey.table !== table && tableSet.has(foreignKey.table)) dependencies.get(table).add(foreignKey.table);
+      }
+    }
+  }
+  const order = dependencyOrderFromMap(tables, dependencies).reverse();
+  return `PRAGMA defer_foreign_keys=ON;\n${order.map((table) => `DROP TABLE IF EXISTS ${quoteIdentifier(table)};`).join('\n')}\nDROP TABLE IF EXISTS d1_migrations;\n`;
 }
 
 function createVerifySql(target) {
@@ -153,8 +206,8 @@ export async function planProductionDataTransfer({ sourceSqlPath, targetBaseline
 
     const sourceDescription = schemaDescription(source);
     const targetDescription = schemaDescription(target);
-    const sourceFingerprint = fingerprint(sourceDescription);
-    const targetFingerprint = fingerprint(targetDescription);
+    const sourceFingerprint = fingerprint(normalizedSchemaObjects(source));
+    const targetFingerprint = fingerprint(normalizedSchemaObjects(target));
     const rebuildRequired = sourceFingerprint !== targetFingerprint;
     const transform = await loadTransform(transformPath);
     const handled = new Set(transform?.handledSourceTables ?? []);
@@ -176,8 +229,16 @@ export async function planProductionDataTransfer({ sourceSqlPath, targetBaseline
       }
       const compatibility = sourceFitsTarget(sourceTable.columns, targetTable.columns);
       if (compatibility.ok) {
-        copyRows(source, target, sourceTable.name, sourceTable.columns);
-        autoCopiedTables.push(sourceTable.name);
+        try {
+          copyRows(source, target, sourceTable.name, sourceTable.columns);
+          autoCopiedTables.push(sourceTable.name);
+        } catch (error) {
+          if (count > 0) decisionRequired.push({
+            table: sourceTable.name,
+            rows: count,
+            reason: `自动搬运无法满足当前模型约束：${error instanceof Error ? error.message : String(error)}`,
+          });
+        }
         continue;
       }
       if (count > 0 && !handled.has(sourceTable.name)) decisionRequired.push({ table: sourceTable.name, rows: count, reason: compatibility.reason });

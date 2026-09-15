@@ -1,9 +1,13 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { planProductionDataTransfer } from '../scripts/production/data-transfer.mjs';
+
+const remoteVerifierPath = fileURLToPath(new URL('../scripts/production/verify-remote-transfer.mjs', import.meta.url));
 
 async function withFiles(sourceSql, targetSql, run) {
   const root = await mkdtemp(join(tmpdir(), 'tpm-data-transfer-'));
@@ -43,6 +47,50 @@ test('production data transfer automatically preserves rows when target only add
       assert.deepEqual(plan.decisionRequired, []);
       assert.deepEqual(plan.autoCopiedTables, ['members']);
       assert.equal(plan.targetRows.members, 1);
+    },
+  );
+});
+
+test('production data transfer detects CHECK or index changes even when table columns are unchanged', async () => {
+  await withFiles(
+    `CREATE TABLE items (id TEXT PRIMARY KEY, quantity INTEGER NOT NULL); CREATE INDEX idx_items_quantity ON items(quantity);`,
+    `CREATE TABLE items (id TEXT PRIMARY KEY, quantity INTEGER NOT NULL CHECK(quantity >= 0)); CREATE INDEX idx_items_quantity ON items(quantity,id);`,
+    async ({ source, target }) => {
+      const plan = await planProductionDataTransfer({ sourceSqlPath: source, targetBaselinePath: target });
+      assert.equal(plan.status, 'ready');
+      assert.equal(plan.rebuildRequired, true);
+    },
+  );
+});
+
+test('production data transfer turns new uniqueness conflicts into a user decision instead of data loss', async () => {
+  await withFiles(
+    `CREATE TABLE items (id TEXT PRIMARY KEY, code TEXT NOT NULL); INSERT INTO items VALUES ('1','A'),('2','A');`,
+    `CREATE TABLE items (id TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE);`,
+    async ({ source, target }) => {
+      const plan = await planProductionDataTransfer({ sourceSqlPath: source, targetBaselinePath: target });
+      assert.equal(plan.status, 'decision_required');
+      assert.ok(plan.decisionRequired.some((item) => item.table === 'items' && /约束/.test(item.reason)));
+    },
+  );
+});
+
+test('generated import SQL inserts parent tables before dependent child tables', async () => {
+  await withFiles(
+    `
+      CREATE TABLE z_parent (id TEXT PRIMARY KEY);
+      CREATE TABLE a_child (id TEXT PRIMARY KEY, parent_id TEXT NOT NULL REFERENCES z_parent(id));
+      INSERT INTO z_parent VALUES ('p');
+      INSERT INTO a_child VALUES ('c','p');
+    `,
+    `
+      CREATE TABLE z_parent (id TEXT PRIMARY KEY, note TEXT);
+      CREATE TABLE a_child (id TEXT PRIMARY KEY, parent_id TEXT NOT NULL REFERENCES z_parent(id));
+    `,
+    async ({ source, target }) => {
+      const plan = await planProductionDataTransfer({ sourceSqlPath: source, targetBaselinePath: target });
+      assert.equal(plan.status, 'ready');
+      assert.ok(plan.dataSql.indexOf('INSERT OR REPLACE INTO "z_parent"') < plan.dataSql.indexOf('INSERT OR REPLACE INTO "a_child"'));
     },
   );
 });
@@ -120,5 +168,52 @@ test('one-time transform is rejected when it was authored for a different source
       assert.ok(plan.decisionRequired.some((item) => /指纹/.test(item.reason)));
     },
   );
+});
+
+test('remote transfer verifier accepts exact row counts with clean foreign keys and integrity', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'tpm-remote-verify-'));
+  try {
+    const summary = join(root, 'summary.json');
+    const result = join(root, 'result.json');
+    await writeFile(summary, JSON.stringify({ targetRows: { members: 1, projects: 0 } }));
+    await writeFile(result, JSON.stringify([
+      { success: true, results: [{ table_name: 'members', row_count: 1 }] },
+      { success: true, results: [{ table_name: 'projects', row_count: 0 }] },
+      { success: true, results: [] },
+      { success: true, results: [{ integrity_check: 'ok' }] },
+    ]));
+    const output = execFileSync(process.execPath, [
+      remoteVerifierPath,
+      summary,
+      result,
+    ], { encoding: 'utf8' });
+    assert.deepEqual(JSON.parse(output), { ok: true, tables: 2 });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('remote transfer verifier rejects a production row-count mismatch', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'tpm-remote-verify-'));
+  try {
+    const summary = join(root, 'summary.json');
+    const result = join(root, 'result.json');
+    await writeFile(summary, JSON.stringify({ targetRows: { members: 1 } }));
+    await writeFile(result, JSON.stringify([
+      { success: true, results: [{ table_name: 'members', row_count: 0 }] },
+      { success: true, results: [] },
+      { success: true, results: [{ integrity_check: 'ok' }] },
+    ]));
+    assert.throws(
+      () => execFileSync(process.execPath, [remoteVerifierPath, summary, result], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }),
+      (error) => {
+        assert.equal(error.status, 1);
+        assert.match(String(error.stderr), /REMOTE_ROW_COUNT_MISMATCH:members:0:1/);
+        return true;
+      },
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
