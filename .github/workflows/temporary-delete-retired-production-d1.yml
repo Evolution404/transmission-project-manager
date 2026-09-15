@@ -1,0 +1,77 @@
+name: Temporary delete retired production D1
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_sha:
+        description: Exact current main commit
+        required: true
+        type: string
+      retired_database_id:
+        description: Retired production D1 UUID to delete
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: temporary-delete-retired-production-d1
+  cancel-in-progress: false
+
+jobs:
+  delete:
+    if: github.ref == 'refs/heads/main'
+    environment: production
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      WRANGLER_SEND_METRICS: 'false'
+      ACCOUNT_ID: '642d30520d6c494dd418b1f4b3853aa6'
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Bind deletion to exact deployed main revision
+        env:
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          RETIRED_DATABASE_ID: ${{ inputs.retired_database_id }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$RETIRED_DATABASE_ID" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          git fetch origin main
+          test "$(git rev-parse origin/main)" = "$RELEASE_SHA"
+          CURRENT_DATABASE_ID="$(node --input-type=module -e 'import {readFileSync} from "node:fs"; const c=JSON.parse(readFileSync("apps/api/wrangler.production.jsonc","utf8")); process.stdout.write(c.d1_databases[0].database_id);')"
+          test "$CURRENT_DATABASE_ID" != "$RETIRED_DATABASE_ID"
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+      - run: npm run production:check -- config apps/api/wrangler.production.jsonc
+
+      - name: Verify current production D1 before deleting retired D1
+        working-directory: apps/api
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          RESULT="$(npm exec -- wrangler d1 execute DB --remote --json --config wrangler.production.jsonc --command "SELECT (SELECT COUNT(*) FROM members WHERE lower(username)=lower('zhangsan')) AS zhangsan_count,(SELECT COUNT(*) FROM demands) AS demand_count,(SELECT COUNT(*) FROM projects) AS project_count,(SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1) AS migration;")"
+          RESULT="$RESULT" node --input-type=module -e 'const p=JSON.parse(process.env.RESULT); const r=p?.[0]?.results?.[0]; if(p?.[0]?.success!==true || Number(r?.zhangsan_count)!==1 || Number(r?.demand_count)!==0 || Number(r?.project_count)!==0 || r?.migration!=="0001_initial_schema.sql") process.exit(1);'
+          curl --fail --silent --show-error --connect-timeout 10 --max-time 20 https://project.980923.xyz/api/health >/dev/null
+
+      - name: Delete retired D1
+        env:
+          RETIRED_DATABASE_ID: ${{ inputs.retired_database_id }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error -X DELETE \
+            "https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/d1/database/${RETIRED_DATABASE_ID}" \
+            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" >/dev/null
+          printf '### Retired production D1 deleted\n- Database ID: `%s`\n' "$RETIRED_DATABASE_ID" >> "$GITHUB_STEP_SUMMARY"
