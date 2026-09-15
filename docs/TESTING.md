@@ -42,7 +42,8 @@ npm run check
 - Node + SQLite + Filesystem 第二运行时：PASS；
 - migration checksum/单基线与 repository/static guards：PASS。
 
-本轮继续在既有基础台账门禁上新增/强化：物理杆塔与线路杆塔节点分离、同一物理塔被多条线路节点复用、专用物理塔 rebind、需求端点使用稳定 `tower_position_id`、班组/杆塔类型/自定义字段配置 CRUD、自定义字段独立版本和类型化索引、已使用字段禁止误删，以及备份/恢复覆盖新增配置和值表。`MasterDataView.test.ts` 当前 **16/16 PASS**。远端 CI 仍需在本轮提交 push 后重新验证，历史 CI 不能替代当前 SHA。
+本轮继续在既有基础台账门禁上新增/强化：物理杆塔与线路杆塔节点分离、同一物理塔被多条线路节点复用、专用物理塔 rebind、需求端点使用稳定 `tower_position_id`、班组/杆塔类型/自定义字段配置 CRUD、自定义字段独立版本和类型化索引、已使用字段禁止误删，以及备份/恢复覆盖新增配置和值表。`MasterDataView.test.ts` 当前 **16/16 PASS**。
+本轮代码与清债快照 `c87fc04` 已由 PR #12 GitHub CI run `34941209241` 重新执行完整 `npm run check` 并 PASS；这才是当前 SHA 的远端门禁证据。
 
 ## 3. 迁移与仓库守卫
 

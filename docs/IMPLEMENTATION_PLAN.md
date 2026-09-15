@@ -15,7 +15,7 @@
 | P6 | 月报、分析、预警、年度事项、通知、对象存储逻辑备份 | 已完成 |
 | 后端可移植化 | Database/ObjectStore 等 Ports；Cloudflare 与 Node 第二运行时 | 已完成 |
 | 基础台账 M1–M5 | 线路中心 UI、编号规范化、更名历史、排序、大批导入 | 已完成并已在上一版本上线 |
-| 基础台账 M6 | 物理杆塔/线路节点分离、同塔 N 回、配置对象、通用自定义字段 | **当前施工，功能已落地，待完整门禁/提交/远端 CI** |
+| 基础台账 M6 | 物理杆塔/线路节点分离、同塔 N 回、配置对象、通用自定义字段 | **代码已收口；本地与 PR #12 远端 CI 全绿，尚未合并/发布** |
 | 生产 schema 升级 | 既有生产 D1 → 当前 M6 schema 的显式数据迁移 | **未设计/未授权，当前发布阻断项** |
 | P7 | 真实业务、恢复、性能、网络和运维移交 | 继续按真实环境逐项验收 |
 
@@ -80,6 +80,8 @@
 - repository/static guards。
 
 本轮定向结果：基础台账 API **25/25 PASS**；相关 Web **30/30 PASS**。最终完整 `npm run check` 已 PASS：Node **270/270**、Web **114/114（19 文件）**，Cloudflare/Node/Web/shared TypeScript、Web production build、Worker dry-run、Node+SQLite+Filesystem 第二运行时和全部静态门禁均 PASS。
+
+远端证据：PR #12 `c87fc04`，GitHub CI run `34941209241` 的完整 `npm run check` 已 PASS。该结论仅表示施工分支代码门禁通过，不表示 production schema 已升级或当前分支已发布。
 
 ## 5. 技术债清理范围
 

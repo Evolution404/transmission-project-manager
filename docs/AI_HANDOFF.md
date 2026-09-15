@@ -7,7 +7,9 @@
 - 当前施工分支：`refactor/master-data-ux-hardening-20260915`
 - 本轮开始时 HEAD / origin：`a70bfccafd0c58b41389a8657e77c34c34428b61`
 - 当前功能提交：`af88419`（物理杆塔/线路节点、需求位置、配置、自定义字段及完整代码回归）。
-- 当前任务：完成技术债和文档清理提交并 push，随后核对 PR #12 新 CI。
+- 当前技术债/文档提交：`c87fc04`。
+- PR #12 已更新到 `c87fc04`；GitHub CI run `34941209241` 的 `check` / `npm run check` 已 **PASS**。
+- 当前任务：本轮代码与技术债收口完成；保持分支 clean，等待后续是否继续做纯结构拆分或另行设计 production schema 迁移。
 - 禁止 `reset/clean`，不要覆盖当前工作区；未经用户明确授权，不合并 `main`、不执行 production migration/reconciliation、不触发 Production release。
 
 长期业务事实只看 `BUSINESS_BASELINE.md`、`DESIGN.md`、`DATA_MODEL.md`；测试门禁看 `TESTING.md`；生产步骤看 `P7_RUNBOOK.md`。已完成阶段过程通过 Git 历史追溯，不再维护重复 WIP 文档。
@@ -96,10 +98,8 @@ line_tower_positions
 
 ## 接下来执行顺序
 
-1. 提交当前文档/技术债清理并 push 当前施工分支。
-2. 核对 PR #12 / 新 CI；只有远端门禁也绿后才算本分支代码收口。
-3. 若继续代码债重构，下一批只做无行为变化的 `p9.ts` / `MasterDataView.vue` / shared 类型模块拆分，不与当前 schema 改动混在同一提交。
-4. 不合并 `main`、不发布生产，除非用户随后明确授权；生产 schema 迁移必须单独设计和审核。
+1. 若继续代码债重构，下一批只做无行为变化的 `p9.ts` / `MasterDataView.vue` / shared 类型模块拆分，不与当前 schema 改动混在同一提交。
+2. 不合并 `main`、不发布生产，除非用户随后明确授权；生产 schema 迁移必须单独设计和审核。
 
 ## 必须继续保持的工程约束
 
