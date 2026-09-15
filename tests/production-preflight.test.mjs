@@ -131,36 +131,31 @@ test('push CI and manual production preflight contain no cloud mutation or crede
   assert.match(source, /environment: production/);
 });
 
-test('production deploy is manual, environment-bound, version-bound and publishes secrets with the same deployment', () => {
-  const source = readFileSync(new URL('../.github/workflows/production-deploy.yml', import.meta.url), 'utf8');
+test('production promote is the single manual production mutation entry point', () => {
+  const source = readFileSync(new URL('../.github/workflows/production-promote.yml', import.meta.url), 'utf8');
   assert.match(source, /workflow_dispatch:/);
   assert.match(source, /environment: production/);
   assert.match(source, /release_sha/);
   assert.match(source, /secrets\.CLOUDFLARE_API_TOKEN/);
   assert.match(source, /secrets\.AUTH_CREDENTIAL_PEPPER/);
   assert.match(source, /secrets\.NOTION_API_TOKEN/);
-  assert.match(source, /--secrets-file/);
   assert.match(source, /npm run check/);
-  assert.match(source, /wrangler deploy --config wrangler\.production\.jsonc/);
-  assert.match(source, /for attempt in \$\(seq 1 30\)/);
-  assert.match(source, /HEALTH_OK=0/);
-  assert.match(source, /HEALTH_OK=1/);
-  assert.match(source, /sleep 2/);
+  assert.match(source, /scripts\/production\/promote\.sh/);
   assert.doesNotMatch(source, /PRODUCTION_DEPLOY_ENABLED|PRODUCTION_CONFIG_JSON|vars\./);
-  assert.doesNotMatch(source, /\n  (push|pull_request|schedule|workflow_run):|d1 migrations apply|d1 execute/);
+  assert.doesNotMatch(source, /\n  (push|pull_request|schedule|workflow_run):/);
 });
 
-test('production migration is a separate manual workflow bound to exact main revision and tracked config', () => {
-  const source = readFileSync(new URL('../.github/workflows/production-migrate.yml', import.meta.url), 'utf8');
-  assert.match(source, /workflow_dispatch:/);
-  assert.match(source, /environment: production/);
-  assert.match(source, /release_sha/);
-  assert.match(source, /database_id/);
-  assert.match(source, /CLOUDFLARE_API_TOKEN/);
-  assert.match(source, /d1 migrations list DB --remote/);
+test('production promotion rebuilds data in place only after a dry data-transfer plan and has rollback', () => {
+  const source = readFileSync(new URL('../scripts/production/promote.sh', import.meta.url), 'utf8');
+  assert.match(source, /d1 export DB --remote/);
+  assert.match(source, /data-transfer-cli\.mjs/);
+  assert.match(source, /MAINTENANCE_MODE:data-migration/);
   assert.match(source, /d1 migrations apply DB --remote/);
-  assert.doesNotMatch(source, /PRODUCTION_MIGRATION_ENABLED|PRODUCTION_CONFIG_JSON|vars\./);
-  assert.doesNotMatch(source, /\n  (push|pull_request|schedule|workflow_run):|wrangler deploy --config/);
+  assert.match(source, /verify-remote-transfer\.mjs/);
+  assert.match(source, /wrangler_api rollback/);
+  assert.match(source, /SOURCE_FINAL/);
+  assert.match(source, /ROLLBACK_RESET/);
+  assert.doesNotMatch(source, /0002_|production-migrate\.yml/);
 });
 
 test('production Cloudflare inventory is manual, environment-bound and read-only', () => {

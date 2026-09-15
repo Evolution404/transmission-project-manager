@@ -1,4 +1,4 @@
-name: Production release
+name: Production promote
 
 on:
   workflow_dispatch:
@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       release_record:
-        description: Reviewed release/backup/schema evidence reference (no secrets)
+        description: Reviewed release/data-transfer evidence reference (no secrets)
         required: true
         type: string
 
@@ -16,15 +16,15 @@ permissions:
   contents: read
 
 concurrency:
-  group: production-release
+  group: production-promote
   cancel-in-progress: false
 
 jobs:
-  deploy:
+  promote:
     if: github.ref == 'refs/heads/main'
     environment: production
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     env:
       WRANGLER_SEND_METRICS: 'false'
     steps:
@@ -69,9 +69,9 @@ jobs:
 
       - name: Package exact approved revision
         working-directory: apps/api
-        run: npm exec -- wrangler deploy --dry-run --config wrangler.production.jsonc --secrets-file "$WORKER_SECRETS_FILE" --outdir dist-production-release
+        run: npm exec -- wrangler deploy --dry-run --config wrangler.production.jsonc --secrets-file "$WORKER_SECRETS_FILE" --outdir dist-production-promote
 
-      - name: Recheck approved main revision before publication
+      - name: Recheck approved main revision before production mutation
         env:
           RELEASE_SHA: ${{ inputs.release_sha }}
         run: |
@@ -80,31 +80,13 @@ jobs:
           test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
           test "$(git rev-parse origin/main)" = "$RELEASE_SHA"
 
-      - name: Publish Worker, bindings and Worker secrets as one version
-        working-directory: apps/api
+      - name: Preserve data and promote production
         env:
+          RELEASE_SHA: ${{ inputs.release_sha }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-        run: npm exec -- wrangler deploy --config wrangler.production.jsonc --secrets-file "$WORKER_SECRETS_FILE"
+        run: bash scripts/production/promote.sh
 
-      - name: Verify custom domain and health
-        run: |
-          set -euo pipefail
-          DOMAIN="$(node --input-type=module -e 'import {readFileSync} from "node:fs"; const c=JSON.parse(readFileSync("apps/api/wrangler.production.jsonc","utf8")); process.stdout.write(c.routes[0].pattern);')"
-          test -n "$DOMAIN"
-          HEALTH_FILE="$(mktemp)"
-          trap 'rm -f "$HEALTH_FILE"' EXIT
-          HEALTH_OK=0
-          for attempt in $(seq 1 30); do
-            if curl --fail --silent --show-error --connect-timeout 10 --max-time 20 "https://${DOMAIN}/api/health" -o "$HEALTH_FILE" \
-              && HEALTH_FILE="$HEALTH_FILE" node --input-type=module -e 'import {readFileSync} from "node:fs"; const body=JSON.parse(readFileSync(process.env.HEALTH_FILE,"utf8")); if (body?.ok !== true || body?.data?.service !== "transmission-project-manager" || body?.data?.schema?.ready !== true) process.exit(1);'; then
-              HEALTH_OK=1
-              break
-            fi
-            sleep 2
-          done
-          test "$HEALTH_OK" = 1
-          printf '### Production release\n- Commit: `%s`\n- Domain: `%s`\n- `/api/health`: PASS\n' "${{ inputs.release_sha }}" "$DOMAIN" >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Remove ephemeral Worker secret file
+      - name: Remove ephemeral files
         if: always()
-        run: rm -f "$RUNNER_TEMP/worker-secrets.json"
+        run: rm -rf "$RUNNER_TEMP/tpm-production-promote" "$RUNNER_TEMP/worker-secrets.json"
+
