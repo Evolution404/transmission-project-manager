@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, h, onMounted, ref } from 'vue';
 import {
-  NAlert, NButton, NDataTable, NEmpty, NForm, NFormItem, NInput, NModal, NSelect,
+  NAlert, NButton, NDataTable, NDropdown, NEmpty, NForm, NFormItem, NInput, NModal, NSelect,
   NSpace, NSwitch, NTag, useMessage,
 } from 'naive-ui';
 import {
@@ -325,7 +325,10 @@ const orderMoving = ref('');
 const orderTarget = ref('');
 const orderPlacement = ref<'before' | 'after'>('before');
 const draggingTowerId = ref<string | null>(null);
-const orderOptions = computed(() => orderDraft.value.map((item) => ({ label: item.towerNo, value: item.id })));
+const orderOptions = computed(() => orderDraft.value.map((item, index) => ({
+  label: `${index + 1} · ${item.towerNo}${item.towerType ? ` · ${item.towerType}` : ''}`,
+  value: item.id,
+})));
 const placementOptions = [{ label: '目标之前', value: 'before' }, { label: '目标之后', value: 'after' }];
 async function openOrderEditor() {
   const line = activeLine.value; if (!line) return;
@@ -348,6 +351,18 @@ function moveDraft(movingId: string, targetId: string, placement: 'before' | 'af
   orderDraft.value = next;
 }
 function applyOrderMove() { moveDraft(orderMoving.value, orderTarget.value, orderPlacement.value); }
+function moveDraftStep(id: string, direction: -1 | 1) {
+  const index = orderDraft.value.findIndex((item) => item.id === id);
+  const targetIndex = index + direction;
+  if (index < 0 || targetIndex < 0 || targetIndex >= orderDraft.value.length) return;
+  const next = [...orderDraft.value];
+  const current = next[index];
+  const target = next[targetIndex];
+  if (!current || !target) return;
+  next[index] = target;
+  next[targetIndex] = current;
+  orderDraft.value = next;
+}
 function dropOrder(targetId: string) {
   if (draggingTowerId.value) moveDraft(draggingTowerId.value, targetId, 'before');
   draggingTowerId.value = null;
@@ -462,16 +477,41 @@ async function saveBulk() {
 
 type TowerRow = TransmissionTowerSummary & { displayOrder: number };
 const towerRows = computed<TowerRow[]>(() => towers.value.map((item, index) => ({ ...item, displayOrder: index + 1 })));
+const lineMoreOptions = [
+  { label: '编辑线路属性', key: 'edit' },
+  { label: '线路更名', key: 'rename' },
+  { label: '名称历史', key: 'history' },
+];
+function handleLineMoreAction(key: string) {
+  if (!activeLine.value) return;
+  if (key === 'edit') openLine(activeLine.value);
+  else if (key === 'rename') openLineRename();
+  else if (key === 'history') void openLineHistory();
+}
+const towerMoreOptions = [
+  { label: '杆塔更名', key: 'rename' },
+  { label: '编号历史', key: 'history' },
+  { label: '删除杆塔', key: 'delete' },
+];
+function handleTowerMoreAction(key: string, row: TowerRow) {
+  if (key === 'rename') openTowerRename(row);
+  else if (key === 'history') void openTowerHistory(row);
+  else if (key === 'delete') void removeObject('towers', row);
+}
 const towerColumns = computed(() => [
   { title: '序号', key: 'displayOrder', width: 64 },
   { title: '杆塔编号', key: 'towerNo', render: (row: TowerRow) => h('div', [h('strong', row.towerNo), row.matchedHistoricalNo ? h('small', `曾用编号匹配：${row.matchedHistoricalNo}`) : null]) },
   { title: '类型', key: 'towerType', render: (row: TowerRow) => row.towerType ?? '—' },
   { title: '状态', key: 'enabled', render: (row: TowerRow) => row.enabled ? '启用' : '停用' },
-  ...(isAdmin.value ? [{ title: '操作', key: 'actions', width: 270, render: (row: TowerRow) => h(NSpace, { size: 4 }, { default: () => [
+  ...(isAdmin.value ? [{ title: '操作', key: 'actions', width: 180, render: (row: TowerRow) => h(NSpace, { size: 6 }, { default: () => [
     h(NButton, { size: 'tiny', onClick: () => openTower(row) }, { default: () => '编辑属性' }),
-    h(NButton, { size: 'tiny', 'data-test': `open-tower-rename-${row.id}`, onClick: () => openTowerRename(row) }, { default: () => '杆塔更名' }),
-    h(NButton, { size: 'tiny', onClick: () => openTowerHistory(row) }, { default: () => '历史' }),
-    h(NButton, { size: 'tiny', disabled: saving.value, onClick: () => removeObject('towers', row) }, { default: () => '删除' }),
+    h(NDropdown, {
+      trigger: 'click',
+      options: towerMoreOptions,
+      disabled: saving.value,
+      'data-test': `tower-more-${row.id}`,
+      onSelect: (key: string) => handleTowerMoreAction(key, row),
+    }, { default: () => h(NButton, { size: 'tiny' }, { default: () => '更多' }) }),
   ] }) }] : []),
 ]);
 
@@ -516,12 +556,12 @@ onMounted(loadAll);
           <p v-if="selectedLine.matchedHistoricalName" class="history-match">由曾用名“{{ selectedLine.matchedHistoricalName }}”匹配到当前线路</p>
         </div>
         <n-space v-if="isAdmin" class="detail-actions">
-          <n-button @click="openLine(selectedLine)">编辑属性</n-button>
-          <n-button data-test="open-line-rename" @click="openLineRename">线路更名</n-button>
-          <n-button @click="openLineHistory">名称历史</n-button>
-          <n-button data-test="open-new-tower" :disabled="!selectedLine.enabled || !selectedVoltage?.enabled" @click="openTower()">新增杆塔</n-button>
+          <n-button data-test="open-new-tower" type="primary" :disabled="!selectedLine.enabled || !selectedVoltage?.enabled" @click="openTower()">新增杆塔</n-button>
           <n-button data-test="open-bulk-towers" :disabled="!selectedLine.enabled || !selectedVoltage?.enabled" @click="openBulk">导入杆塔</n-button>
           <n-button data-test="open-order-editor" @click="openOrderEditor">调整顺序</n-button>
+          <n-dropdown data-test="line-more-actions" trigger="click" :options="lineMoreOptions" @select="handleLineMoreAction">
+            <n-button>更多操作</n-button>
+          </n-dropdown>
         </n-space>
       </header>
       <div class="tower-toolbar">
@@ -573,9 +613,9 @@ onMounted(loadAll);
     </n-modal>
 
     <n-modal v-model:show="orderModal" preset="card" title="调整杆塔顺序" style="width:min(720px,calc(100vw - 32px))">
-      <p>可拖动短距离调整；长距离可选择“移动杆塔 → 目标杆塔 → 目标前/后”。保存时一次性提交完整稳定 ID 顺序。</p>
+      <p>桌面可拖动；手机可直接上移/下移。跨很长距离时，使用“移动杆塔 → 目标杆塔 → 目标前/后”。保存时一次性提交完整稳定 ID 顺序。</p>
       <div class="order-controls"><n-select data-test="order-moving" v-model:value="orderMoving" :options="orderOptions" /><n-select data-test="order-target" v-model:value="orderTarget" :options="orderOptions" /><n-select v-model:value="orderPlacement" :options="placementOptions" /><n-button data-test="apply-order-move" @click="applyOrderMove">应用移动</n-button></div>
-      <div class="order-list"><div v-for="(item,index) in orderDraft" :key="item.id" class="order-row" draggable="true" @dragstart="draggingTowerId=item.id" @dragover.prevent @drop="dropOrder(item.id)"><span class="drag-handle">≡</span><b>{{ index+1 }}</b><strong>{{ item.towerNo }}</strong><span>{{ item.towerType ?? '—' }}</span></div></div>
+      <div class="order-list"><div v-for="(item,index) in orderDraft" :key="item.id" class="order-row" draggable="true" @dragstart="draggingTowerId=item.id" @dragover.prevent @drop="dropOrder(item.id)"><span class="drag-handle">≡</span><b>{{ index+1 }}</b><strong>{{ item.towerNo }}</strong><span>{{ item.towerType ?? '—' }}</span><div class="order-row-actions"><n-button size="tiny" :data-test="`order-up-${item.id}`" :disabled="index===0" @click="moveDraftStep(item.id,-1)">上移</n-button><n-button size="tiny" :data-test="`order-down-${item.id}`" :disabled="index===orderDraft.length-1" @click="moveDraftStep(item.id,1)">下移</n-button></div></div></div>
       <template #footer><div class="actions"><n-button @click="orderModal=false">取消</n-button><n-button data-test="save-order" type="primary" :loading="saving" @click="saveOrder">保存顺序</n-button></div></template>
     </n-modal>
 
@@ -592,7 +632,7 @@ onMounted(loadAll);
 </template>
 
 <style scoped>
-.master-data-view{max-width:1480px;margin:0 auto}.page-heading,.detail-heading{display:flex;justify-content:space-between;gap:20px;align-items:flex-start;padding:20px 22px;border:1px solid #e5e9f0;border-radius:16px;background:#fff}.eyebrow{font-size:11px;font-weight:700;color:#315fd3;letter-spacing:.08em}.page-heading h2,.detail-heading h2{margin:4px 0 5px;font-size:24px}.page-heading p,.detail-heading p{margin:0;color:#7b8493}.line-toolbar,.tower-toolbar{display:grid;grid-template-columns:minmax(170px,220px) minmax(240px,1fr) minmax(150px,190px) auto;gap:10px;margin:16px 0}.tower-toolbar{grid-template-columns:minmax(260px,1fr) auto auto}.line-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.line-card{border:1px solid #e5e9f0;border-radius:14px;background:#fff;overflow:hidden}.line-open{display:block;width:100%;padding:17px;text-align:left;border:0;background:transparent;color:inherit;cursor:pointer}.line-open:hover{background:#f8faff}.line-card-title{display:flex;align-items:center;gap:10px;font-size:16px}.line-card-meta{display:flex;gap:16px;margin-top:12px;color:#737d8d;font-size:12px}.history-match{color:#7a5af8!important;font-size:12px}.line-card-actions{display:flex;gap:14px;padding:0 17px 13px}.back-button{border:0;background:transparent;color:#315fd3;cursor:pointer;padding:4px 0 10px}.detail-title-row{display:flex;align-items:center;gap:10px}.detail-actions{justify-content:flex-end}.actions{display:flex;justify-content:flex-end;gap:10px}.settings-head{display:flex;justify-content:space-between;align-items:center}.setting-row{display:flex;justify-content:space-between;gap:15px;align-items:center;padding:12px 0;border-top:1px solid #edf0f4}.setting-row div:first-child{display:flex;flex-direction:column;gap:3px}.setting-row small{color:#7b8493}.history-list>div{display:grid;grid-template-columns:minmax(120px,1fr) minmax(220px,1.6fr);gap:6px 14px;padding:11px 0;border-top:1px solid #edf0f4}.history-list small{grid-column:1/-1;color:#7b8493}.order-controls{display:grid;grid-template-columns:1fr 1fr 150px auto;gap:8px;margin:12px 0}.order-list{max-height:420px;overflow:auto;border:1px solid #e5e9f0;border-radius:10px}.order-row{display:grid;grid-template-columns:26px 42px 120px 1fr;gap:8px;align-items:center;padding:9px 12px;border-bottom:1px solid #edf0f4;background:#fff}.drag-handle{cursor:grab;color:#8a94a4}.tower-import-source{display:flex;align-items:center;gap:10px;margin:12px 0}.tower-import-preview{margin-top:14px;padding:12px 14px;border-radius:10px;background:#f7f9fc;border:1px solid #e6eaf1}.tower-import-preview p{margin:5px 0}.tower-import-errors{max-height:180px;overflow:auto;color:#b42318}
-@media(max-width:900px){.line-list{grid-template-columns:1fr}.page-heading,.detail-heading{flex-direction:column}.line-toolbar{grid-template-columns:1fr 1fr}.detail-actions{justify-content:flex-start}.order-controls{grid-template-columns:1fr 1fr}.order-row{grid-template-columns:24px 34px 100px 1fr}}
+.master-data-view{max-width:1480px;margin:0 auto}.page-heading,.detail-heading{display:flex;justify-content:space-between;gap:20px;align-items:flex-start;padding:20px 22px;border:1px solid #e5e9f0;border-radius:16px;background:#fff}.eyebrow{font-size:11px;font-weight:700;color:#315fd3;letter-spacing:.08em}.page-heading h2,.detail-heading h2{margin:4px 0 5px;font-size:24px}.page-heading p,.detail-heading p{margin:0;color:#7b8493}.line-toolbar,.tower-toolbar{display:grid;grid-template-columns:minmax(170px,220px) minmax(240px,1fr) minmax(150px,190px) auto;gap:10px;margin:16px 0}.tower-toolbar{grid-template-columns:minmax(260px,1fr) auto auto}.line-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.line-card{border:1px solid #e5e9f0;border-radius:14px;background:#fff;overflow:hidden}.line-open{display:block;width:100%;padding:17px;text-align:left;border:0;background:transparent;color:inherit;cursor:pointer}.line-open:hover{background:#f8faff}.line-card-title{display:flex;align-items:center;gap:10px;font-size:16px}.line-card-meta{display:flex;gap:16px;margin-top:12px;color:#737d8d;font-size:12px}.history-match{color:#7a5af8!important;font-size:12px}.line-card-actions{display:flex;gap:14px;padding:0 17px 13px}.back-button{border:0;background:transparent;color:#315fd3;cursor:pointer;padding:4px 0 10px}.detail-title-row{display:flex;align-items:center;gap:10px}.detail-actions{justify-content:flex-end}.actions{display:flex;justify-content:flex-end;gap:10px}.settings-head{display:flex;justify-content:space-between;align-items:center}.setting-row{display:flex;justify-content:space-between;gap:15px;align-items:center;padding:12px 0;border-top:1px solid #edf0f4}.setting-row div:first-child{display:flex;flex-direction:column;gap:3px}.setting-row small{color:#7b8493}.history-list>div{display:grid;grid-template-columns:minmax(120px,1fr) minmax(220px,1.6fr);gap:6px 14px;padding:11px 0;border-top:1px solid #edf0f4}.history-list small{grid-column:1/-1;color:#7b8493}.order-controls{display:grid;grid-template-columns:1fr 1fr 150px auto;gap:8px;margin:12px 0}.order-list{max-height:420px;overflow:auto;border:1px solid #e5e9f0;border-radius:10px}.order-row{display:grid;grid-template-columns:26px 42px 120px 1fr auto;gap:8px;align-items:center;padding:9px 12px;border-bottom:1px solid #edf0f4;background:#fff}.order-row-actions{display:flex;gap:6px}.drag-handle{cursor:grab;color:#8a94a4}.tower-import-source{display:flex;align-items:center;gap:10px;margin:12px 0}.tower-import-preview{margin-top:14px;padding:12px 14px;border-radius:10px;background:#f7f9fc;border:1px solid #e6eaf1}.tower-import-preview p{margin:5px 0}.tower-import-errors{max-height:180px;overflow:auto;color:#b42318}
+@media(max-width:900px){.line-list{grid-template-columns:1fr}.page-heading,.detail-heading{flex-direction:column}.line-toolbar{grid-template-columns:1fr 1fr}.detail-actions{justify-content:flex-start}.order-controls{grid-template-columns:1fr 1fr}.order-row{grid-template-columns:24px 34px 100px 1fr auto}}
 @media(max-width:600px){.line-toolbar,.tower-toolbar,.order-controls{grid-template-columns:1fr}.page-heading,.detail-heading{padding:16px}.page-heading h2,.detail-heading h2{font-size:20px}.line-card-meta{flex-wrap:wrap}.tower-import-source{align-items:flex-start;flex-direction:column}}
 </style>

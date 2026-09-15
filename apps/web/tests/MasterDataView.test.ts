@@ -10,6 +10,7 @@ vi.mock('naive-ui', async () => {
     NButton: defineComponent({ props: { disabled: Boolean }, emits: ['click'], setup(p, { slots, emit }) { return () => h('button', { disabled: p.disabled, onClick: () => emit('click') }, slots.default?.()); } }),
     NInput: defineComponent({ props: ['value'], emits: ['update:value'], setup(p, { emit }) { return () => h('textarea', { value: p.value, onInput: (e: Event) => emit('update:value', (e.target as HTMLTextAreaElement).value) }); } }),
     NSelect: defineComponent({ props: ['value', 'options'], emits: ['update:value'], setup(p, { emit }) { return () => h('select', { value: p.value, onChange: (e: Event) => emit('update:value', (e.target as HTMLSelectElement).value) }, p.options?.map((o: { value: string; label: string }) => h('option', { value: o.value }, o.label))); } }),
+    NDropdown: defineComponent({ inheritAttrs: false, props: ['options'], emits: ['select'], setup(p, { slots, emit, attrs }) { return () => h('div', attrs, [slots.default?.(), ...(p.options ?? []).map((o: { key: string; label: string }) => h('button', { 'data-dropdown-key': o.key, 'aria-label': o.label, onClick: () => emit('select', o.key) }))]); } }),
     NSwitch: wrap('NSwitch'),
     NModal: defineComponent({ props: ['show'], setup(p, { slots }) { return () => p.show ? h('div', [slots.default?.(), slots.footer?.()]) : null; } }),
     NDataTable: defineComponent({ props: ['data', 'columns'], setup(p) { return () => h('div', p.data.map((r: Record<string, unknown>) => h('div', p.columns.map((c: { key: string; render?: (r: Record<string, unknown>) => unknown }) => h('span', c.render ? c.render(r) as never : String(r[c.key] ?? '')))))); } }),
@@ -167,13 +168,13 @@ it('single tower creation sends no manual order and explains automatic numeric p
 it('uses dedicated line and tower rename actions instead of ordinary edit fields', async () => {
   const w = mount(MasterDataView, { props: { currentUser: admin } }); await flushPromises();
   await w.get('[data-test="select-line-l1"]').trigger('click'); await flushPromises();
-  await w.get('[data-test="open-line-rename"]').trigger('click');
+  await w.get('[data-test="line-more-actions"]').get('[data-dropdown-key="rename"]').trigger('click');
   await w.get('[data-test="line-rename-input"]').setValue('甲线新名');
   await w.get('[data-test="save-line-rename"]').trigger('click'); await flushPromises();
   const lineRename = vi.mocked(fetch).mock.calls.find(([u, init]) => String(u).endsWith('/lines/l1/rename') && init?.method === 'POST');
   expect(JSON.parse(String(lineRename![1]!.body)).lineName).toBe('甲线新名');
 
-  await w.get('[data-test="open-tower-rename-t1"]').trigger('click');
+  await w.get('[data-test="tower-more-t1"]').get('[data-dropdown-key="rename"]').trigger('click');
   await w.get('[data-test="tower-rename-input"]').setValue('21-1');
   await w.get('[data-test="save-tower-rename"]').trigger('click'); await flushPromises();
   const towerRename = vi.mocked(fetch).mock.calls.find(([u, init]) => String(u).endsWith('/towers/t1/rename') && init?.method === 'POST');
@@ -190,6 +191,34 @@ it('manual order editor moves by business position and saves one complete stable
   await w.get('[data-test="save-order"]').trigger('click'); await flushPromises();
   const reorder = vi.mocked(fetch).mock.calls.filter(([u, init]) => String(u).endsWith('/towers/reorder') && init?.method === 'POST').at(-1);
   expect(JSON.parse(String(reorder![1]!.body)).towerIds).toEqual(['t2', 't1']);
+});
+
+it('order editor exposes touch-friendly step controls and descriptive target labels', async () => {
+  const w = mount(MasterDataView, { props: { currentUser: admin } }); await flushPromises();
+  await w.get('[data-test="select-line-l1"]').trigger('click'); await flushPromises();
+  await w.get('[data-test="open-order-editor"]').trigger('click'); await flushPromises();
+
+  expect(w.text()).toContain('1 · #020-1');
+  expect(w.text()).toContain('2 · #030');
+  expect(w.find('[data-test="order-up-t2"]').exists()).toBe(true);
+  expect(w.find('[data-test="order-down-t1"]').exists()).toBe(true);
+
+  await w.get('[data-test="order-up-t2"]').trigger('click');
+  await w.get('[data-test="save-order"]').trigger('click'); await flushPromises();
+  const reorder = vi.mocked(fetch).mock.calls.filter(([u, init]) => String(u).endsWith('/towers/reorder') && init?.method === 'POST').at(-1);
+  expect(JSON.parse(String(reorder![1]!.body)).towerIds).toEqual(['t2', 't1']);
+});
+
+it('keeps only frequent line and tower actions visible while secondary actions live under more menus', async () => {
+  const w = mount(MasterDataView, { props: { currentUser: admin } }); await flushPromises();
+  await w.get('[data-test="select-line-l1"]').trigger('click'); await flushPromises();
+  expect(w.get('[data-test="line-detail"]').text()).toContain('更多操作');
+  expect(w.get('[data-test="line-detail"]').text()).toContain('新增杆塔');
+  expect(w.get('[data-test="line-detail"]').text()).toContain('导入杆塔');
+  expect(w.get('[data-test="line-detail"]').text()).toContain('调整顺序');
+  expect(w.get('[data-test="line-detail"]').text()).not.toContain('线路更名');
+  expect(w.get('[data-test="line-detail"]').text()).not.toContain('名称历史');
+  expect(w.find('[data-test="tower-more-t1"]').exists()).toBe(true);
 });
 
 it('readonly users can inspect line detail without mutation controls', async () => {
