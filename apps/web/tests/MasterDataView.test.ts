@@ -221,6 +221,24 @@ it('keeps only frequent line and tower actions visible while secondary actions l
   expect(w.find('[data-test="tower-more-t1"]').exists()).toBe(true);
 });
 
+it('removes a tower locally without reloading unrelated voltage data and advances the order version', async () => {
+  const w = mount(MasterDataView, { props: { currentUser: admin } }); await flushPromises();
+  await w.get('[data-test="select-line-l1"]').trigger('click'); await flushPromises();
+  const voltageCallsBefore = vi.mocked(fetch).mock.calls.filter(([u]) => String(u) === '/api/master/voltage-levels').length;
+
+  await w.get('[data-test="tower-more-t1"]').get('[data-dropdown-key="delete"]').trigger('click'); await flushPromises();
+
+  const voltageCallsAfter = vi.mocked(fetch).mock.calls.filter(([u]) => String(u) === '/api/master/voltage-levels').length;
+  expect(voltageCallsAfter).toBe(voltageCallsBefore);
+  expect(w.get('[data-test="line-detail"]').text()).toContain('1 基杆塔');
+  expect(w.get('[data-test="line-detail"]').text()).not.toContain('#020-1');
+
+  await w.get('[data-test="open-order-editor"]').trigger('click'); await flushPromises();
+  await w.get('[data-test="save-order"]').trigger('click'); await flushPromises();
+  const reorder = vi.mocked(fetch).mock.calls.filter(([u, init]) => String(u).endsWith('/towers/reorder') && init?.method === 'POST').at(-1);
+  expect(JSON.parse(String(reorder![1]!.body)).expectedTowerOrderVersion).toBe(2);
+});
+
 it('readonly users can inspect line detail without mutation controls', async () => {
   const w = mount(MasterDataView, { props: { currentUser: { ...admin, role: 'readonly' } } }); await flushPromises();
   await w.get('[data-test="select-line-l1"]').trigger('click'); await flushPromises();

@@ -140,12 +140,37 @@ async function setStatusFilter(value: 'all' | 'enabled' | 'disabled') {
   await loadLines();
 }
 
-async function removeObject(kind: string, item: { id: string; version: number }) {
+async function removeObject(kind: 'voltage-levels' | 'lines' | 'towers', item: { id: string; version: number; lineId?: string }) {
   saving.value = true;
   try {
     await apiRequest(`/api/master/${kind}/${item.id}`, jsonRequestInit('DELETE', { expectedVersion: item.version }));
-    if (kind === 'lines' && activeLine.value?.id === item.id) backToLines();
-    await loadAll();
+    if (kind === 'voltage-levels') {
+      voltageLevels.value = voltageLevels.value.filter((row) => row.id !== item.id);
+      if (lineVoltageFilter.value === item.id) {
+        lineVoltageFilter.value = 'all';
+        lineCursor.value = null;
+        await loadLines();
+      }
+    } else if (kind === 'lines') {
+      lines.value = lines.value.filter((row) => row.id !== item.id);
+      if (activeLine.value?.id === item.id) backToLines();
+    } else {
+      towers.value = towers.value.filter((row) => row.id !== item.id);
+      if (item.lineId) {
+        lines.value = lines.value.map((line) => line.id === item.lineId ? {
+          ...line,
+          towerCount: Math.max(0, (line.towerCount ?? 0) - 1),
+          towerOrderVersion: line.towerOrderVersion + 1,
+        } : line);
+        if (activeLine.value?.id === item.lineId) {
+          activeLine.value = {
+            ...activeLine.value,
+            towerCount: Math.max(0, (activeLine.value.towerCount ?? towers.value.length + 1) - 1),
+            towerOrderVersion: activeLine.value.towerOrderVersion + 1,
+          };
+        }
+      }
+    }
     message.success('已删除未引用的台账对象');
   } catch (cause) { message.error(cause instanceof Error ? cause.message : '删除失败'); }
   finally { saving.value = false; }
