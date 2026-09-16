@@ -66,6 +66,7 @@ const towerLoading = ref(false);
 const error = ref('');
 let lineRequest = 0;
 let towerRequest = 0;
+let committedRefreshRetry: { successMessage: string; refresh: () => Promise<unknown> } | null = null;
 
 const selectedLine = computed(() => activeLine.value);
 const selectedVoltage = computed(() => activeLine.value ? voltageLevels.value.find((item) => item.id === activeLine.value!.voltageLevelId) ?? null : null);
@@ -132,6 +133,7 @@ async function loadTowers(append = false) {
 }
 
 async function loadAll() {
+  committedRefreshRetry = null;
   error.value = '';
   loading.value = true;
   try {
@@ -140,6 +142,40 @@ async function loadAll() {
     if (activeLine.value) await loadTowers();
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : '基础台账读取失败';
+  } finally {
+    loading.value = false;
+  }
+}
+
+async function refreshAfterCommittedWrite(successMessage: string, refresh: () => Promise<unknown>) {
+  try {
+    await refresh();
+    committedRefreshRetry = null;
+    error.value = '';
+    message.success(successMessage);
+  } catch (cause) {
+    const detail = cause instanceof Error ? cause.message : '读取最新数据失败';
+    committedRefreshRetry = { successMessage, refresh };
+    error.value = `${successMessage}，但最新数据刷新失败：${detail}`;
+    message.warning(`${successMessage}，但最新数据刷新失败，请重新加载`);
+  }
+}
+
+async function retryMasterData() {
+  const pending = committedRefreshRetry;
+  if (!pending) {
+    await loadAll();
+    return;
+  }
+  loading.value = true;
+  try {
+    await pending.refresh();
+    if (committedRefreshRetry === pending) committedRefreshRetry = null;
+    error.value = '';
+    message.success('最新数据已重新加载');
+  } catch (cause) {
+    const detail = cause instanceof Error ? cause.message : '读取最新数据失败';
+    error.value = `${pending.successMessage}，但最新数据刷新失败：${detail}`;
   } finally {
     loading.value = false;
   }
@@ -236,7 +272,8 @@ async function removeObject(kind: DeleteKind, item: { id: string; version: numbe
         }
       }
     } else {
-      await loadConfigChoices();
+      await refreshAfterCommittedWrite('已删除未引用的台账对象', loadConfigChoices);
+      return;
     }
     message.success('已删除未引用的台账对象');
   } catch (cause) { message.error(cause instanceof Error ? cause.message : '删除失败'); }
@@ -358,9 +395,12 @@ async function saveVoltage() {
     if (editingVoltage.value) await apiRequest(`/api/master/voltage-levels/${editingVoltage.value.id}`, jsonRequestInit('PATCH', { ...body, expectedVersion: editingVoltage.value.version }));
     else await apiRequest('/api/master/voltage-levels', jsonRequestInit('POST', body));
     voltageModal.value = false;
-    await loadVoltageLevels();
-    await loadLines();
-    message.success('电压等级已保存');
+    await refreshAfterCommittedWrite('电压等级已保存', async () => {
+      await loadVoltageLevels();
+      error.value = '';
+      await loadLines();
+      if (error.value) throw new Error(error.value);
+    });
   } catch (cause) { message.error(cause instanceof Error ? cause.message : '保存失败'); }
   finally { saving.value = false; }
 }
@@ -380,8 +420,7 @@ async function saveTeam() {
     if (editingTeam.value) await apiRequest(`/api/master/teams/${editingTeam.value.id}`, jsonRequestInit('PATCH', { ...body, expectedVersion: editingTeam.value.version }));
     else await apiRequest('/api/master/teams', jsonRequestInit('POST', body));
     teamModal.value = false;
-    await loadConfigChoices();
-    message.success('班组配置已保存');
+    await refreshAfterCommittedWrite('班组配置已保存', loadConfigChoices);
   } catch (cause) { message.error(cause instanceof Error ? cause.message : '班组保存失败'); }
   finally { saving.value = false; }
 }
@@ -403,8 +442,7 @@ async function saveTowerType() {
     if (editingTowerType.value) await apiRequest(`/api/master/tower-types/${editingTowerType.value.id}`, jsonRequestInit('PATCH', { ...body, expectedVersion: editingTowerType.value.version }));
     else await apiRequest('/api/master/tower-types', jsonRequestInit('POST', body));
     towerTypeModal.value = false;
-    await loadConfigChoices();
-    message.success('杆塔类型已保存');
+    await refreshAfterCommittedWrite('杆塔类型已保存', loadConfigChoices);
   } catch (cause) { message.error(cause instanceof Error ? cause.message : '杆塔类型保存失败'); }
   finally { saving.value = false; }
 }
@@ -479,8 +517,7 @@ async function saveCustomField() {
     if (editingCustomField.value) await apiRequest(`/api/master/custom-fields/${editingCustomField.value.id}`, jsonRequestInit('PATCH', { ...body, expectedVersion: editingCustomField.value.version }));
     else await apiRequest('/api/master/custom-fields', jsonRequestInit('POST', body));
     customFieldModal.value = false;
-    await loadConfigChoices();
-    message.success('自定义字段已保存');
+    await refreshAfterCommittedWrite('自定义字段已保存', loadConfigChoices);
   } catch (cause) { message.error(cause instanceof Error ? cause.message : '自定义字段保存失败'); }
   finally { saving.value = false; }
 }
@@ -599,8 +636,12 @@ async function savePhysicalTower() {
       enabled: physicalTowerForm.value.enabled,
     }));
     physicalTowerModal.value = false;
-    await Promise.all([loadTowers(), loadPhysicalTowerChoices()]);
-    message.success('物理杆塔属性已保存');
+    await refreshAfterCommittedWrite('物理杆塔属性已保存', async () => {
+      await loadPhysicalTowerChoices();
+      error.value = '';
+      await loadTowers();
+      if (error.value) throw new Error(error.value);
+    });
   } catch (cause) { message.error(cause instanceof Error ? cause.message : '物理杆塔保存失败'); }
   finally { saving.value = false; }
 }
@@ -679,8 +720,7 @@ async function saveCustomValues() {
     }));
     customValuesVersion.value = data.version;
     customValuesModal.value = false;
-    await loadPhysicalTowerChoices();
-    message.success('物理杆塔自定义字段已保存');
+    await refreshAfterCommittedWrite('物理杆塔自定义字段已保存', loadPhysicalTowerChoices);
   } catch (cause) { message.error(cause instanceof Error ? cause.message : '自定义字段保存失败'); }
   finally { saving.value = false; }
 }
@@ -974,7 +1014,7 @@ onMounted(loadAll);
 <template>
   <div class="view-stack master-data-view">
     <n-alert v-if="error" type="error" title="读取失败">
-      <div class="error-recovery"><span>{{ error }}</span><n-button data-test="retry-master-data" size="small" @click="loadAll">重新加载</n-button></div>
+      <div class="error-recovery"><span>{{ error }}</span><n-button data-test="retry-master-data" size="small" @click="retryMasterData">重新加载</n-button></div>
     </n-alert>
 
     <section v-if="!selectedLine" class="line-home" data-test="line-home">

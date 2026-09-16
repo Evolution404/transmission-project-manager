@@ -559,6 +559,34 @@ test('committed demand writes distinguish refresh failure from mutation failure'
   assert.match(demands, /最新数据刷新失败，请重新加载/, '需求页刷新失败必须明确说明写入已成功并提供恢复指引');
 });
 
+test('committed master-data writes distinguish refresh failure from mutation failure', () => {
+  const masterData = readFileSync(resolve(root, 'apps/web/src/views/MasterDataView.vue'), 'utf8');
+  assert.match(masterData, /async function refreshAfterCommittedWrite\(/, '基础台账必须统一处理已提交后的刷新失败');
+  for (const message of [
+    '已删除未引用的台账对象',
+    '电压等级已保存',
+    '班组配置已保存',
+    '杆塔类型已保存',
+    '自定义字段已保存',
+    '物理杆塔属性已保存',
+    '物理杆塔自定义字段已保存',
+  ]) {
+    assert.match(masterData, new RegExp(`refreshAfterCommittedWrite\\('${message}'`), `基础台账写入“${message}”必须区分提交失败与刷新失败`);
+  }
+  assert.match(masterData, /committedRefreshRetry/, '基础台账写后刷新失败必须保留原刷新动作供页面内重试');
+  assert.match(masterData, /async function retryMasterData\(/, '基础台账重新加载必须能恢复最近一次已提交写入的刷新');
+  assert.match(masterData, /最新数据刷新失败，请重新加载/, '基础台账刷新失败必须明确说明写入已成功并提供恢复指引');
+});
+
+test('committed system-operation writes distinguish refresh failure from mutation failure', () => {
+  const operations = readFileSync(resolve(root, 'apps/web/src/features/settings/SystemOperationsPanel.vue'), 'utf8');
+  assert.match(operations, /async function refreshAfterCommittedWrite\(/, '通知与备份写入必须统一处理已提交后的刷新失败');
+  for (const message of ['通知地址已保存', '备份任务已创建', '备份任务已推进', '完整性校验完成']) {
+    assert.match(operations, new RegExp(`refreshAfterCommittedWrite\\('${message}'`), `通知与备份写入“${message}”必须区分提交失败与刷新失败`);
+  }
+  assert.match(operations, /最新数据刷新失败，请重新加载/, '通知与备份刷新失败必须明确说明写入已成功并提供恢复指引');
+});
+
 test('local API development rebuilds the local D1 when the single development baseline changes', () => {
   const apiPackage = JSON.parse(readFileSync(resolve(root, 'apps/api/package.json'), 'utf8'));
   assert.equal(apiPackage.scripts.dev, 'node ../../scripts/dev/api-dev.mjs');

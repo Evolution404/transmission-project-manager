@@ -75,6 +75,26 @@ async function load() {
   }
 }
 
+async function refreshAfterCommittedWrite(successMessage: string, refresh: () => Promise<unknown>) {
+  try {
+    await refresh();
+    error.value = '';
+    message.success(successMessage);
+  } catch (cause) {
+    const detail = cause instanceof Error ? cause.message : '读取最新数据失败';
+    error.value = `${successMessage}，但最新数据刷新失败：${detail}`;
+    message.warning(`${successMessage}，但最新数据刷新失败，请重新加载`);
+  }
+}
+
+async function refreshContacts() {
+  contacts.value = (await apiRequest<{ items: NotificationContactSummary[] }>('/api/notification-contacts')).items;
+}
+
+async function refreshBackups() {
+  backups.value = (await apiRequest<{ items: BackupSummary[] }>('/api/backups')).items;
+}
+
 async function createContact() {
   const memberId = selectedMemberId.value;
   const address = contactAddress.value.trim();
@@ -85,9 +105,8 @@ async function createContact() {
     await apiRequest('/api/notification-contacts', jsonRequestInit('POST', {
       memberId, address, verified: true, enabled: true,
     }));
-    contacts.value = (await apiRequest<{ items: NotificationContactSummary[] }>('/api/notification-contacts')).items;
     contactAddress.value = '';
-    message.success('通知地址已保存');
+    await refreshAfterCommittedWrite('通知地址已保存', refreshContacts);
   } catch (cause) {
     message.error(cause instanceof Error ? cause.message : '通知地址保存失败');
   } finally {
@@ -99,8 +118,7 @@ async function createBackup() {
   saving.value = true;
   try {
     await apiRequest('/api/backups', jsonRequestInit('POST', { backupDate: businessToday(), kind: 'daily' }));
-    backups.value = (await apiRequest<{ items: BackupSummary[] }>('/api/backups')).items;
-    message.success('备份任务已创建');
+    await refreshAfterCommittedWrite('备份任务已创建', refreshBackups);
   } catch (cause) {
     message.error(cause instanceof Error ? cause.message : '备份创建失败');
   } finally {
@@ -111,7 +129,7 @@ async function createBackup() {
 async function stepBackup(item: BackupSummary) {
   try {
     await apiRequest(`/api/backups/${item.id}/step`, jsonRequestInit('POST', {}));
-    backups.value = (await apiRequest<{ items: BackupSummary[] }>('/api/backups')).items;
+    await refreshAfterCommittedWrite('备份任务已推进', refreshBackups);
   } catch (cause) {
     message.error(cause instanceof Error ? cause.message : '备份推进失败');
   }
@@ -120,8 +138,7 @@ async function stepBackup(item: BackupSummary) {
 async function verifyBackup(item: BackupSummary) {
   try {
     await apiRequest(`/api/backups/${item.id}/verify`, jsonRequestInit('POST', {}));
-    backups.value = (await apiRequest<{ items: BackupSummary[] }>('/api/backups')).items;
-    message.success('完整性校验完成');
+    await refreshAfterCommittedWrite('完整性校验完成', refreshBackups);
   } catch (cause) {
     message.error(cause instanceof Error ? cause.message : '备份校验失败');
   }

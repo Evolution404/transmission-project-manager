@@ -4,6 +4,7 @@ import { defineComponent, h } from 'vue';
 import type { CurrentUser, MemberSummary, SettingVersion } from '@tpm/shared';
 
 const authMocks = vi.hoisted(() => ({ createDerivedCredential: vi.fn() }));
+const messageMocks = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), warning: vi.fn() }));
 vi.mock('../src/auth/credentials', () => ({
   normalizeUsername: (value: string) => value.trim().toLowerCase(),
   validatePasswordForClient: (value: string) => value.length < 15 ? '密码至少需要 15 个字符' : null,
@@ -116,7 +117,7 @@ vi.mock('naive-ui', async () => {
   return {
     NAlert, NButton, NCard, NDataTable, NDescriptions, NDescriptionsItem, NEmpty,
     NForm, NFormItem, NInput, NModal, NSelect, NSpace, NSpin, NSwitch, NTag,
-    useMessage: () => ({ success: vi.fn(), error: vi.fn() }),
+    useMessage: () => messageMocks,
   };
 });
 
@@ -174,6 +175,9 @@ describe('AdministrationView member management contract', () => {
   beforeEach(() => {
     members = [member()];
     writes.length = 0;
+    messageMocks.success.mockReset();
+    messageMocks.error.mockReset();
+    messageMocks.warning.mockReset();
     authMocks.createDerivedCredential.mockReset().mockResolvedValue({
       salt: 'AAAAAAAAAAAAAAAAAAAAAA',
       credential: 'derived-credential-value-12345678901234567890',
@@ -247,6 +251,98 @@ describe('AdministrationView member management contract', () => {
     await buttonByText(wrapper, '创建今日备份').trigger('click');
     await flushPromises();
     expect(writes.some((item) => item.url === '/api/backups' && item.method === 'POST')).toBe(true);
+  });
+
+  it('does not report backup creation as failed when only the follow-up backup list refresh fails', async () => {
+    let backupReads = 0;
+    let created = false;
+    fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? 'GET';
+      if (url === '/api/settings' && method === 'GET') return ok({ items: settings });
+      if (url === '/api/members' && method === 'GET') return ok({ items: members });
+      if (url === '/api/notification-contacts' && method === 'GET') return ok({ items: [] });
+      if (url === '/api/notification-outbox' && method === 'GET') return ok({ items: [] });
+      if (url === '/api/reserve-categories' && method === 'GET') return ok({ items: [] });
+      if (url === '/api/category-mappings' && method === 'GET') return ok({ items: [] });
+      if (url === '/api/backups' && method === 'GET') {
+        backupReads += 1;
+        if (backupReads === 2) return fail('备份列表刷新暂时失败', 503);
+        return ok({ items: created ? [{
+          id: 'backup-new', backupDate: '2026-09-16', kind: 'daily', status: 'pending', currentTableIndex: 0,
+          cursorRowid: 0, manifestKey: null, chunkCount: 0, error: null, startedAt: null, completedAt: null,
+          verifiedAt: null, createdAt: '', updatedAt: '',
+        }] : [] });
+      }
+      if (url === '/api/backups' && method === 'POST') {
+        created = true;
+        return ok({ id: 'backup-new' }, 201);
+      }
+      return fail(`unexpected request ${method} ${url}`, 500);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const wrapper = mount(AdministrationView, { props: { currentUser: admin } });
+    await flushPromises();
+    await buttonByText(wrapper, '创建今日备份').trigger('click');
+    await flushPromises();
+
+    expect(created).toBe(true);
+    expect(messageMocks.error).not.toHaveBeenCalled();
+    expect(messageMocks.warning).toHaveBeenCalledWith('备份任务已创建，但最新数据刷新失败，请重新加载');
+    expect(wrapper.text()).toContain('备份任务已创建，但最新数据刷新失败：备份列表刷新暂时失败');
+
+    await buttonByText(wrapper, '重新加载').trigger('click');
+    await flushPromises();
+    expect(backupReads).toBe(3);
+    expect(wrapper.text()).toContain('2026-09-16');
+    expect(wrapper.text()).not.toContain('备份列表刷新暂时失败');
+  });
+
+  it('keeps a committed reserve category creation successful when its follow-up reload fails', async () => {
+    let categoryReads = 0;
+    let created = false;
+    fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? 'GET';
+      if (url === '/api/settings' && method === 'GET') return ok({ items: settings });
+      if (url === '/api/members' && method === 'GET') return ok({ items: members });
+      if (url === '/api/notification-contacts' && method === 'GET') return ok({ items: [] });
+      if (url === '/api/notification-outbox' && method === 'GET') return ok({ items: [] });
+      if (url === '/api/backups' && method === 'GET') return ok({ items: [] });
+      if (url === '/api/category-mappings' && method === 'GET') return ok({ items: [] });
+      if (url === '/api/reserve-categories' && method === 'GET') {
+        categoryReads += 1;
+        if (categoryReads === 2) return fail('分类刷新暂时失败', 503);
+        return ok({ items: created ? [{ id: 'cat-new', key: 'bird', label: '防鸟害', enabled: true, version: 1 }] : [] });
+      }
+      if (url === '/api/reserve-categories' && method === 'POST') {
+        created = true;
+        return ok({ id: 'cat-new', key: 'bird', label: '防鸟害', enabled: true, version: 1 }, 201);
+      }
+      return fail(`unexpected request ${method} ${url}`, 500);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const wrapper = mount(AdministrationView, { props: { currentUser: admin } });
+    await flushPromises();
+    await buttonByText(wrapper, '新增大类').trigger('click');
+    await wrapper.get('input[placeholder="分类键，例如 line_protection"]').setValue('bird');
+    await wrapper.get('input[placeholder="显示名称，例如 防断线"]').setValue('防鸟害');
+    await buttonByText(wrapper, '保存').trigger('click');
+    await flushPromises();
+
+    expect(created).toBe(true);
+    expect(messageMocks.error).not.toHaveBeenCalled();
+    expect(messageMocks.success).toHaveBeenCalledWith('储备大类已新增');
+    expect(wrapper.text()).toContain('分类刷新暂时失败');
+    expect(wrapper.text()).toContain('重新加载');
+
+    await buttonByText(wrapper, '重新加载').trigger('click');
+    await flushPromises();
+    expect(categoryReads).toBe(3);
+    expect(wrapper.text()).toContain('防鸟害');
+    expect(wrapper.text()).not.toContain('分类刷新暂时失败');
   });
 
   it('does not fetch or expose member administration for a non-admin role', async () => {
