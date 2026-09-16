@@ -15,6 +15,7 @@ import type {
   ReserveCategorySummary,
 } from '@tpm/shared';
 import { hasScope, requireRoles, type AppEnv } from './auth.ts';
+import { decodeJsonCursor, encodeJsonCursor } from './http/cursor.ts';
 import { replayIdempotentResponse, requestHash, requireIdempotencyKey } from './http/idempotent-mutation.ts';
 import { apiError } from './http/request-values.ts';
 import { SqlProjectQueryRepository } from './repositories/sql-project-query-repository.ts';
@@ -60,32 +61,26 @@ function safePositiveInteger(value: unknown): number | null {
 }
 
 function parseCursor(value: string | undefined): { createdAt: string; id: string } | null {
-  if (!value) return null;
-  try {
-    const decoded = JSON.parse(atob(value.replace(/-/g, '+').replace(/_/g, '/'))) as { createdAt?: unknown; id?: unknown };
-    if (typeof decoded.createdAt !== 'string' || typeof decoded.id !== 'string') return null;
-    return { createdAt: decoded.createdAt, id: decoded.id };
-  } catch {
-    return null;
-  }
+  const decoded = decodeJsonCursor(value);
+  if (!decoded || typeof decoded !== 'object' || Array.isArray(decoded)) return null;
+  const record = decoded as { createdAt?: unknown; id?: unknown };
+  if (typeof record.createdAt !== 'string' || typeof record.id !== 'string') return null;
+  return { createdAt: record.createdAt, id: record.id };
 }
 
 function makeCursor(createdAt: string, id: string) {
-  return btoa(JSON.stringify({ createdAt, id })).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  return encodeJsonCursor({ createdAt, id });
 }
 
 function parseCandidateCursor(value: string | undefined): string | null {
-  if (!value) return null;
-  try {
-    const decoded = JSON.parse(atob(value.replace(/-/g, '+').replace(/_/g, '/'))) as { id?: unknown };
-    return typeof decoded.id === 'string' && decoded.id ? decoded.id : null;
-  } catch {
-    return null;
-  }
+  const decoded = decodeJsonCursor(value);
+  if (!decoded || typeof decoded !== 'object' || Array.isArray(decoded)) return null;
+  const id = (decoded as { id?: unknown }).id;
+  return typeof id === 'string' && id ? id : null;
 }
 
 function makeCandidateCursor(id: string) {
-  return btoa(JSON.stringify({ id })).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  return encodeJsonCursor({ id });
 }
 
 function canAccessProject(c: Context<AppEnv>, projectId: string) {

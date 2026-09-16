@@ -802,6 +802,26 @@ test('shared public contracts stay split by business domain behind a small barre
   assert.match(baseTsconfig, /"allowImportingTsExtensions"\s*:\s*true/, 'TypeScript must allow explicit .ts ESM specifiers used by the Node runtime');
 });
 
+test('API object pagination cursors share one Base64URL JSON codec', () => {
+  const cursorCodec = resolve(root, 'apps/api/src/http/cursor.ts');
+  assert.equal(existsSync(cursorCodec), true, 'missing shared API cursor codec');
+  const codecSource = readFileSync(cursorCodec, 'utf8');
+  assert.match(codecSource, /export function encodeJsonCursor/);
+  assert.match(codecSource, /export function decodeJsonCursor/);
+
+  for (const relative of [
+    'apps/api/src/demand-import.ts',
+    'apps/api/src/finance.ts',
+    'apps/api/src/project-execution.ts',
+    'apps/api/src/project-execution-query.ts',
+    'apps/api/src/reserve-planning.ts',
+  ]) {
+    const source = readFileSync(resolve(root, relative), 'utf8');
+    assert.match(source, /\.\/http\/cursor\.ts/, `${relative} must use the shared cursor codec`);
+    assert.doesNotMatch(source, /btoa\(JSON\.stringify|JSON\.parse\(atob/, `${relative} must not reimplement cursor Base64URL JSON`);
+  }
+});
+
 test('Node runtime gate exercises the real app, SQLite, Filesystem, and the single schema baseline', () => {
   const nodeConfig = readFileSync(resolve(root, 'apps/api/tsconfig.node-runtime.json'), 'utf8');
   assert.match(nodeConfig, /"src\/app\.ts"/, 'Node typecheck must include the real HTTP app');

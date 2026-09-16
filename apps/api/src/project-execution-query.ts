@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import type { AppEnv } from './auth.ts';
+import { decodeJsonCursor, encodeJsonCursor } from './http/cursor.ts';
 import { apiError } from './http/request-values.ts';
 import { executionLifecycleState, hasExecutionProjectAccess } from './project-execution-shared.ts';
 import type { TaskQueueStatus } from '@tpm/shared';
@@ -9,18 +10,15 @@ import { resolvePersistence } from './runtime/persistence.ts';
 export const projectExecutionQueryApp = new Hono<AppEnv>();
 
 function parseTaskCursor(value: string | undefined): { plannedKey: string; createdAt: string; id: string } | null {
-  if (!value) return null;
-  try {
-    const decoded = JSON.parse(atob(value.replace(/-/g, '+').replace(/_/g, '/'))) as Record<string, unknown>;
-    if (typeof decoded.plannedKey !== 'string' || typeof decoded.createdAt !== 'string' || typeof decoded.id !== 'string') return null;
-    return { plannedKey: decoded.plannedKey, createdAt: decoded.createdAt, id: decoded.id };
-  } catch {
-    return null;
-  }
+  const decoded = decodeJsonCursor(value);
+  if (!decoded || typeof decoded !== 'object' || Array.isArray(decoded)) return null;
+  const record = decoded as Record<string, unknown>;
+  if (typeof record.plannedKey !== 'string' || typeof record.createdAt !== 'string' || typeof record.id !== 'string') return null;
+  return { plannedKey: record.plannedKey, createdAt: record.createdAt, id: record.id };
 }
 
 function taskCursor(value: { plannedKey: string; createdAt: string; id: string }) {
-  return btoa(JSON.stringify(value)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  return encodeJsonCursor(value);
 }
 
 projectExecutionQueryApp.get('/tasks', async (c) => {

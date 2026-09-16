@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { requireRoles, type AppEnv } from './auth.ts';
+import { decodeJsonCursor, encodeJsonCursor } from './http/cursor.ts';
 import { replayIdempotentResponse, requestHash, requireIdempotencyKey } from './http/idempotent-mutation.ts';
 import { apiError } from './http/request-values.ts';
 import {
@@ -86,17 +87,16 @@ function parseDemandIds(value: unknown) {
 }
 
 function encodeReserveProjectCursor(cursor: ReserveProjectListCursor) {
-  return btoa(JSON.stringify(cursor)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  return encodeJsonCursor(cursor);
 }
 
 function parseReserveProjectCursor(value: string | undefined): ReserveProjectListCursor | null {
-  if (!value) return null;
-  try {
-    const decoded = JSON.parse(atob(value.replace(/-/g, '+').replace(/_/g, '/'))) as Record<string, unknown>;
-    return typeof decoded.createdAt === 'string' && typeof decoded.id === 'string'
-      ? { createdAt: decoded.createdAt, id: decoded.id }
-      : null;
-  } catch { return null; }
+  const decoded = decodeJsonCursor(value);
+  if (!decoded || typeof decoded !== 'object' || Array.isArray(decoded)) return null;
+  const record = decoded as Record<string, unknown>;
+  return typeof record.createdAt === 'string' && typeof record.id === 'string'
+    ? { createdAt: record.createdAt, id: record.id }
+    : null;
 }
 
 export const projectExecutionApp = new Hono<AppEnv>();
