@@ -758,6 +758,28 @@ test('engineering audit uses tracked source and the official npm advisory servic
   );
 });
 
+test('shared public contracts stay split by business domain behind a small barrel', () => {
+  const sharedDir = resolve(root, 'packages/shared/src');
+  const expectedModules = [
+    'api.ts',
+    'account.ts',
+    'imports.ts',
+    'master-data.ts',
+    'project-execution.ts',
+    'reserve-planning.ts',
+    'finance.ts',
+    'analysis.ts',
+    'legacy-lifecycle.ts',
+  ];
+  for (const file of expectedModules) {
+    assert.equal(existsSync(resolve(sharedDir, file)), true, `shared contract module missing: ${file}`);
+  }
+  const indexSource = readFileSync(resolve(sharedDir, 'index.ts'), 'utf8');
+  const meaningfulLines = indexSource.split('\n').filter((line) => line.trim() && !line.trim().startsWith('//'));
+  assert.ok(meaningfulLines.length <= expectedModules.length + 2, 'shared index.ts must remain a small re-export barrel');
+  assert.doesNotMatch(indexSource, /\binterface\b|\bconst\s+MEMBER_ROLES\b|function\s+normalizeTowerNo/, 'shared declarations must live in domain modules, not the barrel');
+});
+
 test('Node runtime gate exercises the real app, SQLite, Filesystem, and the single schema baseline', () => {
   const nodeConfig = readFileSync(resolve(root, 'apps/api/tsconfig.node-runtime.json'), 'utf8');
   assert.match(nodeConfig, /"src\/app\.ts"/, 'Node typecheck must include the real HTTP app');
