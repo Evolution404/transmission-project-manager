@@ -140,11 +140,36 @@ test('production promote is the single manual production mutation entry point', 
   assert.match(source, /secrets\.CLOUDFLARE_API_TOKEN/);
   assert.match(source, /secrets\.AUTH_CREDENTIAL_PEPPER/);
   assert.match(source, /secrets\.NOTION_API_TOKEN/);
-  assert.match(source, /npm run check/);
+  assert.match(source, /verify-release-ci\.mjs/);
+  assert.doesNotMatch(source, /npm run check/);
   assert.match(source, /scripts\/production\/promote\.sh/);
   assert.match(source, /git rev-parse origin\/main/);
   assert.doesNotMatch(source, /PRODUCTION_DEPLOY_ENABLED|PRODUCTION_CONFIG_JSON|vars\./);
   assert.doesNotMatch(source, /\n  (push|pull_request|schedule|workflow_run):/);
+});
+
+test('production preflight and promote reuse exact main CI instead of repeating the full test suite', () => {
+  for (const file of ['production-preflight.yml', 'production-promote.yml']) {
+    const source = readFileSync(new URL(`../.github/workflows/${file}`, import.meta.url), 'utf8');
+    assert.match(source, /actions:\s*read/);
+    assert.match(source, /verify-release-ci\.mjs/);
+    assert.match(source, /GITHUB_TOKEN:\s*\$\{\{ github\.token \}\}/);
+    assert.doesNotMatch(source, /npm run check/);
+  }
+  const ci = readFileSync(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8');
+  assert.match(ci, /^\s{2}audit:\s*$/m);
+  assert.match(ci, /npm run engineering:audit/);
+  assert.match(ci, /npm run security:audit/);
+});
+
+test('production promote performs semantic public smoke after deployment', () => {
+  const source = readFileSync(new URL('../scripts/production/promote.sh', import.meta.url), 'utf8');
+  assert.match(source, /public-smoke\.mjs/);
+  assert.match(source, /Worker version/);
+  assert.match(source, /Public smoke: PASS/);
+  const rollbackTrap = source.indexOf('trap rollback_release ERR');
+  const noRebuildDeploy = source.indexOf(`if [[ "$REBUILD_REQUIRED" != 'true' ]]`);
+  assert.ok(rollbackTrap >= 0 && noRebuildDeploy >= 0 && rollbackTrap < noRebuildDeploy, '普通无迁移发布也必须在部署前安装回退 trap');
 });
 
 test('production promotion rebuilds data in place only after a dry data-transfer plan and has rollback', () => {
