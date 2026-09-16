@@ -2,7 +2,7 @@
 
 面向 20 人以内团队的项目管理应用，计划采用 Cloudflare Workers、D1、R2，免费额度内运行，支持电脑和手机访问。
 
-**当前状态：P0–P6、最终业务模型和“电压等级 → 线路 → 杆塔 → 需求定位”基础台账对象化均已完成；当前正在 `refactor/backend-runtime-portability-20260913` 上进行后端可移植化重构，Cloudflare Free 仍是部署基线，同时逐步建立 Node + SQLite + Filesystem 第二运行时。P7 真实业务数据与正式环境验收仍待完成；本轮未升级远端 D1、未合并 `main`、未正式发布。**
+**当前状态：P0–P6、最终业务模型、基础台账对象化和后端可移植化均已完成；Cloudflare Workers + D1 是当前生产基线，Node + SQLite + Filesystem 第二运行时保持可用。全站 UI 重构正在施工分支收口，P7 真实业务、性能、网络、恢复和运维移交继续按生产验收矩阵推进。**
 当前业务认证完全由系统自身维护：用户使用 `username + 密码` 登录，浏览器 Web Worker 负责 Argon2id 派生，服务端只保存带运行时 pepper 的 HMAC verifier，并签发 7 天 HttpOnly 会话。邮箱不参与账号体系。需求、储备、资金、实施结算、提醒与分片备份均已有本地实现。
 
 ## 交给其他 AI 的入口
@@ -15,11 +15,11 @@
 
 ## 本地运行
 
-建议 Node.js 24、npm 11（`.nvmrc` 已固定主版本）。不需要 Cloudflare 账号或令牌即可运行本地开发环境。`npm run dev` 会先应用本地 D1 迁移；空库首次打开时通过一次性 bootstrap 创建首个管理员，不再注入合成账号 seed。
+建议 Node.js 24、npm 11（`.nvmrc` 已固定主版本）。仓库根目录 `Makefile` 是常用工程操作的统一入口；`make help` 可查看全部命令。不需要 Cloudflare 账号或令牌即可运行本地开发环境。`make dev` 会复用正式 `npm run dev` 入口并检查/重建本地开发 D1 基线；空库首次打开时通过一次性 bootstrap 创建首个管理员，不再注入合成账号 seed。
 
 ```sh
-npm ci
-npm run dev
+make install
+make dev
 ```
 
 - 前端：<http://127.0.0.1:5173>
@@ -30,12 +30,14 @@ npm run dev
 ## 检查与构建
 
 ```sh
-npm run check
+make check      # TypeScript + build + Node/Web 全量门禁
+make test       # make check + Headless Chromium UI E2E
+make test-ui    # 仅运行真实无头 UI 验收
 ```
 
 该命令是统一质量门禁：运行生产代码和测试代码 TypeScript 检查、前端构建、Worker **dry-run** 打包、当前开发迁移基线检查、真实本地 workerd + D1 集成测试、production 认证、会话/权限/并发/原子性，以及 Vue 行为合同测试。Node 测试均使用独立临时 D1，不污染日常本地库。详细规则见 `docs/TESTING.md`。
 
-`npm run build` 不会发布网站。`npm run production:preflight` 运行离线配置/验收工具守卫。普通 push 只测试；手工 production preflight 只校验非 Secret 配置并 dry-run，实际部署模板默认不启用，当前没有生产凭据。
+`make build`/`npm run build` 都不会发布网站。生产发布仍只能走受保护的 GitHub `Production promote` workflow；`make production` 只是安全的一键入口，会先要求当前位于 clean、与 `origin/main` 完全同步的 `main`，再触发并等待该 workflow，**不会直接执行 `wrangler deploy`**。只读预检与资源清单分别使用 `make production-preflight`、`make production-inventory`。
 
 ## 目录
 

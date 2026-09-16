@@ -21,6 +21,11 @@
 
 ```sh
 npm run check
+# 等价工程入口
+make check
+
+# 包含 Headless Chromium UI E2E 的完整开发验收
+make test
 ```
 
 等价组成：
