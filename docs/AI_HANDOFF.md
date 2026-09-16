@@ -84,7 +84,7 @@
 - 当前定向结果：MasterData / Demands / ProjectEditors / ProjectDetail / TaskDetail / Administration 相关 **49/49 PASS**，Web typecheck 与 `git diff --check` PASS；完整 `npm run check` 为 Node **298/298 PASS**、Web **136/136 PASS（23 文件）**，Web/API/shared TypeScript、Web production build、Worker dry-run 和 Node + SQLite + Filesystem 第二运行时均 PASS。
 - 分析页图表随后完成暗色模式收口：ECharts 轴线、标签、网格、tooltip 和柱色全部读取全局 `--ui-*` 设计 token；切换“进度与缺口 / 储备剩余”分段或系统明暗主题时会重新渲染并 resize，避免隐藏分段初始化导致尺寸异常。该改动测试先红后绿，Analysis 定向 **4/4 PASS**；完整 `npm run check` 为 Node **298/298 PASS**、Web **137/137 PASS（23 文件）**，TypeScript、Web production build、Worker dry-run 与第二运行时均 PASS。
 
-真实浏览器最终验收仍未完成：项目未引入 Playwright/Puppeteer；本机 Chrome headless 能生成首张未登录截图，但进程会被 Google Updater/Crashpad 拖住，批量桌面/手机/明暗截图流程不可靠。未登录状态不会伪造认证 session；最终验收需要使用正常登录会话补齐真实浏览器截图与交互检查。
+无头浏览器验收基础设施已经补齐：仓库已引入 Playwright，并新增 `npm run test:ui:headless`。该套件每次使用临时目录创建隔离 D1 / R2 本地状态并启动独立 Wrangler Worker，不复用开发数据库、不读取真实浏览器 Cookie，也不接触真实账号。认证链路完全通过页面完成：先在初始化页输入测试管理员姓名、测试账号、测试密码和测试初始化令牌创建首管理员；随后开启新的无 Cookie 浏览器会话，再从登录页输入同一测试账号密码完成真实登录，覆盖浏览器 Argon2id 派生、服务端 HMAC verifier 与 HttpOnly session。当前 Headless Chromium **6/6 PASS**：首次初始化、重新登录、desktop-light、desktop-dark、mobile-light、mobile-dark；四种视口/主题均遍历工作台、需求、项目、任务、资金、分析、基础台账、设置 8 个主路由，并校验横向溢出、桌面/手机导航形态、系统明暗 token 以及桌面侧栏/手机“更多→设置”真实交互。最新完整 `npm run check` 同时为 Node **311/311 PASS**、Web **165/165 PASS（23 文件）**。
 
 ## 最近收口：导航逻辑与可读性审计
 
@@ -110,9 +110,9 @@
 
 ## 下一步施工顺序
 
-1. 继续审计剩余“mutation 成功 → reload 失败”路径，重点是 `MasterDataView.vue`、`ReserveClassificationPanel.vue` 等；只修真正会把已生效写入误报失败的路径，`ProjectDetailView` / `TaskDetailView` 这类 `load()` 已自行吞刷新异常并显示页面错误的路径不要机械重构。
-2. 使用正常认证流程补齐真实浏览器桌面/手机、浅色/暗色截图和关键交互验收；不得通过伪造会话绕过认证。自动测试不能替代最终真实浏览器验收。
-3. 对真实浏览器验收发现的问题继续小批修复、定向回归；若没有新问题则停止继续机械改样式。最终再次运行完整 `npm run check` 后再标记 UI 重构完成。
+1. mutation / reload 语义审计已完成当前高风险路径：`MasterDataView.vue` 与 `SystemOperationsPanel.vue` 已修复真实误报；`ReserveClassificationPanel.vue` 已用行为测试确认不会把刷新失败误报成 mutation 失败；`ProjectDetailView` / `TaskDetailView` 等已正确处理路径不机械重构。
+2. 后续 UI 改动统一同时跑相关 Vitest 与 `npm run test:ui:headless`；无头 E2E 必须继续使用隔离测试数据和页面真实认证，不得注入真实 Cookie、真实密码或复用用户真实浏览器窗口。
+3. 继续做 UI/交互审计时只修浏览器验收能复现的真实问题；若无新问题则停止机械改样式。提交前保持 `npm run check`、`npm run test:ui:headless`、`git diff --check` 全绿。未经用户授权仍不得合并 `main` 或部署生产。
 
 ## 必须保持的业务/工程边界
 

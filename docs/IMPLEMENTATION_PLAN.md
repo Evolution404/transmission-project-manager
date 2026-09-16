@@ -130,7 +130,7 @@ M6 基础台账定向结果：基础台账 API **25/25 PASS**；相关 Web **30/
 - 定向测试、`git diff --check`、相关 typecheck 通过后，再跑完整 `npm run check` 并独立提交。
 - 所有会先提交业务事实、再刷新页面投影的写操作，都必须区分“mutation 失败”和“mutation 已成功但刷新失败”；后者不得诱导用户重复提交。需求、资金、分析已纳入静态门禁，剩余页面按实际风险继续审计，不做机械式重构。
 
-真实浏览器最终验收仍是未完成项。当前项目未引入 Playwright/Puppeteer；本机 Chrome headless 在该环境会被 Updater/Crashpad 拖住，不能稳定批量生成桌面/手机/明暗截图。不得通过伪造认证会话规避登录；最终应使用正常认证会话完成关键页面真实浏览器验收后再宣布 UI 重构完成。
+无头浏览器验收已改为仓库内可重复执行的 Playwright E2E，而不再依赖用户真实 Chrome。新增 `npm run test:ui:headless`：先构建 Web，然后在临时目录初始化独立本地 D1/R2 状态并启动独立 Wrangler Worker；测试凭据只存在于 E2E 代码与临时进程中，不读取 `.env` 中真实账号密码、不复制真实 Cookie。认证必须走页面本身：首次初始化输入测试账号/密码/初始化令牌，新浏览器会话再次输入账号密码登录。当前 Headless Chromium **6/6 PASS**，覆盖 desktop-light、desktop-dark、mobile-light、mobile-dark，并在登录后遍历工作台、需求、项目、任务、资金、分析、基础台账、设置 8 个主路由，检查横向溢出、桌面/手机导航、明暗主题 token 和关键导航交互。同期完整 `npm run check` 为 Node **311/311 PASS**、Web **165/165 PASS（23 文件）**。后续 UI 改动应同时维持该 E2E 与现有单元/集成门禁全绿。
 
 远端证据：PR #12 与后续 `main` CI 均 PASS；生产重建 run `34952233283`、正式 release run `34952547151`、旧 D1 删除 run `34953255900` 均 PASS。当前 production schema 已为当前唯一 `0001_initial_schema.sql` 基线。
 

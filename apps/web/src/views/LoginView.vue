@@ -146,7 +146,7 @@ onMounted(loadStatus);
 
           <n-form v-if="initialized !== null" label-placement="top" @submit.prevent="initialized === false ? bootstrap() : login()">
             <n-form-item v-if="initialized === false" label="管理员姓名">
-              <n-input v-model:value="bootstrapDisplayName" autocomplete="name" />
+              <n-input v-model:value="bootstrapDisplayName" data-test="bootstrap-display-name" autocomplete="name" />
             </n-form-item>
             <n-form-item label="账号">
               <n-input

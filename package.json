@@ -17,6 +17,7 @@
     "build": "npm run build:web && npm run build:worker",
     "test:node": "node --test --test-concurrency=5 tests/*.test.mjs",
     "test:web": "npm run test --workspace @tpm/web",
+    "test:ui:headless": "npm run build:web && playwright test --config playwright.config.ts",
     "test": "npm run test:node && npm run test:web",
     "check": "npm run typecheck && npm run build && npm test",
     "production:check": "node scripts/production/cli.mjs",
@@ -27,6 +28,7 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "5.20260911.1",
+    "@playwright/test": "1.63.0",
     "@types/node": "^24.0.0",
     "concurrently": "10.0.5",
     "typescript": "5.9.3"
