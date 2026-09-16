@@ -100,17 +100,30 @@ async function assertVisibleTextFloor(page: Page) {
   expect(offenders, `${page.url()} 发现低于 12px 的可见业务文字：${offenders.join(' | ')}`).toEqual([]);
 }
 
-async function assertOverlayWithinViewport(page: Page, overlay: Locator) {
+async function assertOverlayWithinViewport(page: Page, overlay: Locator, label: string) {
   await expect(overlay).toBeVisible();
-  await expect.poll(async () => {
-    const box = await overlay.boundingBox();
-    const viewport = page.viewportSize();
-    if (!box || !viewport) return false;
-    return box.x >= -1
-      && box.y >= -1
-      && box.x + box.width <= viewport.width + 1
-      && box.y + box.height <= viewport.height + 1;
-  }).toBe(true);
+  let latest: { x: number; y: number; width: number; height: number; viewportWidth: number; viewportHeight: number } | null = null;
+  try {
+    await expect.poll(async () => {
+      const box = await overlay.boundingBox();
+      const viewport = page.viewportSize();
+      if (!box || !viewport) return false;
+      latest = {
+        x: box.x,
+        y: box.y,
+        width: box.width,
+        height: box.height,
+        viewportWidth: viewport.width,
+        viewportHeight: viewport.height,
+      };
+      return box.x >= -1
+        && box.y >= -1
+        && box.x + box.width <= viewport.width + 1
+        && box.y + box.height <= viewport.height + 1;
+    }).toBe(true);
+  } catch (cause) {
+    throw new Error(`${label} 未完全进入视口；最终几何=${JSON.stringify(latest)}`, { cause });
+  }
 }
 
 async function assertMobileNavigationTargets(page: Page) {
@@ -152,15 +165,15 @@ async function validateKeyOverlays(browser: Browser, mobile: boolean) {
 
     await page.goto(`${baseUrl}/demands`);
     await page.locator('[data-test="open-manual-demand"]').click();
-    await assertOverlayWithinViewport(page, page.getByRole('dialog').filter({ hasText: '新增需求' }));
+    await assertOverlayWithinViewport(page, page.getByRole('dialog').filter({ hasText: '新增需求' }), '新增需求');
 
     await page.goto(`${baseUrl}/projects`);
     await page.locator('[data-test="open-create-project"]').click();
-    await assertOverlayWithinViewport(page, page.getByRole('dialog').filter({ hasText: '新建项目' }));
+    await assertOverlayWithinViewport(page, page.getByRole('dialog').filter({ hasText: '新建项目' }), '新建项目');
 
     await page.goto(`${baseUrl}/administration`);
     await page.getByRole('button', { name: '新增成员' }).click();
-    await assertOverlayWithinViewport(page, page.getByRole('dialog').filter({ hasText: '新增成员' }));
+    await assertOverlayWithinViewport(page, page.getByRole('dialog').filter({ hasText: '新增成员' }), '新增成员');
   } finally {
     await context.close();
   }
