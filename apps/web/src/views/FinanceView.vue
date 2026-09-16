@@ -68,6 +68,8 @@ const saving = ref(false);
 const showFrameworkForm = ref(false);
 const showAgreementForm = ref(false);
 const showEntryForm = ref(false);
+let frameworkContextSequence = 0;
+let budgetProjectSequence = 0;
 const requestedTab = typeof route.query.tab === 'string' ? route.query.tab : '';
 const requestedFrameworkId = typeof route.query.framework === 'string' ? route.query.framework : '';
 const activeTab = ref<FinanceWorkspaceTab>(
@@ -152,12 +154,13 @@ async function loadBase() {
 }
 
 async function loadFrameworkContext() {
+  const sequence = ++frameworkContextSequence;
   const frameworkId = selectedFrameworkId.value;
+  agreements.value = [];
+  summary.value = null;
+  entries.value = [];
+  entryCursor.value = null;
   if (!frameworkId) {
-    agreements.value = [];
-    summary.value = null;
-    entries.value = [];
-    entryCursor.value = null;
     return;
   }
   const [agreementData, summaryData, entryData] = await Promise.all([
@@ -165,6 +168,7 @@ async function loadFrameworkContext() {
     apiRequest<FrameworkFinanceSummary>(`/api/finance/summary?frameworkId=${encodeURIComponent(frameworkId)}&asOf=${businessToday()}`),
     apiRequest<FinancialEntryPage>(`/api/financial-entries?frameworkId=${encodeURIComponent(frameworkId)}&limit=50`),
   ]);
+  if (sequence !== frameworkContextSequence || selectedFrameworkId.value !== frameworkId) return;
   agreements.value = agreementData.items;
   summary.value = summaryData;
   entries.value = entryData.items;
@@ -174,9 +178,11 @@ async function loadFrameworkContext() {
 async function loadMoreEntries() {
   const frameworkId = selectedFrameworkId.value;
   const cursor = entryCursor.value;
+  const contextSequence = frameworkContextSequence;
   if (!frameworkId || !cursor) return;
   try {
     const data = await apiRequest<FinancialEntryPage>(`/api/financial-entries?frameworkId=${encodeURIComponent(frameworkId)}&limit=50&cursor=${encodeURIComponent(cursor)}`);
+    if (contextSequence !== frameworkContextSequence || selectedFrameworkId.value !== frameworkId || entryCursor.value !== cursor) return;
     const known = new Set(entries.value.map((item) => item.id));
     entries.value = [...entries.value, ...data.items.filter((item) => !known.has(item.id))];
     entryCursor.value = data.nextCursor;
@@ -186,6 +192,7 @@ async function loadMoreEntries() {
 }
 
 function clearBudgetProjectContext() {
+  budgetProjectSequence += 1;
   selectedBudgetProjectId.value = null;
   budgets.value = [];
   budgetTotalYuan.value = '';
@@ -195,6 +202,7 @@ function clearBudgetProjectContext() {
 
 async function loadBudgetProject(projectId: string | null) {
   clearBudgetProjectContext();
+  const sequence = budgetProjectSequence;
   if (!projectId) return;
   selectedBudgetProjectId.value = projectId;
   const project = projects.value.find((item) => item.id === projectId);
@@ -202,7 +210,9 @@ async function loadBudgetProject(projectId: string | null) {
     selectedFrameworkId.value = project.frameworkId;
     await loadFrameworkContext();
   }
+  if (sequence !== budgetProjectSequence || selectedBudgetProjectId.value !== projectId) return;
   const data = await apiRequest<{ items: ProjectBudgetSummary[] }>(`/api/budgets?projectId=${encodeURIComponent(projectId)}`);
+  if (sequence !== budgetProjectSequence || selectedBudgetProjectId.value !== projectId) return;
   budgets.value = data.items;
   const budget = data.items[0];
   if (budget) {

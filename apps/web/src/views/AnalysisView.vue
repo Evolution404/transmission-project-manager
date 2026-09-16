@@ -80,6 +80,8 @@ let progressChart: EChartsType | null = null;
 let reserveChart: EChartsType | null = null;
 let disposed = false;
 let themeMedia: MediaQueryList | null = null;
+let frameworkContextSequence = 0;
+let milestoneRequestSequence = 0;
 
 function businessToday() {
   const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
@@ -129,17 +131,28 @@ const alertColumns = [
   { title: '级别', key: 'severity' }, { title: '状态', key: 'state' }, { title: '内容', key: 'message' }, { title: '周期', key: 'periodKey' },
 ];
 
+async function loadMilestones(requestedAsOf = asOfDate.value) {
+  const sequence = ++milestoneRequestSequence;
+  const data = await apiRequest<{ items: MilestoneDueSummary[] }>(`/api/milestones/due?asOf=${requestedAsOf}`);
+  if (sequence !== milestoneRequestSequence || asOfDate.value !== requestedAsOf) return;
+  milestones.value = data.items;
+}
+
 async function loadFrameworkContext() {
+  const sequence = ++frameworkContextSequence;
   const frameworkId = selectedFrameworkId.value;
+  const requestedAsOf = asOfDate.value;
+  const requestedReportMonth = reportMonth.value;
   progress.value = null; gaps.value = []; plans.value = []; reports.value = [];
   if (!frameworkId) { await renderCharts(); return; }
-  const year = Number(selectedFramework.value?.startDate.slice(0, 4) ?? asOfDate.value.slice(0, 4));
+  const year = Number(selectedFramework.value?.startDate.slice(0, 4) ?? requestedAsOf.slice(0, 4));
   const [progressData, gapData, planData, reportData] = await Promise.all([
-    apiRequest<FrameworkProgressSummary>(`/api/analysis/frameworks/${encodeURIComponent(frameworkId)}/progress?asOf=${asOfDate.value}`),
-    apiRequest<{ items: ProjectGapSummary[] }>(`/api/analysis/projects/gaps?frameworkId=${encodeURIComponent(frameworkId)}&asOf=${asOfDate.value}`),
+    apiRequest<FrameworkProgressSummary>(`/api/analysis/frameworks/${encodeURIComponent(frameworkId)}/progress?asOf=${requestedAsOf}`),
+    apiRequest<{ items: ProjectGapSummary[] }>(`/api/analysis/projects/gaps?frameworkId=${encodeURIComponent(frameworkId)}&asOf=${requestedAsOf}`),
     apiRequest<{ items: MonthlyPlanSummary[] }>(`/api/analysis/plans?frameworkId=${encodeURIComponent(frameworkId)}&year=${year}`),
-    apiRequest<{ items: MonthlyReportSummary[] }>(`/api/reports/monthly?frameworkId=${encodeURIComponent(frameworkId)}&businessMonth=${reportMonth.value}`),
+    apiRequest<{ items: MonthlyReportSummary[] }>(`/api/reports/monthly?frameworkId=${encodeURIComponent(frameworkId)}&businessMonth=${requestedReportMonth}`),
   ]);
+  if (sequence !== frameworkContextSequence || selectedFrameworkId.value !== frameworkId) return;
   progress.value = progressData;
   gaps.value = gapData.items;
   plans.value = planData.items;
@@ -149,6 +162,7 @@ async function loadFrameworkContext() {
 
 async function loadCommon() {
   const basePromises: Promise<unknown>[] = [];
+  const requestedAsOf = asOfDate.value;
   const fwPromise = apiRequest<{ items: FrameworkSummary[] }>('/api/frameworks').then((data) => {
     frameworks.value = data.items;
     if (!selectedFrameworkId.value) {
@@ -160,7 +174,7 @@ async function loadCommon() {
   const projectPromise = apiRequest<{ items: FinanceProjectSummary[] }>('/api/finance/projects').then((data) => { projects.value = data.items; });
   const reservePromise = apiRequest<ReserveRemainingSummary>('/api/analysis/reserve-remaining').then((data) => { reserve.value = data; });
   const rulePromise = apiRequest<AnalysisRuleSummary>('/api/analysis/rules').then((data) => { rule.value = data; ruleMode.value = data.mode; ruleThresholdPercent.value = (data.thresholdBasisPoints / 100).toFixed(2).replace(/\.00$/, ''); });
-  const milestonePromise = apiRequest<{ items: MilestoneDueSummary[] }>(`/api/milestones/due?asOf=${asOfDate.value}`).then((data) => { milestones.value = data.items; });
+  const milestonePromise = loadMilestones(requestedAsOf);
   const alertPromise = apiRequest<{ items: AlertEventSummary[] }>('/api/alerts').then((data) => { alerts.value = data.items; });
   basePromises.push(fwPromise, projectPromise, reservePromise, rulePromise, milestonePromise, alertPromise);
   await Promise.all(basePromises);
@@ -187,9 +201,9 @@ async function selectFramework(value: string | null) {
   await loadFrameworkContext();
 }
 async function changeAsOf() {
-  reportMonth.value = asOfDate.value.slice(0, 7);
-  const [milestoneData] = await Promise.all([apiRequest<{ items: MilestoneDueSummary[] }>(`/api/milestones/due?asOf=${asOfDate.value}`), loadFrameworkContext()]);
-  milestones.value = milestoneData.items;
+  const requestedAsOf = asOfDate.value;
+  reportMonth.value = requestedAsOf.slice(0, 7);
+  await Promise.all([loadMilestones(requestedAsOf), loadFrameworkContext()]);
 }
 
 async function savePlan() {
@@ -231,7 +245,7 @@ async function createMilestone() {
   try {
     await apiRequest('/api/milestones', jsonRequestInit('POST', { businessYear: analysisYear.value, title, owner: milestoneForm.value.owner.trim() || null, projectId: null, datePrecision: precision, month, specificDate: specificDate || null, leadDays: [7, 3, 0] }));
     milestoneForm.value = { title: '', owner: '', datePrecision: 'unknown', month: null, specificDate: '' };
-    milestones.value = (await apiRequest<{ items: MilestoneDueSummary[] }>(`/api/milestones/due?asOf=${asOfDate.value}`)).items; message.success('年度事项已创建');
+    await loadMilestones(); message.success('年度事项已创建');
   } catch (cause) { message.error(cause instanceof Error ? cause.message : '事项创建失败'); }
   finally { saving.value = false; }
 }
@@ -240,7 +254,7 @@ async function setMilestoneStatus(item: MilestoneDueSummary, status: 'open' | 'c
   saving.value = true;
   try {
     await apiRequest(`/api/milestones/${item.id}/status`, jsonRequestInit('PUT', { expectedVersion: item.version, status }));
-    milestones.value = (await apiRequest<{ items: MilestoneDueSummary[] }>(`/api/milestones/due?asOf=${asOfDate.value}`)).items;
+    await loadMilestones();
   } catch (cause) { message.error(cause instanceof Error ? cause.message : '事项状态更新失败'); }
   finally { saving.value = false; }
 }

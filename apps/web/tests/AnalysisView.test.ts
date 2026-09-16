@@ -42,6 +42,11 @@ const rule = { id: 'rule1', version: 2, mode: 'ratio', thresholdBasisPoints: 800
 const plan = { id: 'plan1', projectId: 'p1', businessYear: 2026, month: 9, targetAmountFen: 100_000, version: 4, createdAt: '', updatedAt: '' };
 
 function ok(data: unknown, status = 200) { return new Response(JSON.stringify({ ok: true, data }), { status, headers: { 'Content-Type': 'application/json' } }); }
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => { resolve = done; });
+  return { promise, resolve };
+}
 function installFetch() {
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
@@ -111,6 +116,62 @@ describe('AnalysisView P6 behavior', () => {
     await wrapper.get('[data-test="analysis-framework"]').setValue('fw1');
     await flushPromises();
     expect(replace).toHaveBeenCalledWith({ query: { framework: 'fw1', tab: 'alerts' } });
+  });
+
+  it('ignores a stale framework analysis response that returns after a newer selection', async () => {
+    const wrapper = mount(AnalysisView, { props: { currentUser: readonly } });
+    await flushPromises();
+    const fallback = vi.mocked(fetch).getMockImplementation()!;
+    const staleGate = deferred<void>();
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/analysis/frameworks/fw2/') || url.includes('frameworkId=fw2')) await staleGate.promise;
+      return fallback(input, init);
+    });
+
+    await wrapper.get('[data-test="analysis-framework"]').setValue('fw2');
+    await Promise.resolve();
+    await wrapper.get('[data-test="analysis-framework"]').setValue('fw1');
+    await flushPromises();
+    expect(wrapper.get('.analysis-warning').text()).toContain('框架一');
+
+    staleGate.resolve();
+    await flushPromises();
+    expect(wrapper.get('[data-test="analysis-framework"]').attributes('value')).toBe('fw1');
+    expect(wrapper.get('.analysis-warning').text()).toContain('框架一');
+  });
+
+  it('ignores stale milestone results after the statistics date changes again', async () => {
+    const wrapper = mount(AnalysisView, { props: { currentUser: readonly } });
+    await flushPromises();
+    const fallback = vi.mocked(fetch).getMockImplementation()!;
+    const staleGate = deferred<void>();
+    const milestone = (id: string, title: string, dueDate: string) => ({
+      id, businessYear: 2026, title, owner: null, projectId: null, datePrecision: 'day', month: Number(dueDate.slice(5, 7)), specificDate: dueDate,
+      leadDays: [7, 3, 0], status: 'open', version: 1, createdAt: '', updatedAt: '', dueMonth: dueDate.slice(0, 7), dueDate,
+      needsDate: false, reminderDue: true, reminderLeadDays: 0, overdue: false,
+    });
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === '/api/milestones/due?asOf=2026-08-31') {
+        await staleGate.promise;
+        return ok({ items: [milestone('m-old', '旧日期事项', '2026-08-31')] });
+      }
+      if (url === '/api/milestones/due?asOf=2026-09-30') return ok({ items: [milestone('m-new', '新日期事项', '2026-09-30')] });
+      return fallback(input, init);
+    });
+
+    await wrapper.get('[data-test="analysis-as-of"]').setValue('2026-08-31');
+    await Promise.resolve();
+    await wrapper.get('[data-test="analysis-as-of"]').setValue('2026-09-30');
+    await flushPromises();
+    expect(wrapper.text()).toContain('新日期事项');
+    expect(wrapper.text()).not.toContain('旧日期事项');
+
+    staleGate.resolve();
+    await flushPromises();
+    expect(wrapper.text()).toContain('新日期事项');
+    expect(wrapper.text()).not.toContain('旧日期事项');
   });
 
   it('shows real progress, reserve categories and active alerts', async () => {

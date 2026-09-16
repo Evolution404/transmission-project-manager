@@ -67,6 +67,12 @@ function ok(data: unknown, status = 200) {
   return new Response(JSON.stringify({ ok: true, data }), { status, headers: { 'Content-Type': 'application/json' } });
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
 const framework = {
   id: 'fw1', code: 'FW-001', name: '年度框架', totalAmountFen: 1_000_000, annualTargetFen: 1_000_000,
   startDate: '2026-01-01', endDate: '2026-12-31', version: 1, createdAt: '2026-09-12T00:00:00.000Z', updatedAt: '2026-09-12T00:00:00.000Z',
@@ -241,6 +247,63 @@ describe('FinanceView P4 behavior', () => {
     await wrapper.get('[data-test="finance-framework"]').setValue('fw1');
     await flushPromises();
     expect(replace).toHaveBeenCalledWith({ query: { framework: 'fw1', tab: 'entries' } });
+  });
+
+  it('ignores a stale framework response that returns after the user switches back', async () => {
+    const wrapper = mount(FinanceView, { props: { currentUser: admin } });
+    await flushPromises();
+    const fallback = vi.mocked(fetch).getMockImplementation()!;
+    const staleGate = deferred<void>();
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('frameworkId=fw2')) await staleGate.promise;
+      return fallback(input, init);
+    });
+
+    await wrapper.get('[data-test="finance-framework"]').setValue('fw2');
+    await Promise.resolve();
+    await wrapper.get('[data-test="finance-framework"]').setValue('fw1');
+    await flushPromises();
+    expect(wrapper.get('[data-test="finance-framework"]').attributes('value')).toBe('fw1');
+    expect(wrapper.text()).toContain('协议一');
+
+    staleGate.resolve();
+    await flushPromises();
+    expect(wrapper.get('[data-test="finance-framework"]').attributes('value')).toBe('fw1');
+    expect(wrapper.text()).toContain('协议一');
+  });
+
+  it('ignores a stale budget-project response after another project is selected', async () => {
+    const fallback = vi.mocked(fetch).getMockImplementation()!;
+    const staleGate = deferred<void>();
+    const project3 = { ...project, id: 'p3', name: '子项目C' };
+    const staleBudget = { id: 'b-old', projectId: 'p1', projectName: '子项目A', frameworkId: 'fw1', totalAmountFen: 100_000, note: '旧项目', status: 'draft', budgetVersion: 0, version: 1, allocations: [], createdAt: '', updatedAt: '' };
+    const currentBudget = { ...staleBudget, id: 'b-new', projectId: 'p3', projectName: '子项目C', totalAmountFen: 200_000, note: '当前项目' };
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === '/api/finance/projects') return ok({ items: [project, project2, project3] });
+      if (url === '/api/budgets?projectId=p1') {
+        await staleGate.promise;
+        return ok({ items: [staleBudget] });
+      }
+      if (url === '/api/budgets?projectId=p3') return ok({ items: [currentBudget] });
+      return fallback(input, init);
+    });
+
+    const wrapper = mount(FinanceView, { props: { currentUser: admin } });
+    await flushPromises();
+
+    await wrapper.get('[data-test="budget-project"]').setValue('p1');
+    await Promise.resolve();
+    await wrapper.get('[data-test="budget-project"]').setValue('p3');
+    await flushPromises();
+    expect(wrapper.get('[data-test="budget-project"]').attributes('value')).toBe('p3');
+    expect((wrapper.get('[data-test="budget-total"]').element as HTMLInputElement).value).toBe('2000.00');
+
+    staleGate.resolve();
+    await flushPromises();
+    expect(wrapper.get('[data-test="budget-project"]').attributes('value')).toBe('p3');
+    expect((wrapper.get('[data-test="budget-total"]').element as HTMLInputElement).value).toBe('2000.00');
   });
 
   it('clears a budget project from another framework when the user switches framework context', async () => {

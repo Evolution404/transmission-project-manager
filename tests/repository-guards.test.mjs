@@ -517,6 +517,22 @@ test('text-style return navigation keeps a usable touch target', () => {
   assert.match(mobile, /\.breadcrumb-back,\s*\.back-button\s*\{[^}]*min-height:\s*44px/, '手机返回导航命中高度不得低于 44px');
 });
 
+test('async workspace context loaders ignore stale responses', () => {
+  const finance = readFileSync(resolve(root, 'apps/web/src/views/FinanceView.vue'), 'utf8');
+  assert.match(finance, /let frameworkContextSequence = 0;/, '资金框架上下文必须有请求序号');
+  assert.match(finance, /sequence !== frameworkContextSequence \|\| selectedFrameworkId\.value !== frameworkId/, '旧框架响应不得覆盖当前框架');
+  assert.match(finance, /let budgetProjectSequence = 0;/, '预算项目切换必须有请求序号');
+  assert.match(finance, /sequence !== budgetProjectSequence \|\| selectedBudgetProjectId\.value !== projectId/, '旧预算项目响应不得覆盖当前项目');
+  assert.match(finance, /contextSequence !== frameworkContextSequence[^]*?entryCursor\.value !== cursor/, '旧流水分页响应不得追加到新框架');
+
+  const analysis = readFileSync(resolve(root, 'apps/web/src/views/AnalysisView.vue'), 'utf8');
+  assert.match(analysis, /let frameworkContextSequence = 0;/, '分析框架上下文必须有请求序号');
+  assert.match(analysis, /sequence !== frameworkContextSequence \|\| selectedFrameworkId\.value !== frameworkId/, '旧分析框架响应不得覆盖当前框架');
+  assert.match(analysis, /let milestoneRequestSequence = 0;/, '事项读取必须有统一请求序号');
+  assert.match(analysis, /sequence !== milestoneRequestSequence \|\| asOfDate\.value !== requestedAsOf/, '旧统计日期事项响应不得覆盖当前日期');
+  assert.match(analysis, /const milestonePromise = loadMilestones\(requestedAsOf\)/, '分析全量刷新也必须复用事项竞态门禁');
+});
+
 test('local API development rebuilds the local D1 when the single development baseline changes', () => {
   const apiPackage = JSON.parse(readFileSync(resolve(root, 'apps/api/package.json'), 'utf8'));
   assert.equal(apiPackage.scripts.dev, 'node ../../scripts/dev/api-dev.mjs');
