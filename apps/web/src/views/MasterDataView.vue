@@ -951,33 +951,42 @@ onMounted(loadAll);
 
     <section v-if="!selectedLine" class="line-home" data-test="line-home">
       <header class="page-heading">
-        <div><span class="eyebrow">基础台账</span><h2>线路台账</h2><p>以线路为主维护设备位置；电压等级仅作为筛选和线路属性。</p></div>
-        <n-space v-if="isAdmin"><n-button data-test="open-master-settings" @click="openSettings">台账设置</n-button><n-button type="primary" @click="openLine()">新增线路</n-button></n-space>
+        <div class="page-heading-copy"><span class="eyebrow">基础台账</span><h2>线路台账</h2><p>以线路为入口维护线路节点与真实物理杆塔；电压等级、班组和塔型作为稳定配置对象。</p></div>
+        <n-space v-if="isAdmin" class="page-heading-actions"><n-button data-test="open-master-settings" @click="openSettings">台账设置</n-button><n-button type="primary" @click="openLine()">新增线路</n-button></n-space>
       </header>
-      <div class="line-toolbar">
-        <n-select data-test="voltage-filter" :value="lineVoltageFilter" :options="lineVoltageOptions" @update:value="setVoltageFilter" />
-        <n-input v-model:value="lineSearch" data-test="line-search" placeholder="搜索当前线路名或曾用名" @keyup.enter="loadLines()" />
-        <n-select data-test="line-status-filter" :value="lineStatusFilter" :options="lineStatusOptions" @update:value="setStatusFilter" />
-        <n-button :loading="loading" @click="loadLines()">查询</n-button>
-      </div>
-      <div class="line-list">
-        <article v-for="item in lines" :key="item.id" class="line-card">
-          <app-pressable class="line-open" :data-test="`select-line-${item.id}`" @click="openLineDetail(item)">
-            <div class="line-card-title"><n-tag size="small" :bordered="false">{{ item.voltageLevelName }}</n-tag><strong>{{ item.lineName }}</strong></div>
-            <p v-if="item.matchedHistoricalName" class="history-match">曾用名匹配：{{ item.matchedHistoricalName }}</p>
-            <div class="line-card-meta"><span>{{ item.towerCount ?? 0 }} 基杆塔</span><span>{{ item.enabled ? '启用' : '停用' }}</span><span v-if="item.lineCode">{{ item.lineCode }}</span></div>
-          </app-pressable>
-          <div v-if="isAdmin" class="line-card-actions"><n-button text size="tiny" @click="openLine(item)">编辑属性</n-button><n-button text size="tiny" :disabled="saving" @click="requestDelete('lines',item,`线路“${item.lineName}”`)">删除</n-button></div>
-        </article>
-      </div>
-      <n-empty v-if="!lines.length && !loading" description="没有符合条件的线路" />
-      <n-button v-if="lineCursor" :loading="loading" @click="loadLines(true)">加载更多线路</n-button>
+      <section class="line-list-surface">
+        <div class="line-toolbar">
+          <n-select data-test="voltage-filter" :value="lineVoltageFilter" :options="lineVoltageOptions" @update:value="setVoltageFilter" />
+          <n-input v-model:value="lineSearch" data-test="line-search" placeholder="搜索当前线路名或曾用名" @keyup.enter="loadLines()" />
+          <n-select data-test="line-status-filter" :value="lineStatusFilter" :options="lineStatusOptions" @update:value="setStatusFilter" />
+          <n-button :loading="loading" @click="loadLines()">查询</n-button>
+        </div>
+        <div v-if="lines.length" class="line-table-head" aria-hidden="true"><span>线路</span><span>杆塔</span><span>状态</span><span>线路编码</span><span></span></div>
+        <div class="line-list">
+          <article v-for="item in lines" :key="item.id" class="line-card">
+            <app-pressable class="line-open" :data-test="`select-line-${item.id}`" @click="openLineDetail(item)">
+              <div class="line-card-primary">
+                <div class="line-card-title"><n-tag size="small" :bordered="false">{{ item.voltageLevelName }}</n-tag><strong>{{ item.lineName }}</strong></div>
+                <p v-if="item.matchedHistoricalName" class="history-match">曾用名匹配：{{ item.matchedHistoricalName }}</p>
+              </div>
+              <span class="line-fact">{{ item.towerCount ?? 0 }} 基</span>
+              <span class="line-state" :class="{ disabled: !item.enabled }">{{ item.enabled ? '启用' : '停用' }}</span>
+              <span class="line-code">{{ item.lineCode || '—' }}</span>
+              <span class="line-chevron">›</span>
+            </app-pressable>
+            <div v-if="isAdmin" class="line-card-actions"><n-button text size="tiny" @click="openLine(item)">编辑属性</n-button><n-button text size="tiny" :disabled="saving" @click="requestDelete('lines',item,`线路“${item.lineName}”`)">删除</n-button></div>
+          </article>
+        </div>
+        <n-empty v-if="!lines.length && !loading" description="没有符合条件的线路" />
+        <div v-if="lineCursor" class="load-more"><n-button :loading="loading" @click="loadLines(true)">加载更多线路</n-button></div>
+      </section>
     </section>
 
     <section v-else class="line-detail" data-test="line-detail">
       <app-pressable class="back-button" data-test="back-lines" @click="backToLines">← 返回线路台账</app-pressable>
       <header class="detail-heading">
         <div>
+          <span class="eyebrow">线路详情</span>
           <div class="detail-title-row"><n-tag :bordered="false">{{ selectedLine.voltageLevelName }}</n-tag><h2>{{ selectedLine.lineName }}</h2></div>
           <p>{{ selectedLine.towerCount ?? towers.length }} 基杆塔 · {{ selectedLine.enabled ? '启用' : '停用' }}<template v-if="selectedLine.lineCode"> · {{ selectedLine.lineCode }}</template></p>
           <p v-if="selectedLine.matchedHistoricalName" class="history-match">由曾用名“{{ selectedLine.matchedHistoricalName }}”匹配到当前线路</p>
@@ -991,16 +1000,17 @@ onMounted(loadAll);
           </n-dropdown>
         </n-space>
       </header>
-      <div class="tower-toolbar">
-        <n-input v-model:value="towerSearch" placeholder="输入 10、10-1 等当前或曾用编号" @keyup.enter="loadTowers()" />
-        <n-button :loading="towerLoading" @click="loadTowers()">查找杆塔</n-button>
-        <n-button v-if="towerSearch" @click="towerSearch='';loadTowers()">清除</n-button>
-      </div>
-      <div v-if="towerRows.length" class="tower-desktop-table">
-        <n-data-table :columns="towerColumns" :data="towerRows" :pagination="false" :loading="towerLoading" :scroll-x="760" />
-      </div>
-      <div v-if="towerRows.length" class="tower-mobile-list" data-test="tower-mobile-list">
-        <article v-for="row in towerRows" :key="row.id" class="tower-mobile-card" :data-test="`tower-mobile-card-${row.id}`">
+      <section class="tower-data-surface">
+        <div class="tower-toolbar">
+          <n-input v-model:value="towerSearch" placeholder="输入 10、10-1 等当前或曾用编号" @keyup.enter="loadTowers()" />
+          <n-button :loading="towerLoading" @click="loadTowers()">查找杆塔</n-button>
+          <n-button v-if="towerSearch" @click="towerSearch='';loadTowers()">清除</n-button>
+        </div>
+        <div v-if="towerRows.length" class="tower-desktop-table">
+          <n-data-table :columns="towerColumns" :data="towerRows" :pagination="false" :loading="towerLoading" :scroll-x="760" />
+        </div>
+        <div v-if="towerRows.length" class="tower-mobile-list" data-test="tower-mobile-list">
+          <article v-for="row in towerRows" :key="row.id" class="tower-mobile-card" :data-test="`tower-mobile-card-${row.id}`">
           <div class="tower-mobile-main">
             <span class="tower-mobile-order">{{ row.displayOrder }}</span>
             <div>
@@ -1019,10 +1029,11 @@ onMounted(loadAll);
               <n-button size="small">更多</n-button>
             </n-dropdown>
           </div>
-        </article>
-      </div>
-      <n-empty v-else-if="!towerLoading" description="当前线路下暂无匹配杆塔" />
-      <n-button v-if="towerCursor" :loading="towerLoading" @click="loadTowers(true)">加载更多杆塔</n-button>
+          </article>
+        </div>
+        <n-empty v-else-if="!towerLoading" description="当前线路下暂无匹配杆塔" />
+        <div v-if="towerCursor" class="load-more"><n-button :loading="towerLoading" @click="loadTowers(true)">加载更多杆塔</n-button></div>
+      </section>
     </section>
 
     <n-modal v-model:show="settingsModal" preset="card" title="台账与字段配置" style="width:min(820px,calc(100vw - 32px))">
@@ -1194,8 +1205,114 @@ onMounted(loadAll);
 </template>
 
 <style scoped>
-.master-data-view{max-width:1480px;margin:0 auto}.error-recovery{display:flex;align-items:center;justify-content:space-between;gap:12px}.page-heading,.detail-heading{display:flex;justify-content:space-between;gap:20px;align-items:flex-start;padding:20px 22px;border:1px solid #e5e9f0;border-radius:16px;background:#fff}.eyebrow{font-size:11px;font-weight:700;color:#315fd3;letter-spacing:.08em}.page-heading h2,.detail-heading h2{margin:4px 0 5px;font-size:24px}.page-heading p,.detail-heading p{margin:0;color:#7b8493}.line-toolbar,.tower-toolbar{display:grid;grid-template-columns:minmax(170px,220px) minmax(240px,1fr) minmax(150px,190px) auto;gap:10px;margin:16px 0}.tower-toolbar{grid-template-columns:minmax(260px,1fr) auto auto}.line-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.line-card{border:1px solid #e5e9f0;border-radius:14px;background:#fff;overflow:hidden}.line-open{display:block;width:100%;padding:17px;text-align:left;border:0;background:transparent;color:inherit;cursor:pointer}.line-open:hover{background:#f8faff}.line-card-title{display:flex;align-items:center;gap:10px;font-size:16px}.line-card-meta{display:flex;gap:16px;margin-top:12px;color:#737d8d;font-size:12px}.history-match{color:#7a5af8!important;font-size:12px}.line-card-actions{display:flex;gap:14px;padding:0 17px 13px}.back-button{border:0;background:transparent;color:#315fd3;cursor:pointer;padding:4px 0 10px}.detail-title-row{display:flex;align-items:center;gap:10px}.detail-actions{justify-content:flex-end}.actions{display:flex;justify-content:flex-end;gap:10px}.settings-head{display:flex;justify-content:space-between;align-items:center}.setting-row{display:flex;justify-content:space-between;gap:15px;align-items:center;padding:12px 0;border-top:1px solid #edf0f4}.setting-row div:first-child{display:flex;flex-direction:column;gap:3px}.setting-row small{color:#7b8493}.history-list>div{display:grid;grid-template-columns:minmax(120px,1fr) minmax(220px,1.6fr);gap:6px 14px;padding:11px 0;border-top:1px solid #edf0f4}.history-list small{grid-column:1/-1;color:#7b8493}.tower-mobile-list{display:none}.tower-mobile-card{border:1px solid #e5e9f0;border-radius:12px;background:#fff;padding:13px}.tower-mobile-main{display:grid;grid-template-columns:30px minmax(0,1fr) auto;gap:10px;align-items:center}.tower-mobile-main strong,.tower-mobile-main small{display:block}.tower-mobile-main small{margin-top:3px}.tower-mobile-order{display:grid;place-items:center;width:28px;height:28px;border-radius:8px;background:#f3f6fb;color:#667085;font-size:12px;font-weight:700}.tower-mobile-meta{display:flex;justify-content:space-between;gap:12px;margin-top:10px;padding-top:10px;border-top:1px solid #edf0f4;font-size:12px}.tower-mobile-meta span{color:#7b8493}.tower-mobile-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:10px}.order-controls{display:grid;grid-template-columns:1fr 1fr 150px auto;gap:8px;margin:12px 0}.order-list{max-height:420px;overflow:auto;border:1px solid #e5e9f0;border-radius:10px}.order-row{display:grid;grid-template-columns:26px 42px 120px 1fr auto;gap:8px;align-items:center;padding:9px 12px;border-bottom:1px solid #edf0f4;background:#fff}.order-row-actions{display:flex;gap:6px}.drag-handle{cursor:grab;color:#8a94a4}.tower-import-source{display:flex;align-items:center;gap:10px;margin:12px 0}.tower-import-preview{margin-top:14px;padding:12px 14px;border-radius:10px;background:#f7f9fc;border:1px solid #e6eaf1}.tower-import-preview p{margin:5px 0}.tower-import-errors{max-height:180px;overflow:auto;color:#b42318}
-@media(max-width:900px){.line-list{grid-template-columns:1fr}.page-heading,.detail-heading{flex-direction:column}.line-toolbar{grid-template-columns:1fr 1fr}.detail-actions{justify-content:flex-start}.order-controls{grid-template-columns:1fr 1fr}.order-row{grid-template-columns:24px 34px 100px 1fr auto}}
-@media(max-width:720px){.tower-desktop-table{display:none}.tower-mobile-list{display:grid;gap:10px}}
-@media(max-width:600px){.error-recovery{align-items:flex-start;flex-direction:column}.line-toolbar,.tower-toolbar,.order-controls{grid-template-columns:1fr}.page-heading,.detail-heading{padding:16px}.page-heading h2,.detail-heading h2{font-size:20px}.line-card-meta{flex-wrap:wrap}.tower-import-source{align-items:flex-start;flex-direction:column}}
+.master-data-view { max-width: 1480px; margin: 0 auto; }
+.line-home, .line-detail { display: grid; gap: 16px; }
+.error-recovery { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.page-heading, .detail-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; padding: 4px 0 6px; }
+.page-heading-copy { min-width: 0; }
+.eyebrow { display: block; margin-bottom: 6px; color: var(--ui-text-tertiary); font-size: 11px; font-weight: 700; letter-spacing: .07em; }
+.page-heading h2, .detail-heading h2 { margin: 0; color: var(--ui-text); font-size: 28px; font-weight: 720; line-height: 1.22; letter-spacing: -.025em; }
+.page-heading p, .detail-heading p { max-width: 760px; margin: 7px 0 0; color: var(--ui-text-secondary); font-size: 13px; line-height: 1.55; }
+.page-heading-actions, .detail-actions { flex: 0 0 auto; }
+
+.line-list-surface, .tower-data-surface { overflow: hidden; border: 1px solid var(--ui-border); border-radius: var(--ui-radius-lg); background: var(--ui-surface); }
+.line-toolbar, .tower-toolbar { display: grid; grid-template-columns: minmax(170px, 220px) minmax(240px, 1fr) minmax(150px, 190px) auto; gap: 10px; padding: 13px 15px; border-bottom: 1px solid var(--ui-border); background: var(--ui-surface); }
+.tower-toolbar { grid-template-columns: minmax(260px, 1fr) auto auto; }
+.line-table-head { display: grid; grid-template-columns: minmax(280px, 1.8fr) 90px 90px minmax(120px, .8fr) 24px; gap: 16px; padding: 10px 16px; border-bottom: 1px solid var(--ui-border); background: var(--ui-surface-subtle); color: var(--ui-text-tertiary); font-size: 11px; font-weight: 650; }
+.line-list { display: grid; }
+.line-card { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; border-bottom: 1px solid var(--ui-border); background: var(--ui-surface); }
+.line-card:last-child { border-bottom: 0; }
+.line-open { display: grid; grid-template-columns: minmax(280px, 1.8fr) 90px 90px minmax(120px, .8fr) 24px; gap: 16px; align-items: center; width: 100%; min-height: 68px; padding: 12px 16px; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
+.line-open:hover { background: var(--ui-surface-subtle); }
+.line-card-primary { min-width: 0; }
+.line-card-title { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.line-card-title strong { overflow: hidden; font-size: 14px; font-weight: 670; text-overflow: ellipsis; white-space: nowrap; }
+.line-fact, .line-state, .line-code { color: var(--ui-text-secondary); font-size: 12px; }
+.line-state { color: var(--ui-success); font-weight: 650; }
+.line-state.disabled { color: var(--ui-text-tertiary); }
+.line-code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.line-chevron { color: var(--ui-text-tertiary); font-size: 20px; }
+.line-card-actions { display: none; position: absolute; right: 42px; top: 50%; gap: 8px; align-items: center; transform: translateY(-50%); }
+.line-card:hover .line-card-actions { display: flex; }
+.line-card:hover .line-code, .line-card:hover .line-chevron { opacity: .18; }
+.history-match { margin: 4px 0 0 !important; color: var(--ui-info) !important; font-size: 11px !important; }
+.load-more { display: flex; justify-content: center; padding: 13px 16px; border-top: 1px solid var(--ui-border); }
+
+.back-button { justify-self: start; padding: 2px 0; border: 0; background: transparent; color: var(--ui-text-secondary); font-size: 12px; cursor: pointer; }
+.back-button:hover { color: var(--ui-accent); }
+.detail-title-row { display: flex; align-items: center; gap: 10px; }
+.tower-desktop-table { padding: 0; }
+.tower-data-surface :deep(.n-data-table) { border: 0; border-radius: 0; }
+.actions { display: flex; justify-content: flex-end; gap: 10px; }
+
+.settings-head { display: flex; justify-content: space-between; align-items: center; gap: 18px; }
+.setting-row { display: flex; justify-content: space-between; gap: 15px; align-items: center; padding: 12px 0; border-top: 1px solid var(--ui-border); }
+.setting-row div:first-child { display: flex; flex-direction: column; gap: 3px; }
+.setting-row small { color: var(--ui-text-secondary); }
+.history-list > div { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(220px, 1.6fr); gap: 6px 14px; padding: 11px 0; border-top: 1px solid var(--ui-border); }
+.history-list small { grid-column: 1 / -1; color: var(--ui-text-secondary); }
+
+.tower-mobile-list { display: none; }
+.tower-mobile-card { border-bottom: 1px solid var(--ui-border); background: var(--ui-surface); padding: 14px; }
+.tower-mobile-card:last-child { border-bottom: 0; }
+.tower-mobile-main { display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; gap: 10px; align-items: center; }
+.tower-mobile-main strong, .tower-mobile-main small { display: block; }
+.tower-mobile-main small { margin-top: 3px; }
+.tower-mobile-order { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 8px; background: var(--ui-surface-muted); color: var(--ui-text-secondary); font-size: 12px; font-weight: 700; }
+.tower-mobile-meta { display: flex; justify-content: space-between; gap: 12px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--ui-border); font-size: 12px; }
+.tower-mobile-meta span { color: var(--ui-text-secondary); }
+.tower-mobile-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+
+.order-controls { display: grid; grid-template-columns: 1fr 1fr 150px auto; gap: 8px; margin: 12px 0; }
+.order-list { max-height: 420px; overflow: auto; border: 1px solid var(--ui-border); border-radius: 10px; }
+.order-row { display: grid; grid-template-columns: 26px 42px 120px 1fr auto; gap: 8px; align-items: center; padding: 9px 12px; border-bottom: 1px solid var(--ui-border); background: var(--ui-surface); }
+.order-row-actions { display: flex; gap: 6px; }
+.drag-handle { cursor: grab; color: var(--ui-text-tertiary); }
+.tower-import-source { display: flex; align-items: center; gap: 10px; margin: 12px 0; }
+.tower-import-preview { margin-top: 14px; padding: 12px 14px; border: 1px solid var(--ui-border); border-radius: 10px; background: var(--ui-surface-subtle); }
+.tower-import-preview p { margin: 5px 0; }
+.tower-import-errors { max-height: 180px; overflow: auto; color: var(--ui-danger); }
+
+@media (max-width: 980px) {
+  .page-heading, .detail-heading { align-items: flex-start; flex-direction: column; }
+  .line-toolbar { grid-template-columns: 1fr 1fr; }
+  .detail-actions { justify-content: flex-start; }
+  .order-controls { grid-template-columns: 1fr 1fr; }
+  .order-row { grid-template-columns: 24px 34px 100px 1fr auto; }
+  .line-table-head, .line-open { grid-template-columns: minmax(240px, 1.8fr) 76px 76px minmax(90px, .7fr) 20px; gap: 10px; }
+}
+
+@media (max-width: 767px) {
+  .page-heading, .detail-heading { gap: 16px; }
+  .page-heading h2, .detail-heading h2 { font-size: 24px; }
+  .page-heading-actions, .detail-actions { width: 100%; }
+  .page-heading-actions :deep(.n-space), .detail-actions :deep(.n-space) { width: 100%; }
+  .line-table-head { display: none; }
+  .line-card { display: block; }
+  .line-open { display: grid; grid-template-columns: 1fr auto; gap: 10px 14px; min-height: 0; padding: 15px 14px; }
+  .line-card-primary { grid-column: 1 / -1; }
+  .line-fact, .line-state, .line-code { align-self: center; }
+  .line-fact::before { content: '杆塔 '; color: var(--ui-text-tertiary); }
+  .line-code { display: none; }
+  .line-chevron { grid-column: 2; grid-row: 2; }
+  .line-card-actions { position: static; display: flex; justify-content: flex-end; padding: 0 14px 12px; transform: none; }
+  .line-card:hover .line-code, .line-card:hover .line-chevron { opacity: 1; }
+  .tower-desktop-table { display: none; }
+  .tower-mobile-list { display: grid; }
+  .tower-toolbar { grid-template-columns: 1fr auto; }
+  .tower-toolbar > .n-button:last-child { grid-column: 1 / -1; }
+}
+
+@media (max-width: 600px) {
+  .error-recovery { align-items: flex-start; flex-direction: column; }
+  .line-toolbar, .tower-toolbar, .order-controls { grid-template-columns: 1fr; }
+  .page-heading-actions, .detail-actions { display: grid !important; grid-template-columns: 1fr 1fr; gap: 8px !important; }
+  .page-heading-actions :deep(.n-button), .detail-actions :deep(.n-button) { width: 100%; }
+  .detail-actions :deep(.n-button:first-child) { grid-column: 1 / -1; }
+  .detail-title-row { align-items: flex-start; flex-direction: column; gap: 7px; }
+  .settings-head { align-items: flex-start; flex-direction: column; }
+  .setting-row { align-items: flex-start; flex-direction: column; }
+  .tower-import-source { align-items: stretch; flex-direction: column; }
+  .tower-import-source :deep(.n-button) { width: 100%; }
+}
 </style>

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, h, onMounted, ref } from 'vue';
+import { useRoute } from 'vue-router';
 import {
   NAlert,
   NButton,
@@ -31,6 +32,7 @@ import type {
 } from '@tpm/shared';
 
 const props = defineProps<{ currentUser: CurrentUser }>();
+const route = useRoute();
 const message = useMessage();
 const canManageStructure = computed(() => props.currentUser.role === 'admin' || props.currentUser.role === 'project_manager');
 const canFinanceWrite = computed(() => ['admin', 'project_manager', 'finance'].includes(props.currentUser.role));
@@ -172,6 +174,8 @@ async function loadInitial() {
     entryBusinessDate.value = businessToday();
     await loadBase();
     await loadFrameworkContext();
+    const routeProjectId = typeof route.query.projectId === 'string' ? route.query.projectId : null;
+    if (routeProjectId && projects.value.some((item) => item.id === routeProjectId)) await loadBudgetProject(routeProjectId);
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : '读取资金数据失败';
   } finally {

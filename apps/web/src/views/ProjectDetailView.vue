@@ -7,6 +7,7 @@ import { ApiRequestError, apiRequest, jsonRequestInit } from '../api/client';
 import { parseApiResponse } from '../api/response';
 import AppPressable from '../app/AppPressable.vue';
 import AppFilePicker from '../app/AppFilePicker.vue';
+import ProjectFinancePanel from '../features/projects/ProjectFinancePanel.vue';
 import ProjectSourceEditor from '../features/projects/ProjectSourceEditor.vue';
 import ProjectMaterialsEditor from '../features/projects/ProjectMaterialsEditor.vue';
 
@@ -85,6 +86,7 @@ async function load() {
 function backToProjects() { void router.push('/projects'); }
 function openTask(taskId: string) { void router.push(`/projects/${encodeURIComponent(projectId.value)}/tasks/${encodeURIComponent(taskId)}`); }
 function createTask() { void router.push(`/projects/${encodeURIComponent(projectId.value)}/tasks/new`); }
+function openFinanceWorkspace() { void router.push({ path: '/finance', query: { projectId: projectId.value } }); }
 
 function attachmentChanged(event: Event) {
   attachmentFile.value = (event.target as HTMLInputElement).files?.[0] ?? null;
@@ -294,6 +296,10 @@ onMounted(load);
           <n-empty v-else description="当前项目没有项目物资；0 物资项目仍然合法" />
         </section>
 
+        <section v-else-if="tab === 'finance'" class="detail-section">
+          <project-finance-panel :project="project" @open-workspace="openFinanceWorkspace" />
+        </section>
+
         <section v-else-if="tab === 'history'" class="detail-section">
           <div class="section-heading">
             <div><h3>附件与历史</h3><p>项目附件按当前项目权限读取；项目与储备版本用于追踪当前定义。</p></div>
@@ -326,10 +332,6 @@ onMounted(load);
           </div>
         </section>
 
-        <section v-else class="detail-section muted-placeholder">
-          <h3>资金</h3>
-          <p>项目资金摘要将在资金工作区完成项目级查询后接入。</p>
-        </section>
       </template>
     </n-spin>
 

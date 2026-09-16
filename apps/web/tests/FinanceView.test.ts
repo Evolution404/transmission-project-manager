@@ -2,6 +2,9 @@ import { flushPromises, mount } from '@vue/test-utils';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CurrentUser } from '@tpm/shared';
 
+const routeQuery = vi.hoisted(() => ({} as Record<string, string>));
+vi.mock('vue-router', () => ({ useRoute: () => ({ query: routeQuery }) }));
+
 vi.mock('naive-ui', async () => {
   const vue = await import('vue');
   const wrap = (name: string) => vue.defineComponent({
@@ -96,7 +99,10 @@ function installFetch({ withEntryCursor = false } = {}) {
 }
 
 describe('FinanceView P4 behavior', () => {
-  beforeEach(() => installFetch());
+  beforeEach(() => {
+    for (const key of Object.keys(routeQuery)) delete routeQuery[key];
+    installFetch();
+  });
   afterEach(() => vi.unstubAllGlobals());
 
   it('shows framework usage warnings and keeps budget occurrence distinct from actual cost', async () => {
@@ -178,5 +184,13 @@ describe('FinanceView P4 behavior', () => {
       type: 'actual_cost', projectId: 'p1', amountFen: 100_000, businessDate: '2026-09-12', note: null,
       allocations: [{ agreementId: 'ag1', amountFen: 100_000 }],
     });
+  });
+
+  it('honors projectId from the route so project detail can deep-link into the matching budget context', async () => {
+    routeQuery.projectId = 'p1';
+    const wrapper = mount(FinanceView, { props: { currentUser: admin } });
+    await flushPromises();
+    expect(wrapper.get('[data-test="budget-project"]').attributes('value')).toBe('p1');
+    expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url) === '/api/budgets?projectId=p1')).toBe(true);
   });
 });

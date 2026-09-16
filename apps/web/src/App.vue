@@ -30,12 +30,12 @@ const loggingOut = ref(false);
 const mobileMenuOpen = ref(false);
 const prefersDark = ref(false);
 
-const themeOverrides: GlobalThemeOverrides = {
+const themeOverrides = computed<GlobalThemeOverrides>(() => ({
   common: {
-    primaryColor: '#2563eb',
-    primaryColorHover: '#1d4ed8',
-    primaryColorPressed: '#1e40af',
-    primaryColorSuppl: '#3b82f6',
+    primaryColor: prefersDark.value ? '#7aa7ff' : '#2563eb',
+    primaryColorHover: prefersDark.value ? '#96b9ff' : '#1d4ed8',
+    primaryColorPressed: prefersDark.value ? '#638fe8' : '#1e40af',
+    primaryColorSuppl: prefersDark.value ? '#84adff' : '#3b82f6',
     borderRadius: '12px',
     borderRadiusSmall: '9px',
     fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif',
@@ -44,8 +44,10 @@ const themeOverrides: GlobalThemeOverrides = {
   Input: { heightMedium: '40px', borderRadius: '10px' },
   Select: { peers: { InternalSelection: { heightMedium: '40px', borderRadius: '10px' } } },
   Card: { borderRadius: '14px' },
-  DataTable: { thColor: '#f8fafc', thColorHover: '#f8fafc', tdColorHover: '#f8fafc' },
-};
+  DataTable: prefersDark.value
+    ? { thColor: '#1b212a', thColorHover: '#1f2732', tdColorHover: '#1b222c' }
+    : { thColor: '#f8fafc', thColorHover: '#f8fafc', tdColorHover: '#f8fafc' },
+}));
 
 const roleLabels: Record<CurrentUser['role'], string> = {
   admin: '系统管理员',

@@ -73,6 +73,9 @@ function installFetch(options: { conflict?: boolean; draft?: boolean; confirmCon
     if (url === '/api/reserve-projects/p1') return ok(options.draft ? { ...project, status: 'draft', reserveVersion: 2, version: 7 } : project);
     if (url === '/api/projects/p1/execution') return ok(execution(false));
     if (url === '/api/attachments?objectType=project&objectId=p1' && (!init?.method || init.method === 'GET')) return ok({ items: attachments });
+    if (url === '/api/frameworks') return ok({ items: [] });
+    if (url === '/api/budgets?projectId=p1') return ok({ items: [{ id: 'budget-1', projectId: 'p1', projectName: project.name, frameworkId: null, totalAmountFen: 1_000_000, note: null, status: 'confirmed', budgetVersion: 2, version: 3, allocations: [], createdAt: '', updatedAt: '' }] });
+    if (url === '/api/financial-entries?projectId=p1&limit=20') return ok({ items: [{ id: 'entry-1', frameworkId: 'fw1', projectId: 'p1', projectName: project.name, type: 'actual_cost', businessDate: '2026-09-15', amountFen: 12_345, note: '现场费用', reversesEntryId: null, allocations: [], createdAt: '' }], nextCursor: null });
     if (url === '/api/attachments?objectType=project&objectId=p1&fileName=%E9%AA%8C%E6%94%B6%E8%AE%B0%E5%BD%95.pdf' && init?.method === 'POST') {
       const uploaded = { id: 'att-2', projectId: 'p1', objectType: 'project', objectId: 'p1', fileName: '验收记录.pdf', contentType: 'application/pdf', sizeBytes: 4, createdAt: '2026-09-16T00:00:00.000Z' };
       attachments = [...attachments, uploaded];
@@ -203,5 +206,26 @@ describe('ProjectDetailView project release', () => {
     expect(wrapper.text()).toContain('现场照片.jpg');
     expect(wrapper.find('[data-test="project-attachment-file"]').exists()).toBe(false);
     expect(wrapper.find('[data-test="upload-project-attachment"]').exists()).toBe(false);
+  });
+
+  it('shows current project budget and explicitly recent finance entries without treating a page as cumulative totals', async () => {
+    installFetch();
+    const wrapper = mount(ProjectDetailView, { props: { currentUser: admin } });
+    await flushPromises();
+    await wrapper.get('[data-test="project-tab-finance"]').trigger('click');
+    await flushPromises();
+
+    expect(wrapper.find('[data-test="project-finance-panel"]').exists()).toBe(true);
+    expect(wrapper.text()).toContain('当前预算');
+    expect(wrapper.text()).toContain('10,000.00');
+    expect(wrapper.text()).toContain('最近流水');
+    expect(wrapper.text()).toContain('123.45');
+    expect(wrapper.text()).toContain('最近流水不是累计统计');
+    expect(wrapper.text()).not.toContain('累计实际发生');
+
+    const financeButton = wrapper.findAll('button').find((candidate) => candidate.text().includes('打开资金工作区'));
+    expect(financeButton).toBeTruthy();
+    await financeButton!.trigger('click');
+    expect(push).toHaveBeenCalledWith({ path: '/finance', query: { projectId: 'p1' } });
   });
 });

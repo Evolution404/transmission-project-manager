@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
-import { NAlert, NButton, NCard, NForm, NFormItem, NInput, NSpin } from 'naive-ui';
+import { NAlert, NButton, NForm, NFormItem, NInput, NSpin } from 'naive-ui';
 import type { ApiResponse, CredentialKdfDescriptor, CurrentUser } from '@tpm/shared';
 import { parseApiResponse } from '../api/response';
 import {
@@ -123,77 +123,90 @@ onMounted(loadStatus);
 
 <template>
   <div class="login-page">
-    <n-card class="login-card" :title="initialized === false ? '初始化系统管理员' : '登录输电项目管理台'">
-      <n-spin :show="loading || initialized === null">
-        <n-alert v-if="error" type="error" class="login-alert">{{ error }}</n-alert>
+    <div class="auth-shell">
+      <section class="auth-brand-panel">
+        <div class="auth-brand-mark" aria-hidden="true"><span></span></div>
+        <div class="auth-brand-copy">
+          <span>TRANSMISSION PROJECTS</span>
+          <h1>输电项目全流程管理</h1>
+          <p>需求、储备、执行、资金和分析保持同一业务上下文，桌面与移动端使用同一套真实数据。</p>
+        </div>
+        <div class="auth-brand-foot">南京供电 · 内部业务系统</div>
+      </section>
 
-        <n-form v-if="initialized !== null" label-placement="top" @submit.prevent="initialized === false ? bootstrap() : login()">
-          <n-form-item v-if="initialized === false" label="管理员姓名">
-            <n-input v-model:value="bootstrapDisplayName" autocomplete="name" />
-          </n-form-item>
-          <n-form-item label="账号">
-            <n-input
-              v-model:value="username"
-              data-test="login-username"
-              autocomplete="username"
-              :input-props="{
-                id: 'username',
-                name: 'username',
-                autocomplete: 'username',
-                autocapitalize: 'none',
-                spellcheck: false,
-              }"
-              :placeholder="initialized === false ? '请输入管理员账号' : '请输入账号'"
-            />
-          </n-form-item>
-          <n-form-item label="密码">
-            <n-input
-              v-model:value="password"
-              data-test="login-password"
-              type="password"
-              show-password-on="mousedown"
-              placeholder="请输入密码"
-              :autocomplete="initialized === false ? 'new-password' : 'current-password'"
-              :input-props="{
-                id: 'password',
-                name: 'password',
-                autocomplete: initialized === false ? 'new-password' : 'current-password',
-              }"
-            />
-          </n-form-item>
+      <section class="auth-form-panel">
+        <div class="auth-form-header">
+          <span>{{ initialized === false ? 'SYSTEM SETUP' : 'ACCOUNT' }}</span>
+          <h2>{{ initialized === false ? '初始化系统管理员' : '登录管理台' }}</h2>
+          <p>{{ initialized === false ? '仅首次部署需要完成此步骤。' : '使用系统账号继续进入项目工作区。' }}</p>
+        </div>
+        <n-spin :show="loading || initialized === null">
+          <n-alert v-if="error" type="error" class="login-alert">{{ error }}</n-alert>
 
-          <template v-if="initialized === false">
-            <n-form-item label="确认密码">
+          <n-form v-if="initialized !== null" label-placement="top" @submit.prevent="initialized === false ? bootstrap() : login()">
+            <n-form-item v-if="initialized === false" label="管理员姓名">
+              <n-input v-model:value="bootstrapDisplayName" autocomplete="name" />
+            </n-form-item>
+            <n-form-item label="账号">
               <n-input
-                v-model:value="confirmPassword"
-                data-test="bootstrap-confirm-password"
-                type="password"
-                placeholder="请再次输入密码"
-                autocomplete="new-password"
+                v-model:value="username"
+                data-test="login-username"
+                autocomplete="username"
+                :input-props="{
+                  id: 'username',
+                  name: 'username',
+                  autocomplete: 'username',
+                  autocapitalize: 'none',
+                  spellcheck: false,
+                }"
+                :placeholder="initialized === false ? '请输入管理员账号' : '请输入账号'"
               />
             </n-form-item>
-            <n-form-item label="初始化令牌（仅首次使用）">
+            <n-form-item label="密码">
               <n-input
-                v-model:value="bootstrapToken"
-                data-test="bootstrap-token"
+                v-model:value="password"
+                data-test="login-password"
                 type="password"
-                placeholder="请输入一次性初始化令牌"
-                autocomplete="off"
+                show-password-on="mousedown"
+                placeholder="请输入密码"
+                :autocomplete="initialized === false ? 'new-password' : 'current-password'"
+                :input-props="{
+                  id: 'password',
+                  name: 'password',
+                  autocomplete: initialized === false ? 'new-password' : 'current-password',
+                }"
               />
             </n-form-item>
-            <p class="login-help">初始化令牌仅用于首次创建系统管理员，由部署方提供；创建成功后该初始化入口自动关闭。</p>
-            <n-button data-test="login-submit" type="primary" attr-type="submit" block :loading="loading">
-              创建首个管理员
-            </n-button>
-          </template>
-          <template v-else>
-            <n-button data-test="login-submit" type="primary" attr-type="submit" block :loading="loading">
-              登录
-            </n-button>
+
+            <template v-if="initialized === false">
+              <n-form-item label="确认密码">
+                <n-input
+                  v-model:value="confirmPassword"
+                  data-test="bootstrap-confirm-password"
+                  type="password"
+                  placeholder="请再次输入密码"
+                  autocomplete="new-password"
+                />
+              </n-form-item>
+              <n-form-item label="初始化令牌（仅首次使用）">
+                <n-input
+                  v-model:value="bootstrapToken"
+                  data-test="bootstrap-token"
+                  type="password"
+                  placeholder="请输入一次性初始化令牌"
+                  autocomplete="off"
+                />
+              </n-form-item>
+              <p class="login-help">初始化令牌仅用于首次创建系统管理员，由部署方提供；创建成功后该入口自动关闭。</p>
+              <n-button data-test="login-submit" type="primary" attr-type="submit" block :loading="loading">创建首个管理员</n-button>
+            </template>
+            <template v-else>
+              <n-button data-test="login-submit" type="primary" attr-type="submit" block :loading="loading">登录</n-button>
             <p class="login-help">忘记密码请联系管理员重置。</p>
-          </template>
-        </n-form>
-      </n-spin>
-    </n-card>
+            </template>
+          </n-form>
+        </n-spin>
+      </section>
+    </div>
   </div>
 </template>

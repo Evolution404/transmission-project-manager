@@ -14,13 +14,13 @@ export const router = createRouter({
     { path: '/tasks', name: 'tasks', component: () => import('./views/TaskQueueView.vue'), meta: { title: '执行任务' } },
     { path: '/delivery', redirect: '/tasks' },
     { path: '/finance', name: 'finance', component: () => import('./views/FinanceView.vue'), meta: { title: '框架费用' } },
-    { path: '/analysis', name: 'analysis', component: () => import('./views/AnalysisView.vue'), meta: { title: '储备分析' } },
+    { path: '/analysis', name: 'analysis', component: () => import('./views/AnalysisView.vue'), meta: { title: '业务分析' } },
     { path: '/master-data', name: 'master-data', component: () => import('./views/MasterDataView.vue'), meta: { title: '基础台账' } },
     {
       path: '/administration',
       name: 'administration',
       component: () => import('./views/AdministrationView.vue'),
-      meta: { title: '规则与成员' },
+      meta: { title: '设置' },
     },
   ],
 });

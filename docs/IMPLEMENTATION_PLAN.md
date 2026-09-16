@@ -1,6 +1,6 @@
 # 实施计划与验收清单
 
-版本：2026-09-15。长期业务事实见 `BUSINESS_BASELINE.md`，当前施工状态见 `AI_HANDOFF.md`。
+版本：2026-09-16。长期业务事实见 `BUSINESS_BASELINE.md`，当前施工状态见 `AI_HANDOFF.md`。
 
 ## 1. 阶段总览
 
@@ -18,7 +18,7 @@
 | 基础台账 M6 | 物理杆塔/线路节点分离、同塔 N 回、配置对象、通用自定义字段 | **已合入 main 并发布生产** |
 | 生产 schema 升级 | 既有生产 D1 → 当前 M6 schema | **已完成：按用户授权重建空 D1，仅保留 zhangsan 账号及原密码凭据，旧 D1 已删除** |
 | P7 | 真实业务、恢复、性能、网络和运维移交 | 继续按真实环境逐项验收 |
-| 全站 UI 重构 | 应用壳、项目/任务闭环、需求、资金、台账、分析、设置、认证视觉与全站验收 | **施工中**；项目/任务核心闭环、跨项目任务队列、原生控件硬门禁已落地，需求与资金正在迁移。当前长期 UI 规范统一维护在 `DESIGN.md` |
+| 全站 UI 重构 | 应用壳、项目/任务闭环、需求、资金、台账、分析、设置、认证视觉与全站验收 | **施工中，主体迁移已完成**；项目/任务核心闭环、需求、资金、台账、分析、设置、认证和旧页面退役已落地，当前重点为全站细节审计与真实浏览器最终验收。长期 UI 规范统一维护在 `DESIGN.md` |
 
 ## 2. 当前业务主路径
 
@@ -64,6 +64,11 @@
 - 台账设置：电压等级 / 班组 / 杆塔类型 / 自定义字段。
 - 杆塔行：线路节点编辑、物理塔编辑、重新关联物理塔、自定义字段、更名/历史、删除明确分离。
 - 新增/批量导入默认不猜同塔；用户显式选择已有物理塔或事后 rebind。
+- 当前全站 UI 已把基础台账外层统一为“线路对象清单 → 线路详情 → 全宽杆塔数据区”：桌面使用高密度对象清单/表格，手机使用独立对象列表，不改变 M6 的线路位置与物理杆塔身份边界。
+- 统一项目详情已接入来源需求、项目物资、储备确认、项目出库、执行任务、项目资金、附件与历史；项目资金只展示真实当前预算/框架归属和明确标注的最近流水，不用分页结果冒充全量累计。
+- 任务详情统一供应编辑器支持已上报/已发货/已到货三个阶段，保留独立 `supply_version`、幂等与 409 输入保留。
+- 设置承载成员、可读系统配置、储备分类、通知和逻辑备份；分析页只承载业务分析、计划、月报、年度事项和预警。
+- 旧 `/reserves` 与 `/delivery` 页面实现已经删除，分别只保留到项目中心和任务队列的兼容重定向，避免两套业务 UI 长期并存。
 
 ## 4. 当前门禁
 
@@ -82,7 +87,9 @@
 
 M6 基础台账定向结果：基础台账 API **25/25 PASS**；相关 Web **30/30 PASS**。M6 收口时完整 `npm run check` 为 Node **270/270**、Web **114/114（19 文件）**。
 
-全站 UI 重构当前施工分支 `refactor/ui-redesign-20260916` 最近一次完整 `npm run check` 已 PASS：Node **295/295**、Web **135/135（25 文件）**，Cloudflare/Node/Web/shared TypeScript、Web production build、Worker dry-run、Node+SQLite+Filesystem 第二运行时和全部静态门禁均 PASS。
+全站 UI 重构当前施工分支 `refactor/ui-redesign-20260916` 最近一次完整 `npm run check` 已 PASS：Node **295/295**、Web **131/131（23 文件）**，Cloudflare/Node/Web/shared TypeScript、Web production build、Worker dry-run、Node+SQLite+Filesystem 第二运行时和全部静态门禁均 PASS。Web 测试文件数量下降是因为旧 `ReservesView` / `DeliveryView` 在能力迁移后连同重复 UI 测试一起删除，不是关闭或跳过测试。
+
+真实浏览器最终验收仍是未完成项。当前项目未引入 Playwright/Puppeteer；本机 Chrome headless 在该环境会被 Updater/Crashpad 拖住，不能稳定批量生成桌面/手机/明暗截图。不得通过伪造认证会话规避登录；最终应使用正常认证会话完成关键页面真实浏览器验收后再宣布 UI 重构完成。
 
 远端证据：PR #12 与后续 `main` CI 均 PASS；生产重建 run `34952233283`、正式 release run `34952547151`、旧 D1 删除 run `34953255900` 均 PASS。当前 production schema 已为当前唯一 `0001_initial_schema.sql` 基线。
 
@@ -97,7 +104,7 @@ M6 基础台账定向结果：基础台账 API **25/25 PASS**；相关 Web **30/
 - `project-execution.ts` 已由约 850 行降至约 334 行；其职责回混已有 repository/static guard。
 - `analysis-operations.ts` 的混合职责已经完成拆分：`analysis-calculations.ts` 承载纯分析计算/查询编排，`analysis-operations.ts` 仅保留分析/计划/月报/里程碑 HTTP，`notification-operations.ts` 承载通知/告警/outbox，`backup-operations.ts` 承载逻辑备份，`system-tasks.ts` 承载定时任务编排。最新已验证代码提交为 `8c8f7ef`。
 - 分析计算抽取前已逐项对照旧实现并由测试锁定 BigInt 四舍五入、季度状态、默认/自定义计划、ratio/gap lagging 边界和里程碑提醒语义；分析/P6、通知仓储、备份仓储和 repository guards 定向合计 **53/53 PASS**。
-- 当前最新完整门禁基线为 Node **293/293 PASS**、Web **114/114 PASS**，双运行时 typecheck、Web build、Worker dry-run 全绿。
+- 上述分析模块职责拆分完成时的历史门禁基线为 Node **293/293 PASS**、Web **114/114 PASS**；当前施工分支的最新完整门禁以第 4 节所列 Node **295/295**、Web **131/131（23 文件）**为准。
 - 后续候选热点仍包括 `reserve-planning.ts`、`demand-import.ts`、`finance.ts`、`project-lifecycle.ts`、`MasterDataView.vue`、`packages/shared/src/index.ts`；按职责耦合收益排序拆分，禁止仅按文件行数机械拆分。
 
 ## 6. 当前生产状态
