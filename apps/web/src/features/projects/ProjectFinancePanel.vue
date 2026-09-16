@@ -59,7 +59,7 @@ onMounted(load);
       <n-button secondary @click="emit('openWorkspace')">打开资金工作区</n-button>
     </div>
 
-    <div v-if="error" class="finance-error">{{ error }} <n-button text @click="load">重新加载</n-button></div>
+    <div v-if="error" class="finance-error">{{ error }} <n-button secondary @click="load">重新加载</n-button></div>
     <n-spin :show="loading">
       <div class="finance-facts">
         <div>

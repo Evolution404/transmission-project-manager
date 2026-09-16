@@ -95,7 +95,7 @@ onMounted(load);
       </div>
     </div>
     <div class="section-panel-body classification-body">
-      <div v-if="error" class="classification-error">{{ error }} <n-button text @click="load">重新加载</n-button></div>
+      <div v-if="error" class="classification-error">{{ error }} <n-button secondary @click="load">重新加载</n-button></div>
       <n-spin :show="loading">
         <div class="classification-grid">
           <section class="classification-group">
@@ -169,6 +169,7 @@ onMounted(load);
 @media (max-width: 560px) {
   .classification-group { padding: 14px; }
   .classification-heading { align-items: flex-start; }
+  .classification-heading .n-button { min-height: 40px; }
   .inline-editor { grid-template-columns: 1fr; }
 }
 </style>

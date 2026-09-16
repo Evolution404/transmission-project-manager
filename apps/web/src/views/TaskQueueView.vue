@@ -139,7 +139,7 @@ onMounted(() => load());
 
       <div v-if="error" class="inline-error">
         <span>{{ error }}</span>
-        <n-button text @click="load()">重新加载</n-button>
+        <n-button secondary @click="load()">重新加载</n-button>
       </div>
 
       <n-spin :show="loading">

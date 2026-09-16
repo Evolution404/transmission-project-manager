@@ -322,7 +322,7 @@ code { font-family: "SFMono-Regular", Consolas, monospace; font-size: 12px; }
   .app-shell { display: block; }
   .app-sider { display: none; }
   .topbar { min-height: 52px; padding: 0 16px; background: rgba(246,247,249,.94); }
-  .topbar-product, .topbar-divider, .identity-copy { display: none; }
+  .topbar-product, .topbar-divider, .identity-card { display: none; }
   .topbar-context strong { font-size: 14px; }
   .content-wrap { min-height: calc(100dvh - 52px); padding: 18px 14px calc(92px + env(safe-area-inset-bottom)); }
   .view-stack { gap: 14px; }
@@ -359,6 +359,7 @@ code { font-family: "SFMono-Regular", Consolas, monospace; font-size: 12px; }
   .mobile-bottom-nav button { display: grid; place-items: center; align-content: center; gap: 3px; min-width: 0; min-height: 52px; border: 0; border-radius: 14px; background: transparent; color: #667085; }
   .mobile-bottom-nav button small { font-size: 13px; font-weight: 620; }
   .mobile-bottom-nav button.active { background: #f2f5fa; color: #1f5fd1; }
+  .mobile-account-row .n-button { min-height: 44px; padding-inline: 14px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

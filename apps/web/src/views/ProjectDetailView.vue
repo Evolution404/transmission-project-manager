@@ -239,7 +239,7 @@ onMounted(load);
 <template>
   <div class="view-stack project-detail-view">
     <app-pressable class="breadcrumb-back" @click="backToProjects">← 返回项目</app-pressable>
-    <div v-if="error" class="detail-error">{{ error }} <n-button text @click="load">重新加载</n-button></div>
+    <div v-if="error" class="detail-error">{{ error }} <n-button secondary @click="load">重新加载</n-button></div>
     <n-spin :show="loading">
       <template v-if="project && execution">
         <header class="object-header">

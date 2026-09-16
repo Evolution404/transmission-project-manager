@@ -965,12 +965,14 @@ const lineMoreOptions = [
   { label: '编辑线路属性', key: 'edit' },
   { label: '线路更名', key: 'rename' },
   { label: '名称历史', key: 'history' },
+  { label: '删除线路', key: 'delete' },
 ];
 function handleLineMoreAction(key: string) {
   if (!activeLine.value) return;
   if (key === 'edit') openLine(activeLine.value);
   else if (key === 'rename') openLineRename();
   else if (key === 'history') void openLineHistory();
+  else if (key === 'delete') requestDelete('lines', activeLine.value, `线路“${activeLine.value.lineName}”`);
 }
 const towerMoreOptions = [
   { label: '编辑物理杆塔', key: 'physical' },

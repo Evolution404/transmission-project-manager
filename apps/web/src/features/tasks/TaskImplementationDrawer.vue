@@ -186,7 +186,7 @@ async function save() {
 .drawer-line > div { display: grid; gap: 3px; }
 .progress-actions { position: sticky; bottom: 0; display: flex; justify-content: flex-end; gap: 10px; padding-top: 14px; background: var(--ui-surface); }
 @media (max-width: 767px) {
-  :global(.task-progress-drawer .n-drawer) { width: 100vw !important; max-width: 100vw !important; }
+  :global(.task-progress-drawer.n-drawer) { left: 0 !important; right: auto !important; top: 0 !important; bottom: auto !important; width: 100dvw !important; max-width: 100dvw !important; height: 100dvh !important; max-height: 100dvh !important; min-height: 0; overflow: hidden; }
   .drawer-line { grid-template-columns: 1fr; gap: 7px; padding: 11px 0; }
   .progress-actions { padding-bottom: max(14px, env(safe-area-inset-bottom)); }
   .progress-actions .n-button:last-child { flex: 1; }

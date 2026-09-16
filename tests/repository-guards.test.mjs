@@ -533,6 +533,38 @@ test('business UI does not use tiny action buttons', () => {
   assert.deepEqual(tinyButtons, [], `业务操作禁止使用 tiny 按钮：${tinyButtons.join(', ')}`);
 });
 
+test('error recovery actions use real buttons instead of collapsed text-only hit targets', () => {
+  for (const file of collectSourceFiles(resolve(root, 'apps/web/src'))) {
+    if (!file.endsWith('.vue')) continue;
+    const source = readFileSync(file, 'utf8');
+    assert.doesNotMatch(
+      source,
+      /<n-button[^>]*\btext\b[^>]*>\s*重新加载\s*<\/n-button>/,
+      `${file} 的“重新加载”不得使用 text-only 按钮；错误恢复动作必须保留真实可点击高度`,
+    );
+  }
+});
+
+test('line deletion has a non-hover detail action for touch desktop users', () => {
+  const source = readFileSync(resolve(root, 'apps/web/src/views/MasterDataView.vue'), 'utf8');
+  const options = source.match(/const lineMoreOptions = \[[\s\S]*?\];/)?.[0] ?? '';
+  const handler = source.match(/function handleLineMoreAction\(key: string\) \{[\s\S]*?\n\}/)?.[0] ?? '';
+  assert.match(options, /label:\s*'删除线路'[^}]*key:\s*'delete'/, '线路详情“更多操作”必须提供删除入口，不能只依赖 hover 快捷操作');
+  assert.match(handler, /key === 'delete'[\s\S]*requestDelete\('lines'/, '详情删除入口必须走既有线路删除确认流程');
+});
+
+test('drawer responsive selectors target the NDrawer root instead of a nonexistent descendant', () => {
+  for (const file of collectSourceFiles(resolve(root, 'apps/web/src'))) {
+    if (!file.endsWith('.vue') && !file.endsWith('.css')) continue;
+    const source = readFileSync(file, 'utf8');
+    assert.doesNotMatch(
+      source,
+      /:global\(\.[\w-]*drawer\s+\.n-drawer\)/,
+      `${file} 将 drawer class 直接挂在 NDrawer 根节点时，不得再用后代选择器匹配 .n-drawer`,
+    );
+  }
+});
+
 test('text-style return navigation keeps a usable touch target', () => {
   const styleSource = readFileSync(resolve(root, 'apps/web/src/styles.css'), 'utf8');
   assert.match(styleSource, /\.breadcrumb-back,\s*\.back-button\s*\{[^}]*min-height:\s*36px/);

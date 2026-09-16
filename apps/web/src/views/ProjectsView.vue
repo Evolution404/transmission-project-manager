@@ -166,7 +166,7 @@ onMounted(() => loadPage());
         <span class="result-count">当前显示 {{ projects.length }} 个项目</span>
       </div>
 
-      <div v-if="error" class="inline-error">{{ error }} <n-button text @click="loadPage()">重新加载</n-button></div>
+      <div v-if="error" class="inline-error">{{ error }} <n-button secondary @click="loadPage()">重新加载</n-button></div>
       <n-spin :show="loading">
         <n-data-table v-if="projects.length" class="desktop-project-table" :data="projects" :columns="columns" :pagination="false" :scroll-x="900" />
         <div v-if="projects.length" class="mobile-project-list">

@@ -228,7 +228,7 @@ onMounted(load);
 <template>
   <div class="view-stack task-detail-view">
     <app-pressable class="breadcrumb-back" @click="backToOrigin">‹ {{ returnLabel }}</app-pressable>
-    <div v-if="error" class="detail-error">{{ error }} <n-button text @click="load">重新加载</n-button></div>
+    <div v-if="error" class="detail-error">{{ error }} <n-button secondary @click="load">重新加载</n-button></div>
     <n-spin :show="loading">
       <template v-if="project && task">
         <section class="object-header">
@@ -414,7 +414,7 @@ onMounted(load);
   .supply-line > .n-button { grid-column: 1 / -1; width: 100%; justify-self: stretch; margin: 2px 0 0; }
   .placeholder-section { align-items: stretch; flex-direction: column; }
   .placeholder-section > .n-button { width: 100%; }
-  :global(.supply-drawer .n-drawer) { width: 100vw !important; max-width: 100vw !important; }
+  :global(.supply-drawer.n-drawer) { left: 0 !important; right: auto !important; top: 0 !important; bottom: auto !important; width: 100dvw !important; max-width: 100dvw !important; height: 100dvh !important; max-height: 100dvh !important; min-height: 0; overflow: hidden; }
   .drawer-actions { padding-bottom: max(14px, env(safe-area-inset-bottom)); }
   .drawer-actions .n-button:last-child { flex: 1; }
 }

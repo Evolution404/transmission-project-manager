@@ -156,7 +156,7 @@ onMounted(load);
       </div>
     </div>
     <div class="section-panel-body operations-body">
-      <div v-if="error" class="operation-error">{{ error }} <n-button text @click="load">重新加载</n-button></div>
+      <div v-if="error" class="operation-error">{{ error }} <n-button secondary @click="load">重新加载</n-button></div>
       <n-spin :show="loading">
         <div class="operations-grid">
           <section class="operation-group">

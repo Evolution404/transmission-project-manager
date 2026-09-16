@@ -9,7 +9,7 @@ const root = resolve(import.meta.dirname, '../..');
 const wrangler = resolve(root, 'node_modules/.bin/wrangler');
 const apiConfig = resolve(root, 'apps/api/wrangler.jsonc');
 const databaseName = 'transmission-project-manager-local';
-const username = 'e2e-admin';
+const username = 'e2e-admin-with-a-very-long-username-for-layout-audit-2026';
 const password = 'HeadlessOnly-2026!';
 const bootstrapToken = 'headless-e2e-bootstrap-token';
 const credentialPepper = 'headless-e2e-credential-pepper';
@@ -18,6 +18,7 @@ let stateRoot = '';
 let baseUrl = '';
 let server: ChildProcess | null = null;
 let authenticatedState: Awaited<ReturnType<BrowserContext['storageState']>> | undefined;
+let drawerFixture: { projectId: string; taskId: string; taskMaterialId: string } | undefined;
 
 function freePort(): Promise<number> {
   return new Promise((resolvePort, reject) => {
@@ -74,6 +75,78 @@ async function loginThroughUi(page: Page) {
   await expect(page.locator('.app-shell')).toBeVisible();
 }
 
+async function mutationThroughSession<T>(page: Page, path: string, key: string, body: unknown, expectedStatus: number) {
+  const result = await page.evaluate(async ({ path: requestPath, key: idempotencyKey, body: requestBody }) => {
+    const response = await fetch(requestPath, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey },
+      body: JSON.stringify(requestBody),
+    });
+    return { status: response.status, payload: await response.json() };
+  }, { path, key, body });
+  expect(result.status, `${path} 测试夹具创建失败：${JSON.stringify(result.payload)}`).toBe(expectedStatus);
+  return result.payload as T;
+}
+
+async function createDrawerFixture(page: Page) {
+  const created = await mutationThroughSession<{ data: { id: string; version: number; materialRequirements: Array<{ id: string }> } }>(
+    page,
+    '/api/reserve-projects',
+    'e2e-drawer-project',
+    {
+      name: 'E2E 抽屉响应式验收项目',
+      year: 2026,
+      owner: 'E2E',
+      demandIds: [],
+      materials: [{
+        materialId: null,
+        model: 'E2E-MATERIAL',
+        unit: '件',
+        requiredQuantityScaled: 10000,
+        unitPriceScaled: null,
+        reserveCategoryId: null,
+      }],
+    },
+    201,
+  );
+  const projectId = created.data.id;
+  const projectMaterialId = created.data.materialRequirements[0]!.id;
+  const confirmed = await mutationThroughSession<{ data: { version: number } }>(
+    page,
+    `/api/reserve-projects/${encodeURIComponent(projectId)}/confirm`,
+    'e2e-drawer-confirm',
+    { expectedVersion: created.data.version, reason: 'E2E 抽屉验收' },
+    200,
+  );
+  const released = await mutationThroughSession<{ data: { projectVersion: number } }>(
+    page,
+    '/api/project-releases',
+    'e2e-drawer-release',
+    { projectId, expectedProjectVersion: confirmed.data.version, releaseDate: '2026-09-16', note: 'E2E 抽屉验收' },
+    201,
+  );
+  const task = await mutationThroughSession<{ data: { id: string; materials: Array<{ id: string }> } }>(
+    page,
+    '/api/project-tasks',
+    'e2e-drawer-task',
+    {
+      projectId,
+      expectedProjectVersion: released.data.projectVersion,
+      name: 'E2E 抽屉验收任务',
+      description: null,
+      scopeText: null,
+      owner: 'E2E',
+      plannedDate: null,
+      plannedQuantityScaled: 10000,
+      unit: '项',
+      demandScopes: [],
+      materials: [{ projectMaterialRequirementId: projectMaterialId, quantityScaled: 10000 }],
+    },
+    201,
+  );
+  return { projectId, taskId: task.data.id, taskMaterialId: task.data.materials[0]!.id };
+}
+
 async function assertNoHorizontalOverflow(page: Page) {
   const state = await page.evaluate(() => {
     const viewportWidth = window.innerWidth;
@@ -121,26 +194,93 @@ async function assertVisibleTextFloor(page: Page) {
   expect(offenders, `${page.url()} 发现低于 12px 的可见业务文字：${offenders.join(' | ')}`).toEqual([]);
 }
 
+async function assertNoVisibleLoadError(page: Page) {
+  const errors = await page.locator([
+    '.inline-error',
+    '.detail-error',
+    '.finance-error',
+    '.classification-error',
+    '.operation-error',
+    '.error-recovery',
+    '.n-alert.n-alert--error-type',
+  ].join(', ')).evaluateAll((elements) => elements
+    .map((element) => {
+      const node = element as HTMLElement;
+      const rect = node.getBoundingClientRect();
+      return {
+        text: node.innerText.trim().slice(0, 180),
+        visible: rect.width > 0 && rect.height > 0 && getComputedStyle(node).visibility !== 'hidden',
+      };
+    })
+    .filter((item) => item.visible));
+  expect(errors, `${page.url()} 仍处于加载错误态：${JSON.stringify(errors)}`).toEqual([]);
+}
+
 async function assertOverlayWithinViewport(page: Page, overlay: Locator, label: string) {
   await expect(overlay).toBeVisible();
-  let latest: { x: number; y: number; width: number; height: number; viewportWidth: number; viewportHeight: number } | null = null;
+  let latest: {
+    x: number; y: number; width: number; height: number; viewportWidth: number; viewportHeight: number;
+    visualViewport?: { width: number; height: number; offsetLeft: number; offsetTop: number };
+    style?: Record<string, string>; parent?: { x: number; y: number; width: number; height: number };
+    container?: { x: number; y: number; width: number; height: number; position: string; left: string; right: string; top: string; bottom: string };
+  } | null = null;
   try {
     await expect.poll(async () => {
       const box = await overlay.boundingBox();
-      const viewport = page.viewportSize();
-      if (!box || !viewport) return false;
+      if (!box) return false;
+      const diagnostics = await overlay.evaluate((element) => {
+        const style = getComputedStyle(element);
+        const parentRect = element.parentElement?.getBoundingClientRect();
+        const container = element.closest<HTMLElement>('.n-drawer-container');
+        const containerRect = container?.getBoundingClientRect();
+        const containerStyle = container ? getComputedStyle(container) : null;
+        return {
+          viewport: { width: window.innerWidth, height: window.innerHeight },
+          visualViewport: window.visualViewport ? {
+            width: window.visualViewport.width,
+            height: window.visualViewport.height,
+            offsetLeft: window.visualViewport.offsetLeft,
+            offsetTop: window.visualViewport.offsetTop,
+          } : undefined,
+          style: {
+            left: style.left,
+            right: style.right,
+            top: style.top,
+            bottom: style.bottom,
+            transform: style.transform,
+            marginLeft: style.marginLeft,
+            marginRight: style.marginRight,
+            position: style.position,
+            boxSizing: style.boxSizing,
+            overflow: style.overflow,
+          },
+          parent: parentRect ? { x: parentRect.x, y: parentRect.y, width: parentRect.width, height: parentRect.height } : undefined,
+          container: containerRect && containerStyle ? {
+            x: containerRect.x,
+            y: containerRect.y,
+            width: containerRect.width,
+            height: containerRect.height,
+            position: containerStyle.position,
+            left: containerStyle.left,
+            right: containerStyle.right,
+            top: containerStyle.top,
+            bottom: containerStyle.bottom,
+          } : undefined,
+        };
+      });
       latest = {
         x: box.x,
         y: box.y,
         width: box.width,
         height: box.height,
-        viewportWidth: viewport.width,
-        viewportHeight: viewport.height,
+        viewportWidth: diagnostics.viewport.width,
+        viewportHeight: diagnostics.viewport.height,
+        ...diagnostics,
       };
       return box.x >= -1
         && box.y >= -1
-        && box.x + box.width <= viewport.width + 1
-        && box.y + box.height <= viewport.height + 1;
+        && box.x + box.width <= diagnostics.viewport.width + 1
+        && box.y + box.height <= diagnostics.viewport.height + 1;
     }).toBe(true);
   } catch (cause) {
     throw new Error(`${label} 未完全进入视口；最终几何=${JSON.stringify(latest)}`, { cause });
@@ -153,6 +293,33 @@ async function assertMobileNavigationTargets(page: Page) {
   ));
   expect(heights).toHaveLength(5);
   expect(Math.min(...heights)).toBeGreaterThanOrEqual(44);
+}
+
+async function assertMobileShellTouchTargets(page: Page) {
+  await expect(page.locator('.topbar .identity-card')).toBeHidden();
+
+  await page.getByRole('button', { name: '更多' }).click();
+  await expect(page.getByRole('dialog')).toBeVisible();
+  const drawerLogout = page.locator('.mobile-account-row .n-button');
+  const drawerBox = await drawerLogout.boundingBox();
+  expect(drawerBox?.height ?? 0, '手机账号区退出按钮命中高度不足').toBeGreaterThanOrEqual(44);
+}
+
+async function assertMobileContentTouchTargets(page: Page) {
+  const offenders = await page.locator('.content-wrap button').evaluateAll((buttons) => buttons
+    .map((button) => {
+      const element = button as HTMLElement;
+      const rect = element.getBoundingClientRect();
+      return {
+        text: (element.innerText || element.getAttribute('aria-label') || '').trim().slice(0, 40),
+        height: Math.round(rect.height * 10) / 10,
+        width: Math.round(rect.width * 10) / 10,
+        className: element.className,
+        visible: rect.width > 0 && rect.height > 0 && getComputedStyle(element).visibility !== 'hidden',
+      };
+    })
+    .filter((item) => item.visible && item.height < 36));
+  expect(offenders, `${page.url()} 手机内容区发现低于 36px 的按钮：${JSON.stringify(offenders)}`).toEqual([]);
 }
 
 async function assertSidebarActiveIndicator(page: Page, title: string, path: string) {
@@ -230,12 +397,14 @@ async function assertRouteLayout(page: Page, path: string, mobile: boolean) {
   await page.goto(`${baseUrl}${path}`);
   await expect(page.locator('.app-shell')).toBeVisible();
   await expect(page.locator('.content-wrap')).not.toBeEmpty();
+  await assertNoVisibleLoadError(page);
   await assertNoHorizontalOverflow(page);
   await assertVisibleTextFloor(page);
   if (mobile) {
     await expect(page.locator('.app-sider')).toBeHidden();
     await expect(page.locator('.mobile-bottom-nav')).toBeVisible();
     await assertMobileNavigationTargets(page);
+    await assertMobileContentTouchTargets(page);
     await assertNoSiblingOverlap(page, '.mobile-bottom-nav > button', ['.app-icon', 'small'], '手机底部导航');
   } else {
     await expect(page.locator('.app-sider')).toBeVisible();
@@ -243,12 +412,12 @@ async function assertRouteLayout(page: Page, path: string, mobile: boolean) {
   }
 }
 
-async function validateKeyOverlays(browser: Browser, mobile: boolean) {
+async function validateKeyOverlays(browser: Browser, options: { width: number; height: number; mobile: boolean }) {
   const context = await browser.newContext({
-    viewport: mobile ? { width: 390, height: 844 } : { width: 1440, height: 900 },
+    viewport: { width: options.width, height: options.height },
     colorScheme: 'light',
-    isMobile: mobile,
-    hasTouch: mobile,
+    isMobile: options.mobile,
+    hasTouch: options.mobile,
     storageState: authenticatedState,
   });
   try {
@@ -267,6 +436,49 @@ async function validateKeyOverlays(browser: Browser, mobile: boolean) {
     await page.goto(`${baseUrl}/administration`);
     await page.getByRole('button', { name: '新增成员' }).click();
     await assertOverlayWithinViewport(page, page.getByRole('dialog').filter({ hasText: '新增成员' }), '新增成员');
+  } finally {
+    await context.close();
+  }
+}
+
+async function validateBusinessDrawers(browser: Browser, width: number, height: number) {
+  if (!drawerFixture) throw new Error('业务抽屉测试夹具尚未创建');
+  const context = await browser.newContext({
+    viewport: { width, height },
+    colorScheme: 'light',
+    isMobile: false,
+    hasTouch: true,
+    storageState: authenticatedState,
+  });
+  try {
+    const page = await context.newPage();
+    const projectUrl = `${baseUrl}/projects/${encodeURIComponent(drawerFixture.projectId)}`;
+    const taskUrl = `${projectUrl}/tasks/${encodeURIComponent(drawerFixture.taskId)}`;
+
+    await page.goto(projectUrl);
+    await page.locator('[data-test="project-tab-materials"]').click();
+    await expect(page.locator('[data-test="edit-project-materials"]')).toBeVisible();
+    await page.locator('[data-test="edit-project-materials"]').click();
+    await assertOverlayWithinViewport(page, page.locator('.project-materials-drawer.n-drawer'), '项目物资抽屉');
+
+    await page.goto(projectUrl);
+    await page.locator('[data-test="project-tab-demands"]').click();
+    await page.locator('[data-test="edit-project-sources"]').click();
+    await assertOverlayWithinViewport(page, page.locator('.project-source-drawer.n-drawer'), '项目来源抽屉');
+
+    await page.goto(taskUrl);
+    await page.locator(`[data-test="open-supply-${drawerFixture.taskMaterialId}"]`).click();
+    await assertOverlayWithinViewport(page, page.locator('.supply-drawer.n-drawer'), '供应进度抽屉');
+
+    await page.goto(taskUrl);
+    await page.locator('[data-test="task-section-implementation"]').click();
+    await page.locator('[data-test="open-implementation"]').click();
+    await assertOverlayWithinViewport(page, page.locator('.task-progress-drawer.n-drawer'), '实施抽屉');
+
+    await page.goto(taskUrl);
+    await page.locator('[data-test="task-section-settlement"]').click();
+    await page.locator('[data-test="open-settlement"]').click();
+    await assertOverlayWithinViewport(page, page.locator('.task-progress-drawer.n-drawer'), '结算抽屉');
   } finally {
     await context.close();
   }
@@ -300,6 +512,8 @@ async function validateAuthenticatedUi(browser: Browser, options: {
 
     if (options.mobile) {
       await page.goto(`${baseUrl}/`);
+      await assertMobileShellTouchTargets(page);
+      await page.keyboard.press('Escape');
       await page.getByRole('button', { name: '更多' }).click();
       await expect(page.getByRole('dialog')).toBeVisible();
       await assertNoSiblingOverlap(
@@ -389,6 +603,18 @@ test.describe.serial('无头浏览器真实认证与响应式 UI', () => {
     authenticatedState = await page.context().storageState();
   });
 
+  test('为业务抽屉响应式验收创建隔离项目和任务夹具', async ({ browser }) => {
+    const context = await browser.newContext({ storageState: authenticatedState });
+    try {
+      const page = await context.newPage();
+      await page.goto(baseUrl);
+      await expect(page.locator('.app-shell')).toBeVisible();
+      drawerFixture = await createDrawerFixture(page);
+    } finally {
+      await context.close();
+    }
+  });
+
   test('真实登录会话在业务深链整页刷新后保持当前路由', async ({ browser }) => {
     const context = await browser.newContext({
       viewport: { width: 1440, height: 900 },
@@ -412,7 +638,12 @@ test.describe.serial('无头浏览器真实认证与响应式 UI', () => {
   for (const options of [
     { name: 'desktop-light', width: 1440, height: 900, colorScheme: 'light' as const, mobile: false },
     { name: 'desktop-dark', width: 1440, height: 900, colorScheme: 'dark' as const, mobile: false },
+    { name: 'desktop-low-height-light', width: 1440, height: 600, colorScheme: 'light' as const, mobile: false },
+    { name: 'compact-narrow-light', width: 768, height: 900, colorScheme: 'light' as const, mobile: false, compact: true },
+    { name: 'compact-low-height-light', width: 768, height: 600, colorScheme: 'light' as const, mobile: false, compact: true },
     { name: 'compact-light', width: 900, height: 900, colorScheme: 'light' as const, mobile: false, compact: true },
+    { name: 'compact-wide-light', width: 1100, height: 900, colorScheme: 'light' as const, mobile: false, compact: true },
+    { name: 'mobile-narrow-light', width: 320, height: 700, colorScheme: 'light' as const, mobile: true },
     { name: 'mobile-light', width: 390, height: 844, colorScheme: 'light' as const, mobile: true },
     { name: 'mobile-dark', width: 390, height: 844, colorScheme: 'dark' as const, mobile: true },
   ]) {
@@ -422,10 +653,26 @@ test.describe.serial('无头浏览器真实认证与响应式 UI', () => {
   }
 
   test('桌面关键写入弹层不超出视口', async ({ browser }) => {
-    await validateKeyOverlays(browser, false);
+    await validateKeyOverlays(browser, { width: 1440, height: 900, mobile: false });
+  });
+
+  test('紧凑桌面关键写入弹层不超出视口', async ({ browser }) => {
+    await validateKeyOverlays(browser, { width: 768, height: 700, mobile: false });
   });
 
   test('手机关键写入弹层不超出视口', async ({ browser }) => {
-    await validateKeyOverlays(browser, true);
+    await validateKeyOverlays(browser, { width: 390, height: 844, mobile: true });
+  });
+
+  test('窄屏手机关键写入弹层不超出视口', async ({ browser }) => {
+    await validateKeyOverlays(browser, { width: 320, height: 700, mobile: true });
+  });
+
+  test('手机业务抽屉不超出视口', async ({ browser }) => {
+    await validateBusinessDrawers(browser, 390, 844);
+  });
+
+  test('窄屏手机业务抽屉不超出视口', async ({ browser }) => {
+    await validateBusinessDrawers(browser, 320, 700);
   });
 });
