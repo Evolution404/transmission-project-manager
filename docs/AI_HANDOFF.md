@@ -4,19 +4,19 @@
 
 ## 当前任务
 
-全站 UI 重构已经通过 PR #15 合入 `main` 并发布生产。当前进入**工程化加固**阶段，目标是减少重复工程步骤、建立可重复审计、拆分高耦合公共契约，并继续清理真实技术债；禁止为了“文件变小”机械拆分业务模块。
+全站 UI 与第一轮工程化加固已经通过 PR #15 / #16 合入 `main` 并发布生产。当前继续做**代码/发布工程化审计**，目标是减少重复发布耗时、提高发布证据与自动回退质量，并继续按明确职责边界清理真实技术债；禁止为了“文件变小”机械拆分业务模块。
 
-当前施工分支：`refactor/engineering-hardening-20260916`。禁止 `git reset` / `git clean`，不得覆盖他人未提交修改。除非用户再次明确授权，本工程化分支不得触发新的生产发布或生产数据变更。
+当前施工分支：`refactor/release-engineering-20260916`。禁止 `git reset` / `git clean`，不得覆盖他人未提交修改。当前用户只要求“继续审计代码，优化发布”，未授权本分支合入或再次发布生产；完成 CI 后停在可审查状态。
 
-## 工程化发布前的生产基线
+## 当前生产基线
 
-- PR #15 已合入 `main@bc59cf18befb3058d47848e8dae6f9589187c9dd`。
-- 合并后 `main` CI run `35107954205`：`check`、`headless-ui` 均 PASS。
-- `Production preflight` run `35108265214`：PASS。
-- `Production promote` run `35108487959`：PASS。
+- PR #16 已合入 `main@10274d5b213598c51e7da075273e30930e7de707`。
+- 合并后 `main` CI run `35115163597`：`check`、`headless-ui` PASS。
+- `Production preflight` run `35115550812`：PASS。
+- `Production promote` run `35115794914`：PASS。
 - 数据保留评估为 `rebuildRequired=false`，source/target schema fingerprint 完全一致，未重建 D1、未清空生产数据。
-- 当前已发布 Worker Version ID：`c943338c-e5a3-4731-ac83-9f4b990e8505`。
-- 独立公网验收：`/api/health` 正常、`schema.ready=true`、current/required migration 均为 `0001_initial_schema.sql`；认证已初始化；匿名受保护接口返回 401。
+- 当前已发布 Worker Version ID：`e50f4e69-c4eb-4ab5-afb0-a1a79603cd3a`。
+- 独立公网验收：`/api/health` 正常、`schema.ready=true`、current/required migration 均为 `0001_initial_schema.sql`；`/api/auth/status initialized=true`；匿名 `/api/me` 返回 401。只读 inventory run `35116478135` PASS。
 
 生产仍处开发阶段 schema 策略：只允许单一 `0001_initial_schema.sql`；只有用户明确宣布进入运行阶段/正式维护升级链后，才允许追加 `0002+`。
 
@@ -75,6 +75,25 @@
 
 提交：`def862a refactor(api): share pagination cursor codec`。
 
+### 当前发布链优化 WIP
+
+- CI 新增独立 `audit` job，工程卫生与 production dependency security audit 成为发布关键证据；
+- `Production preflight` / `Production promote` 不再把同一 SHA 的完整测试重复执行，而由 `verify-release-ci.mjs` 严格复用精确 `main` push CI 的 `check / headless-ui / audit` 三项成功证据；
+- `Production preflight` 已解除 `production` Environment 绑定：它无云凭据、无 remote mutation，不再占用生产审批/Secret 边界；
+- production workflow 仍在 fresh runner 重新安装锁定依赖、build Web、校验 production config 并做 Worker dry-run，不能只靠历史构建产物；
+- `public-smoke.mjs` 自动验证 health/schema migration、认证初始化和匿名 401；
+- `make production-smoke` 从受控 production config 解析正式域名，可随时只读复核当前线上基础状态；
+- code-only `rebuildRequired=false` 发布也在 deploy 前记录旧 Worker version 并安装 rollback trap，smoke 失败时自动回滚；发布摘要直接记录新 Worker Version ID；
+- 旧 `main@10274d5` CI 因尚无 `audit` job，被新 release gate 正确拒绝复用，证明门禁不会拿旧弱证据冒充新发布证据。
+
+当前相关提交：`368ab75 build: reuse exact CI evidence for releases`。
+
+### 储备分类配置职责拆分
+
+`reserve-planning.ts` 原先同时承载项目储备和储备大类/需求类别映射配置。当前将 `/reserve-categories` 与 `/category-mappings` 原路径迁入 `reserve-category-config.ts`，项目成本分类分摊仍留在项目储备域；权限、幂等、版本和错误合同不变。repository guard 防止两类职责再次混回同一模块。
+
+提交：`f790db5 refactor(api): isolate reserve category configuration`。
+
 ## 当前维护热点
 
 工程审计当前仍报告以下 >=600 行真源；它们是审查候选，不是“必须按行数拆分”的失败项：
@@ -92,11 +111,11 @@
 
 ## 当前验证状态与下一步
 
-最新完整本地 `make test` 已 PASS：Node **327/327**、Web **165/165（23 文件）**、Headless Chromium **23/23**；Cloudflare/Node/Web/shared TypeScript、Web production build、Worker dry-run、Node + SQLite + Filesystem 第二运行时全部通过。`make audit` 同样 PASS，production dependency audit 为 **0 vulnerabilities**。
+最新完整本地 `make test` 已 PASS：Node **334/334**、Web **165/165（23 文件）**、Headless Chromium **23/23**；Cloudflare/Node/Web/shared TypeScript、Web production build、Worker dry-run、Node + SQLite + Filesystem 第二运行时全部通过。`make audit` 同样 PASS，production dependency audit 为 **0 vulnerabilities**。
 
 Shared 拆分过程中完整门禁曾抓到 Node 原生 ESM 不接受无扩展名相对 specifier；现已改为显式 `.ts`，并新增门禁防回归。该失败从未合入 `main`、从未发布生产。
 
-用户已于 2026-09-16 明确授权：工程化收口完成且最终 CI 通过后合入 `main` 并发布生产。后续不得因为这一授权顺带实施新的业务功能或高风险大拆分；只完成当前工程化分支的 CI → PR/merge → `main` CI → `Production promote` → production health/版本核验。
+下一步仅完成当前分支文档同步 → GitHub CI 三 job 实测 → 如需要创建 PR 供用户审核。**不得沿用上一轮已经完成的发布授权自动合并/部署当前分支。**
 
 ## 必须保持的业务/工程边界
 

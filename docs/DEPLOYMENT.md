@@ -10,13 +10,13 @@
 
 PR #1 合并前 CI 与合并后的 `main` CI #31 均通过。Cloudflare Workers + D1 仍是当前计算/数据库部署基线；对象存储统一经 `ObjectStorePort`。当前正式方案选择 Notion，保留 Cloudflare R2 与 Node Filesystem 可替换后端；Node + SQLite + Filesystem 仍作为普通服务器第二运行时。
 
-最新生产代码基线为 `main@bc59cf18befb3058d47848e8dae6f9589187c9dd`。2026-09-16 的 `Production promote` run `35108487959` 完整 PASS；数据保留评估确认 source/target schema fingerprint 一致、`rebuildRequired=false`，因此未重建 D1。当前 Worker Version ID 为 `c943338c-e5a3-4731-ac83-9f4b990e8505`，公网 health/schema readiness 与匿名鉴权拒绝已独立复核。
+最新生产代码基线为 `main@10274d5b213598c51e7da075273e30930e7de707`。PR #16 合并后的 `main` CI run `35115163597` 全绿，`Production preflight` run `35115550812` 与 `Production promote` run `35115794914` 均 PASS；数据保留评估确认 source/target schema fingerprint 一致、`rebuildRequired=false`，因此未重建 D1。当前 Worker Version ID 为 `e50f4e69-c4eb-4ab5-afb0-a1a79603cd3a`，公网 health/schema readiness、认证初始化与匿名 401 均已复核。
 
 生产 workflow 已通过 PR #2 合入 `main@bc4774767c159068d59e16d6726444c5c1525dd6`，合并后的 CI #37 PASS。仓库现有四类 Actions：
 
-- `CI`：push `main` / PR / 手工，仅执行完整代码门禁；
-- `Production preflight (no deployment)`：手工，仅校验 production config + dry-run，不携带云凭据；
-- `Production promote`：唯一生产变更入口，手工、`production` Environment 绑定；自动完成数据保留评估、必要的数据结构转换、Worker 发布和真实 `/api/health` 验证。
+- `CI`：push `main` / PR / 手工；`check`、`headless-ui`、`audit` 三个发布关键 job 分别执行完整代码门禁、真实无头 UI 验收、工程卫生/生产依赖安全审计；
+- `Production preflight (no deployment)`：可选手工演练；先验证**精确 main SHA** 的上述三个 CI job 已全绿，再只执行生产专属 Web build、production config 校验与 Worker dry-run，不携带 Cloudflare 凭据；
+- `Production promote`：唯一生产变更入口，手工、`production` Environment 绑定；同样复用精确 main CI 证据，不重复跑完整测试，随后执行生产专属打包、数据保留评估、必要的数据结构转换、Worker 发布、真实公网 smoke 与失败回退。
 
 **代码中存在 workflow 不等于生产已经发布。** 2026-09-14 已建立 GitHub `production` Environment，并限制生产 workflow 仅从 `main` 运行。生产非敏感配置现在直接受 Git 管理于 `apps/api/wrangler.production.jsonc`；GitHub 不再保存重复的 production Variables。正式发布长期只依赖 3 个 Environment Secrets：`CLOUDFLARE_API_TOKEN`、`AUTH_CREDENTIAL_PEPPER`、`NOTION_API_TOKEN`。`BOOTSTRAP_TOKEN` 仅在首次管理员初始化时临时使用，不属于长期配置。
 
@@ -114,8 +114,9 @@ YAML 中写 `environment: production` 不能替代真实 Environment protection 
 - `make dev`：启动本地 API + Web；
 - `make test`：完整 `npm run check` + Headless Chromium UI E2E；
 - `make ci`：触发并等待当前分支 `CI`；
-- `make production-preflight`：要求 clean 且与 `origin/main` 同步的 `main`，触发并等待无变更预检；
-- `make production`：同样校验精确 `main` 后触发并等待 `Production promote`；
+- `make production-preflight`：可选；要求 clean 且与 `origin/main` 同步的 `main`，触发并等待生产打包/dry-run 演练；
+- `make production`：同样校验精确 `main` 后触发并等待 `Production promote`；workflow 会复用该 SHA 已完成的 main CI 证据，不重复执行全套测试；
+- `make production-smoke`：不触发发布、不读取用户 Cookie/密码，直接从受控 production config 解析正式域名并检查 health/schema、认证初始化和匿名 401；
 - `make production-inventory`：触发并等待读取型 Cloudflare production inventory。
 
 `Makefile` 不允许直接执行 `wrangler deploy`、remote D1 mutation、`git reset` 或 `git clean`。生产 Secret、数据保留评估、精确 SHA 二次绑定、正式发布、health 验证和失败回退仍全部由受保护 workflow 负责。
@@ -123,9 +124,9 @@ YAML 中写 `environment: production` 不能替代真实 Environment protection 
 ### 6.1 代码门禁
 
 1. 所有修改先进入远端施工分支和 PR；
-2. PR 最新 HEAD 的 GitHub Actions `npm run check` 必须全绿；
+2. PR 最新 HEAD 的 GitHub Actions `check / headless-ui / audit` 必须全绿；
 3. 通过 GitHub 合入 `main`；
-4. 合并后的 `main` CI 再次通过；
+4. 合并后的 `main` CI 的 `check / headless-ui / audit` 再次全绿；生产 workflow 只接受这一**精确 main SHA 的 push CI**，拒绝其他分支、其他 SHA、手工 CI 或缺 job 的旧证据；
 5. `Production promote` 不要求人工复制 SHA；workflow 自动绑定触发时的 `github.sha`，且在生产变更前再次要求 `origin/main` 仍等于该 SHA。若 `main` 在运行期间前进，本次发布自动停止。
 
 ### 6.2 资源与身份核对
@@ -145,13 +146,16 @@ YAML 中写 `environment: production` 不能替代真实 Environment protection 
 
 ### 6.3 预检
 
-运行 GitHub Actions `Production preflight (no deployment)`：
+`Production preflight (no deployment)` 是可选发布演练，不是重复 main CI 的必经步骤。运行时：
 
-- 完整 `npm run check`；
+- 验证精确 `main` SHA 的 `check / headless-ui / audit` 三个 CI job 已全绿；
+- fresh runner 安装锁定依赖并重新构建 Web 静态资源；
 - 直接校验仓库中的 `apps/api/wrangler.production.jsonc`；
 - `npm run production:check -- config`；
 - Wrangler production dry-run；
 - 不携带 Cloudflare Token，不产生云端变更。
+
+该 workflow 不绑定 `production` Environment：它既不读取 production Secrets，也不执行 Cloudflare mutation，因此不应占用生产审批边界。真正的 `Production promote` 与只读 production inventory 仍按各自权限模型执行。
 
 ### 6.4 开发期生产数据重建
 
@@ -172,15 +176,16 @@ YAML 中写 `environment: production` 不能替代真实 Environment protection 
 
 1. 在 GitHub Actions 点开 `Production promote`，保持默认 `main`，直接点击运行；**没有任何必填输入**；
 2. workflow 自动把触发时的 `github.sha` 作为本次唯一发布 SHA；
-3. workflow 再执行完整 `npm run check`；
-4. validation + dry-run；
+3. workflow 通过 GitHub Actions API 验证精确 `main` SHA 的 push CI 已成功，且 `check / headless-ui / audit` 三个 job 全绿；**不再把同一提交的完整测试重复执行第三遍**；
+4. fresh runner 安装锁定依赖、重新 build Web，执行 production config validation + Worker dry-run；
 5. runner 将 `AUTH_CREDENTIAL_PEPPER` 与 `NOTION_API_TOKEN` 写入仅存在于 `$RUNNER_TEMP` 的 0600 临时 secret 文件；
 6. 再次确认 `origin/main` 仍等于触发时 SHA；若期间有新提交进入 `main`，本次发布 fail-closed，重新点一次即可；
 7. `wrangler deploy --config wrangler.production.jsonc --secrets-file <runner-temp>`，代码、bindings 与 Worker Secrets 同一版本发布；
 8. GitHub runner 从 production config 提取真实自定义域名；
-9. 请求 `https://<domain>/api/health`；
-10. 只有 `ok=true`、service 正确、`schema.ready=true` 才判定发布后的基础健康检查通过；
-11. 无论成功失败都删除 runner 临时 secret 文件。
+9. 请求真实自定义域名并执行语义 smoke：`/api/health` 必须 `ok=true`、service 正确、`schema.ready=true` 且 current/required migration 一致；`/api/auth/status` 必须 `initialized=true`；匿名 `/api/me` 必须返回 401 `UNAUTHENTICATED`；
+10. workflow 读取当前 100% Worker Version ID 并写入 GitHub Step Summary，作为可追溯发布证据；
+11. 普通 `rebuildRequired=false` 的 code-only 发布也会在 deploy 前记录旧 Worker version 并安装 rollback trap；如果 deploy 后 health/smoke 失败，同样自动回滚旧 Worker，而不是只在 D1 重建路径才具备回退；
+12. 无论成功失败都删除 runner 临时 secret 文件和迁移临时文件。
 
 当生产数据结构与当前 `0001` 已一致时，`Production promote` 只执行普通 deploy；只有检测到数据结构确实不同且历史数据可确定性迁移时，才进入同库重建流程。该过程不会新增 migration 版本。
 

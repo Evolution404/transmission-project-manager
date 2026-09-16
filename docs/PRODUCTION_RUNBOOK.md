@@ -1,6 +1,6 @@
 # 生产预检、发布与恢复操作手册
 
-核对日期：2026-09-14。
+核对日期：2026-09-16。
 
 本手册描述真实生产环境的云端预检、migration、发布、验收和恢复。后续禁止把用户 Mac、本地 shell、本地 Wrangler 或其他个人电脑作为正式操作前提；GitHub Actions + Cloudflare 是默认执行面。
 
@@ -12,9 +12,9 @@ PR #2 合入后使用以下 Actions：
 
 | Workflow | 作用 | 允许远端变更 |
 |---|---|---|
-| `CI` | PR / `main` 完整 `npm run check` | 否 |
-| `Production preflight (no deployment)` | production config validation + dry-run | 否 |
-| `Production promote` | 数据保留评估 + 必要的数据模型重建 + Worker 发布 | 是 |
+| `CI` | `check` + `headless-ui` + `audit`，形成可复用的精确 SHA 发布证据 | 否 |
+| `Production preflight (no deployment)` | 可选：复用精确 main CI，production build/config validation + dry-run | 否 |
+| `Production promote` | 复用精确 main CI；数据保留评估 + 必要的数据模型重建 + Worker 发布 + 公网 smoke | 是 |
 
 `Production promote` 是唯一日常生产变更入口，只能手工触发、绑定 `production` Environment，并要求精确当前 `main` SHA。
 
@@ -125,26 +125,28 @@ PR #2 合入后使用以下 Actions：
 ### 5.1 PR / main 门禁
 
 1. 远端施工分支提交；
-2. PR 最新 HEAD 的 GitHub CI 全绿；
+2. PR 最新 HEAD 的 GitHub CI `check / headless-ui / audit` 全绿；
 3. GitHub 合入 `main`；
-4. 合并后的 `main` CI 再次全绿；
+4. 合并后的 `main` push CI `check / headless-ui / audit` 再次全绿；
 5. 记录准确 40 位 `main` SHA。
 
 禁止使用本地测试替代 GitHub Actions。
 
 ### 5.2 Production preflight
 
-手工运行 `Production preflight (no deployment)`：
+`Production preflight (no deployment)` 是可选演练。手工运行时：
 
-- `npm ci`；
-- `npm run check`；
+- 使用 GitHub Actions API 验证触发时**精确 main SHA**已有成功的 push CI，并且 `check / headless-ui / audit` 三个 job 均成功；其他分支、其他 SHA、`workflow_dispatch` CI、旧缺 job 的 CI 均不得复用；
+- fresh runner 执行 `npm ci` 与 Web production build，以保证后续 Worker static assets 打包有真实产物；
 - 直接读取并校验受审的 `apps/api/wrangler.production.jsonc`；
 - `npm run production:check -- config`；
 - production Wrangler dry-run；
 - 不加载 `CLOUDFLARE_API_TOKEN`；
 - 不执行 remote migration 或 deploy。
 
-preflight 通过只证明配置结构和构建，不证明真实资源/Secret 存在。
+preflight 不绑定 `production` Environment，也不读取任何 production Secret；纯只读/离线演练不应占用生产审批边界。preflight 通过只证明精确 SHA 的 CI 证据、production 配置和 fresh-runner 打包成立，不证明真实 Cloudflare 资源/Secret 存在。正式发布不强制先跑 preflight，因为 `Production promote` 会执行同样的 CI 证据校验和生产专属打包检查。
+
+需要在不发布的情况下快速检查当前线上基础状态时，使用 `make production-smoke`。该命令从 `apps/api/wrangler.production.jsonc` 读取正式自定义域名，不重复维护 URL，只执行公网 GET：health/schema migration、认证初始化和匿名 `/api/me` 401。
 
 ### 5.3 开发期生产数据迁移
 
@@ -168,8 +170,8 @@ preflight 通过只证明配置结构和构建，不证明真实资源/Secret �
 
 1. 手工触发 `Production promote`；
 2. 保持默认 `main`，直接运行；workflow **没有必填输入**，自动用触发时 `github.sha` 锁定准确版本；
-3. workflow 重新执行完整 `npm run check`；
-4. production config validator；
+3. workflow 通过 GitHub Actions API 验证精确 `main` SHA 对应的成功 push CI，且 `check / headless-ui / audit` 三个 job 全绿；不重复执行完整 `npm run check`；
+4. fresh runner 执行锁定依赖安装、Web production build、production config validator 与 Worker dry-run；
 5. runner 从 GitHub Environment Secrets 生成 0600 的临时 `worker-secrets.json`；
 6. Wrangler dry-run 使用同一 `--secrets-file`；
 7. 再次 fetch `origin/main` 并要求仍等于触发时 SHA；如果 `main` 在执行期间已有新提交，本次自动停止，重新触发即可；
@@ -177,9 +179,10 @@ preflight 通过只证明配置结构和构建，不证明真实资源/Secret �
 9. 维护模式下 `/api/health` 仍可用，其余 API 返回 503，Cron 停止写入；workflow 再次导出权威快照；
 10. 同一生产 D1 重建当前 `0001` 并导入转换后的历史数据，核对逐表行数、外键和 integrity；
 11. `wrangler deploy --config wrangler.production.jsonc --secrets-file <runner-temp>` 退出维护模式并发布代码、bindings 与 Worker Secrets；
-12. GitHub runner 请求 `https://<domain>/api/health`，只有 `ok=true`、service 正确、`schema.ready=true` 才通过；
-13. 结构迁移后的任一步失败都会尝试恢复维护前完整 D1 导出并回滚维护前 Worker version；
-14. 无论成功失败都删除 runner 临时数据库导出、转换结果和 secret 文件。
+12. GitHub runner 对真实自定义域名执行公网 smoke：health 必须 service/schema/migration 全就绪，认证必须 `initialized=true`，匿名 `/api/me` 必须为 401 `UNAUTHENTICATED`；
+13. workflow 读取并记录当前 100% Worker Version ID；
+14. deploy 前始终记录旧 Worker version 并安装 rollback trap，因此 code-only 发布若 smoke 失败也会自动回滚；若发生结构迁移，则同时尝试恢复维护前完整 D1 导出；
+15. 无论成功失败都删除 runner 临时数据库导出、转换结果和 secret 文件。
 
 `Production promote` 在开发阶段可能**重建当前 `0001` 数据模型**，但绝不因此新增 `0002+` migration。
 
@@ -229,6 +232,18 @@ Worker publish、语义 health 验证和临时 Secret 清理全部 PASS，最终
 6. 独立公网复核：`/api/health` 返回 `ok=true`、`schema.ready=true` 且 current/required migration 均为 `0001_initial_schema.sql`；`/api/auth/status` 已初始化；匿名 `/api/me` 返回 401。
 
 该记录证明当前“一键发布”没有绕过既有数据保留、精确 SHA、Secrets、dry-run 和 health 保护。
+
+### 2026-09-16 第一轮工程化加固正式 promote 记录
+
+PR #16 已合入 `main@10274d5b213598c51e7da075273e30930e7de707`：
+
+1. 合并后 `main` CI run `35115163597` 的 `check` 与 `headless-ui` PASS（该版本尚未引入独立 `audit` job）。
+2. `Production preflight` run `35115550812` PASS；`Production promote` run `35115794914` PASS。
+3. 数据保留评估 `rebuildRequired=false`，source/target schema fingerprint 均为 `194acf05036750ad361ee899af46b8ef183cd037f787b3c1ffa3d4739669817f`，生产 D1 未重建。
+4. Worker Version ID 为 `e50f4e69-c4eb-4ab5-afb0-a1a79603cd3a`。
+5. 发布后公网复核：health schema ready/current=required=`0001_initial_schema.sql`；认证已初始化；匿名 `/api/me` 为 401。只读 production inventory run `35116478135` PASS。
+
+当前施工分支随后把 `audit` 提升为 CI 发布关键 job，并新增精确 main CI 证据复用、公网 smoke 自动化和 code-only Worker 自动回退。该优化只有合入 main 后的新 CI 才能作为发布证据；旧 CI 即使 conclusion=success，只要缺少 `audit` job 也会被新门禁拒绝。
 
 ## 6. 首次管理员和认证验收
 

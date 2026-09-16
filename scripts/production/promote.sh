@@ -16,6 +16,12 @@ DATA_SQL="$WORK_DIR/data.sql"
 VERIFY_SQL="$WORK_DIR/verify.sql"
 VERIFY_RESULT="$WORK_DIR/verify-result.json"
 HEALTH_FILE="$WORK_DIR/health.json"
+DOMAIN="$(node --input-type=module - "$CONFIG" <<'NODE'
+import {readFileSync} from 'node:fs';
+const c=JSON.parse(readFileSync(process.argv[2],'utf8'));
+process.stdout.write(c.routes[0].pattern);
+NODE
+)"
 
 : "${RELEASE_SHA:?RELEASE_SHA is required}"
 : "${CLOUDFLARE_API_TOKEN:?CLOUDFLARE_API_TOKEN is required}"
@@ -82,15 +88,8 @@ NODE
 
 wait_health() {
   local mode="$1"
-  local domain
-  domain="$(node --input-type=module - "$CONFIG" <<'NODE'
-import {readFileSync} from 'node:fs';
-const c=JSON.parse(readFileSync(process.argv[2],'utf8'));
-process.stdout.write(c.routes[0].pattern);
-NODE
-)"
   for _ in $(seq 1 30); do
-    if curl --fail --silent --show-error --connect-timeout 10 --max-time 20 "https://${domain}/api/health" -o "$HEALTH_FILE"; then
+    if curl --fail --silent --show-error --connect-timeout 10 --max-time 20 "https://${DOMAIN}/api/health" -o "$HEALTH_FILE"; then
       if HEALTH_FILE="$HEALTH_FILE" MODE="$mode" node --input-type=module <<'NODE'
 import {readFileSync} from 'node:fs';
 const body=JSON.parse(readFileSync(process.env.HEALTH_FILE,'utf8'));
@@ -106,9 +105,14 @@ NODE
   return 1
 }
 
+active_version_id() {
+  wrangler_api deployments status --config "$CONFIG" --json | node --input-type=module -e 'let input=""; for await (const chunk of process.stdin) input+=chunk; const status=JSON.parse(input); const active=(status.versions ?? []).find((item)=>Number(item.percentage)===100); if (!active?.version_id) process.exit(1); process.stdout.write(active.version_id);'
+}
+
 deploy_normal() {
   wrangler_api deploy --config "$CONFIG" --secrets-file "$WORKER_SECRETS_FILE"
   wait_health normal
+  node "$ROOT/scripts/production/public-smoke.mjs" "https://${DOMAIN}"
 }
 
 git fetch origin main >/dev/null
@@ -119,13 +123,7 @@ test "$(git rev-parse origin/main)" = "$RELEASE_SHA"
 export_database "$SOURCE_PROBE"
 run_plan "$SOURCE_PROBE" "$SUMMARY_PROBE"
 REBUILD_REQUIRED="$(json_field "$SUMMARY_PROBE" rebuildRequired)"
-if [[ "$REBUILD_REQUIRED" != 'true' ]]; then
-  deploy_normal
-  printf '### Production promote\n- Commit: `%s`\n- Data rebuild: not required\n- Health: PASS\n' "$RELEASE_SHA" >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
-  exit 0
-fi
-
-OLD_VERSION_ID="$(wrangler_api deployments status --config "$CONFIG" --json | node --input-type=module -e 'let input=""; for await (const chunk of process.stdin) input+=chunk; const status=JSON.parse(input); const active=(status.versions ?? []).find((item)=>Number(item.percentage)===100); if (!active?.version_id) process.exit(1); process.stdout.write(active.version_id);')"
+OLD_VERSION_ID="$(active_version_id)"
 DB_MUTATED=0
 
 rollback_release() {
@@ -150,6 +148,14 @@ rollback_release() {
 }
 trap rollback_release ERR
 
+if [[ "$REBUILD_REQUIRED" != 'true' ]]; then
+  deploy_normal
+  NEW_VERSION_ID="$(active_version_id)"
+  trap - ERR
+  printf '### Production promote\n- Commit: `%s`\n- Worker version: `%s`\n- Data rebuild: not required\n- Health: PASS\n- Public smoke: PASS\n' "$RELEASE_SHA" "$NEW_VERSION_ID" >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+  exit 0
+fi
+
 # Freeze application writes before taking the authoritative migration snapshot.
 wrangler_api deploy --config "$CONFIG" --secrets-file "$WORKER_SECRETS_FILE" --var MAINTENANCE_MODE:data-migration
 wait_health maintenance
@@ -169,6 +175,7 @@ wrangler_api d1 execute DB --remote --config "$CONFIG" --file "$VERIFY_SQL" --js
 node "$ROOT/scripts/production/verify-remote-transfer.mjs" "$SUMMARY_FINAL" "$VERIFY_RESULT"
 
 deploy_normal
+NEW_VERSION_ID="$(active_version_id)"
 DB_MUTATED=0
 trap - ERR
-printf '### Production promote\n- Commit: `%s`\n- Historical data: preserved/transformed into current `0001_initial_schema.sql` model\n- Production D1: rebuilt in place\n- Health: PASS\n' "$RELEASE_SHA" >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+printf '### Production promote\n- Commit: `%s`\n- Worker version: `%s`\n- Historical data: preserved/transformed into current `0001_initial_schema.sql` model\n- Production D1: rebuilt in place\n- Health: PASS\n- Public smoke: PASS\n' "$RELEASE_SHA" "$NEW_VERSION_ID" >> "${GITHUB_STEP_SUMMARY:-/dev/null}"

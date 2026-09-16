@@ -5,6 +5,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: production-preflight
@@ -13,19 +14,23 @@ concurrency:
 jobs:
   preflight:
     if: github.ref == 'refs/heads/main'
-    environment: production
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
       WRANGLER_SEND_METRICS: 'false'
+      RELEASE_SHA: ${{ github.sha }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           cache: npm
-      - run: npm ci
-      - run: npm run check
+      - name: Reuse exact main CI evidence
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/engineering/verify-release-ci.mjs
+      - run: npm ci --no-audit --fund=false
+      - run: npm run build:web
       - run: npm run production:check -- config apps/api/wrangler.production.jsonc
       - name: Package only (no Cloudflare credentials)
         working-directory: apps/api
