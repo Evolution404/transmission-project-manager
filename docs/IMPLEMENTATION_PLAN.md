@@ -18,7 +18,8 @@
 | 基础台账 M6 | 物理杆塔/线路节点分离、同塔 N 回、配置对象、通用自定义字段 | **已合入 main 并发布生产** |
 | 生产 schema 升级 | 既有生产 D1 → 当前 M6 schema | **已完成：按用户授权重建空 D1，仅保留 zhangsan 账号及原密码凭据，旧 D1 已删除** |
 | P7 | 真实业务、恢复、性能、网络和运维移交 | 继续按真实环境逐项验收 |
-| 全站 UI 重构 | 应用壳、项目/任务闭环、需求、资金、台账、分析、设置、认证视觉与全站验收 | **当前施工分支已完成自动化验收收口，待用户授权合并**；项目/任务核心闭环、需求、资金、台账、分析、设置、认证和旧页面退役已落地，Playwright 已覆盖真实页面认证、桌面/手机、浅色/暗色、主路由与关键弹层。长期 UI 规范统一维护在 `DESIGN.md` |
+| 全站 UI 重构 | 应用壳、项目/任务闭环、需求、资金、台账、分析、设置、认证视觉与全站验收 | **已通过 PR #15 合入 main 并发布生产**；Playwright 持续覆盖真实页面认证、桌面/手机、浅色/暗色、主路由、关键弹层和业务 Drawer。长期 UI 规范统一维护在 `DESIGN.md` |
+| 工程化加固 | Makefile、可重复审计、共享契约模块化、测试/CI 提效 | **施工中**；统一工程入口与 production workflow runner 已进入 main，当前 `refactor/engineering-hardening-20260916` 继续收口工程卫生和结构热点 |
 
 ## 2. 当前业务主路径
 
@@ -87,7 +88,7 @@
 
 M6 基础台账定向结果：基础台账 API **25/25 PASS**；相关 Web **30/30 PASS**。M6 收口时完整 `npm run check` 为 Node **270/270**、Web **114/114（19 文件）**。
 
-全站 UI 重构当前施工分支 `refactor/ui-redesign-20260916` 最近一次完整 `npm run check` 已 PASS：Node **308/308**、Web **161/161（23 文件）**，Cloudflare/Node/Web/shared TypeScript、Web production build、Worker dry-run、Node+SQLite+Filesystem 第二运行时和全部静态门禁均 PASS。
+全站 UI 重构已通过 PR #15 合入 `main@bc59cf18befb3058d47848e8dae6f9589187c9dd`；合并后 CI run `35107954205` 的 `check` 与 `headless-ui` 均 PASS。生产 preflight run `35108265214` 与 Production promote run `35108487959` 也均 PASS。
 
 项目分页/路由状态工作包已经收口并验证：修复项目列表固定前 50 条且 `nextCursor:null` 的分页缺口，并让工作台 `/projects?stage=reserve`、项目列表 `stage/query`、任务队列 `/tasks?status=...&query=...` 在刷新后恢复筛选。定向仓储测试 **2/2 PASS**，Projects/Tasks 定向 **6/6 PASS**，Web/API typecheck 和 `git diff --check` 均 PASS。
 
@@ -132,7 +133,7 @@ M6 基础台账定向结果：基础台账 API **25/25 PASS**；相关 Web **30/
 
 无头浏览器验收已改为仓库内可重复执行的 Playwright E2E，而不再依赖用户真实 Chrome。`npm run test:ui:headless` 会先构建 Web，然后在临时目录初始化独立本地 D1/R2 状态并启动独立 Wrangler Worker；测试凭据只存在于 E2E 代码与临时进程中，不读取 `.env` 中真实账号密码、不复制用户真实 Cookie。认证必须走页面本身：首次初始化输入测试账号/密码/初始化令牌，新浏览器会话再次输入账号密码登录；后续验收复用这次真实登录产生的会话状态。当前 Headless Chromium **23/23 PASS**，覆盖 1440 桌面明暗主题、1440×600 低高度、768 / 900 / 1100 紧凑桌面、768×600 低高度、390 手机明暗主题和 320px 最窄手机。8 个主路由必须真实加载成功，任何可见加载错误态都直接失败；同时检查横向溢出、实际字号下限、手机按钮及输入/下拉/日期/页签触控目标、可见按钮必须具有文字或 aria-label/title、明暗 token、关键导航和真实 DOMRect 重叠。“新增需求 / 新建项目 / 新增成员”在 1440 / 768 / 390 / 320 四档视口中做几何验收；E2E 还创建隔离项目与任务，真实打开项目物资、项目来源、供应、实施、结算 5 类 Drawer，并在 390 / 320px 触控视口中校验完整进入屏幕；该夹具使用超长项目/任务/负责人/物资型号，额外验证 768 / 390 / 320 下项目详情、任务详情和任务队列不被长文本撑破。近期审计又修复了 text-only 错误恢复按钮命中区坍缩、768px 需求模态框高度断点、线路删除仅 hover 可达，以及多处 NDrawer 根节点选择器误写成后代选择器的问题；新增 repository guard 防止回归。新增“主路由必须加载成功”门禁还发现并修复任务队列 SQL 使用旧 `projects.year` 字段的问题，现已对齐当前 `business_year` schema。颜色 token 审计继续发现浅色三级文字原本只有约 2.58:1 对比度，现已将浅色 secondary/tertiary 调整为 `#475467/#667085`，并新增常用浅色 surface ≥4.5:1 的 repository guard。CI 保留独立 `headless-ui` job并上传失败 screenshot/trace。同期完整 `npm run check` 为 Node **318/318 PASS**、Web **165/165 PASS（23 文件）**。后续 UI 改动必须同时维持该 E2E 与现有单元/集成门禁全绿。
 
-远端证据：PR #12 与后续 `main` CI 均 PASS；生产重建 run `34952233283`、正式 release run `34952547151`、旧 D1 删除 run `34953255900` 均 PASS。当前 production schema 已为当前唯一 `0001_initial_schema.sql` 基线。
+远端证据：PR #15 与合并后 `main` CI run `35107954205` 均 PASS；最新 production preflight `35108265214`、Production promote `35108487959` 均 PASS。该次发布评估 `rebuildRequired=false`，未重建 D1、未丢弃生产数据。当前 production schema 仍为唯一 `0001_initial_schema.sql` 基线。
 
 ## 5. 技术债清理范围
 
@@ -145,7 +146,7 @@ M6 基础台账定向结果：基础台账 API **25/25 PASS**；相关 Web **30/
 - `project-execution.ts` 已由约 850 行降至约 334 行；其职责回混已有 repository/static guard。
 - `analysis-operations.ts` 的混合职责已经完成拆分：`analysis-calculations.ts` 承载纯分析计算/查询编排，`analysis-operations.ts` 仅保留分析/计划/月报/里程碑 HTTP，`notification-operations.ts` 承载通知/告警/outbox，`backup-operations.ts` 承载逻辑备份，`system-tasks.ts` 承载定时任务编排。最新已验证代码提交为 `8c8f7ef`。
 - 分析计算抽取前已逐项对照旧实现并由测试锁定 BigInt 四舍五入、季度状态、默认/自定义计划、ratio/gap lagging 边界和里程碑提醒语义；分析/P6、通知仓储、备份仓储和 repository guards 定向合计 **53/53 PASS**。
-- 上述分析模块职责拆分完成时的历史门禁基线为 Node **293/293 PASS**、Web **114/114 PASS**；当前施工分支的最新完整门禁以第 4 节所列 Node **308/308**、Web **161/161（23 文件）**为准。
+- 上述分析模块职责拆分完成时的历史门禁基线为 Node **293/293 PASS**、Web **114/114 PASS**；当前工程化施工分支最新完整本地 `make test` 为 Node **324/324 PASS**、Web **165/165 PASS（23 文件）**、Headless Chromium **23/23 PASS**，并通过 Cloudflare/Node/Web/shared TypeScript、Web production build、Worker dry-run、Node + SQLite + Filesystem 第二运行时及 `make audit`。
 - 后续候选热点仍包括 `reserve-planning.ts`、`demand-import.ts`、`finance.ts`、`project-lifecycle.ts`、`MasterDataView.vue`、`packages/shared/src/index.ts`；按职责耦合收益排序拆分，禁止仅按文件行数机械拆分。
 
 ## 6. 当前生产状态
@@ -156,7 +157,7 @@ M6 基础台账定向结果：基础台账 API **25/25 PASS**；相关 Web **30/
 - 生产 Notion 对象存储已通过 run `34953724187` 核对：active 对象索引为 0，没有应用可见的旧附件/备份对象需要清理；Notion FileUpload 物理删除能力仍以平台 API 为边界。
 - Cloudflare Worker 已通过正式 `Production release` 发布，公网 health 与认证初始化状态通过复核。
 - 以后若生产已经产生正式业务数据，默认走统一 `Production promote`：先只读评估并自动搬运结构兼容的数据；结构变化时在临时 SQLite 中转换到当前 `0001` 新模型并校验；无法确定性转换则在生产变更前停止并由用户决定。只有用户再次明确授权删除时才允许清空数据。
-- 当前标准化发布重构只在施工分支完成并测试，**尚未合并 `main`、尚未再次触发生产发布**；不要把“流程代码已完成”写成“线上已切换到新流程”。
+- 2026-09-16 全站 UI + Makefile 工程入口已通过 PR #15 合入 `main@bc59cf18befb3058d47848e8dae6f9589187c9dd` 并由 `Production promote` run `35108487959` 正式发布。数据评估判定 schema fingerprint 一致、`rebuildRequired=false`，因此只发布代码/静态资源并原样保留生产 D1。
 
 ## 7. 本轮完成标准
 

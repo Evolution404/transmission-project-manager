@@ -20,6 +20,7 @@ import type {
   UpdateBudgetRequest,
 } from '@tpm/shared';
 import { hasScope, requireRoles, type AppEnv } from './auth.ts';
+import { decodeJsonCursor, encodeJsonCursor } from './http/cursor.ts';
 import { replayIdempotentResponse, requestHash, requireIdempotencyKey } from './http/idempotent-mutation.ts';
 import { apiError } from './http/request-values.ts';
 import { SqlFinanceBudgetRepository } from './repositories/sql-finance-budget-repository.ts';
@@ -107,15 +108,14 @@ function ratioAtLeast(numerator: number, denominator: number, thresholdBasisPoin
   return denominator > 0 && BigInt(numerator) * 10000n >= BigInt(denominator) * BigInt(thresholdBasisPoints);
 }
 function makeEntryCursor(businessDate: string, createdAt: string, id: string) {
-  return btoa(JSON.stringify({ businessDate, createdAt, id })).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  return encodeJsonCursor({ businessDate, createdAt, id });
 }
 function parseEntryCursor(value: string | undefined): { businessDate: string; createdAt: string; id: string } | null {
-  if (!value) return null;
-  try {
-    const decoded = JSON.parse(atob(value.replace(/-/g, '+').replace(/_/g, '/'))) as Record<string, unknown>;
-    if (typeof decoded.businessDate !== 'string' || typeof decoded.createdAt !== 'string' || typeof decoded.id !== 'string') return null;
-    return { businessDate: decoded.businessDate, createdAt: decoded.createdAt, id: decoded.id };
-  } catch { return null; }
+  const decoded = decodeJsonCursor(value);
+  if (!decoded || typeof decoded !== 'object' || Array.isArray(decoded)) return null;
+  const record = decoded as Record<string, unknown>;
+  if (typeof record.businessDate !== 'string' || typeof record.createdAt !== 'string' || typeof record.id !== 'string') return null;
+  return { businessDate: record.businessDate, createdAt: record.createdAt, id: record.id };
 }
 
 export const financeApp = new Hono<AppEnv>();

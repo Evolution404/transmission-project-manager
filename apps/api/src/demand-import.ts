@@ -15,6 +15,7 @@ import type {
 } from '@tpm/shared';
 import { normalizeTowerNo } from '@tpm/shared';
 import { requireRoles, type AppEnv } from './auth.ts';
+import { decodeJsonCursor, encodeJsonCursor } from './http/cursor.ts';
 import { replayIdempotentResponse, requestHash, requireIdempotencyKey } from './http/idempotent-mutation.ts';
 import { apiError } from './http/request-values.ts';
 import { SqlDemandQueryRepository } from './repositories/sql-demand-query-repository.ts';
@@ -302,16 +303,15 @@ async function normalizeRows(
 }
 
 function parseCursor(value: string | undefined): { createdAt: string; id: string } | null {
-  if (!value) return null;
-  try {
-    const decoded = JSON.parse(atob(value.replace(/-/g, '+').replace(/_/g, '/'))) as { createdAt?: unknown; id?: unknown };
-    if (typeof decoded.createdAt !== 'string' || typeof decoded.id !== 'string') return null;
-    return { createdAt: decoded.createdAt, id: decoded.id };
-  } catch { return null; }
+  const decoded = decodeJsonCursor(value);
+  if (!decoded || typeof decoded !== 'object' || Array.isArray(decoded)) return null;
+  const record = decoded as { createdAt?: unknown; id?: unknown };
+  if (typeof record.createdAt !== 'string' || typeof record.id !== 'string') return null;
+  return { createdAt: record.createdAt, id: record.id };
 }
 
 function makeCursor(createdAt: string, id: string) {
-  return btoa(JSON.stringify({ createdAt, id })).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  return encodeJsonCursor({ createdAt, id });
 }
 
 export const demandImportApp = new Hono<AppEnv>();

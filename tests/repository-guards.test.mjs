@@ -724,6 +724,19 @@ test('CI keeps isolated headless browser acceptance as its own job', () => {
   assert.match(workflow, /npm run test:ui:headless/, 'CI headless-ui job must execute the repository E2E command');
 });
 
+test('full local test gate reuses the web build produced by check', () => {
+  const makefile = readFileSync(resolve(root, 'Makefile'), 'utf8');
+  const packageJson = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8'));
+  assert.equal(
+    packageJson.scripts?.['test:ui:headless:prepared'],
+    'playwright test --config playwright.config.ts',
+    'prepared headless test must run Playwright without rebuilding Web',
+  );
+  assert.match(makefile, /^test:\s+check\s*$/m, 'make test must finish check before UI E2E');
+  assert.match(makefile, /^\s+npm run test:ui:headless:prepared\s*$/m, 'make test must reuse the Web build produced by check');
+  assert.match(makefile, /^test-ui:\s*\n\s+npm run test:ui:headless\s*$/m, 'standalone make test-ui must remain self-contained and build Web first');
+});
+
 test('Makefile is the single ergonomic entry point without bypassing production governance', () => {
   const makefilePath = resolve(root, 'Makefile');
   assert.equal(existsSync(makefilePath), true, '仓库根目录必须提供 Makefile 作为统一工程入口');
@@ -737,6 +750,76 @@ test('Makefile is the single ergonomic entry point without bypassing production 
   assert.match(source, /scripts\/engineering\/github-workflow\.mjs production-promote\.yml --ref main --require-main-sync/, '生产一键发布必须走受保护的 Production promote workflow');
   assert.doesNotMatch(source, /wrangler\s+deploy/, 'Makefile 不得直接执行 wrangler deploy 绕过生产治理');
   assert.doesNotMatch(source, /git\s+(?:reset|clean)\b/, 'Makefile 不得提供破坏工作区的 reset/clean 快捷入口');
+});
+
+test('engineering audit uses tracked source and the official npm advisory service', () => {
+  const makefile = readFileSync(resolve(root, 'Makefile'), 'utf8');
+  const packageJson = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8'));
+  assert.match(makefile, /^audit:/m, 'Makefile 必须提供统一工程审计入口');
+  assert.match(makefile, /^security-audit:/m, 'Makefile 必须提供独立依赖安全审计入口');
+  assert.match(makefile, /npm run engineering:audit\b/, '工程审计应复用受版本控制的审计脚本');
+  assert.match(makefile, /npm run security:audit\b/, '安全审计应复用固定 npm script');
+  assert.equal(
+    packageJson.scripts?.['security:audit'],
+    'npm audit --omit=dev --audit-level=high --registry=https://registry.npmjs.org',
+    '安全审计必须显式使用 npm 官方 advisory API，不能受本机安装镜像能力影响',
+  );
+  assert.equal(
+    packageJson.scripts?.['engineering:audit'],
+    'node scripts/engineering/repository-audit.mjs',
+    '工程审计必须使用仓库内可复现脚本',
+  );
+});
+
+test('shared public contracts stay split by business domain behind a small barrel', () => {
+  const sharedDir = resolve(root, 'packages/shared/src');
+  const expectedModules = [
+    'api.ts',
+    'account.ts',
+    'imports.ts',
+    'master-data.ts',
+    'project-execution.ts',
+    'reserve-planning.ts',
+    'finance.ts',
+    'analysis.ts',
+    'legacy-lifecycle.ts',
+  ];
+  for (const file of expectedModules) {
+    assert.equal(existsSync(resolve(sharedDir, file)), true, `shared contract module missing: ${file}`);
+  }
+  const indexSource = readFileSync(resolve(sharedDir, 'index.ts'), 'utf8');
+  const meaningfulLines = indexSource.split('\n').filter((line) => line.trim() && !line.trim().startsWith('//'));
+  assert.ok(meaningfulLines.length <= expectedModules.length + 2, 'shared index.ts must remain a small re-export barrel');
+  assert.doesNotMatch(indexSource, /\binterface\b|\bconst\s+MEMBER_ROLES\b|function\s+normalizeTowerNo/, 'shared declarations must live in domain modules, not the barrel');
+
+  for (const file of ['index.ts', ...expectedModules]) {
+    const source = readFileSync(resolve(sharedDir, file), 'utf8');
+    for (const match of source.matchAll(/(?:from|export\s+\*)\s+['"](\.[^'"]+)['"]/g)) {
+      assert.match(match[1], /\.ts$/, `${file} relative ESM specifier must include .ts so Node runtime can resolve source directly`);
+    }
+  }
+  const baseTsconfig = readFileSync(resolve(root, 'tsconfig.base.json'), 'utf8');
+  assert.match(baseTsconfig, /"allowImportingTsExtensions"\s*:\s*true/, 'TypeScript must allow explicit .ts ESM specifiers used by the Node runtime');
+});
+
+test('API object pagination cursors share one Base64URL JSON codec', () => {
+  const cursorCodec = resolve(root, 'apps/api/src/http/cursor.ts');
+  assert.equal(existsSync(cursorCodec), true, 'missing shared API cursor codec');
+  const codecSource = readFileSync(cursorCodec, 'utf8');
+  assert.match(codecSource, /export function encodeJsonCursor/);
+  assert.match(codecSource, /export function decodeJsonCursor/);
+
+  for (const relative of [
+    'apps/api/src/demand-import.ts',
+    'apps/api/src/finance.ts',
+    'apps/api/src/project-execution.ts',
+    'apps/api/src/project-execution-query.ts',
+    'apps/api/src/reserve-planning.ts',
+  ]) {
+    const source = readFileSync(resolve(root, relative), 'utf8');
+    assert.match(source, /\.\/http\/cursor\.ts/, `${relative} must use the shared cursor codec`);
+    assert.doesNotMatch(source, /btoa\(JSON\.stringify|JSON\.parse\(atob/, `${relative} must not reimplement cursor Base64URL JSON`);
+  }
 });
 
 test('Node runtime gate exercises the real app, SQLite, Filesystem, and the single schema baseline', () => {

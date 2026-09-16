@@ -1,6 +1,6 @@
 # 测试策略与开发门禁
 
-版本：2026-09-15。适用于所有业务功能、基础台账、认证、后端可移植化、数据迁移、缺陷修复和正式环境准备。
+版本：2026-09-16。适用于所有业务功能、基础台账、认证、后端可移植化、数据迁移、缺陷修复、工程化重构和正式环境准备。
 
 ## 1. 核心规则：测试先于生产代码
 
@@ -37,18 +37,31 @@ make test
 - 全部 `tests/*.test.mjs` Node/workerd+D1 测试；
 - 全部 `apps/web/tests/*.test.ts` Vue/Vitest 行为测试。
 
-`refactor/master-data-ux-hardening-20260915` 最近一次完整门禁（2026-09-15，物理杆塔/线路节点与配置模型收口）：
+`make test` 在 `make check` 已成功生成 Web production build 后直接执行 Playwright，不重复构建 Web；单独执行 `make test-ui` 时仍会先构建 Web，保持自包含。CI 的 `headless-ui` job同样保持独立构建，不能依赖另一个 job 的本地文件。
+
+当前工程化施工分支 `refactor/engineering-hardening-20260916` 最近一次完整本地门禁：
 
 - TypeScript（Cloudflare API + Node runtime + Web + shared）：PASS；
 - Web production build：PASS；
 - Worker `wrangler deploy --dry-run`：PASS；
-- Vue/Vitest：**114/114 PASS（19 个测试文件）**；
-- Node：**270/270 PASS**；
+- Vue/Vitest：**165/165 PASS（23 个测试文件）**；
+- Node：**327/327 PASS**；
+- Headless Chromium：**23/23 PASS**；
 - Node + SQLite + Filesystem 第二运行时：PASS；
 - migration checksum/单基线与 repository/static guards：PASS。
+- `make audit`：仓库工程卫生 PASS，production dependency audit **0 vulnerabilities**。
 
-本轮继续在既有基础台账门禁上新增/强化：物理杆塔与线路杆塔节点分离、同一物理塔被多条线路节点复用、专用物理塔 rebind、需求端点使用稳定 `tower_position_id`、班组/杆塔类型/自定义字段配置 CRUD、自定义字段独立版本和类型化索引、已使用字段禁止误删，以及备份/恢复覆盖新增配置和值表。`MasterDataView.test.ts` 当前 **16/16 PASS**。
-本轮代码与清债快照 `c87fc04` 已由 PR #12 GitHub CI run `34941209241` 重新执行完整 `npm run check` 并 PASS；这才是当前 SHA 的远端门禁证据。
+Shared 公共契约已经从单一巨型 `index.ts` 按业务域拆分；Node 原生 TypeScript ESM 通过显式 `.ts` 相对 specifier 保证可解析，并由 repository guard、maintenance-mode 与 Node 第二运行时测试共同锁定，不能只依赖 Bundler/typecheck 通过。
+
+API 中需求、项目储备、资金、项目执行与任务队列的对象型分页游标统一复用 `apps/api/src/http/cursor.ts` 的 Base64URL JSON codec；各路由仍负责自己的字段形状校验和 `INVALID_CURSOR` 业务错误，公共 codec 不承载业务语义。`tests/cursor-codec.test.mjs` 和 repository guard 防止再次复制编解码实现。
+
+工程卫生和生产依赖安全审计统一使用：
+
+```sh
+make audit
+```
+
+工程审计只扫描 `git ls-files` 真源，禁止把 `.wrangler/tmp`、旧 sourcemap 或历史 dry-run 产物当源码问题；安全审计显式使用 npm 官方 advisory API，不受本机安装镜像是否实现 audit endpoint 影响。
 
 ## 3. 迁移与仓库守卫
 

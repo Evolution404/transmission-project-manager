@@ -217,6 +217,19 @@ Worker publish、语义 health 验证和临时 Secret 清理全部 PASS，最终
 
 这次“重建空库”只适用于用户明确允许删除现有业务数据的情形。未来一旦生产数据需要保留，仍必须回到 5.3A 的迁移/备份/对账/回退要求，不能把本次流程当作默认升级方案。
 
+### 2026-09-16 UI / 工程入口正式 promote 记录
+
+全站 UI 重构与统一 Makefile 工程入口经 PR #15 合入 `main@bc59cf18befb3058d47848e8dae6f9589187c9dd`：
+
+1. PR #15 的 `check` / `headless-ui` 均 PASS；合并后 `main` CI run `35107954205` 再次双绿。
+2. `make production-preflight` 触发 run `35108265214`，完整 check、production config validator 与 Wrangler dry-run 全部 PASS。
+3. `make production` 仅作为受保护 workflow 的编排入口，触发 `Production promote` run `35108487959`；本地没有直接执行 production `wrangler deploy`。
+4. promote 数据保留评估返回 `rebuildRequired=false`，source/target schema fingerprint 完全一致、`decisionRequired=[]`；因此未进入 D1 重建/转换流程，现有生产数据原样保留。
+5. Worker 和 41 个新增/变化静态资源发布成功；Version ID `c943338c-e5a3-4731-ac83-9f4b990e8505`，自定义域名与 Cron 保持原配置。
+6. 独立公网复核：`/api/health` 返回 `ok=true`、`schema.ready=true` 且 current/required migration 均为 `0001_initial_schema.sql`；`/api/auth/status` 已初始化；匿名 `/api/me` 返回 401。
+
+该记录证明当前“一键发布”没有绕过既有数据保留、精确 SHA、Secrets、dry-run 和 health 保护。
+
 ## 6. 首次管理员和认证验收
 
 首次上线：
