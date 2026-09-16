@@ -343,12 +343,14 @@ onMounted(load);
       v-model:show="sourceEditorOpen"
       :project="project"
       @saved="projectDefinitionSaved"
+      @request-refresh="load"
     />
     <project-materials-editor
       v-if="project"
       v-model:show="materialsEditorOpen"
       :project="project"
       @saved="projectDefinitionSaved"
+      @request-refresh="load"
     />
 
     <n-modal

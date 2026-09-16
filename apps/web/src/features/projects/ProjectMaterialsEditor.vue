@@ -5,7 +5,7 @@ import type { ReserveCategorySummary, ReserveProjectSummary } from '@tpm/shared'
 import { ApiRequestError, apiRequest, jsonRequestInit } from '../../api/client';
 
 const props = defineProps<{ show: boolean; project: ReserveProjectSummary }>();
-const emit = defineEmits<{ 'update:show': [value: boolean]; saved: [] }>();
+const emit = defineEmits<{ 'update:show': [value: boolean]; saved: []; 'request-refresh': [] }>();
 
 type Draft = { id: string | null; materialId: string | null; model: string; unit: string; quantity: string; unitPrice: string; reserveCategoryId: string | null };
 const drafts = ref<Draft[]>([]);
@@ -28,6 +28,7 @@ async function initialize() {
   try { categories.value = (await apiRequest<{ items: ReserveCategorySummary[] }>('/api/reserve-categories')).items; }
   catch (cause) { error.value = cause instanceof Error ? cause.message : '读取储备分类失败'; }
 }
+function setShow(value: boolean) { if (!saving.value || value) emit('update:show', value); }
 function add() { drafts.value.push({ id: null, materialId: null, model: '', unit: '', quantity: '', unitPrice: '', reserveCategoryId: null }); }
 function remove(index: number) { drafts.value.splice(index, 1); }
 
@@ -54,10 +55,11 @@ watch(() => props.show, (show) => { if (show) void initialize(); });
 </script>
 
 <template>
-  <n-drawer :show="show" placement="right" :width="760" class="project-materials-drawer" @update:show="emit('update:show', $event)">
-    <n-drawer-content title="修订项目物资" closable>
+  <n-drawer :show="show" placement="right" :width="760" :mask-closable="!saving" class="project-materials-drawer" @update:show="setShow">
+    <n-drawer-content title="修订项目物资" :closable="!saving">
       <div class="editor-intro"><strong>项目物资是项目阶段独立确认的事实</strong><span>可以新增、换型、增减数量；已经被执行任务占用的范围由服务端保护，不会静默改写历史。</span></div>
       <n-alert v-if="error" :type="conflict ? 'warning' : 'error'" :bordered="false" class="editor-alert">{{ error }}</n-alert>
+      <n-button v-if="conflict" data-test="refresh-project-material-conflict" secondary block class="editor-alert" @click="emit('request-refresh')">读取最新项目数据</n-button>
       <div v-if="drafts.length" class="material-editor-list">
         <section v-for="(row,index) in drafts" :key="row.id ?? `new-${index}`" class="material-editor-row">
           <div class="material-row-head"><strong>物资 {{ index + 1 }}</strong><n-button quaternary type="error" size="small" @click="remove(index)">移除</n-button></div>
@@ -73,7 +75,7 @@ watch(() => props.show, (show) => { if (show) void initialize(); });
       <n-empty v-else description="当前没有项目物资；0 物资项目是合法状态" />
       <n-button secondary class="add-material" @click="add">新增项目物资</n-button>
       <div class="reason-field"><span>本次调整原因</span><n-input v-model:value="reason" data-test="material-revision-reason" placeholder="必填，用于保留修订历史" /></div>
-      <div class="editor-actions"><n-button :disabled="saving" @click="emit('update:show', false)">取消</n-button><n-button data-test="save-project-materials" type="primary" :loading="saving" @click="save">保存物资修订</n-button></div>
+      <div class="editor-actions"><n-button :disabled="saving" @click="setShow(false)">取消</n-button><n-button data-test="save-project-materials" type="primary" :loading="saving" @click="save">保存物资修订</n-button></div>
     </n-drawer-content>
   </n-drawer>
 </template>

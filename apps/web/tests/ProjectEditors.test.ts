@@ -38,6 +38,7 @@ const project: ReserveProjectSummary = {
 };
 
 function ok(data: unknown) { return new Response(JSON.stringify({ ok: true, data }), { status: 200, headers: { 'Content-Type': 'application/json' } }); }
+function conflict() { return new Response(JSON.stringify({ ok: false, error: { code: 'VERSION_CONFLICT', message: '项目已被修改' } }), { status: 409, headers: { 'Content-Type': 'application/json' } }); }
 
 describe('project definition editors', () => {
   afterEach(() => vi.unstubAllGlobals());
@@ -79,5 +80,48 @@ describe('project definition editors', () => {
     await flushPromises();
     const call = vi.mocked(fetch).mock.calls.find(([url, init]) => String(url) === '/api/reserve-projects/p1/materials' && init?.method === 'PUT');
     expect(JSON.parse(String(call![1]!.body))).toMatchObject({ expectedVersion: 5, reason: '本轮不需要项目物资', materials: [] });
+  });
+
+  it('keeps source-selection draft on a version conflict and exposes an in-place refresh action', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.startsWith('/api/demands?')) return ok({ items: [{ id: 'd2', sequenceNo: 'D-002', year: 2026, voltageLevelId: null, lineId: null, locationType: null, startTowerPositionId: null, endTowerPositionId: null, voltageRaw: '220kV', voltageVerified: '220kV', lineName: '龙城线', section: '#011-#020', category: '防断线', owner: null, version: 1, createdAt: '' }], nextCursor: null });
+      if (url === '/api/reserve-projects/p1/demands' && init?.method === 'PUT') return conflict();
+      throw new Error(`unexpected request ${init?.method ?? 'GET'} ${url}`);
+    }));
+    const wrapper = mount(ProjectSourceEditor, { props: { show: false, project } });
+    await wrapper.setProps({ show: true });
+    await flushPromises();
+    await wrapper.get('input[type="checkbox"]').setValue(true);
+    await wrapper.get('[data-test="save-project-sources"]').trigger('click');
+    await flushPromises();
+
+    expect(wrapper.text()).toContain('当前选择已保留');
+    expect(wrapper.find('[data-test="refresh-project-source-conflict"]').exists()).toBe(true);
+    expect((wrapper.get('input[type="checkbox"]').element as HTMLInputElement).checked).toBe(true);
+    await wrapper.get('[data-test="refresh-project-source-conflict"]').trigger('click');
+    expect(wrapper.emitted('request-refresh')).toHaveLength(1);
+  });
+
+  it('keeps material draft on a version conflict and exposes an in-place refresh action', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === '/api/reserve-categories') return ok({ items: [] });
+      if (url === '/api/reserve-projects/p1/materials' && init?.method === 'PUT') return conflict();
+      throw new Error(`unexpected request ${init?.method ?? 'GET'} ${url}`);
+    }));
+    const wrapper = mount(ProjectMaterialsEditor, { props: { show: false, project } });
+    await wrapper.setProps({ show: true });
+    await flushPromises();
+    await wrapper.get('.material-fields input').setValue('FXBW-110-新');
+    await wrapper.get('[data-test="material-revision-reason"]').setValue('现场调整');
+    await wrapper.get('[data-test="save-project-materials"]').trigger('click');
+    await flushPromises();
+
+    expect(wrapper.text()).toContain('当前物资草稿已保留');
+    expect(wrapper.find('[data-test="refresh-project-material-conflict"]').exists()).toBe(true);
+    expect((wrapper.get('.material-fields input').element as HTMLInputElement).value).toBe('FXBW-110-新');
+    await wrapper.get('[data-test="refresh-project-material-conflict"]').trigger('click');
+    expect(wrapper.emitted('request-refresh')).toHaveLength(1);
   });
 });

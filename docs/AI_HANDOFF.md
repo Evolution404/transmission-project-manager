@@ -73,14 +73,21 @@
 - 页面眉标、登录/改密装饰文字和项目对象眉标中的 `WORKSPACE/PROJECTS/EXECUTION/FINANCE/SETTINGS/ANALYSIS/DEMANDS/PROJECT/...` 已统一改为中文，并增加静态门禁，避免纯英文装饰文案回流。未知角色/预警状态也不再回退显示内部英文枚举。
 - 全局 DataTable hover/分隔线已改用 `--ui-*` token，不再维护浅色/暗色两套硬编码值；分析页刷新、月报生成、事项创建补 loading 反馈。
 - 该状态一致性包新增 repository guard 后 **40/40 PASS**，相关 Web 定向 **49/49 PASS**、TaskCreate **3/3 PASS**；最终完整 `npm run check` 为 Node **298/298 PASS**、Web **134/134 PASS（23 文件）**。
-- 当前定向结果：repository guards **40/40 PASS**；相关 11 个 Web 页面 **49/49 PASS**；TaskCreate **3/3 PASS**；Web typecheck 与 `git diff --check` PASS。完整 `npm run check` 仍需在本小包提交前复跑。
+
+继续完成了一轮移动端与并发状态审计（当前待完整门禁后提交）：
+
+- 需求页“物资字典”已补手机独立对象列表，名称、编码、型号、单位、启停状态无需横向拖动桌面宽表；新增需求/需求详情弹窗在手机端限制可视高度，正文独立滚动，footer 考虑 safe-area。
+- 项目“来源需求”和“项目物资”编辑器新增完整 409 恢复链：冲突后草稿保留，抽屉内可直接“读取最新项目数据”，父项目刷新后继续使用原草稿重试；保存进行中遮罩和关闭按钮均不能误关抽屉。
+- 任务详情删除无任何行为的“更多”假按钮；供应抽屉保存中同样禁止误关。
+- 基础台账所有业务弹窗统一加入手机可视高度、内部滚动和安全区 footer；清理用户界面中的“稳定 ID / JSON / 成员 ID”等无业务价值实现术语，未知自定义字段类型不回退英文内部值。
+- 当前定向结果：MasterData / Demands / ProjectEditors / ProjectDetail / TaskDetail / Administration 相关 **49/49 PASS**，Web typecheck 与 `git diff --check` PASS；完整 `npm run check` 为 Node **298/298 PASS**、Web **136/136 PASS（23 文件）**，Web/API/shared TypeScript、Web production build、Worker dry-run 和 Node + SQLite + Filesystem 第二运行时均 PASS。
 
 真实浏览器最终验收仍未完成：项目未引入 Playwright/Puppeteer；本机 Chrome headless 能生成首张未登录截图，但进程会被 Google Updater/Crashpad 拖住，批量桌面/手机/明暗截图流程不可靠。未登录状态不会伪造认证 session；最终验收需要使用正常登录会话补齐真实浏览器截图与交互检查。
 
 ## 下一步施工顺序
 
-1. 对新位置继续补齐空状态、加载失败、只读、409、重复提交和移动端软键盘/底部操作区域检查；已有自动测试继续保留。
-2. 使用正常认证流程补齐真实浏览器桌面/手机、浅色/暗色截图和关键交互验收；不得通过伪造会话绕过认证。自动测试不能替代最终真实浏览器验收。
+1. 使用正常认证流程补齐真实浏览器桌面/手机、浅色/暗色截图和关键交互验收；不得通过伪造会话绕过认证。自动测试不能替代最终真实浏览器验收。
+2. 对真实浏览器验收发现的问题继续小批修复、定向回归；若没有新问题则停止继续机械改样式。
 3. 真实浏览器验收完成后最终再次运行完整 `npm run check`，确认全站功能迁移和交互验收都完成后才可标记 UI 重构完成。
 
 ## 必须保持的业务/工程边界

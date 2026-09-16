@@ -652,7 +652,16 @@ onMounted(loadInitial);
               </n-form>
             </div>
             <div class="dictionary-data">
-              <n-data-table v-if="materials.length" :columns="materialColumns" :data="materials" :pagination="false" :scroll-x="720" />
+              <n-data-table v-if="materials.length" class="desktop-material-table" :columns="materialColumns" :data="materials" :pagination="false" :scroll-x="720" />
+              <div v-if="materials.length" class="mobile-material-list">
+                <div v-for="item in materials" :key="item.id" class="mobile-material-item" :data-test="`mobile-material-${item.id}`">
+                  <div class="mobile-material-head">
+                    <div><strong>{{ item.name }}</strong><span>{{ item.code || '无编码' }}</span></div>
+                    <n-tag size="small" :bordered="false" :type="item.enabled ? 'success' : 'default'">{{ item.enabled ? '启用' : '停用' }}</n-tag>
+                  </div>
+                  <div class="mobile-material-facts"><span>型号 {{ item.model }}</span><span>单位 {{ item.unit }}</span></div>
+                </div>
+              </div>
               <n-empty v-else description="暂无标准物资。导入需求可以先进行，但未知物资会被标记为待核实。" />
             </div>
           </section>
@@ -814,6 +823,7 @@ onMounted(loadInitial);
 .dictionary-edit { padding: 16px; border-bottom: 1px solid var(--ui-border); background: var(--ui-surface-subtle); }
 .dictionary-data :deep(.n-data-table) { border: 0; border-radius: 0; }
 .dictionary-data > .n-empty { padding: 32px 16px; }
+.mobile-material-list { display: none; }
 .status-line { margin-top: 14px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .template-row { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr) auto; gap: 10px; margin-bottom: 18px; }
 .mapping-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 18px; }
@@ -905,6 +915,11 @@ onMounted(loadInitial);
   .search-input { width: 100%; }
 }
 @media (max-width: 767px) {
+  :deep(.demand-modal), :deep(.demand-detail-modal) { width: calc(100vw - 20px) !important; max-height: calc(100dvh - 20px); }
+  :deep(.demand-modal .n-card__content), :deep(.demand-detail-modal .n-card__content) { max-height: calc(100dvh - 142px); overflow-y: auto; overscroll-behavior: contain; }
+  :deep(.demand-modal .n-card__footer) { padding-bottom: max(14px, env(safe-area-inset-bottom)); background: var(--ui-surface); }
+  .modal-actions { position: sticky; bottom: 0; }
+  .modal-actions .n-button:last-child { flex: 1; }
   .import-step-header, .dictionary-panel-header { grid-template-columns: 30px minmax(0, 1fr); align-items: start; }
   .import-step-header > .n-button, .dictionary-panel-header > .n-button { grid-column: 2; justify-self: start; }
   .dictionary-panel-header > div { grid-column: 1 / -1; }
@@ -924,6 +939,15 @@ onMounted(loadInitial);
   .mobile-demand-chevron { justify-self: end; color: var(--ui-text-tertiary) !important; font-size: 20px !important; }
   .mobile-demand-line { overflow: hidden; font-size: 14px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
   .mobile-demand-meta { display: flex; flex-wrap: wrap; gap: 5px 12px; color: var(--ui-text-secondary); font-size: 11px; }
+  .desktop-material-table { display: none; }
+  .mobile-material-list { display: grid; }
+  .mobile-material-item { display: grid; gap: 8px; padding: 14px; border-bottom: 1px solid var(--ui-border); }
+  .mobile-material-item:last-child { border-bottom: 0; }
+  .mobile-material-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+  .mobile-material-head > div { display: grid; gap: 3px; min-width: 0; }
+  .mobile-material-head strong { overflow: hidden; font-size: 13px; font-weight: 680; text-overflow: ellipsis; white-space: nowrap; }
+  .mobile-material-head span { color: var(--ui-text-tertiary); font-size: 10px; }
+  .mobile-material-facts { display: flex; flex-wrap: wrap; gap: 5px 14px; color: var(--ui-text-secondary); font-size: 11px; }
 }
 @media (max-width: 560px) {
   .material-section-heading { align-items: flex-start; }

@@ -374,7 +374,7 @@ onMounted(load);
         <div class="section-panel-header">
           <div>
             <h3>系统配置</h3>
-            <p>当前生效的版本化运行参数。这里展示业务含义，不暴露底层 JSON 结构。</p>
+            <p>当前生效的版本化运行参数。这里展示业务含义，不暴露底层数据结构。</p>
           </div>
           <n-tag :bordered="false">版本化</n-tag>
         </div>

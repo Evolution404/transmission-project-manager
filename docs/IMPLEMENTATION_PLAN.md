@@ -95,6 +95,8 @@ M6 基础台账定向结果：基础台账 API **25/25 PASS**；相关 Web **30/
 
 状态恢复与中文化一致性收尾已完成：任务创建上下文读取失败显示可恢复错误而不是空白页；工作台、需求、资金、分析、设置统一提供“重新加载”；纯英文页面眉标/认证装饰文案由 repository guard 拦截；DataTable 全局 hover/分隔线统一走主题 token；分析页刷新、月报生成、事项创建补齐进行中反馈。该小包 repository guards **40/40 PASS**、相关 Web **49/49 PASS**、TaskCreate **3/3 PASS**；完整 `npm run check` 为 Node **298/298 PASS**、Web **134/134 PASS（23 文件）**。
 
+随后继续收口移动端与并发编辑体验：需求物资字典增加手机对象列表；需求长弹窗、基础台账业务弹窗统一处理可视高度/正文滚动/safe-area footer；项目来源需求和项目物资的 409 从“仅提示用户关闭刷新”改为草稿原地保留并可直接刷新父项目；保存中的项目编辑器和任务供应抽屉禁止误关；删除任务详情无行为“更多”按钮，并清理业务界面的内部实现术语。该包定向 Web **49/49 PASS（6 文件）**、Web typecheck 与 `git diff --check` PASS；完整 `npm run check` 为 Node **298/298 PASS**、Web **136/136 PASS（23 文件）**，Web/API/shared TypeScript、Web production build、Worker dry-run 与第二运行时均 PASS。
+
 该工作包保持以下验收条件：
 
 - `/api/reserve-projects` 的 `stage=reserve` 必须在 SQL 层按“不存在 `project_releases`”过滤，与工作台/分析统计口径一致；

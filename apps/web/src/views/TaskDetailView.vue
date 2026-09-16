@@ -217,7 +217,6 @@ onMounted(load);
               <n-tag v-if="props.currentUser.role === 'readonly'" size="small" :bordered="false">只读</n-tag>
             </div>
           </div>
-          <n-button quaternary>更多</n-button>
         </section>
 
         <section class="parallel-summary" aria-label="任务三线摘要">
@@ -282,8 +281,8 @@ onMounted(load);
       </template>
     </n-spin>
 
-    <n-drawer v-model:show="supplyOpen" placement="right" :width="520" class="supply-drawer" @mask-click="closeSupply">
-      <n-drawer-content title="登记供应进度" closable>
+    <n-drawer v-model:show="supplyOpen" placement="right" :width="520" :mask-closable="!savingSupply" class="supply-drawer" @mask-click="closeSupply">
+      <n-drawer-content title="登记供应进度" :closable="!savingSupply">
         <template v-if="selectedMaterial && selectedSupply">
           <div class="supply-context">
             <strong>{{ selectedMaterial.model }}</strong>

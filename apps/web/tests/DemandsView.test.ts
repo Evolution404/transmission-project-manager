@@ -143,7 +143,7 @@ describe('DemandsView P2 behavior', () => {
         { id: 'tower-2', lineId: 'line-1', lineName: '手工需求线', towerNo: '#002', sortRank: 2000, towerType: null, enabled: true, version: 1 },
       ] });
       if (url === '/api/materials' && init?.method === 'POST') return new Response(JSON.stringify({ ok: true, data: { id: 'm1', code: null, name: '线夹', model: 'JX-01', unit: '套', enabled: true, version: 1 } }), { status: 201, headers: { 'Content-Type': 'application/json' } });
-      if (url.startsWith('/api/materials')) return ok({ items: [] });
+      if (url.startsWith('/api/materials')) return ok({ items: [{ id: 'm1', code: 'MAT-001', name: '线夹', model: 'JX-01', unit: '套', enabled: true, version: 1 }] });
       throw new Error(`unexpected request ${url}`);
     }));
     parseFileInWorker.mockReset();
@@ -159,6 +159,7 @@ describe('DemandsView P2 behavior', () => {
     await flushPromises();
     expect(wrapper.text()).toContain('龙城线');
     expect(wrapper.find('[data-test="mobile-demand-d1"]').exists()).toBe(true);
+    expect(wrapper.find('[data-test="mobile-material-m1"]').exists()).toBe(true);
     expect(wrapper.text()).toContain('仅管理员或项目管理角色可以导入需求');
     expect(wrapper.find('[data-test="file-input"]').exists()).toBe(false);
     expect(wrapper.find('[data-test="add-material"]').exists()).toBe(false);

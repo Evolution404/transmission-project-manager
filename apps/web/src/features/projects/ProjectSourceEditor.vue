@@ -5,7 +5,7 @@ import type { DemandSummary, ProjectDemandLinkSummary, ReserveProjectSummary } f
 import { ApiRequestError, apiRequest, jsonRequestInit } from '../../api/client';
 
 const props = defineProps<{ show: boolean; project: ReserveProjectSummary }>();
-const emit = defineEmits<{ 'update:show': [value: boolean]; saved: [] }>();
+const emit = defineEmits<{ 'update:show': [value: boolean]; saved: []; 'request-refresh': [] }>();
 
 const query = ref('');
 const searching = ref(false);
@@ -29,6 +29,10 @@ function initialize() {
     sequenceNo: item.sequenceNo, lineName: item.lineName, section: item.section, category: item.category,
   }]));
   void search();
+}
+
+function setShow(value: boolean) {
+  if (!saving.value || value) emit('update:show', value);
 }
 
 async function search() {
@@ -88,13 +92,14 @@ watch(query, () => {
 </script>
 
 <template>
-  <n-drawer :show="show" placement="right" :width="640" class="project-source-drawer" @update:show="emit('update:show', $event)">
-    <n-drawer-content title="编辑来源需求" closable>
+  <n-drawer :show="show" placement="right" :width="640" :mask-closable="!saving" class="project-source-drawer" @update:show="setShow">
+    <n-drawer-content title="编辑来源需求" :closable="!saving">
       <div class="editor-intro">
         <strong>来源需求只表达项目从哪里来</strong>
         <span>这里不会把需求物资自动复制为项目物资，也不会把需求数量当作项目物资上限。</span>
       </div>
       <n-alert v-if="error" :type="conflict ? 'warning' : 'error'" :bordered="false" class="editor-alert">{{ error }}</n-alert>
+      <n-button v-if="conflict" data-test="refresh-project-source-conflict" secondary block class="editor-alert" @click="emit('request-refresh')">读取最新项目数据</n-button>
 
       <section class="selected-section">
         <div class="editor-heading"><div><h4>已关联</h4><p>{{ selectedItems.length }} 项</p></div></div>
@@ -121,7 +126,7 @@ watch(query, () => {
         </n-spin>
       </section>
 
-      <div class="editor-actions"><n-button :disabled="saving" @click="emit('update:show', false)">取消</n-button><n-button data-test="save-project-sources" type="primary" :loading="saving" @click="save">保存来源关系</n-button></div>
+      <div class="editor-actions"><n-button :disabled="saving" @click="setShow(false)">取消</n-button><n-button data-test="save-project-sources" type="primary" :loading="saving" @click="save">保存来源关系</n-button></div>
     </n-drawer-content>
   </n-drawer>
 </template>

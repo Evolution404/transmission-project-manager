@@ -144,7 +144,7 @@ onMounted(load);
         <div class="operations-grid">
           <section class="operation-group">
             <div class="operation-heading">
-              <div><strong>通知联系人</strong><small>选择真实成员，不手工输入成员 ID。</small></div>
+              <div><strong>通知联系人</strong><small>直接选择真实成员，不手工填写内部标识。</small></div>
             </div>
             <div class="contact-form">
               <n-select v-model:value="selectedMemberId" :options="memberOptions" placeholder="选择成员" filterable />
