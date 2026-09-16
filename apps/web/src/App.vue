@@ -77,7 +77,7 @@ const systemNav: NavItem[] = [
 ];
 
 const activeKey = computed(() => String(route.meta.navKey ?? route.path));
-const moreNavKeys = new Set(['/demands', '/finance', '/analysis', '/master-data', '/administration']);
+const moreNavKeys = new Set(['/finance', '/analysis', '/master-data', '/administration']);
 const mobileMoreActive = computed(() => mobileMenuOpen.value || moreNavKeys.has(activeKey.value));
 const pageTitle = computed(() => String(route.meta.title ?? BRAND_SUBTITLE));
 const naiveTheme = computed(() => prefersDark.value ? darkTheme : null);
@@ -259,6 +259,7 @@ onMounted(() => {
 
           <nav class="mobile-bottom-nav" aria-label="手机主导航">
             <app-pressable :class="{ active: activeKey === '/' }" :aria-current="activeKey === '/' ? 'page' : undefined" @click="navigateMobile('/')"><app-icon name="workspace" /><small>工作台</small></app-pressable>
+            <app-pressable :class="{ active: activeKey === '/demands' }" :aria-current="activeKey === '/demands' ? 'page' : undefined" @click="navigateMobile('/demands')"><app-icon name="demands" /><small>需求</small></app-pressable>
             <app-pressable :class="{ active: activeKey === '/projects' }" :aria-current="activeKey === '/projects' ? 'page' : undefined" @click="navigateMobile('/projects')"><app-icon name="projects" /><small>项目</small></app-pressable>
             <app-pressable :class="{ active: activeKey === '/tasks' }" :aria-current="activeKey === '/tasks' ? 'page' : undefined" @click="navigateMobile('/tasks')"><app-icon name="tasks" /><small>任务</small></app-pressable>
             <app-pressable :class="{ active: mobileMoreActive }" :aria-current="moreNavKeys.has(activeKey) ? 'page' : undefined" @click="navigateMobile('more')"><app-icon name="more" /><small>更多</small></app-pressable>
@@ -267,7 +268,7 @@ onMounted(() => {
           <n-drawer v-model:show="mobileMenuOpen" placement="bottom" height="auto" class="mobile-more-drawer">
             <n-drawer-content title="更多" closable>
               <div class="mobile-more-grid">
-                <app-pressable v-for="item in [...workNav.slice(1, 2), ...managementNav, ...systemNav]" :key="item.key" :class="{ active: activeKey === item.key }" :aria-current="activeKey === item.key ? 'page' : undefined" @click="navigate(item.key)">
+                <app-pressable v-for="item in [...managementNav, ...systemNav]" :key="item.key" :class="{ active: activeKey === item.key }" :aria-current="activeKey === item.key ? 'page' : undefined" @click="navigate(item.key)">
                   <span class="mobile-more-icon"><app-icon :name="item.icon" /></span>
                   <span>{{ item.label }}</span>
                   <app-icon name="chevron" :size="16" class="mobile-more-chevron" />

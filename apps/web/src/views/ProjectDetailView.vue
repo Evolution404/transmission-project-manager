@@ -461,7 +461,7 @@ onMounted(load);
 .progress-metric strong { font-size: 13px; }
 .money-summary { display: grid; align-content: center; min-height: 176px; padding: 20px; border-left: 2px solid var(--ui-accent); background: var(--ui-surface-subtle); }
 .money-summary strong { margin: 8px 0; font-size: 27px; font-weight: 690; font-variant-numeric: tabular-nums; letter-spacing: -.025em; }
-.money-summary small { color: var(--ui-text-secondary); font-size: 12px; }
+.money-summary small { color: var(--ui-text-secondary); font-size: 13px; }
 .section-heading { display: flex; align-items: end; justify-content: space-between; margin-bottom: 14px; }
 .section-heading h3, .muted-placeholder h3 { margin: 0; font-size: 15px; font-weight: 680; }
 .section-heading p, .muted-placeholder p { margin: 4px 0 0; color: var(--ui-text-secondary); font-size: 13px; }
@@ -492,10 +492,10 @@ onMounted(load);
 .attachment-name { overflow: hidden; color: var(--ui-text); font-size: 13px; font-weight: 620; text-overflow: ellipsis; white-space: nowrap; }
 .attachment-meta { color: var(--ui-text-tertiary); font-size: 12px; }
 .attachment-action { color: var(--ui-accent); font-size: 13px; font-weight: 620; }
-.detail-error { padding: 12px 14px; border-radius: 10px; background: var(--ui-danger-soft); color: var(--ui-danger); font-size: 12px; }
+.detail-error { padding: 12px 14px; border-radius: 10px; background: var(--ui-danger-soft); color: var(--ui-danger); font-size: 13px; }
 .release-intro { margin-bottom: 18px; padding: 13px 14px; border: 1px solid var(--ui-border); border-radius: 11px; background: var(--ui-surface-subtle); }
 .release-intro strong { font-size: 14px; }
-.release-intro p { margin: 6px 0 0; color: var(--ui-text-secondary); font-size: 12px; line-height: 1.6; }
+.release-intro p { margin: 6px 0 0; color: var(--ui-text-secondary); font-size: 13px; line-height: 1.6; }
 .release-facts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 18px; }
 .release-facts > div { display: grid; gap: 4px; padding: 11px 12px; border: 1px solid var(--ui-border); border-radius: 10px; }
 .release-facts span { color: var(--ui-text-secondary); font-size: 13px; }

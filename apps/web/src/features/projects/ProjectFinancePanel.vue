@@ -100,7 +100,7 @@ onMounted(load);
 <style scoped>
 .project-finance-panel { display: grid; gap: 18px; }
 .finance-heading { margin-bottom: 0; }
-.finance-error { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 13px; border-radius: 10px; background: var(--ui-danger-soft); color: var(--ui-danger); font-size: 12px; }
+.finance-error { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 13px; border-radius: 10px; background: var(--ui-danger-soft); color: var(--ui-danger); font-size: 13px; }
 .finance-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); overflow: hidden; border: 1px solid var(--ui-border); border-radius: var(--ui-radius-md); }
 .finance-facts > div { display: grid; gap: 5px; min-height: 100px; align-content: center; padding: 15px 17px; }
 .finance-facts > div + div { border-left: 1px solid var(--ui-border); }
@@ -114,7 +114,7 @@ onMounted(load);
 .entry-date { color: var(--ui-text-secondary); font-size: 13px; font-variant-numeric: tabular-nums; }
 .finance-entry-row > strong { font-size: 13px; font-weight: 650; font-variant-numeric: tabular-nums; }
 .entry-note { overflow: hidden; color: var(--ui-text-secondary); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
-.more-note { margin: 10px 0 0; color: var(--ui-text-tertiary); font-size: 12px; }
+.more-note { margin: 10px 0 0; color: var(--ui-text-tertiary); font-size: 13px; }
 @media (max-width: 767px) {
   .finance-heading { align-items: flex-start; gap: 12px; }
   .finance-heading > .n-button { flex: 0 0 auto; }

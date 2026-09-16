@@ -59,7 +59,7 @@ const loading = ref(true);
 const error = ref('');
 const demands = ref<DemandSummary[]>([]);
 const demandCursor = ref<string | null>(null);
-const demandQuery = ref('');
+const demandQuery = ref(typeof route.query.query === 'string' ? route.query.query : '');
 const requestedTab = typeof route.query.tab === 'string' ? route.query.tab : '';
 const activeTab = ref<DemandWorkspaceTab>(demandWorkspaceTabs.has(requestedTab as DemandWorkspaceTab) ? requestedTab as DemandWorkspaceTab : 'pool');
 const selectedDemand = ref<DemandDetail | null>(null);
@@ -104,6 +104,20 @@ function setActiveTab(value: string | number) {
   if (nextTab === 'pool') delete query.tab;
   else query.tab = nextTab;
   void router.replace({ query });
+}
+
+function syncDemandQuery() {
+  const query = { ...route.query };
+  const term = demandQuery.value.trim();
+  if (term) query.query = term;
+  else delete query.query;
+  void router.replace({ query });
+}
+
+async function applyDemandQuery() {
+  demandCursor.value = null;
+  syncDemandQuery();
+  await loadDemands();
 }
 
 const fieldDefinitions: Array<{ key: keyof ImportFieldMapping; label: string; required: boolean }> = [
@@ -519,8 +533,8 @@ onMounted(loadInitial);
 
           <section class="demand-list-surface">
             <div class="demand-list-toolbar">
-              <n-input v-model:value="demandQuery" class="search-input" placeholder="搜索线路、杆段或序号" clearable @keyup.enter="loadDemands()" />
-              <n-button secondary @click="loadDemands()">查询</n-button>
+              <n-input v-model:value="demandQuery" class="search-input" data-test="demand-search" placeholder="搜索线路、杆段或序号" clearable @keyup.enter="applyDemandQuery" />
+              <n-button data-test="demand-search-submit" secondary @click="applyDemandQuery">查询</n-button>
               <span class="list-count">已加载 {{ demands.length }} 条</span>
             </div>
             <n-data-table v-if="demands.length" class="desktop-demand-table" :columns="demandColumns" :data="demands" :pagination="false" :scroll-x="900" />
@@ -826,7 +840,7 @@ onMounted(loadInitial);
 .demand-list-surface { overflow: hidden; border: 1px solid var(--ui-border); border-radius: var(--ui-radius-lg); background: var(--ui-surface); }
 .demand-list-toolbar { display: flex; align-items: center; gap: 10px; min-height: 64px; padding: 12px 16px; border-bottom: 1px solid var(--ui-border); }
 .search-input { width: min(360px, 42vw); }
-.list-count { margin-left: auto; color: var(--ui-text-tertiary); font-size: 12px; white-space: nowrap; }
+.list-count { margin-left: auto; color: var(--ui-text-tertiary); font-size: 13px; white-space: nowrap; }
 .mobile-demand-list { display: none; }
 .import-workflow, .dictionary-panel { overflow: hidden; border: 1px solid var(--ui-border); border-radius: var(--ui-radius-lg); background: var(--ui-surface); }
 .import-step + .import-step { border-top: 1px solid var(--ui-border); }
@@ -853,7 +867,7 @@ onMounted(loadInitial);
 .load-more { display: flex; justify-content: center; padding: 14px 16px; border-top: 1px solid var(--ui-border); }
 .detail-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
 .detail-grid div { display: grid; gap: 4px; padding: 12px 13px; border: 1px solid var(--ui-border); border-radius: 10px; background: var(--ui-surface-subtle); }
-.detail-grid span { color: var(--ui-text-tertiary); font-size: 12px; }
+.detail-grid span { color: var(--ui-text-tertiary); font-size: 13px; }
 .detail-grid strong { color: var(--ui-text); font-size: 13px; }
 .detail-grid-polished { margin-bottom: 6px; }
 .material-lines { display: grid; gap: 8px; margin-top: 20px; }
@@ -866,14 +880,14 @@ onMounted(loadInitial);
   grid-column: 1 / -1;
   margin: 2px 0 10px;
   color: var(--ui-text);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 700;
 }
 .form-section-wide { margin-top: 8px; padding-top: 14px; border-top: 1px solid var(--ui-border); }
 .material-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .material-section-heading > div { display: grid; gap: 3px; }
-.material-section-heading strong { color: var(--ui-text); font-size: 12px; }
-.material-section-heading span { color: var(--ui-text-tertiary); font-size: 12px; font-weight: 400; }
+.material-section-heading strong { color: var(--ui-text); font-size: 13px; }
+.material-section-heading span { color: var(--ui-text-tertiary); font-size: 13px; font-weight: 400; }
 .manual-material-list { display: grid; gap: 10px; }
 .manual-material-row {
   display: grid;
@@ -895,7 +909,7 @@ onMounted(loadInitial);
   border-radius: 8px;
   background: var(--ui-accent-soft);
   color: var(--ui-accent);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 750;
 }
 .manual-material-remove { margin-bottom: 2px; }
@@ -918,7 +932,7 @@ onMounted(loadInitial);
   background: var(--ui-accent-soft);
 }
 .modal-intro strong { color: var(--ui-text); font-size: 13px; }
-.modal-intro span { color: var(--ui-text-secondary); font-size: 12px; line-height: 1.5; }
+.modal-intro span { color: var(--ui-text-secondary); font-size: 13px; line-height: 1.5; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; }
 :deep(.demand-modal), :deep(.demand-detail-modal) { border-radius: 15px; overflow: hidden; box-shadow: var(--ui-shadow-popover); }
 @media (max-width: 850px) {
@@ -952,9 +966,9 @@ onMounted(loadInitial);
   .mobile-demand-heading { display: grid; grid-template-columns: minmax(0,1fr) 18px; align-items: center; gap: 12px; }
   .mobile-demand-heading > div { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
   .mobile-demand-heading strong { font-size: 13px; font-weight: 700; }
-  .mobile-demand-heading span { color: var(--ui-text-tertiary); font-size: 12px; }
+  .mobile-demand-heading span { color: var(--ui-text-tertiary); font-size: 13px; }
   .mobile-demand-chevron { justify-self: end; color: var(--ui-text-tertiary) !important; font-size: 20px !important; }
-  .mobile-demand-line { overflow: hidden; font-size: 14px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+  .mobile-demand-line { font-size: 14px; font-weight: 650; line-height: 1.45; overflow-wrap: anywhere; }
   .mobile-demand-meta { display: flex; flex-wrap: wrap; gap: 5px 12px; color: var(--ui-text-secondary); font-size: 13px; }
   .desktop-material-table { display: none; }
   .mobile-material-list { display: grid; }
@@ -962,8 +976,8 @@ onMounted(loadInitial);
   .mobile-material-item:last-child { border-bottom: 0; }
   .mobile-material-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
   .mobile-material-head > div { display: grid; gap: 3px; min-width: 0; }
-  .mobile-material-head strong { overflow: hidden; font-size: 13px; font-weight: 680; text-overflow: ellipsis; white-space: nowrap; }
-  .mobile-material-head span { color: var(--ui-text-tertiary); font-size: 12px; }
+  .mobile-material-head strong { font-size: 13px; font-weight: 680; line-height: 1.45; overflow-wrap: anywhere; }
+  .mobile-material-head span { color: var(--ui-text-tertiary); font-size: 13px; }
   .mobile-material-facts { display: flex; flex-wrap: wrap; gap: 5px 14px; color: var(--ui-text-secondary); font-size: 13px; }
 }
 @media (max-width: 560px) {

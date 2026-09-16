@@ -91,4 +91,11 @@ describe('business routes', () => {
       expect(route?.meta.navKey, path).toBe(navKey);
     }
   });
+
+  it('renders an explicit not-found state for unknown URLs instead of leaving the app shell blank', () => {
+    const route = router.getRoutes().find((item) => item.path === '/:pathMatch(.*)*');
+    expect(route).toBeTruthy();
+    expect(route?.meta.title).toBe('页面不存在');
+    expect(typeof route?.components?.default).toBe('function');
+  });
 });

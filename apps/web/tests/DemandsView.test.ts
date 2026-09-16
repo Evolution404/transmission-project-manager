@@ -175,6 +175,21 @@ describe('DemandsView P2 behavior', () => {
     expect(replace).toHaveBeenCalledWith({ query: { tab: 'import' } });
   });
 
+  it('restores demand search from the URL and keeps explicit searches refresh-safe', async () => {
+    routeQuery.query = '龙城';
+    const wrapper = mount(DemandsView, { props: { currentUser: admin } });
+    await flushPromises();
+
+    expect(wrapper.get('[data-test="demand-search"]').attributes('value')).toBe('龙城');
+    expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes('/api/demands?limit=50&query=%E9%BE%99%E5%9F%8E'))).toBe(true);
+
+    await wrapper.get('[data-test="demand-search"]').setValue('新线');
+    await wrapper.get('[data-test="demand-search-submit"]').trigger('click');
+    await flushPromises();
+    expect(replace).toHaveBeenCalledWith({ query: { query: '新线' } });
+    expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes('query=%E6%96%B0%E7%BA%BF'))).toBe(true);
+  });
+
   it('loads the demand pool for readonly users but does not expose import/write controls', async () => {
     const wrapper = mount(DemandsView, { props: { currentUser: readonly } });
     await flushPromises();

@@ -1235,7 +1235,7 @@ onMounted(loadAll);
 .line-card-actions { display: none; position: absolute; right: 42px; top: 50%; gap: 8px; align-items: center; transform: translateY(-50%); }
 .line-card:hover .line-card-actions { display: flex; }
 .line-card:hover .line-code, .line-card:hover .line-chevron { opacity: .18; }
-.history-match { margin: 4px 0 0 !important; color: var(--ui-info) !important; font-size: 12px !important; }
+.history-match { margin: 4px 0 0 !important; color: var(--ui-info) !important; font-size: 13px !important; }
 .load-more { display: flex; justify-content: center; padding: 13px 16px; border-top: 1px solid var(--ui-border); }
 
 .back-button { justify-self: start; padding: 3px 0; border: 0; background: transparent; color: var(--ui-text-secondary); font-size: 13px; cursor: pointer; }

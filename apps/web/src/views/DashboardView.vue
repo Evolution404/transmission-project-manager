@@ -96,7 +96,7 @@ onMounted(loadDashboard);
 .overview-cell:hover { background: var(--ui-surface-subtle); }
 .overview-cell > span { color: var(--ui-text-secondary); font-size: 13px; font-weight: 620; }
 .overview-cell > strong { align-self: end; font-size: 31px; font-weight: 690; letter-spacing: -.035em; font-variant-numeric: tabular-nums; }
-.overview-cell > small { color: var(--ui-text-tertiary); font-size: 12px; line-height: 1.4; }
+.overview-cell > small { color: var(--ui-text-tertiary); font-size: 13px; line-height: 1.4; }
 .overview-cell.emphasis > strong { color: var(--ui-info); }
 .overview-cell.warning > strong { color: var(--ui-warning); }
 .workspace-section { overflow: hidden; border: 1px solid var(--ui-border); border-radius: var(--ui-radius-lg); background: var(--ui-surface); }
@@ -111,7 +111,7 @@ onMounted(loadDashboard);
 .workspace-links > button > span:nth-child(2) { min-width: 0; }
 .workspace-links strong, .workspace-links small { display: block; }
 .workspace-links strong { font-size: 13px; font-weight: 660; }
-.workspace-links small { margin-top: 4px; overflow: hidden; color: var(--ui-text-secondary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.workspace-links small { margin-top: 4px; overflow: hidden; color: var(--ui-text-secondary); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
 .workspace-links :deep(.app-icon:last-child) { color: var(--ui-text-tertiary); }
 @media (max-width: 1050px) { .overview-strip { grid-template-columns: repeat(3,1fr); } .overview-cell:nth-child(3) { border-right: 0; } .overview-cell:nth-child(n+4) { border-top: 1px solid var(--ui-border); } .workspace-links { grid-template-columns: 1fr; } .workspace-links > button { border-right: 0; border-bottom: 1px solid var(--ui-border); } .workspace-links > button:last-child { border-bottom: 0; } }
 @media (max-width: 767px) {

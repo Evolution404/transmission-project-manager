@@ -286,13 +286,24 @@ code { font-family: "SFMono-Regular", Consolas, monospace; font-size: 12px; }
 .mobile-account-row small { margin-top: 2px; color: var(--ui-text-tertiary); font-size: 12px; }
 
 @media (max-width: 1100px) and (min-width: 768px) {
-  .app-shell { grid-template-columns: 76px minmax(0, 1fr); }
-  .app-sider { width: 76px; padding-inline: 10px; }
+  .app-shell { grid-template-columns: 96px minmax(0, 1fr); }
+  .app-sider { width: 96px; padding-inline: 8px; }
   .brand-block { justify-content: center; min-height: 72px; padding-inline: 0; }
   .brand-block .brand-lockup { justify-content: center; }
   .brand-block .brand-icon { width: 42px; height: 42px; }
-  .brand-lockup-copy, .nav-section-label, .nav-item > span, .account-copy { display: none; }
-  .nav-item { justify-content: center; width: 100%; margin-inline: 0; padding-inline: 0; }
+  .brand-lockup-copy, .nav-section-label, .account-copy { display: none; }
+  .nav-section { gap: 5px; margin-bottom: 12px; }
+  .nav-item {
+    flex-direction: column;
+    justify-content: center;
+    gap: 4px;
+    width: 100%;
+    min-height: 58px;
+    margin-inline: 0;
+    padding: 7px 3px;
+    text-align: center;
+  }
+  .nav-item > span { width: 100%; font-size: 13px; line-height: 1.15; }
   .nav-item.active::before { left: -4px; }
   .sidebar-account { justify-content: center; padding-inline: 0; background: transparent; }
   .content-wrap { padding: 26px 24px 46px; }
@@ -326,7 +337,7 @@ code { font-family: "SFMono-Regular", Consolas, monospace; font-size: 12px; }
     left: 12px;
     z-index: 45;
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(5, 1fr);
     min-height: 64px;
     padding: 5px 6px;
     border: 1px solid rgba(208,213,221,.8);
@@ -336,7 +347,7 @@ code { font-family: "SFMono-Regular", Consolas, monospace; font-size: 12px; }
     backdrop-filter: blur(16px) saturate(130%);
   }
   .mobile-bottom-nav button { display: grid; place-items: center; align-content: center; gap: 3px; min-width: 0; min-height: 52px; border: 0; border-radius: 14px; background: transparent; color: #667085; }
-  .mobile-bottom-nav button small { font-size: 12px; font-weight: 620; }
+  .mobile-bottom-nav button small { font-size: 13px; font-weight: 620; }
   .mobile-bottom-nav button.active { background: #f2f5fa; color: #1f5fd1; }
 }
 

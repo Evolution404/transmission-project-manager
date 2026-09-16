@@ -144,23 +144,23 @@ onMounted(load);
 
 <style scoped>
 .classification-body { padding: 0; }
-.classification-error { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 16px; padding: 10px 12px; border-radius: 10px; background: var(--ui-danger-soft); color: var(--ui-danger); font-size: 12px; }
+.classification-error { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 16px; padding: 10px 12px; border-radius: 10px; background: var(--ui-danger-soft); color: var(--ui-danger); font-size: 13px; }
 .classification-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .classification-group { min-width: 0; padding: 18px; }
 .mapping-group { border-left: 1px solid var(--ui-border); }
 .classification-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
 .classification-heading > div { display: grid; gap: 3px; }
 .classification-heading strong { color: var(--ui-text); font-size: 13px; font-weight: 680; }
-.classification-heading small { color: var(--ui-text-tertiary); font-size: 12px; }
+.classification-heading small { color: var(--ui-text-tertiary); font-size: 13px; }
 .inline-editor { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: 8px; margin-bottom: 14px; padding: 12px; border: 1px solid var(--ui-border); border-radius: 11px; background: var(--ui-surface-subtle); }
 .category-list, .mapping-list { display: grid; border-top: 1px solid var(--ui-border); }
 .category-row, .mapping-row { min-height: 48px; border-bottom: 1px solid var(--ui-border); }
 .category-row:last-child, .mapping-row:last-child { border-bottom: 0; }
 .category-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: center; }
 .category-row > div { display: grid; gap: 2px; }
-.category-row strong, .mapping-row strong { font-size: 12px; font-weight: 650; }
-.category-row small { color: var(--ui-text-tertiary); font-size: 12px; }
-.mapping-row { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 10px; align-items: center; color: var(--ui-text-secondary); font-size: 12px; }
+.category-row strong, .mapping-row strong { font-size: 13px; font-weight: 650; }
+.category-row small { color: var(--ui-text-tertiary); font-size: 13px; }
+.mapping-row { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 10px; align-items: center; color: var(--ui-text-secondary); font-size: 13px; }
 .mapping-row > :last-child { text-align: right; }
 @media (max-width: 900px) {
   .classification-grid { grid-template-columns: 1fr; }

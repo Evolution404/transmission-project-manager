@@ -387,6 +387,30 @@ test('mobile UI keeps usable navigation and dashboard density', () => {
   assert.doesNotMatch(dashboardSource, /:cols="5"/);
 });
 
+test('compact desktop navigation keeps visible text labels instead of becoming an icon-only rail', () => {
+  const styleSource = readFileSync(resolve(root, 'apps/web/src/styles.css'), 'utf8');
+  const compactStart = styleSource.indexOf('@media (max-width: 1100px) and (min-width: 768px)');
+  const mobileStart = styleSource.indexOf('@media (max-width: 767px)');
+  assert.ok(compactStart >= 0 && mobileStart > compactStart, 'missing compact desktop navigation breakpoint');
+  const compactSource = styleSource.slice(compactStart, mobileStart);
+  assert.doesNotMatch(
+    compactSource,
+    /\.nav-item\s*>\s*span[^}]*display:\s*none/,
+    'compact desktop navigation must keep business labels visible; icon-only navigation is not usable on touch laptops/tablets',
+  );
+  assert.match(compactSource, /\.nav-item[^}]*flex-direction:\s*column/);
+});
+
+test('mobile primary navigation keeps the demand to project to task workflow at the first level', () => {
+  const appSource = readFileSync(resolve(root, 'apps/web/src/App.vue'), 'utf8');
+  const styleSource = readFileSync(resolve(root, 'apps/web/src/styles.css'), 'utf8');
+  const mobileNav = appSource.match(/<nav class="mobile-bottom-nav"[\s\S]*?<\/nav>/)?.[0] ?? '';
+  assert.match(mobileNav, /navigateMobile\('\/demands'\)/, '需求必须是手机一级导航，而不是藏在“更多”里');
+  assert.match(mobileNav, /navigateMobile\('\/projects'\)/);
+  assert.match(mobileNav, /navigateMobile\('\/tasks'\)/);
+  assert.match(styleSource, /\.mobile-bottom-nav[\s\S]*grid-template-columns:\s*repeat\(5,\s*1fr\)/);
+});
+
 test('web business typography never drops below the 12px readability floor', () => {
   for (const file of collectSourceFiles(resolve(root, 'apps/web/src'))) {
     if (!file.endsWith('.vue') && !file.endsWith('.css')) continue;

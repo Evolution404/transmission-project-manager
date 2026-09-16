@@ -474,7 +474,7 @@ onMounted(load);
 
 <style scoped>
 .settings-view { max-width: 1320px; }
-.section-count { color: var(--ui-text-tertiary); font-size: 12px; white-space: nowrap; }
+.section-count { color: var(--ui-text-tertiary); font-size: 13px; white-space: nowrap; }
 .mobile-member-list { display: none; }
 .settings-list { padding: 0; }
 .setting-row {
@@ -522,7 +522,7 @@ onMounted(load);
   .member-avatar { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 10px; background: var(--ui-surface-muted); color: var(--ui-text-secondary); font-size: 13px; font-weight: 700; }
   .member-mobile-copy { display: grid; gap: 3px; min-width: 0; }
   .member-mobile-copy strong { overflow: hidden; font-size: 13px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
-  .member-mobile-copy small { overflow: hidden; color: var(--ui-text-tertiary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+  .member-mobile-copy small { overflow: hidden; color: var(--ui-text-tertiary); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
   .setting-row { grid-template-columns: 1fr; gap: 8px; min-height: 0; padding: 14px; }
   .setting-value { text-align: left; }
   .form-grid, .scope-row { grid-template-columns: 1fr; }

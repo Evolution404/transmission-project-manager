@@ -37,7 +37,7 @@
 - 已建立 UI 硬门禁：业务源码禁止直接渲染原生 `<button>` / `<input>` / `<select>` / `<textarea>` 和动态 `h('button')`；原生 file input 只能隐藏在设计系统 primitive 内。门禁位于 `tests/repository-guards.test.mjs`。
 - 设计系统 primitive：`apps/web/src/app/AppPressable.vue`、`AppFilePicker.vue`。
 
-最近一次完整 `npm run check`：Node **299/299 PASS**、Web **144/144 PASS（23 个测试文件）**；TypeScript、Web production build、Worker `wrangler deploy --dry-run`、Node + SQLite + Filesystem 第二运行时均 PASS。
+最近一次完整 `npm run check`：Node **301/301 PASS**、Web **147/147 PASS（23 个测试文件）**；TypeScript、Web production build、Worker `wrangler deploy --dry-run`、Node + SQLite + Filesystem 第二运行时均 PASS。
 
 最近 UI 提交：
 
@@ -93,7 +93,12 @@
 - 全站显式 CSS 字号新增硬门禁：业务源码禁止 10px/11px，12px 仅作为最低 caption 基线；表头、列表关键元数据、状态、返回/操作文字普遍提升至 13px，主 Tab/分段导航提升至 14px。repository guard 已锁定该约束。
 - 返回上下文统一：任务队列进入任务详情后返回原 `status/query`；项目详情进入任务详情/新建任务后返回原项目详情；新建项目后继续保留原项目列表筛选 URL；项目详情进入资金工作区携带 `projectId + tab=budgets + from`，资金页只在合法项目来源下显示“返回项目”。
 - 需求、资金、分析主工作区用 URL `tab` 恢复/同步当前位置；任务详情用 `section` 恢复“供应/实施/结算/范围”。默认项不强制写参数，非法值回默认项，不再刷新后悄悄回首个 Tab 或产生空白状态。
-- 本轮测试先红后绿：新增路由归属、返回上下文、工作区 Tab/Section 和字号门禁回归；最终完整 `npm run check` 为 Node **299/299 PASS**、Web **144/144 PASS（23 文件）**，TypeScript、Web production build、Worker dry-run 与 Node + SQLite + Filesystem 第二运行时全部 PASS。
+- 项目详情非法 `tab` 已使用白名单回退到概览，错误/旧链接不会再出现“项目头正常但正文空白”的半空白状态；默认概览不额外污染 URL。该修复已独立提交 `f6b302c`。
+- 中等桌面/平板宽度原 76px 纯图标侧栏已改为 96px 紧凑文字侧栏，图标与业务名称同时可见；新增 repository guard 禁止再次把 768–1100px 导航退化为只能靠图标识别。
+- 手机一级导航调整为“工作台 / 需求 / 项目 / 任务 / 更多”，核心“需求 → 项目 → 执行任务”流程不再把需求藏进更多；资金、分析、基础台账、设置留在更多，并有静态门禁锁定一级业务路径。
+- 显式 12px 样式从审计时的 67 处缩减到 19 处，保留项主要是版本、眉标、日期、序号等真正 caption；错误提示、状态、列表主次事实、设置记录、移动端对象事实等高频信息已提升到 13px。手机任务名、所属项目名、需求线路名和物资名允许自然换行，不再强制单行省略。
+- 新增显式 404 页面：未知/过期前端 URL 不再只显示应用壳和空白正文，而是提供“返回工作台 / 打开项目中心”。需求池显式搜索也已纳入 URL `query`，刷新、分享链接或返回页面后继续保留搜索条件。
+- 本轮测试继续按先红后绿推进；最终完整 `npm run check` 为 Node **301/301 PASS**、Web **147/147 PASS（23 文件）**，TypeScript、Web production build、Worker dry-run 与 Node + SQLite + Filesystem 第二运行时全部 PASS。
 
 ## 下一步施工顺序
 

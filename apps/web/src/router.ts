@@ -22,5 +22,11 @@ export const router = createRouter({
       component: () => import('./views/AdministrationView.vue'),
       meta: { title: '设置', navKey: '/administration' },
     },
+    {
+      path: '/:pathMatch(.*)*',
+      name: 'not-found',
+      component: () => import('./views/NotFoundView.vue'),
+      meta: { title: '页面不存在' },
+    },
   ],
 });
