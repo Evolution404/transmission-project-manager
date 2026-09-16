@@ -1,4 +1,4 @@
-import type { DemandLocationType } from './master-data';
+import type { DemandLocationType } from './master-data.ts';
 
 export type ImportFileType = 'xlsx' | 'csv';
 export type ImportBatchStatus = 'draft' | 'validating' | 'review' | 'ready' | 'publishing' | 'published';

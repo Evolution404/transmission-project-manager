@@ -1,4 +1,4 @@
-import type { ProjectStatus } from './reserve-planning';
+import type { ProjectStatus } from './reserve-planning.ts';
 
 export type AgreementStatus = 'active' | 'paused' | 'expired';
 export type FinancialEntryType = 'budget_occurrence' | 'actual_cost';

@@ -791,6 +791,15 @@ test('shared public contracts stay split by business domain behind a small barre
   const meaningfulLines = indexSource.split('\n').filter((line) => line.trim() && !line.trim().startsWith('//'));
   assert.ok(meaningfulLines.length <= expectedModules.length + 2, 'shared index.ts must remain a small re-export barrel');
   assert.doesNotMatch(indexSource, /\binterface\b|\bconst\s+MEMBER_ROLES\b|function\s+normalizeTowerNo/, 'shared declarations must live in domain modules, not the barrel');
+
+  for (const file of ['index.ts', ...expectedModules]) {
+    const source = readFileSync(resolve(sharedDir, file), 'utf8');
+    for (const match of source.matchAll(/(?:from|export\s+\*)\s+['"](\.[^'"]+)['"]/g)) {
+      assert.match(match[1], /\.ts$/, `${file} relative ESM specifier must include .ts so Node runtime can resolve source directly`);
+    }
+  }
+  const baseTsconfig = readFileSync(resolve(root, 'tsconfig.base.json'), 'utf8');
+  assert.match(baseTsconfig, /"allowImportingTsExtensions"\s*:\s*true/, 'TypeScript must allow explicit .ts ESM specifiers used by the Node runtime');
 });
 
 test('Node runtime gate exercises the real app, SQLite, Filesystem, and the single schema baseline', () => {

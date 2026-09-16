@@ -1,4 +1,4 @@
-import type { LifecycleState } from './project-execution';
+import type { LifecycleState } from './project-execution.ts';
 
 export interface ReleaseLineInput {
   demandMaterialId: string;

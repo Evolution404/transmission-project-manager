@@ -1,4 +1,4 @@
-import type { MaterialSummary } from './master-data';
+import type { MaterialSummary } from './master-data.ts';
 
 export type ProjectStatus = 'draft' | 'confirmed';
 export type ProjectCostKind = 'material' | 'construction' | 'other';
