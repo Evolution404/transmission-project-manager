@@ -4,7 +4,7 @@ import DemandsView from '../src/views/DemandsView.vue';
 import ReservesView from '../src/views/ReservesView.vue';
 import FinanceView from '../src/views/FinanceView.vue';
 import AnalysisView from '../src/views/AnalysisView.vue';
-import DeliveryView from '../src/views/DeliveryView.vue';
+import TaskQueueView from '../src/views/TaskQueueView.vue';
 import ProjectsView from '../src/views/ProjectsView.vue';
 import ProjectDetailView from '../src/views/ProjectDetailView.vue';
 import TaskDetailView from '../src/views/TaskDetailView.vue';
@@ -47,13 +47,15 @@ describe('business routes', () => {
     expect(resolved.default).toBe(AnalysisView);
   });
 
-  it('lazy-loads the real delivery and settlement workspace at /delivery instead of the P5 placeholder', async () => {
-    const route = router.getRoutes().find((item) => item.path === '/delivery');
+  it('uses /tasks as the cross-project task queue and keeps /delivery as a compatibility redirect', async () => {
+    const route = router.getRoutes().find((item) => item.path === '/tasks');
     expect(route).toBeTruthy();
     const loader = route?.components?.default;
     expect(typeof loader).toBe('function');
     const resolved = await (loader as () => Promise<{ default: unknown }>)();
-    expect(resolved.default).toBe(DeliveryView);
+    expect(resolved.default).toBe(TaskQueueView);
+    const legacy = router.getRoutes().find((item) => item.path === '/delivery');
+    expect(legacy?.redirect).toBe('/tasks');
   });
 
   it('provides stable project and task deep links for refresh-safe navigation', async () => {

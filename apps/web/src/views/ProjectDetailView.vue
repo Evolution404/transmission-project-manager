@@ -123,13 +123,13 @@ onMounted(load);
 
 <template>
   <div class="view-stack project-detail-view">
-    <button class="breadcrumb-back" @click="backToProjects">‹ 返回项目</button>
+    <button class="breadcrumb-back" @click="backToProjects">← 返回项目</button>
     <div v-if="error" class="detail-error">{{ error }} <n-button text @click="load">重新加载</n-button></div>
     <n-spin :show="loading">
       <template v-if="project && execution">
-        <section class="object-header">
+        <header class="object-header">
           <div>
-            <div class="object-kicker">{{ project.year ?? '未设年度' }} · {{ project.owner || '未指定负责人' }}</div>
+            <div class="object-kicker">PROJECT · {{ project.year ?? '未设年度' }}</div>
             <h2>{{ project.name }}</h2>
             <div class="object-tags">
               <n-tag size="small" :bordered="false" :type="execution.released ? 'info' : project.status === 'confirmed' ? 'success' : 'default'">
@@ -139,10 +139,12 @@ onMounted(load);
               <span>储备 v{{ project.reserveVersion }}</span>
             </div>
           </div>
-          <n-button v-if="canManage && project.status === 'confirmed' && !execution.released" data-test="open-project-release" type="primary" @click="openProjectRelease">项目出库</n-button>
-          <n-button v-else-if="canCreateTask && execution.released && !execution.tasks.length" type="primary" @click="createTask">新建执行任务</n-button>
-          <n-button v-else-if="execution.tasks.length" type="primary" @click="setTab('tasks')">查看执行任务</n-button>
-        </section>
+          <div class="object-actions">
+            <n-button v-if="canManage && project.status === 'confirmed' && !execution.released" data-test="open-project-release" type="primary" @click="openProjectRelease">项目出库</n-button>
+            <n-button v-else-if="canCreateTask && execution.released && !execution.tasks.length" type="primary" @click="createTask">新建执行任务</n-button>
+            <n-button v-else-if="execution.tasks.length" secondary @click="setTab('tasks')">查看执行任务</n-button>
+          </div>
+        </header>
 
         <nav class="segment-nav" aria-label="项目详情分段">
           <button v-for="item in [
@@ -242,60 +244,65 @@ onMounted(load);
 </template>
 
 <style scoped>
-.project-detail-view { max-width: 1260px; }
-.breadcrumb-back { justify-self: start; padding: 3px 0; border: 0; background: transparent; color: var(--ui-text-secondary, #566174); cursor: pointer; }
-.breadcrumb-back:hover { color: var(--ui-accent, #075dcc); }
-.object-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; padding: 4px 2px 8px; }
-.object-kicker { margin-bottom: 5px; color: var(--ui-text-secondary, #566174); font-size: 13px; }
-.object-header h2 { margin: 0; font-size: 28px; line-height: 1.25; letter-spacing: -.025em; }
-.object-tags { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 11px; color: var(--ui-text-secondary, #566174); font-size: 12px; }
-.segment-nav { display: flex; gap: 4px; overflow-x: auto; padding: 4px; border: 1px solid var(--ui-border, #dce2ea); border-radius: 14px; background: rgba(255,255,255,.72); scrollbar-width: none; }
-.segment-nav button { min-height: 38px; padding: 0 14px; border: 0; border-radius: 10px; background: transparent; color: var(--ui-text-secondary, #566174); white-space: nowrap; cursor: pointer; }
-.segment-nav button.active { background: var(--ui-surface, #fff); color: var(--ui-text, #18212f); font-weight: 700; box-shadow: 0 1px 3px rgba(25,40,65,.08); }
-.detail-section { padding: 22px; border: 1px solid var(--ui-border, #dce2ea); border-radius: 18px; background: var(--ui-surface, #fff); }
+.project-detail-view { max-width: 1380px; }
+.breadcrumb-back { justify-self: start; padding: 0; border: 0; background: transparent; color: var(--ui-text-secondary); font-size: 12px; cursor: pointer; }
+.breadcrumb-back:hover { color: var(--ui-accent); }
+.object-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 28px; padding: 6px 0 4px; }
+.object-kicker { margin-bottom: 7px; color: var(--ui-text-tertiary); font-size: 10px; font-weight: 700; letter-spacing: .08em; }
+.object-header h2 { margin: 0; color: var(--ui-text); font-size: 28px; font-weight: 720; line-height: 1.23; letter-spacing: -.026em; }
+.object-tags { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px; margin-top: 10px; color: var(--ui-text-secondary); font-size: 11px; }
+.object-actions { display: flex; align-items: center; gap: 8px; }
+.segment-nav { display: flex; gap: 24px; overflow-x: auto; min-height: 46px; padding: 0 2px; border-bottom: 1px solid var(--ui-border); scrollbar-width: none; }
+.segment-nav button { position: relative; min-height: 45px; padding: 0; border: 0; background: transparent; color: var(--ui-text-secondary); font-size: 12px; font-weight: 570; white-space: nowrap; cursor: pointer; }
+.segment-nav button.active { color: var(--ui-text); font-weight: 670; }
+.segment-nav button.active::after { position: absolute; right: 0; bottom: -1px; left: 0; height: 2px; border-radius: 2px; background: var(--ui-accent); content: ''; }
+.detail-section { padding: 20px; border: 1px solid var(--ui-border); border-radius: var(--ui-radius-lg); background: var(--ui-surface); }
 .overview-grid { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(280px, .75fr); gap: 28px; }
-.overview-primary { display: grid; grid-template-columns: 1fr 1fr; gap: 20px 26px; }
-.metric-row, .progress-metric { display: grid; gap: 7px; min-height: 74px; align-content: center; }
-.metric-row span, .progress-metric span, .money-summary span { color: var(--ui-text-secondary, #566174); font-size: 13px; }
-.metric-row strong { font-size: 24px; }
+.overview-primary { display: grid; grid-template-columns: 1fr 1fr; gap: 0; border: 1px solid var(--ui-border); border-radius: var(--ui-radius-md); overflow: hidden; }
+.metric-row, .progress-metric { display: grid; gap: 7px; min-height: 88px; align-content: center; padding: 15px 17px; }
+.metric-row:nth-child(odd), .progress-metric:nth-child(odd) { border-right: 1px solid var(--ui-border); }
+.metric-row:nth-child(n+3), .progress-metric:nth-child(n+3) { border-top: 1px solid var(--ui-border); }
+.metric-row span, .progress-metric span, .money-summary span { color: var(--ui-text-secondary); font-size: 11px; }
+.metric-row strong { font-size: 24px; font-weight: 690; }
 .progress-metric > div { display: flex; justify-content: space-between; gap: 14px; }
-.progress-metric strong { font-size: 15px; }
-.money-summary { display: grid; align-content: center; min-height: 168px; padding: 20px; border-radius: 16px; background: var(--ui-surface-muted, #eef1f5); }
-.money-summary strong { margin: 8px 0; font-size: 26px; font-variant-numeric: tabular-nums; }
-.money-summary small { color: var(--ui-text-secondary, #566174); }
+.progress-metric strong { font-size: 13px; }
+.money-summary { display: grid; align-content: center; min-height: 176px; padding: 20px; border-left: 2px solid var(--ui-accent); background: var(--ui-surface-subtle); }
+.money-summary strong { margin: 8px 0; font-size: 27px; font-weight: 690; font-variant-numeric: tabular-nums; letter-spacing: -.025em; }
+.money-summary small { color: var(--ui-text-secondary); font-size: 11px; }
 .section-heading { display: flex; align-items: end; justify-content: space-between; margin-bottom: 14px; }
-.section-heading h3, .muted-placeholder h3 { margin: 0; font-size: 18px; }
-.section-heading p, .muted-placeholder p { margin: 4px 0 0; color: var(--ui-text-secondary, #566174); font-size: 13px; }
+.section-heading h3, .muted-placeholder h3 { margin: 0; font-size: 15px; font-weight: 680; }
+.section-heading p, .muted-placeholder p { margin: 4px 0 0; color: var(--ui-text-secondary); font-size: 11px; }
 .task-list, .fact-list { display: grid; }
-.task-row { display: grid; grid-template-columns: minmax(0, 1fr) auto 24px; gap: 20px; align-items: center; min-height: 68px; padding: 12px 4px; border: 0; border-bottom: 1px solid var(--ui-border, #dce2ea); background: transparent; color: inherit; text-align: left; cursor: pointer; }
+.task-row { display: grid; grid-template-columns: minmax(0, 1fr) auto 24px; gap: 20px; align-items: center; min-height: 68px; padding: 12px 2px; border: 0; border-bottom: 1px solid var(--ui-border); background: transparent; color: inherit; text-align: left; cursor: pointer; }
 .task-row:last-child { border-bottom: 0; }
+.task-row:hover { background: var(--ui-surface-subtle); }
 .task-row > div:first-child { display: grid; gap: 4px; }
-.task-row span, .fact-list span { color: var(--ui-text-secondary, #566174); font-size: 13px; }
+.task-row span, .fact-list span { color: var(--ui-text-secondary); font-size: 11px; }
 .task-progress-pair { display: flex; gap: 16px; }
-.row-chevron { font-size: 22px; }
-.fact-list > div { display: flex; justify-content: space-between; gap: 20px; padding: 13px 2px; border-bottom: 1px solid var(--ui-border, #dce2ea); }
-.detail-error { padding: 14px 16px; border-radius: 12px; background: #fff4f3; color: #b42318; }
-.release-intro { margin-bottom: 18px; padding: 14px 15px; border-radius: 14px; background: var(--ui-surface-muted, #eef1f5); }
+.row-chevron { color: var(--ui-text-tertiary); font-size: 20px; }
+.fact-list > div { display: flex; justify-content: space-between; gap: 20px; padding: 13px 2px; border-bottom: 1px solid var(--ui-border); }
+.detail-error { padding: 12px 14px; border-radius: 10px; background: var(--ui-danger-soft); color: var(--ui-danger); font-size: 12px; }
+.release-intro { margin-bottom: 18px; padding: 13px 14px; border: 1px solid var(--ui-border); border-radius: 11px; background: var(--ui-surface-subtle); }
 .release-intro strong { font-size: 14px; }
-.release-intro p { margin: 6px 0 0; color: var(--ui-text-secondary, #566174); font-size: 13px; line-height: 1.6; }
+.release-intro p { margin: 6px 0 0; color: var(--ui-text-secondary); font-size: 12px; line-height: 1.6; }
 .release-facts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 18px; }
-.release-facts > div { display: grid; gap: 4px; padding: 11px 12px; border: 1px solid var(--ui-border, #dce2ea); border-radius: 12px; }
-.release-facts span { color: var(--ui-text-secondary, #566174); font-size: 12px; }
+.release-facts > div { display: grid; gap: 4px; padding: 11px 12px; border: 1px solid var(--ui-border); border-radius: 10px; }
+.release-facts span { color: var(--ui-text-secondary); font-size: 11px; }
 .release-facts strong { font-size: 14px; }
 .release-error, .release-reload { margin-bottom: 14px; }
 .release-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 4px; }
 @media (max-width: 767px) {
   .object-header { align-items: flex-start; flex-direction: column; gap: 16px; }
   .object-header h2 { font-size: 24px; }
-  .object-header > .n-button { width: 100%; }
-  .segment-nav { margin-inline: -2px; }
-  .detail-section { padding: 17px 16px; }
+  .object-actions { width: 100%; }
+  .object-actions > .n-button { flex: 1; }
+  .segment-nav { gap: 20px; margin-inline: -2px; }
+  .detail-section { padding: 16px 14px; }
   .overview-grid { grid-template-columns: 1fr; gap: 16px; }
-  .overview-primary { grid-template-columns: 1fr; gap: 4px; }
-  .metric-row { grid-template-columns: 1fr auto; min-height: 46px; align-items: center; }
+  .overview-primary { grid-template-columns: 1fr 1fr; }
+  .metric-row, .progress-metric { min-height: 72px; padding: 12px; }
   .metric-row strong { font-size: 18px; }
-  .progress-metric { min-height: 62px; }
-  .money-summary { min-height: 124px; }
+  .money-summary { min-height: 118px; border-left-width: 2px; }
   .money-summary strong { font-size: 22px; }
   .task-row { grid-template-columns: 1fr 20px; gap: 12px; }
   .task-progress-pair { grid-column: 1 / -1; justify-content: flex-start; }

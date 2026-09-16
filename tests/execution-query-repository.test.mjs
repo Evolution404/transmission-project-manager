@@ -7,7 +7,8 @@ import { SqlExecutionQueryRepository } from '../apps/api/src/repositories/sql-ex
 function fixture() {
   const sqlite = new DatabaseSync(':memory:');
   sqlite.exec(`
-    CREATE TABLE projects (id TEXT PRIMARY KEY,framework_id TEXT,version INTEGER NOT NULL);
+    CREATE TABLE projects (id TEXT PRIMARY KEY,name TEXT,year INTEGER,owner TEXT,framework_id TEXT,version INTEGER NOT NULL);
+    CREATE TABLE member_scopes (id TEXT PRIMARY KEY,member_id TEXT,scope_type TEXT,scope_id TEXT);
     CREATE TABLE project_releases (id TEXT PRIMARY KEY,project_id TEXT NOT NULL);
     CREATE TABLE demands (id TEXT PRIMARY KEY,sequence_no TEXT,line_name TEXT,section_text TEXT);
     CREATE TABLE project_demand_links (id TEXT PRIMARY KEY,project_id TEXT,demand_id TEXT);
@@ -20,7 +21,7 @@ function fixture() {
     CREATE TABLE task_settlements (id TEXT PRIMARY KEY,task_id TEXT,settlement_date TEXT,coverage_quantity_scaled INTEGER,final INTEGER,voided_at TEXT,created_at TEXT);
     CREATE TABLE task_settlement_scope_lines (id TEXT PRIMARY KEY,settlement_id TEXT,task_demand_scope_id TEXT,quantity_scaled INTEGER);
     CREATE TABLE task_settlement_reminders (task_id TEXT PRIMARY KEY,first_implementation_date TEXT,due_date TEXT,status TEXT,final_settlement_id TEXT);
-    INSERT INTO projects VALUES ('p1','fw1',5);
+    INSERT INTO projects VALUES ('p1','Project Alpha',2026,'Owner A','fw1',5);
     INSERT INTO project_releases VALUES ('r1','p1');
     INSERT INTO demands VALUES ('d1','001','Line A','S1');
     INSERT INTO project_demand_links VALUES ('l1','p1','d1');
@@ -50,5 +51,49 @@ test('execution query repository returns portable task and project execution pro
     const demand = await repository.findDemandExecution('d1');
     assert.equal(demand?.summary.settlementComplete, true);
     assert.deepEqual(demand?.projects, [{ id: 'p1', frameworkId: 'fw1' }]);
+  } finally { sqlite.close(); }
+});
+
+test('task queue applies member scope, search, status filter and cursor before page hydration', async () => {
+  const { sqlite, repository } = fixture();
+  try {
+    sqlite.exec(`
+      INSERT INTO projects VALUES ('p2','Project Beta',2026,'Owner B','fw2',1);
+      INSERT INTO project_releases VALUES ('r2','p2');
+      INSERT INTO member_scopes VALUES ('ms1','member1','project','p1');
+      INSERT INTO project_tasks VALUES ('t2','p1','r1','Inspect Line A',NULL,'S2','Owner A','2026-01-05',200,'项',1,1,1,'d','d');
+      INSERT INTO project_tasks VALUES ('t3','p2','r2','Hidden Task',NULL,'S3','Owner B','2026-01-04',300,'项',1,1,1,'b','b');
+      INSERT INTO task_implementation_records VALUES ('i2','t2',50,'2026-01-04');
+    `);
+
+    const first = await repository.listTaskQueue({
+      memberId: 'member1', unrestricted: false, query: '', status: 'all', cursor: null, limit: 1,
+    });
+    assert.equal(first.items.length, 1);
+    assert.equal(first.items[0].projectName, 'Project Alpha');
+    assert.equal(first.items[0].id, 't2');
+    assert.ok(first.nextCursor);
+
+    const second = await repository.listTaskQueue({
+      memberId: 'member1', unrestricted: false, query: '', status: 'all', cursor: first.nextCursor, limit: 1,
+    });
+    assert.deepEqual(second.items.map((item) => item.id), ['t1']);
+    assert.equal(second.nextCursor, null);
+
+    const implementationPending = await repository.listTaskQueue({
+      memberId: 'member1', unrestricted: false, query: 'inspect', status: 'implementation_pending', cursor: null, limit: 20,
+    });
+    assert.deepEqual(implementationPending.items.map((item) => item.id), ['t2']);
+    assert.equal(implementationPending.items[0].implementedQuantityScaled, 50);
+
+    const settlementPending = await repository.listTaskQueue({
+      memberId: 'member1', unrestricted: false, query: '', status: 'settlement_pending', cursor: null, limit: 20,
+    });
+    assert.deepEqual(settlementPending.items.map((item) => item.id), ['t2']);
+
+    const unrestricted = await repository.listTaskQueue({
+      memberId: 'admin', unrestricted: true, query: 'hidden', status: 'all', cursor: null, limit: 20,
+    });
+    assert.deepEqual(unrestricted.items.map((item) => item.id), ['t3']);
   } finally { sqlite.close(); }
 });

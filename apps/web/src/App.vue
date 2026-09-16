@@ -7,24 +7,18 @@ import {
   NConfigProvider,
   NDrawer,
   NDrawerContent,
-  NLayout,
-  NLayoutContent,
-  NLayoutHeader,
-  NLayoutSider,
-  NMenu,
   NMessageProvider,
   NSpin,
-  NTag,
   darkTheme,
   dateZhCN,
   zhCN,
   type GlobalThemeOverrides,
-  type MenuOption,
 } from 'naive-ui';
 import type { ApiResponse, CurrentUser } from '@tpm/shared';
 import { parseApiResponse } from './api/response';
 import LoginView from './views/LoginView.vue';
 import ChangePasswordView from './views/ChangePasswordView.vue';
+import AppIcon from './app/AppIcon.vue';
 
 const route = useRoute();
 const router = useRouter();
@@ -37,13 +31,19 @@ const prefersDark = ref(false);
 
 const themeOverrides: GlobalThemeOverrides = {
   common: {
-    primaryColor: '#2457d6',
-    primaryColorHover: '#1f4fc5',
-    primaryColorPressed: '#193fa0',
-    borderRadius: '10px',
-    borderRadiusSmall: '8px',
+    primaryColor: '#2563eb',
+    primaryColorHover: '#1d4ed8',
+    primaryColorPressed: '#1e40af',
+    primaryColorSuppl: '#3b82f6',
+    borderRadius: '12px',
+    borderRadiusSmall: '9px',
     fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif',
   },
+  Button: { heightMedium: '38px', heightSmall: '32px', borderRadiusMedium: '10px', borderRadiusSmall: '9px' },
+  Input: { heightMedium: '40px', borderRadius: '10px' },
+  Select: { peers: { InternalSelection: { heightMedium: '40px', borderRadius: '10px' } } },
+  Card: { borderRadius: '14px' },
+  DataTable: { thColor: '#f8fafc', thColorHover: '#f8fafc', tdColorHover: '#f8fafc' },
 };
 
 const roleLabels: Record<CurrentUser['role'], string> = {
@@ -54,27 +54,26 @@ const roleLabels: Record<CurrentUser['role'], string> = {
   readonly: '只读用户',
 };
 
-const menuOptions: MenuOption[] = [
-  {
-    type: 'group', label: '工作', key: 'work', children: [
-      { label: '工作台', key: '/' },
-      { label: '需求', key: '/demands' },
-      { label: '项目', key: '/projects' },
-      { label: '执行任务', key: '/delivery' },
-    ],
-  },
-  {
-    type: 'group', label: '管理', key: 'management', children: [
-      { label: '资金', key: '/finance' },
-      { label: '分析', key: '/analysis' },
-    ],
-  },
-  { label: '基础台账', key: '/master-data' },
-  { label: '设置', key: '/administration' },
+type NavIcon = 'workspace' | 'demands' | 'projects' | 'tasks' | 'finance' | 'analysis' | 'master' | 'settings';
+type NavItem = { label: string; key: string; icon: NavIcon };
+const workNav: NavItem[] = [
+  { label: '工作台', key: '/', icon: 'workspace' },
+  { label: '需求', key: '/demands', icon: 'demands' },
+  { label: '项目', key: '/projects', icon: 'projects' },
+  { label: '执行任务', key: '/tasks', icon: 'tasks' },
+];
+const managementNav: NavItem[] = [
+  { label: '资金', key: '/finance', icon: 'finance' },
+  { label: '分析', key: '/analysis', icon: 'analysis' },
+];
+const systemNav: NavItem[] = [
+  { label: '基础台账', key: '/master-data', icon: 'master' },
+  { label: '设置', key: '/administration', icon: 'settings' },
 ];
 
 const activeKey = computed(() => {
   if (route.path.startsWith('/projects/')) return '/projects';
+  if (route.path === '/delivery' || route.path.startsWith('/tasks')) return '/tasks';
   return route.path;
 });
 const pageTitle = computed(() => String(route.meta.title ?? '输电项目全流程管理台'));
@@ -173,78 +172,114 @@ onMounted(() => {
         @changed="passwordChanged"
       />
 
-      <n-layout v-else has-sider class="app-shell">
-        <n-layout-sider
-          bordered
-          collapse-mode="width"
-          :collapsed-width="64"
-          :width="224"
-          class="app-sider"
-        >
-          <div class="brand-block">
-            <div class="brand-mark">TP</div>
-            <div>
-              <div class="brand-title">输电项目</div>
-              <div class="brand-subtitle">全流程工作台</div>
+      <div v-else class="app-shell">
+        <aside class="app-sider" aria-label="主导航">
+          <button class="brand-block" aria-label="返回工作台" @click="navigate('/')">
+            <span class="brand-mark" aria-hidden="true"><span></span></span>
+            <span class="brand-copy">
+              <strong>输电项目</strong>
+              <small>全流程管理</small>
+            </span>
+          </button>
+
+          <div class="nav-scroll">
+            <section class="nav-section">
+              <span class="nav-section-label">工作</span>
+              <button
+                v-for="item in workNav"
+                :key="item.key"
+                class="nav-item"
+                :class="{ active: activeKey === item.key }"
+                :title="item.label"
+                :aria-current="activeKey === item.key ? 'page' : undefined"
+                @click="navigate(item.key)"
+              >
+                <app-icon :name="item.icon" />
+                <span>{{ item.label }}</span>
+              </button>
+            </section>
+            <section class="nav-section">
+              <span class="nav-section-label">管理</span>
+              <button
+                v-for="item in managementNav"
+                :key="item.key"
+                class="nav-item"
+                :class="{ active: activeKey === item.key }"
+                :title="item.label"
+                @click="navigate(item.key)"
+              >
+                <app-icon :name="item.icon" />
+                <span>{{ item.label }}</span>
+              </button>
+            </section>
+          </div>
+
+          <div class="nav-bottom">
+            <button
+              v-for="item in systemNav"
+              :key="item.key"
+              class="nav-item"
+              :class="{ active: activeKey === item.key }"
+              :title="item.label"
+              @click="navigate(item.key)"
+            >
+              <app-icon :name="item.icon" />
+              <span>{{ item.label }}</span>
+            </button>
+            <div class="sidebar-account">
+              <div class="account-avatar">{{ currentUser.displayName.slice(0, 1) }}</div>
+              <div class="account-copy"><strong>{{ currentUser.displayName }}</strong><small>{{ roleLabels[currentUser.role] }}</small></div>
             </div>
           </div>
-          <n-menu
-            :value="activeKey"
-            :options="menuOptions"
-            @update:value="navigate"
-          />
-          <div class="sidebar-account">
-            <div class="account-avatar">{{ currentUser.displayName.slice(0, 1) }}</div>
-            <div><strong>{{ currentUser.displayName }}</strong><small>{{ roleLabels[currentUser.role] }}</small></div>
-          </div>
-        </n-layout-sider>
+        </aside>
 
-        <n-layout>
-          <n-layout-header class="topbar">
-            <div class="topbar-title-wrap">
-              <div>
-                <div class="page-kicker">输电项目全流程</div>
-                <h1>{{ pageTitle }}</h1>
-              </div>
+        <div class="app-stage">
+          <header class="topbar">
+            <div class="topbar-context">
+              <span class="topbar-product">项目管理台</span>
+              <span class="topbar-divider" aria-hidden="true"></span>
+              <strong>{{ pageTitle }}</strong>
             </div>
             <div class="identity-card">
-              <div>
+              <div class="identity-copy">
                 <strong>{{ currentUser.displayName }}</strong>
                 <small>@{{ currentUser.username }}</small>
               </div>
-              <n-button size="small" quaternary :loading="loggingOut" @click="logout">退出</n-button>
+              <n-button circle quaternary size="small" :loading="loggingOut" aria-label="退出登录" title="退出登录" @click="logout">
+                <template #icon><app-icon name="logout" :size="18" /></template>
+              </n-button>
             </div>
-          </n-layout-header>
+          </header>
 
-          <n-layout-content class="content-wrap">
+          <main class="content-wrap">
             <router-view :current-user="currentUser" />
-          </n-layout-content>
+          </main>
 
           <nav class="mobile-bottom-nav" aria-label="手机主导航">
-            <button :class="{ active: activeKey === '/' }" @click="navigateMobile('/')"><small>工作台</small></button>
-            <button :class="{ active: activeKey === '/projects' }" @click="navigateMobile('/projects')"><small>项目</small></button>
-            <button :class="{ active: activeKey === '/delivery' }" @click="navigateMobile('/delivery')"><small>任务</small></button>
-            <button @click="navigateMobile('more')"><small>更多</small></button>
+            <button :class="{ active: activeKey === '/' }" @click="navigateMobile('/')"><app-icon name="workspace" /><small>工作台</small></button>
+            <button :class="{ active: activeKey === '/projects' }" @click="navigateMobile('/projects')"><app-icon name="projects" /><small>项目</small></button>
+            <button :class="{ active: activeKey === '/tasks' }" @click="navigateMobile('/tasks')"><app-icon name="tasks" /><small>任务</small></button>
+            <button :class="{ active: mobileMenuOpen }" @click="navigateMobile('more')"><app-icon name="more" /><small>更多</small></button>
           </nav>
 
-          <n-drawer v-model:show="mobileMenuOpen" placement="left" :width="280">
-            <n-drawer-content title="项目全流程" closable>
-              <div class="mobile-drawer-brand">
-                <div class="brand-mark">TP</div>
-                <div>
-                  <strong>输电项目管理</strong>
-                  <small>需求 · 储备 · 执行 · 结算</small>
-                </div>
+          <n-drawer v-model:show="mobileMenuOpen" placement="bottom" height="auto" class="mobile-more-drawer">
+            <n-drawer-content title="更多" closable>
+              <div class="mobile-more-grid">
+                <button v-for="item in [...workNav.slice(1, 2), ...managementNav, ...systemNav]" :key="item.key" @click="navigate(item.key)">
+                  <span class="mobile-more-icon"><app-icon :name="item.icon" /></span>
+                  <span>{{ item.label }}</span>
+                  <app-icon name="chevron" :size="16" class="mobile-more-chevron" />
+                </button>
               </div>
-              <n-menu
-                :value="activeKey"
-                :options="menuOptions"
-                @update:value="navigate"
-              />
+              <div class="mobile-account-row">
+                <div class="account-avatar">{{ currentUser.displayName.slice(0, 1) }}</div>
+                <div><strong>{{ currentUser.displayName }}</strong><small>{{ roleLabels[currentUser.role] }} · @{{ currentUser.username }}</small></div>
+                <n-button quaternary size="small" :loading="loggingOut" @click="logout">退出</n-button>
+              </div>
             </n-drawer-content>
           </n-drawer>
-        </n-layout>
-      </n-layout>
+        </div>
+      </div>
     </n-message-provider>
   </n-config-provider>
 </template>

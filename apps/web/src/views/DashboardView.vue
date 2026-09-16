@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
-import { NAlert, NCard, NSpin, NStatistic, NTag } from 'naive-ui';
+import { useRouter } from 'vue-router';
+import { NAlert, NSpin } from 'naive-ui';
 import type { AnalysisDashboardSummary, CurrentUser } from '@tpm/shared';
 import { parseApiResponse } from '../api/response';
+import AppIcon from '../app/AppIcon.vue';
 
 const props = defineProps<{ currentUser: CurrentUser }>();
+const router = useRouter();
 
 const loading = ref(true);
 const error = ref('');
@@ -31,13 +34,7 @@ async function loadDashboard() {
   }
 }
 
-const roleLabels: Record<CurrentUser['role'], string> = {
-  admin: '系统管理员',
-  project_manager: '项目管理',
-  implementation: '实施人员',
-  finance: '财务人员',
-  readonly: '只读用户',
-};
+function navigate(path: string) { void router.push(path); }
 
 onMounted(loadDashboard);
 </script>
@@ -46,121 +43,82 @@ onMounted(loadDashboard);
   <div class="view-stack dashboard-view">
     <n-alert v-if="error" type="error" title="数据读取失败">{{ error }}</n-alert>
 
-    <div class="dashboard-hero">
-      <div>
-        <span class="eyebrow">业务总览</span>
-        <h2>从需求到结算，一屏掌握当前状态</h2>
-        <p>关注待进入执行的项目、实施后的结算待办和需要处理的活动预警。</p>
+    <header class="page-header">
+      <div class="page-header-copy">
+        <span class="page-eyebrow">WORKSPACE</span>
+        <h2 class="page-title">工作台</h2>
+        <p class="page-description">查看当前业务状态，并直接进入需要处理的项目、任务和预警。</p>
       </div>
-      <n-tag :bordered="false" type="info">数据日期 {{ dashboard?.asOf ?? '—' }}</n-tag>
-    </div>
+      <div class="dashboard-date"><span>数据日期</span><strong>{{ dashboard?.asOf ?? '—' }}</strong></div>
+    </header>
 
     <n-spin :show="loading">
-      <div class="metrics-grid">
-        <n-card class="metric-card">
-          <span class="metric-label">已纳入需求</span>
-          <n-statistic :value="dashboard?.demandCount ?? 0" />
-          <small>已进入项目范围的需求</small>
-        </n-card>
-        <n-card class="metric-card">
-          <span class="metric-label">项目总数</span>
-          <n-statistic :value="dashboard?.projectCount ?? 0" />
-          <small>当前授权范围内项目</small>
-        </n-card>
-        <n-card class="metric-card metric-card-attention">
-          <span class="metric-label">待项目级出库</span>
-          <n-statistic :value="dashboard?.unreleasedProjectCount ?? 0" />
-          <small>尚未正式进入执行阶段</small>
-        </n-card>
-        <n-card class="metric-card metric-card-attention">
-          <span class="metric-label">结算待办</span>
-          <n-statistic :value="dashboard?.pendingSettlementCount ?? 0" />
-          <small>已有实施事实、尚未最终结算</small>
-        </n-card>
-        <n-card class="metric-card metric-card-alert metric-card-wide-mobile">
-          <span class="metric-label">活动预警</span>
-          <n-statistic :value="dashboard?.activeAlertCount ?? 0" />
-          <small>规则越线或年度事项提醒</small>
-        </n-card>
-      </div>
+      <section class="overview-strip" aria-label="业务摘要">
+        <button class="overview-cell" @click="navigate('/demands')">
+          <span>需求</span><strong>{{ dashboard?.demandCount ?? 0 }}</strong><small>已纳入系统</small>
+        </button>
+        <button class="overview-cell" @click="navigate('/projects')">
+          <span>项目</span><strong>{{ dashboard?.projectCount ?? 0 }}</strong><small>当前授权范围</small>
+        </button>
+        <button class="overview-cell emphasis" @click="navigate('/projects?stage=reserve')">
+          <span>待出库</span><strong>{{ dashboard?.unreleasedProjectCount ?? 0 }}</strong><small>等待进入执行</small>
+        </button>
+        <button class="overview-cell emphasis" @click="navigate('/delivery')">
+          <span>结算待办</span><strong>{{ dashboard?.pendingSettlementCount ?? 0 }}</strong><small>实施后未最终结算</small>
+        </button>
+        <button class="overview-cell warning" @click="navigate('/analysis')">
+          <span>活动预警</span><strong>{{ dashboard?.activeAlertCount ?? 0 }}</strong><small>当前有效提醒</small>
+        </button>
+      </section>
     </n-spin>
 
-    <n-card title="业务主线" class="flow-card">
-      <div class="flow-grid">
-        <div class="flow-node"><span>01</span><strong>项目需求</strong><small>抽象事项，可附需求物资</small></div>
-        <div class="flow-arrow">→</div>
-        <div class="flow-node"><span>02</span><strong>项目储备</strong><small>确认来源与项目物资</small></div>
-        <div class="flow-arrow">→</div>
-        <div class="flow-node"><span>03</span><strong>项目级出库</strong><small>一次进入正式执行阶段</small></div>
-        <div class="flow-arrow">→</div>
-        <div class="flow-node"><span>04</span><strong>执行任务</strong><small>供应、实施、结算并行</small></div>
-        <div class="flow-arrow">→</div>
-        <div class="flow-node"><span>05</span><strong>需求反馈</strong><small>四状态回投原始需求</small></div>
+    <section class="workspace-section">
+      <div class="workspace-section-heading"><div><h3>常用入口</h3><p>按工作对象进入，不需要先理解后台模块结构。</p></div></div>
+      <div class="workspace-links">
+        <button @click="navigate('/projects')"><span class="workspace-link-icon"><app-icon name="projects" /></span><span><strong>项目中心</strong><small>储备、出库、执行任务和项目资金</small></span><app-icon name="chevron" :size="17" /></button>
+        <button @click="navigate('/delivery')"><span class="workspace-link-icon"><app-icon name="tasks" /></span><span><strong>执行任务</strong><small>供应、现场实施和任务结算</small></span><app-icon name="chevron" :size="17" /></button>
+        <button @click="navigate('/demands')"><span class="workspace-link-icon"><app-icon name="demands" /></span><span><strong>项目需求</strong><small>新建、导入和查看需求来源</small></span><app-icon name="chevron" :size="17" /></button>
       </div>
-    </n-card>
-
-    <n-card title="当前工作身份" class="identity-panel">
-      <div class="identity-summary">
-        <div><span>成员</span><strong>{{ props.currentUser.displayName }}</strong></div>
-        <div><span>角色</span><strong>{{ roleLabels[props.currentUser.role] }}</strong></div>
-        <div><span>授权范围</span><strong>{{ props.currentUser.scopes.length ? props.currentUser.scopes.length + ' 项' : '未配置' }}</strong></div>
-        <div><span>登录账号</span><strong>@{{ props.currentUser.username }}</strong></div>
-      </div>
-    </n-card>
+    </section>
   </div>
 </template>
 
 <style scoped>
-.dashboard-view { gap: 16px; }
-.dashboard-hero {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 20px;
-  padding: 20px 22px;
-  border: 1px solid #e4e9f1;
-  border-radius: 14px;
-  background: linear-gradient(115deg, #fff 0%, #f6f8fd 100%);
-  box-shadow: 0 8px 24px rgba(18, 32, 61, 0.04);
-}
-.eyebrow { color: #2457d6; font-size: 11px; font-weight: 700; letter-spacing: .08em; }
-.dashboard-hero h2 { margin: 4px 0 5px; font-size: 21px; color: #182033; letter-spacing: -.01em; }
-.dashboard-hero p { margin: 0; color: #7e8898; font-size: 13px; }
-.metrics-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 14px; }
-.metric-card { position: relative; min-width: 0; min-height: 132px; overflow: hidden; }
-.metric-card::before { content: ''; position: absolute; inset: 0 auto 0 0; width: 3px; background: #6f8de0; }
-.metric-card-attention::before { background: #d89a32; }
-.metric-card-alert::before { background: #c45e5e; }
-.metric-label { display: block; margin-bottom: 8px; color: #697388; font-size: 12px; font-weight: 650; word-break: keep-all; }
-.metric-card :deep(.n-statistic-value) { font-size: 28px; font-weight: 720; color: #1b2740; letter-spacing: -.02em; }
-.metric-card small { display: block; margin-top: 8px; color: #98a0ae; font-size: 10px; line-height: 1.5; }
-.flow-grid { display: grid; grid-template-columns: 1fr auto 1fr auto 1fr auto 1fr auto 1fr; gap: 10px; align-items: stretch; }
-.flow-node { display: grid; gap: 5px; min-height: 100px; padding: 14px; border: 1px solid #e8ecf2; border-radius: 11px; background: #fafbfc; }
-.flow-node span { color: #2457d6; font-size: 10px; font-weight: 750; letter-spacing: .08em; }
-.flow-node strong { color: #2b3650; font-size: 13px; }
-.flow-node small { color: #8a94a4; font-size: 11px; line-height: 1.5; }
-.flow-arrow { align-self: center; color: #b0b7c4; font-size: 16px; }
-@media (max-width: 1100px) {
-  .metrics-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .flow-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .flow-arrow { display: none; }
-  .flow-node:last-child { grid-column: 1 / -1; }
-}
-@media (max-width: 700px) {
-  .dashboard-view { gap: 12px; }
-  .dashboard-hero { align-items: flex-start; flex-direction: column; gap: 12px; padding: 16px; }
-  .dashboard-hero h2 { font-size: 19px; line-height: 1.35; }
-  .dashboard-hero p { font-size: 12px; line-height: 1.65; }
-  .metrics-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-  .metric-card { min-height: 118px; }
-  .metric-card-wide-mobile { grid-column: 1 / -1; min-height: 104px; }
-  .metric-label { white-space: nowrap; font-size: 12px; }
-  .metric-card small { font-size: 10px; line-height: 1.45; word-break: normal; }
-  .metric-card :deep(.n-statistic-value) { font-size: 25px; }
-  .flow-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-  .flow-node { min-height: 88px; padding: 12px; }
-  .flow-node strong { font-size: 12px; }
-  .flow-node small { font-size: 10px; }
-  .identity-panel { display: none; }
+.dashboard-date { display: grid; gap: 3px; min-width: 126px; padding: 10px 12px; border-left: 2px solid var(--ui-border-strong); }
+.dashboard-date span { color: var(--ui-text-tertiary); font-size: 10px; }
+.dashboard-date strong { font-size: 13px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.overview-strip { display: grid; grid-template-columns: repeat(5, minmax(0,1fr)); overflow: hidden; border: 1px solid var(--ui-border); border-radius: var(--ui-radius-lg); background: var(--ui-surface); }
+.overview-cell { display: grid; gap: 6px; min-width: 0; min-height: 134px; padding: 20px; border: 0; border-right: 1px solid var(--ui-border); background: transparent; color: inherit; text-align: left; cursor: pointer; transition: background-color 140ms ease; }
+.overview-cell:last-child { border-right: 0; }
+.overview-cell:hover { background: var(--ui-surface-subtle); }
+.overview-cell > span { color: var(--ui-text-secondary); font-size: 12px; font-weight: 620; }
+.overview-cell > strong { align-self: end; font-size: 31px; font-weight: 690; letter-spacing: -.035em; font-variant-numeric: tabular-nums; }
+.overview-cell > small { color: var(--ui-text-tertiary); font-size: 11px; line-height: 1.4; }
+.overview-cell.emphasis > strong { color: var(--ui-info); }
+.overview-cell.warning > strong { color: var(--ui-warning); }
+.workspace-section { overflow: hidden; border: 1px solid var(--ui-border); border-radius: var(--ui-radius-lg); background: var(--ui-surface); }
+.workspace-section-heading { padding: 16px 18px 13px; border-bottom: 1px solid var(--ui-border); }
+.workspace-section-heading h3 { margin: 0; font-size: 15px; font-weight: 680; }
+.workspace-section-heading p { margin: 4px 0 0; color: var(--ui-text-secondary); font-size: 12px; }
+.workspace-links { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); }
+.workspace-links > button { display: grid; grid-template-columns: 40px 1fr 18px; align-items: center; gap: 12px; min-width: 0; min-height: 92px; padding: 16px 18px; border: 0; border-right: 1px solid var(--ui-border); background: transparent; color: inherit; text-align: left; cursor: pointer; }
+.workspace-links > button:last-child { border-right: 0; }
+.workspace-links > button:hover { background: var(--ui-surface-subtle); }
+.workspace-link-icon { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 11px; background: var(--ui-surface-muted); color: var(--ui-text-secondary); }
+.workspace-links > button > span:nth-child(2) { min-width: 0; }
+.workspace-links strong, .workspace-links small { display: block; }
+.workspace-links strong { font-size: 13px; font-weight: 660; }
+.workspace-links small { margin-top: 4px; overflow: hidden; color: var(--ui-text-secondary); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.workspace-links :deep(.app-icon:last-child) { color: var(--ui-text-tertiary); }
+@media (max-width: 1050px) { .overview-strip { grid-template-columns: repeat(3,1fr); } .overview-cell:nth-child(3) { border-right: 0; } .overview-cell:nth-child(n+4) { border-top: 1px solid var(--ui-border); } .workspace-links { grid-template-columns: 1fr; } .workspace-links > button { border-right: 0; border-bottom: 1px solid var(--ui-border); } .workspace-links > button:last-child { border-bottom: 0; } }
+@media (max-width: 767px) {
+  .dashboard-date { align-self: flex-start; min-width: 0; padding: 4px 0 4px 10px; }
+  .overview-strip { grid-template-columns: 1fr 1fr; }
+  .overview-cell { min-height: 112px; padding: 15px; border-right: 1px solid var(--ui-border); border-top: 1px solid var(--ui-border); }
+  .overview-cell:nth-child(-n+2) { border-top: 0; }
+  .overview-cell:nth-child(even) { border-right: 0; }
+  .overview-cell:last-child { grid-column: 1 / -1; border-right: 0; }
+  .overview-cell > strong { font-size: 27px; }
+  .workspace-links > button { min-height: 78px; padding: 13px 15px; }
 }
 </style>

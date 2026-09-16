@@ -335,10 +335,12 @@ test('mobile UI keeps usable navigation and dashboard density', () => {
   const styleSource = readFileSync(resolve(root, 'apps/web/src/styles.css'), 'utf8');
   assert.match(appSource, /mobile-bottom-nav/);
   assert.match(appSource, /n-drawer/);
-  assert.match(styleSource, /@media \(max-width: 720px\)/);
+  assert.match(styleSource, /@media \(max-width: (?:7\d\d|6\d\d)px\)/);
   assert.match(styleSource, /\.mobile-bottom-nav/);
-  assert.match(dashboardSource, /metrics-grid/);
-  assert.match(dashboardSource, /grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/);
+  assert.match(styleSource, /\.app-sider\s*\{\s*display:\s*none/);
+  assert.match(styleSource, /env\(safe-area-inset-bottom\)/);
+  assert.match(dashboardSource, /overview-strip/);
+  assert.match(dashboardSource, /grid-template-columns:\s*1fr 1fr/);
   assert.doesNotMatch(dashboardSource, /:cols="5"/);
 });
 
