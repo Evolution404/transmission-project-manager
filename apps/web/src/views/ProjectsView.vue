@@ -11,6 +11,7 @@ const route = useRoute();
 const router = useRouter();
 const message = useMessage();
 const loading = ref(true);
+const loadingMore = ref(false);
 const error = ref('');
 const projects = ref<ReserveProjectSummary[]>([]);
 const search = ref(typeof route.query.query === 'string' ? route.query.query : '');
@@ -28,12 +29,8 @@ const stageOptions = [
   { label: '待出库', value: 'reserve' },
 ];
 
-const filtered = computed(() => {
-  const query = search.value.trim().toLowerCase();
-  if (!query) return projects.value;
-  return projects.value.filter((project) => [project.name, project.owner ?? '', String(project.year ?? '')]
-    .some((value) => value.toLowerCase().includes(query)));
-});
+const emptyDescription = computed(() => search.value.trim() ? '没有匹配当前条件的项目' : stage.value === 'reserve' ? '当前没有待出库项目' : '暂无项目');
+let requestSequence = 0;
 
 function openProject(projectId: string) {
   const from = route.fullPath?.startsWith('/projects') ? route.fullPath : '/projects';
@@ -75,19 +72,29 @@ async function saveProject() {
 }
 
 async function loadPage(cursor?: string) {
-  loading.value = true;
+  const append = Boolean(cursor);
+  const sequence = ++requestSequence;
+  if (append) loadingMore.value = true;
+  else loading.value = true;
   error.value = '';
   try {
     const query = new URLSearchParams({ limit: '50' });
     if (stage.value === 'reserve') query.set('stage', 'reserve');
+    const term = search.value.trim();
+    if (term) query.set('query', term);
     if (cursor) query.set('cursor', cursor);
     const page = await apiRequest<{ items: ReserveProjectSummary[]; nextCursor: string | null }>(`/api/reserve-projects?${query.toString()}`);
+    if (sequence !== requestSequence) return;
     projects.value = cursor ? [...projects.value, ...page.items] : page.items;
     nextCursor.value = page.nextCursor;
   } catch (cause) {
+    if (sequence !== requestSequence) return;
     error.value = cause instanceof Error ? cause.message : '读取项目失败';
   } finally {
-    loading.value = false;
+    if (sequence === requestSequence) {
+      loading.value = false;
+      loadingMore.value = false;
+    }
   }
 }
 
@@ -109,7 +116,12 @@ watch(stage, () => {
 let searchTimer: ReturnType<typeof setTimeout> | undefined;
 watch(search, () => {
   if (searchTimer) clearTimeout(searchTimer);
-  searchTimer = setTimeout(syncRouteFilters, 180);
+  searchTimer = setTimeout(() => {
+    projects.value = [];
+    nextCursor.value = null;
+    syncRouteFilters();
+    void loadPage();
+  }, 220);
 });
 
 const columns = [
@@ -143,17 +155,17 @@ onMounted(() => loadPage());
 
     <section class="list-surface">
       <div class="list-toolbar">
-        <n-input v-model:value="search" data-test="project-search" clearable placeholder="搜索已加载项目的名称、负责人或年度" />
+        <n-input v-model:value="search" data-test="project-search" clearable placeholder="搜索项目名称、负责人或年度" />
         <n-select v-model:value="stage" data-test="project-stage-filter" :options="stageOptions" class="stage-filter" />
         <div class="toolbar-spacer"></div>
-        <span class="result-count">已加载 {{ filtered.length }} 个项目</span>
+        <span class="result-count">当前显示 {{ projects.length }} 个项目</span>
       </div>
 
       <div v-if="error" class="inline-error">{{ error }} <n-button text @click="loadPage()">重新加载</n-button></div>
       <n-spin :show="loading">
-        <n-data-table v-if="filtered.length" class="desktop-project-table" :data="filtered" :columns="columns" :pagination="false" :scroll-x="900" />
-        <div v-if="filtered.length" class="mobile-project-list">
-          <app-pressable v-for="item in filtered" :key="item.id" class="mobile-project-card" @click="openProject(item.id)">
+        <n-data-table v-if="projects.length" class="desktop-project-table" :data="projects" :columns="columns" :pagination="false" :scroll-x="900" />
+        <div v-if="projects.length" class="mobile-project-list">
+          <app-pressable v-for="item in projects" :key="item.id" class="mobile-project-card" @click="openProject(item.id)">
             <div class="mobile-project-title-row">
               <strong>{{ item.name }}</strong>
               <span class="status-pill" :class="item.status === 'confirmed' ? 'confirmed' : 'draft'">{{ item.status === 'confirmed' ? '储备已确认' : '储备草稿' }}</span>
@@ -166,9 +178,9 @@ onMounted(() => loadPage());
             </div>
           </app-pressable>
         </div>
-        <n-empty v-if="!loading && !filtered.length" description="暂无项目" />
+        <n-empty v-if="!loading && !projects.length" :description="emptyDescription" />
       </n-spin>
-      <div v-if="nextCursor" class="load-more"><n-button :loading="loading" @click="loadPage(nextCursor)">加载更多</n-button></div>
+      <div v-if="nextCursor" class="load-more"><n-button :loading="loadingMore" @click="loadPage(nextCursor)">加载更多</n-button></div>
     </section>
 
     <n-drawer v-model:show="createOpen" placement="right" :width="520" class="project-create-drawer">

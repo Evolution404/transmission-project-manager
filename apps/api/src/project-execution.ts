@@ -204,6 +204,8 @@ projectExecutionApp.get('/reserve-projects', async (c) => {
   const rawStage = c.req.query('stage') ?? 'all';
   if (!['all', 'reserve'].includes(rawStage)) return c.json(apiError('INVALID_PROJECT_STAGE', 'stage 必须为 all 或 reserve'), 400);
   const stage = rawStage as ReserveProjectListStage;
+  const query = c.req.query('query')?.trim() || null;
+  if (query && query.length > 120) return c.json(apiError('INVALID_PROJECT_QUERY', '项目搜索条件不能超过 120 个字符'), 400);
   const rawCursor = c.req.query('cursor');
   const cursor = parseReserveProjectCursor(rawCursor);
   if (rawCursor && !cursor) return c.json(apiError('INVALID_CURSOR', '项目分页游标无效'), 400);
@@ -214,7 +216,7 @@ projectExecutionApp.get('/reserve-projects', async (c) => {
     frameworkIds: user.scopes.filter((scope) => scope.type === 'framework' && scope.id).map((scope) => scope.id!),
   };
   const { database } = createCloudflarePersistence(c.env);
-  const rows = await new SqlReserveProjectQueryRepository(database).list({ limit: limit + 1, stage, cursor, access });
+  const rows = await new SqlReserveProjectQueryRepository(database).list({ limit: limit + 1, stage, query, cursor, access });
   const items = rows.slice(0, limit);
   const last = items.at(-1);
   const nextCursor = rows.length > limit && last ? encodeReserveProjectCursor({ createdAt: last.createdAt, id: last.id }) : null;

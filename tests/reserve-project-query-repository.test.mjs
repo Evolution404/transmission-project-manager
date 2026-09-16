@@ -39,7 +39,7 @@ test('reserve project query repository hydrates projects and protection facts po
     assert.equal(project?.demandLinks[0].demandId, 'd1');
     assert.equal(project?.materialRequirements[0].reserveCategory?.label, '防鸟');
     assert.equal(project?.knownMaterialAmountFen, 20000);
-    assert.equal((await repository.list({ limit: 10, stage: 'all', cursor: null, access: null })).length, 1);
+    assert.equal((await repository.list({ limit: 10, stage: 'all', query: null, cursor: null, access: null })).length, 1);
     assert.deepEqual(await repository.findState('p1'), { id: 'p1', frameworkId: 'fw1', status: 'draft', reserveVersion: 0, version: 2 });
     assert.equal(await repository.validateDemandIds(['d1']), true);
     assert.equal(await repository.validateDemandIds(['missing']), false);
@@ -63,33 +63,41 @@ test('reserve project list filters unreleased projects in SQL and keyset-pages w
       INSERT INTO project_releases VALUES ('r3','p3','2026-09-04T00:00:00.000Z');
     `);
 
-    const reserve = await repository.list({ limit: 10, stage: 'reserve', cursor: null, access: null });
+    const reserve = await repository.list({ limit: 10, stage: 'reserve', query: null, cursor: null, access: null });
     assert.deepEqual(reserve.map((item) => item.id), ['p1', 'p4', 'p2']);
 
-    const first = await repository.list({ limit: 1, stage: 'all', cursor: null, access: null });
+    const searched = await repository.list({ limit: 10, stage: 'all', query: 'Second', cursor: null, access: null });
+    assert.deepEqual(searched.map((item) => item.id), ['p2']);
+    const searchedByOwner = await repository.list({ limit: 10, stage: 'all', query: 'B', cursor: null, access: null });
+    assert.deepEqual(searchedByOwner.map((item) => item.id), ['p2']);
+
+    const first = await repository.list({ limit: 1, stage: 'all', query: null, cursor: null, access: null });
     assert.deepEqual(first.map((item) => item.id), ['p1']);
     const second = await repository.list({
       limit: 1,
       stage: 'all',
+      query: null,
       cursor: { createdAt: first[0].createdAt, id: first[0].id },
       access: null,
     });
     const third = await repository.list({
       limit: 1,
       stage: 'all',
+      query: null,
       cursor: { createdAt: second[0].createdAt, id: second[0].id },
       access: null,
     });
     const fourth = await repository.list({
       limit: 1,
       stage: 'all',
+      query: null,
       cursor: { createdAt: third[0].createdAt, id: third[0].id },
       access: null,
     });
     assert.deepEqual([...first, ...second, ...third, ...fourth].map((item) => item.id), ['p1', 'p4', 'p2', 'p3']);
 
     // p2 is behind newer out-of-scope rows. A post-LIMIT permission filter would return an empty page here.
-    const scoped = await repository.list({ limit: 1, stage: 'all', cursor: null, access: { projectIds: ['p2'], frameworkIds: [] } });
+    const scoped = await repository.list({ limit: 1, stage: 'all', query: null, cursor: null, access: { projectIds: ['p2'], frameworkIds: [] } });
     assert.deepEqual(scoped.map((item) => item.id), ['p2']);
   } finally { sqlite.close(); }
 });

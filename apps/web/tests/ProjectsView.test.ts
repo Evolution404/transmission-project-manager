@@ -88,15 +88,15 @@ describe('ProjectsView', () => {
     routeQuery.query = '龙城';
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
-      if (url === '/api/reserve-projects?limit=50&stage=reserve') return ok({ items: [], nextCursor: null });
-      if (url === '/api/reserve-projects?limit=50') return ok({ items: [], nextCursor: null });
+      if (url === '/api/reserve-projects?limit=50&stage=reserve&query=%E9%BE%99%E5%9F%8E') return ok({ items: [], nextCursor: null });
+      if (url === '/api/reserve-projects?limit=50&query=%E9%BE%99%E5%9F%8E') return ok({ items: [], nextCursor: null });
       throw new Error(`unexpected GET ${url}`);
     });
     vi.stubGlobal('fetch', fetchMock);
     const wrapper = mount(ProjectsView, { props: { currentUser: admin } });
     await flushPromises();
 
-    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('stage=reserve'))).toBe(true);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('stage=reserve') && String(url).includes('query=%E9%BE%99%E5%9F%8E'))).toBe(true);
     expect(wrapper.get('[data-test="project-search"]').attributes('value')).toBe('龙城');
     expect(wrapper.get('[data-test="project-stage-filter"]').attributes('value')).toBe('reserve');
 

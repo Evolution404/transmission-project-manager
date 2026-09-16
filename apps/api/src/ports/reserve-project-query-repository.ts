@@ -42,6 +42,7 @@ export interface ReserveProjectListCursor {
 export interface ReserveProjectListInput {
   limit: number;
   stage: ReserveProjectListStage;
+  query: string | null;
   cursor: ReserveProjectListCursor | null;
   access: { projectIds: readonly string[]; frameworkIds: readonly string[] } | null;
 }

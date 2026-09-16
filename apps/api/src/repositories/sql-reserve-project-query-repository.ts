@@ -111,6 +111,14 @@ export class SqlReserveProjectQueryRepository implements ReserveProjectQueryRepo
       filters.push(accessParts.length ? `(${accessParts.join(' OR ')})` : '0=1');
     }
     if (input.stage === 'reserve') filters.push('NOT EXISTS (SELECT 1 FROM project_releases pr WHERE pr.project_id=p.id)');
+    if (input.query) {
+      filters.push(`(
+        instr(lower(p.name),lower(?))>0
+        OR instr(lower(COALESCE(p.owner,'')),lower(?))>0
+        OR instr(CAST(COALESCE(p.business_year,'') AS TEXT),?)>0
+      )`);
+      params.push(input.query, input.query, input.query);
+    }
     if (input.cursor) {
       filters.push('(p.created_at < ? OR (p.created_at = ? AND p.id < ?))');
       params.push(input.cursor.createdAt, input.cursor.createdAt, input.cursor.id);
