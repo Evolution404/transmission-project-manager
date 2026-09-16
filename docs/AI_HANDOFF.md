@@ -8,7 +8,7 @@
 
 当前施工分支：`refactor/engineering-hardening-20260916`。禁止 `git reset` / `git clean`，不得覆盖他人未提交修改。除非用户再次明确授权，本工程化分支不得触发新的生产发布或生产数据变更。
 
-## 已发布生产基线
+## 工程化发布前的生产基线
 
 - PR #15 已合入 `main@bc59cf18befb3058d47848e8dae6f9589187c9dd`。
 - 合并后 `main` CI run `35107954205`：`check`、`headless-ui` 均 PASS。
@@ -69,6 +69,12 @@
 
 提交：`67e9671 refactor(shared): split public contracts by domain`。
 
+### API 分页游标去重
+
+需求、项目储备、资金、项目执行和任务队列原先分别复制 Base64URL JSON cursor 编解码。现统一到 `apps/api/src/http/cursor.ts`；路由层仍保留各自字段校验、权限和错误语义，不把业务规则下沉到通用 codec。新增 `tests/cursor-codec.test.mjs` 与 repository guard 防止重复实现回流。
+
+提交：`def862a refactor(api): share pagination cursor codec`。
+
 ## 当前维护热点
 
 工程审计当前仍报告以下 >=600 行真源；它们是审查候选，不是“必须按行数拆分”的失败项：
@@ -86,16 +92,11 @@
 
 ## 当前验证状态与下一步
 
-最新完整本地 `make test` 已 PASS：Node **324/324**、Web **165/165（23 文件）**、Headless Chromium **23/23**；Cloudflare/Node/Web/shared TypeScript、Web production build、Worker dry-run、Node + SQLite + Filesystem 第二运行时全部通过。`make audit` 同样 PASS，production dependency audit 为 **0 vulnerabilities**。
+最新完整本地 `make test` 已 PASS：Node **327/327**、Web **165/165（23 文件）**、Headless Chromium **23/23**；Cloudflare/Node/Web/shared TypeScript、Web production build、Worker dry-run、Node + SQLite + Filesystem 第二运行时全部通过。`make audit` 同样 PASS，production dependency audit 为 **0 vulnerabilities**。
 
 Shared 拆分过程中完整门禁曾抓到 Node 原生 ESM 不接受无扩展名相对 specifier；现已改为显式 `.ts`，并新增门禁防回归。该失败从未合入 `main`、从未发布生产。
 
-本轮剩余：
-
-1. 提交并推送长期文档同步；
-2. 用 `make ci` 验证工程化分支 `check + headless-ui` 双绿；
-3. 再审查剩余 >=600 行热点，只处理有明确职责边界/重复逻辑/测试收益的模块；
-4. 工程化分支是否合入 `main`、是否再次发布生产，等待用户明确授权。
+用户已于 2026-09-16 明确授权：工程化收口完成且最终 CI 通过后合入 `main` 并发布生产。后续不得因为这一授权顺带实施新的业务功能或高风险大拆分；只完成当前工程化分支的 CI → PR/merge → `main` CI → `Production promote` → production health/版本核验。
 
 ## 必须保持的业务/工程边界
 

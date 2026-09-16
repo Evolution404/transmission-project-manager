@@ -45,13 +45,15 @@ make test
 - Web production build：PASS；
 - Worker `wrangler deploy --dry-run`：PASS；
 - Vue/Vitest：**165/165 PASS（23 个测试文件）**；
-- Node：**324/324 PASS**；
+- Node：**327/327 PASS**；
 - Headless Chromium：**23/23 PASS**；
 - Node + SQLite + Filesystem 第二运行时：PASS；
 - migration checksum/单基线与 repository/static guards：PASS。
 - `make audit`：仓库工程卫生 PASS，production dependency audit **0 vulnerabilities**。
 
 Shared 公共契约已经从单一巨型 `index.ts` 按业务域拆分；Node 原生 TypeScript ESM 通过显式 `.ts` 相对 specifier 保证可解析，并由 repository guard、maintenance-mode 与 Node 第二运行时测试共同锁定，不能只依赖 Bundler/typecheck 通过。
+
+API 中需求、项目储备、资金、项目执行与任务队列的对象型分页游标统一复用 `apps/api/src/http/cursor.ts` 的 Base64URL JSON codec；各路由仍负责自己的字段形状校验和 `INVALID_CURSOR` 业务错误，公共 codec 不承载业务语义。`tests/cursor-codec.test.mjs` 和 repository guard 防止再次复制编解码实现。
 
 工程卫生和生产依赖安全审计统一使用：
 
