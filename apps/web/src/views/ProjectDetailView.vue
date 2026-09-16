@@ -224,7 +224,7 @@ onMounted(load);
       <template v-if="project && execution">
         <header class="object-header">
           <div>
-            <div class="object-kicker">PROJECT · {{ project.year ?? '未设年度' }}</div>
+            <div class="object-kicker">项目 · {{ project.year ?? '未设年度' }}</div>
             <h2>{{ project.name }}</h2>
             <div class="object-tags">
               <n-tag size="small" :bordered="false" :type="execution.released ? 'info' : project.status === 'confirmed' ? 'success' : 'default'">

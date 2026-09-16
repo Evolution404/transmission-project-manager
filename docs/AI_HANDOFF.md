@@ -36,7 +36,7 @@
 - 已建立 UI 硬门禁：业务源码禁止直接渲染原生 `<button>` / `<input>` / `<select>` / `<textarea>` 和动态 `h('button')`；原生 file input 只能隐藏在设计系统 primitive 内。门禁位于 `tests/repository-guards.test.mjs`。
 - 设计系统 primitive：`apps/web/src/app/AppPressable.vue`、`AppFilePicker.vue`。
 
-最近一次完整 `npm run check`：Node **296/296 PASS**、Web **133/133 PASS（23 个测试文件）**；TypeScript、Web production build、Worker `wrangler deploy --dry-run`、Node + SQLite + Filesystem 第二运行时均 PASS。Web 测试文件数下降来自旧 `ReservesView` / `DeliveryView` 页面及其重复测试在能力迁移完成后正式删除，不是跳过门禁。
+最近一次完整 `npm run check`：Node **298/298 PASS**、Web **134/134 PASS（23 个测试文件）**；TypeScript、Web production build、Worker `wrangler deploy --dry-run`、Node + SQLite + Filesystem 第二运行时均 PASS。Web 测试文件数下降来自旧 `ReservesView` / `DeliveryView` 页面及其重复测试在能力迁移完成后正式删除，不是跳过门禁。
 
 最近 UI 提交：
 
@@ -55,7 +55,7 @@
 - `ProjectsView.vue` 已从 URL 恢复 `stage/query` 并同步筛选状态；列表使用服务端 cursor 分页，进入详情时携带完整项目列表 URL，`ProjectDetailView.vue` 返回时恢复原筛选上下文。
 - `TaskQueueView.vue` 已从 URL 恢复并同步 `status/query`，刷新 `/tasks?status=settlement_pending` 后仍保持待结算筛选并按该状态请求服务端。
 - `PlaceholderView.vue` 已删除并确认无引用；`DashboardView.test.ts` 已补 router mock，消除全量 Web 测试中的虚假 router injection warning。
-- 测试先行回归已收口：仓储分页/stage **2/2 PASS**，Projects/Tasks 定向 **6/6 PASS**，Web/API typecheck、`git diff --check` 均 PASS；完整 `npm run check` 为 Node **296/296 PASS**、Web **133/133 PASS（23 文件）**。
+- 测试先行回归已收口：仓储分页/stage **2/2 PASS**，Projects/Tasks 定向 **6/6 PASS**，Web/API typecheck、`git diff --check` 均 PASS；当前分支最新完整 `npm run check` 为 Node **298/298 PASS**、Web **134/134 PASS（23 文件）**。
 
 ## 当前 UI 收尾施工包
 
@@ -64,7 +64,16 @@
 - 任务队列手机对象行已补任务四状态与计划量；任务创建、任务详情、实施/结算抽屉、需求弹窗和项目详情的残留浅色 fallback/硬编码浮层阴影已改为统一设计 token。
 - 设置页成员编辑弹窗补齐手机端可滚动内容区、软键盘/安全区友好的 sticky 操作区；未知角色/运维状态不再回退显示英文内部枚举。
 - 已完成“旧入口 → 新位置”覆盖审计：当前 `views/` 只剩实际页面；`/reserves` 与 `/delivery` 仅保留兼容重定向。现有 settings/tasks/projects feature 组件均有真实引用，没有可安全删除的死 Vue 组件。
-- 当前施工包验证已通过：相关 Web 定向 **39/39 PASS（7 文件）**，项目查询仓储 **2/2 PASS**；完整 `npm run check` 为 Node **296/296 PASS**、Web **133/133 PASS（23 文件）**，Web/API/shared typecheck、Web production build、Worker dry-run、Node + SQLite + Filesystem 第二运行时和 `git diff --check` 均 PASS。
+- 当前施工包验证已通过：相关 Web 定向 **39/39 PASS（7 文件）**，项目查询仓储 **2/2 PASS**；当前分支最新完整 `npm run check` 为 Node **298/298 PASS**、Web **134/134 PASS（23 文件）**，Web/API/shared typecheck、Web production build、Worker dry-run、Node + SQLite + Filesystem 第二运行时和 `git diff --check` 均 PASS。
+
+其后状态一致性收尾已经完成并通过完整门禁：
+
+- `TaskCreateView` 已补真实回归：项目/执行上下文读取失败时不再只剩“返回项目”的空白页，而是显示错误和“重新加载”；测试按先红后绿完成。
+- 工作台、需求、资金、分析、设置统一补主数据读取失败后的“重新加载”动作；repository guard 锁定这 5 个主工作区的恢复入口。
+- 页面眉标、登录/改密装饰文字和项目对象眉标中的 `WORKSPACE/PROJECTS/EXECUTION/FINANCE/SETTINGS/ANALYSIS/DEMANDS/PROJECT/...` 已统一改为中文，并增加静态门禁，避免纯英文装饰文案回流。未知角色/预警状态也不再回退显示内部英文枚举。
+- 全局 DataTable hover/分隔线已改用 `--ui-*` token，不再维护浅色/暗色两套硬编码值；分析页刷新、月报生成、事项创建补 loading 反馈。
+- 该状态一致性包新增 repository guard 后 **40/40 PASS**，相关 Web 定向 **49/49 PASS**、TaskCreate **3/3 PASS**；最终完整 `npm run check` 为 Node **298/298 PASS**、Web **134/134 PASS（23 文件）**。
+- 当前定向结果：repository guards **40/40 PASS**；相关 11 个 Web 页面 **49/49 PASS**；TaskCreate **3/3 PASS**；Web typecheck 与 `git diff --check` PASS。完整 `npm run check` 仍需在本小包提交前复跑。
 
 真实浏览器最终验收仍未完成：项目未引入 Playwright/Puppeteer；本机 Chrome headless 能生成首张未登录截图，但进程会被 Google Updater/Crashpad 拖住，批量桌面/手机/明暗截图流程不可靠。未登录状态不会伪造认证 session；最终验收需要使用正常登录会话补齐真实浏览器截图与交互检查。
 

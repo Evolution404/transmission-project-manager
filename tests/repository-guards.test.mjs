@@ -329,6 +329,30 @@ test('web form defaults are Chinese and English default placeholders are forbidd
   }
 });
 
+test('web decorative labels stay Chinese instead of reintroducing English chrome', () => {
+  for (const file of collectSourceFiles(resolve(root, 'apps/web/src'))) {
+    if (!file.endsWith('.vue')) continue;
+    const source = readFileSync(file, 'utf8');
+    assert.doesNotMatch(source, /class="page-eyebrow"[^>]*>\s*[A-Z][A-Z\s/&-]{2,}\s*</, `${file} 的页面眉标仍使用纯英文装饰文案`);
+    assert.doesNotMatch(source, /<span>\s*(?:TRANSMISSION PROJECTS|ACCOUNT SECURITY|SECURITY)\s*<\/span>/, `${file} 的认证界面仍使用纯英文装饰文案`);
+    assert.doesNotMatch(source, /class="object-kicker"[^>]*>\s*PROJECT\b/, `${file} 的对象眉标仍使用英文 PROJECT`);
+  }
+});
+
+test('primary workspaces provide an explicit retry action for load failures', () => {
+  const retryContracts = [
+    ['DashboardView.vue', 'loadDashboard'],
+    ['DemandsView.vue', 'loadInitial'],
+    ['FinanceView.vue', 'loadInitial'],
+    ['AnalysisView.vue', 'refresh'],
+    ['AdministrationView.vue', 'load'],
+  ];
+  for (const [name, handler] of retryContracts) {
+    const source = readFileSync(resolve(root, 'apps/web/src/views', name), 'utf8');
+    assert.match(source, new RegExp(`@click=["']${handler}["'][^>]*>\\s*重新加载`), `${name} 的加载失败提示缺少明确重新加载动作`);
+  }
+});
+
 test('web business UI cannot render browser-native controls directly', () => {
   const pressableFile = resolve(root, 'apps/web/src/app/AppPressable.vue');
   const filePickerFile = resolve(root, 'apps/web/src/app/AppFilePicker.vue');

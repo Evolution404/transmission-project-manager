@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
-import { NAlert, NSpin } from 'naive-ui';
+import { NAlert, NButton, NSpin } from 'naive-ui';
 import type { AnalysisDashboardSummary, CurrentUser } from '@tpm/shared';
 import { parseApiResponse } from '../api/response';
 import AppIcon from '../app/AppIcon.vue';
@@ -42,11 +42,13 @@ onMounted(loadDashboard);
 
 <template>
   <div class="view-stack dashboard-view">
-    <n-alert v-if="error" type="error" title="数据读取失败">{{ error }}</n-alert>
+    <n-alert v-if="error" type="error" title="数据读取失败">
+      <div class="load-error-content"><span>{{ error }}</span><n-button size="small" secondary @click="loadDashboard">重新加载</n-button></div>
+    </n-alert>
 
     <header class="page-header">
       <div class="page-header-copy">
-        <span class="page-eyebrow">WORKSPACE</span>
+        <span class="page-eyebrow">业务工作台</span>
         <h2 class="page-title">工作台</h2>
         <p class="page-description">查看当前业务状态，并直接进入需要处理的项目、任务和预警。</p>
       </div>

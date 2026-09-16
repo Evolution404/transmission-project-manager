@@ -171,6 +171,10 @@ onMounted(() => {
   <div class="view-stack task-create-view">
     <app-pressable class="breadcrumb-back" @click="backToProject">‹ 返回项目</app-pressable>
     <n-spin :show="loading">
+      <section v-if="!loading && error && (!project || !execution)" class="page-load-state">
+        <n-alert type="error" :bordered="false">{{ error }}</n-alert>
+        <n-button secondary @click="load">重新加载</n-button>
+      </section>
       <template v-if="project && execution">
         <section class="create-header">
           <div>
@@ -245,6 +249,7 @@ onMounted(() => {
 .task-create-view { max-width: 1260px; }
 .breadcrumb-back { justify-self: start; padding: 3px 0; border: 0; background: transparent; color: var(--ui-text-secondary); cursor: pointer; }
 .create-header { padding: 4px 2px 8px; }
+.page-load-state { display: grid; gap: 12px; justify-items: start; padding: 20px; border: 1px solid var(--ui-border); border-radius: var(--ui-radius-lg); background: var(--ui-surface); }
 .object-kicker { margin-bottom: 5px; color: var(--ui-text-secondary); font-size: 13px; }
 .create-header h2 { margin: 0; font-size: 28px; line-height: 1.25; letter-spacing: -.025em; }
 .create-header p { margin: 7px 0 0; color: var(--ui-text-secondary); font-size: 14px; }

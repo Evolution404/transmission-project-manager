@@ -68,7 +68,7 @@ async function submit() {
       <section class="auth-brand-panel">
         <div class="auth-brand-mark" aria-hidden="true"><span></span></div>
         <div class="auth-brand-copy">
-          <span>ACCOUNT SECURITY</span>
+          <span>账号安全</span>
           <h1>完成账号安全设置</h1>
           <p>密码派生在浏览器本地完成；修改成功后旧会话按系统安全策略失效。</p>
         </div>
@@ -76,7 +76,7 @@ async function submit() {
       </section>
       <section class="auth-form-panel">
         <div class="auth-form-header">
-          <span>SECURITY</span>
+          <span>安全设置</span>
           <h2>修改密码</h2>
           <p>设置新的登录密码后继续进入业务页面。</p>
         </div>

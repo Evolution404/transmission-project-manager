@@ -87,11 +87,13 @@
 
 M6 基础台账定向结果：基础台账 API **25/25 PASS**；相关 Web **30/30 PASS**。M6 收口时完整 `npm run check` 为 Node **270/270**、Web **114/114（19 文件）**。
 
-全站 UI 重构当前施工分支 `refactor/ui-redesign-20260916` 最近一次完整 `npm run check` 已 PASS：Node **296/296**、Web **133/133（23 文件）**，Cloudflare/Node/Web/shared TypeScript、Web production build、Worker dry-run、Node+SQLite+Filesystem 第二运行时和全部静态门禁均 PASS。Web 测试文件数量下降是因为旧 `ReservesView` / `DeliveryView` 在能力迁移后连同重复 UI 测试一起删除，不是关闭或跳过测试。
+全站 UI 重构当前施工分支 `refactor/ui-redesign-20260916` 最近一次完整 `npm run check` 已 PASS：Node **298/298**、Web **134/134（23 文件）**，Cloudflare/Node/Web/shared TypeScript、Web production build、Worker dry-run、Node+SQLite+Filesystem 第二运行时和全部静态门禁均 PASS。Web 测试文件数量下降是因为旧 `ReservesView` / `DeliveryView` 在能力迁移后连同重复 UI 测试一起删除，不是关闭或跳过测试。
 
 项目分页/路由状态工作包已经收口并验证：修复项目列表固定前 50 条且 `nextCursor:null` 的分页缺口，并让工作台 `/projects?stage=reserve`、项目列表 `stage/query`、任务队列 `/tasks?status=...&query=...` 在刷新后恢复筛选。定向仓储测试 **2/2 PASS**，Projects/Tasks 定向 **6/6 PASS**，Web/API typecheck 和 `git diff --check` 均 PASS。
 
-其后的 UI 收尾施工包进一步修复了“大项目集搜索”和手机端完成度：项目搜索改为服务端 SQL `LIMIT` 前过滤；资金页框架/协议/流水在手机使用独立对象列表；任务队列手机端直接展示四状态与计划量；成员弹窗补软键盘/安全区可达操作区；业务 View/feature 的浅色 fallback 已清理为统一设计 token；无实际效果的资金筛选控件已删除。旧入口覆盖审计确认 `/reserves`、`/delivery` 只保留兼容重定向，现有业务 Vue 组件均有真实引用。定向 Web **39/39 PASS（7 文件）**、项目查询仓储 **2/2 PASS**；完整 `npm run check` 为 Node **296/296 PASS**、Web **133/133 PASS（23 文件）**，Web/API/shared typecheck、Web production build、Worker dry-run、Node+SQLite+Filesystem 第二运行时与 `git diff --check` 均 PASS。
+其后的 UI 收尾施工包进一步修复了“大项目集搜索”和手机端完成度：项目搜索改为服务端 SQL `LIMIT` 前过滤；资金页框架/协议/流水在手机使用独立对象列表；任务队列手机端直接展示四状态与计划量；成员弹窗补软键盘/安全区可达操作区；业务 View/feature 的浅色 fallback 已清理为统一设计 token；无实际效果的资金筛选控件已删除。旧入口覆盖审计确认 `/reserves`、`/delivery` 只保留兼容重定向，现有业务 Vue 组件均有真实引用。定向 Web **39/39 PASS（7 文件）**、项目查询仓储 **2/2 PASS**；当前分支最新完整 `npm run check` 为 Node **298/298 PASS**、Web **134/134 PASS（23 文件）**，Web/API/shared typecheck、Web production build、Worker dry-run、Node+SQLite+Filesystem 第二运行时与 `git diff --check` 均 PASS。
+
+状态恢复与中文化一致性收尾已完成：任务创建上下文读取失败显示可恢复错误而不是空白页；工作台、需求、资金、分析、设置统一提供“重新加载”；纯英文页面眉标/认证装饰文案由 repository guard 拦截；DataTable 全局 hover/分隔线统一走主题 token；分析页刷新、月报生成、事项创建补齐进行中反馈。该小包 repository guards **40/40 PASS**、相关 Web **49/49 PASS**、TaskCreate **3/3 PASS**；完整 `npm run check` 为 Node **298/298 PASS**、Web **134/134 PASS（23 文件）**。
 
 该工作包保持以下验收条件：
 
@@ -118,7 +120,7 @@ M6 基础台账定向结果：基础台账 API **25/25 PASS**；相关 Web **30/
 - `project-execution.ts` 已由约 850 行降至约 334 行；其职责回混已有 repository/static guard。
 - `analysis-operations.ts` 的混合职责已经完成拆分：`analysis-calculations.ts` 承载纯分析计算/查询编排，`analysis-operations.ts` 仅保留分析/计划/月报/里程碑 HTTP，`notification-operations.ts` 承载通知/告警/outbox，`backup-operations.ts` 承载逻辑备份，`system-tasks.ts` 承载定时任务编排。最新已验证代码提交为 `8c8f7ef`。
 - 分析计算抽取前已逐项对照旧实现并由测试锁定 BigInt 四舍五入、季度状态、默认/自定义计划、ratio/gap lagging 边界和里程碑提醒语义；分析/P6、通知仓储、备份仓储和 repository guards 定向合计 **53/53 PASS**。
-- 上述分析模块职责拆分完成时的历史门禁基线为 Node **293/293 PASS**、Web **114/114 PASS**；当前施工分支的最新完整门禁以第 4 节所列 Node **295/295**、Web **131/131（23 文件）**为准。
+- 上述分析模块职责拆分完成时的历史门禁基线为 Node **293/293 PASS**、Web **114/114 PASS**；当前施工分支的最新完整门禁以第 4 节所列 Node **298/298**、Web **134/134（23 文件）**为准。
 - 后续候选热点仍包括 `reserve-planning.ts`、`demand-import.ts`、`finance.ts`、`project-lifecycle.ts`、`MasterDataView.vue`、`packages/shared/src/index.ts`；按职责耦合收益排序拆分，禁止仅按文件行数机械拆分。
 
 ## 6. 当前生产状态

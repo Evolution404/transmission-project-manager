@@ -60,6 +60,17 @@ function ok(data: unknown, status = 200) {
 describe('TaskCreateView', () => {
   afterEach(() => { vi.unstubAllGlobals(); push.mockReset(); });
 
+  it('shows a recoverable page-level error when project context cannot be loaded', async () => {
+    vi.stubGlobal('crypto', { randomUUID: vi.fn(() => 'task-create-idem') });
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('网络连接失败'); }));
+
+    const wrapper = mount(TaskCreateView, { props: { currentUser: manager } });
+    await flushPromises();
+
+    expect(wrapper.text()).toContain('网络连接失败');
+    expect(wrapper.text()).toContain('重新加载');
+  });
+
   it('creates a task with optional demand scope and remaining project-material allocation', async () => {
     vi.stubGlobal('crypto', { randomUUID: vi.fn(() => 'task-create-idem') });
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {

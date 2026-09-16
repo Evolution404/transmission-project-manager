@@ -295,7 +295,7 @@ const memberColumns = [
       return h('div', { class: 'member-cell' }, [h('strong', row.displayName), h('small', row.username)]);
     },
   },
-  { title: '角色', key: 'role', width: 110, render: (row: MemberSummary) => roleLabel.get(row.role) ?? row.role },
+  { title: '角色', key: 'role', width: 110, render: (row: MemberSummary) => roleLabel.get(row.role) ?? '未知角色' },
   {
     title: '状态', key: 'status', width: 120,
     render(row: MemberSummary) {
@@ -319,11 +319,13 @@ onMounted(load);
 <template>
   <n-spin :show="loading">
     <div class="view-stack settings-view" data-test="settings-page">
-      <n-alert v-if="error" type="error" title="读取失败">{{ error }}</n-alert>
+      <n-alert v-if="error" type="error" title="读取失败">
+        <div class="load-error-content"><span>{{ error }}</span><n-button size="small" secondary @click="load">重新加载</n-button></div>
+      </n-alert>
 
       <header class="page-header">
         <div class="page-header-copy">
-          <span class="page-eyebrow">SETTINGS</span>
+          <span class="page-eyebrow">系统设置</span>
           <h2 class="page-title">设置</h2>
           <p class="page-description">集中管理账号、权限与运行配置。业务数据维护仍在对应业务模块完成。</p>
         </div>

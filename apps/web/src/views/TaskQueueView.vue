@@ -116,7 +116,7 @@ onMounted(() => load());
   <div class="view-stack task-queue-view">
     <header class="page-header">
       <div class="page-header-copy">
-        <span class="page-eyebrow">EXECUTION</span>
+        <span class="page-eyebrow">任务执行</span>
         <h2 class="page-title">执行任务</h2>
         <p class="page-description">跨项目查看当前授权范围内的任务，供应、实施和结算保持独立进度。</p>
       </div>

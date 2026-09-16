@@ -323,11 +323,13 @@ onMounted(loadInitial);
 <template>
   <n-spin :show="loading">
     <div class="view-stack finance-view">
-      <n-alert v-if="error" type="error" title="读取失败">{{ error }}</n-alert>
+      <n-alert v-if="error" type="error" title="读取失败">
+        <div class="load-error-content"><span>{{ error }}</span><n-button size="small" secondary @click="loadInitial">重新加载</n-button></div>
+      </n-alert>
 
       <header class="page-header">
         <div class="page-header-copy">
-          <span class="page-eyebrow">FINANCE</span>
+          <span class="page-eyebrow">资金管理</span>
           <h2 class="page-title">资金管理</h2>
           <p class="page-description">框架额度、预算确认、预算发生和实际发生保持独立账目，先看状态，再按需登记。</p>
         </div>

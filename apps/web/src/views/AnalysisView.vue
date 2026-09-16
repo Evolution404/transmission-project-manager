@@ -92,8 +92,8 @@ function formatMoney(fen: number | null | undefined) { return fen === null || fe
 function formatPercent(bp: number | null | undefined) { return bp === null || bp === undefined ? '未配置' : `${(bp / 100).toFixed(2)}%`; }
 function formatQuantity(value: number) { return (value / 10000).toFixed(4).replace(/\.?0+$/, ''); }
 function quarterStatusLabel(status: string) { return status === 'ended' ? '已结束' : status === 'in_progress' ? '进行中' : '未开始'; }
-function alertStateLabel(state: string) { return state === 'active' ? '处理中' : state === 'recovered' ? '已恢复' : state; }
-function alertSeverityLabel(severity: string) { return severity === 'warning' ? '预警' : severity === 'critical' ? '严重' : severity === 'info' ? '提示' : severity; }
+function alertStateLabel(state: string) { return state === 'active' ? '处理中' : state === 'recovered' ? '已恢复' : '未知状态'; }
+function alertSeverityLabel(severity: string) { return severity === 'warning' ? '预警' : severity === 'critical' ? '严重' : severity === 'info' ? '提示' : '未知级别'; }
 function milestoneStateLabel(row: MilestoneDueSummary) { return row.status === 'completed' ? '已完成' : row.overdue ? '已逾期' : row.reminderDue ? '待处理' : '未到期'; }
 
 const frameworkOptions = computed(() => frameworks.value.map((item) => ({ label: `${item.code} · ${item.name}`, value: item.id })));
@@ -244,10 +244,12 @@ onBeforeUnmount(() => { disposed = true; window.removeEventListener('resize', re
 
 <template>
   <div class="view-stack analysis-view">
-    <n-alert v-if="error" type="error">{{ error }}</n-alert>
+    <n-alert v-if="error" type="error">
+      <div class="load-error-content"><span>{{ error }}</span><n-button size="small" secondary @click="refresh">重新加载</n-button></div>
+    </n-alert>
     <header class="page-header">
       <div class="page-header-copy">
-        <span class="page-eyebrow">ANALYSIS</span>
+        <span class="page-eyebrow">业务分析</span>
         <h2 class="page-title">分析</h2>
         <p class="page-description">查看框架进度、项目缺口、储备剩余和年度事项；通知与备份已归入设置。</p>
       </div>
@@ -256,7 +258,7 @@ onBeforeUnmount(() => { disposed = true; window.removeEventListener('resize', re
     <section class="analysis-toolbar">
       <n-form-item label="统计日期"><n-input v-model:value="asOfDate" data-test="analysis-as-of" @change="changeAsOf" /></n-form-item>
       <n-form-item label="框架"><n-select :value="selectedFrameworkId" :options="frameworkOptions" data-test="analysis-framework" @update:value="selectFramework" /></n-form-item>
-      <n-button @click="refresh">刷新数据</n-button>
+      <n-button :loading="loading" @click="refresh">刷新数据</n-button>
     </section>
 
     <n-spin :show="loading">
@@ -318,7 +320,7 @@ onBeforeUnmount(() => { disposed = true; window.removeEventListener('resize', re
               <div v-if="canPlan" class="configuration-group">
                 <strong>月报快照</strong>
                 <n-form-item label="业务月份"><n-input v-model:value="reportMonth" /></n-form-item>
-                <n-button @click="generateReport">生成新修订</n-button>
+                <n-button :loading="saving" @click="generateReport">生成新修订</n-button>
                 <div v-if="reports.length" class="report-history"><span v-for="item in reports" :key="item.id">{{ item.businessMonth }} · 修订 {{ item.revision }} · 规则 v{{ item.ruleVersion }}</span></div>
                 <span v-else class="configuration-empty">当前月份尚无报告快照</span>
               </div>
@@ -349,7 +351,7 @@ onBeforeUnmount(() => { disposed = true; window.removeEventListener('resize', re
               <n-form-item label="日期精度"><n-select v-model:value="milestoneForm.datePrecision" :options="[{ label: '具体日期', value: 'day' }, { label: '仅月份', value: 'month' }, { label: '待补充', value: 'unknown' }]" /></n-form-item>
               <n-form-item v-if="milestoneForm.datePrecision !== 'unknown'" label="月份"><n-select v-model:value="milestoneForm.month" :options="monthOptions" /></n-form-item>
               <n-form-item v-if="milestoneForm.datePrecision === 'day'" label="日期"><n-input v-model:value="milestoneForm.specificDate" /></n-form-item>
-              <n-button @click="createMilestone">新增事项</n-button>
+              <n-button :loading="saving" @click="createMilestone">新增事项</n-button>
             </div>
           </section>
           <section class="analysis-panel">

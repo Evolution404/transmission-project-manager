@@ -146,7 +146,7 @@ onMounted(() => loadPage());
   <div class="view-stack projects-view">
     <header class="page-header">
       <div class="page-header-copy">
-        <span class="page-eyebrow">PROJECTS</span>
+        <span class="page-eyebrow">项目中心</span>
         <h2 class="page-title">项目</h2>
         <p class="page-description">一个项目身份贯穿储备、出库、执行、资金和历史，不按阶段重复建档。</p>
       </div>

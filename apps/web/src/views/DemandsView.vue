@@ -479,11 +479,13 @@ onMounted(loadInitial);
 <template>
   <n-spin :show="loading">
     <div class="view-stack demands-view">
-      <n-alert v-if="error" type="error" title="读取失败">{{ error }}</n-alert>
+      <n-alert v-if="error" type="error" title="读取失败">
+        <div class="load-error-content"><span>{{ error }}</span><n-button size="small" secondary @click="loadInitial">重新加载</n-button></div>
+      </n-alert>
 
       <header class="page-header">
         <div class="page-header-copy">
-          <span class="page-eyebrow">DEMANDS</span>
+          <span class="page-eyebrow">需求管理</span>
           <h2 class="page-title">项目需求</h2>
           <p class="page-description">维护抽象需求及来源事实；需求物资只属于需求阶段，不自动变成项目物资。</p>
         </div>

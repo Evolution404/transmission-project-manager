@@ -127,7 +127,7 @@ onMounted(loadStatus);
       <section class="auth-brand-panel">
         <div class="auth-brand-mark" aria-hidden="true"><span></span></div>
         <div class="auth-brand-copy">
-          <span>TRANSMISSION PROJECTS</span>
+          <span>输电项目管理</span>
           <h1>输电项目全流程管理</h1>
           <p>需求、储备、执行、资金和分析保持同一业务上下文，桌面与移动端使用同一套真实数据。</p>
         </div>
