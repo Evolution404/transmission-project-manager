@@ -97,6 +97,8 @@ M6 基础台账定向结果：基础台账 API **25/25 PASS**；相关 Web **30/
 
 随后继续收口移动端与并发编辑体验：需求物资字典增加手机对象列表；需求长弹窗、基础台账业务弹窗统一处理可视高度/正文滚动/safe-area footer；项目来源需求和项目物资的 409 从“仅提示用户关闭刷新”改为草稿原地保留并可直接刷新父项目；保存中的项目编辑器和任务供应抽屉禁止误关；删除任务详情无行为“更多”按钮，并清理业务界面的内部实现术语。该包定向 Web **49/49 PASS（6 文件）**、Web typecheck 与 `git diff --check` PASS；完整 `npm run check` 为 Node **298/298 PASS**、Web **136/136 PASS（23 文件）**，Web/API/shared TypeScript、Web production build、Worker dry-run 与第二运行时均 PASS。
 
+分析页图表继续完成暗色/响应式收口：ECharts 配色不再依赖默认主题，而是读取全局设计 token；切换分析分段或系统明暗主题后重新 setOption/resize，并使用 `containLabel` 避免手机端长分类文字被固定边距裁切。Analysis 定向 **4/4 PASS**；完整 `npm run check` 为 Node **298/298 PASS**、Web **137/137 PASS（23 文件）**，TypeScript、Web production build、Worker dry-run 与第二运行时均 PASS。
+
 该工作包保持以下验收条件：
 
 - `/api/reserve-projects` 的 `stage=reserve` 必须在 SQL 层按“不存在 `project_releases`”过滤，与工作台/分析统计口径一致；

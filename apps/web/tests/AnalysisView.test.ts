@@ -2,7 +2,8 @@ import { flushPromises, mount } from '@vue/test-utils';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CurrentUser } from '@tpm/shared';
 
-vi.mock('../src/charts/echarts', () => ({ init: () => ({ setOption: vi.fn(), resize: vi.fn(), dispose: vi.fn() }) }));
+const { chartSetOption, chartResize } = vi.hoisted(() => ({ chartSetOption: vi.fn(), chartResize: vi.fn() }));
+vi.mock('../src/charts/echarts', () => ({ init: () => ({ setOption: chartSetOption, resize: chartResize, dispose: vi.fn() }) }));
 vi.mock('naive-ui', async () => {
   const vue = await import('vue');
   const wrap = (name: string) => vue.defineComponent({ name, setup(_, { slots }) { return () => vue.h('div', { 'data-stub': name }, [slots['header-extra']?.(), slots.default?.()]); } });
@@ -60,8 +61,20 @@ function installFetch() {
 }
 
 describe('AnalysisView P6 behavior', () => {
-  beforeEach(() => installFetch());
-  afterEach(() => vi.unstubAllGlobals());
+  beforeEach(() => {
+    chartSetOption.mockReset();
+    chartResize.mockReset();
+    document.documentElement.style.setProperty('--ui-text', '#f8fafc');
+    document.documentElement.style.setProperty('--ui-text-secondary', '#cbd5e1');
+    document.documentElement.style.setProperty('--ui-border', '#334155');
+    document.documentElement.style.setProperty('--ui-surface-raised', '#111827');
+    document.documentElement.style.setProperty('--ui-accent', '#60a5fa');
+    installFetch();
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    document.documentElement.removeAttribute('style');
+  });
 
   it('shows real progress, reserve categories and active alerts', async () => {
     const wrapper = mount(AnalysisView, { props: { currentUser: readonly } });
@@ -71,6 +84,17 @@ describe('AnalysisView P6 behavior', () => {
     expect(wrapper.text()).toContain('防断线');
     expect(wrapper.text()).toContain('实际进度低于同期计划');
     expect(wrapper.find('[data-test="save-plan"]').exists()).toBe(false);
+  });
+
+  it('renders charts with design tokens instead of light-only ECharts defaults', async () => {
+    mount(AnalysisView, { props: { currentUser: readonly } });
+    await flushPromises();
+    expect(chartSetOption).toHaveBeenCalled();
+    expect(chartSetOption.mock.calls[0]?.[0]).toMatchObject({
+      tooltip: { backgroundColor: '#111827', borderColor: '#334155', textStyle: { color: '#f8fafc' } },
+      xAxis: { axisLabel: { color: '#cbd5e1' }, axisLine: { lineStyle: { color: '#334155' } } },
+      series: [{ itemStyle: { color: '#60a5fa' } }],
+    });
   });
 
   it('updates an existing monthly plan with exact fen and its current version', async () => {

@@ -44,6 +44,7 @@ const isAdmin = computed(() => props.currentUser.role === 'admin');
 const loading = ref(true);
 const saving = ref(false);
 const error = ref('');
+const activeTab = ref('progress');
 const frameworks = ref<FrameworkSummary[]>([]);
 const projects = ref<FinanceProjectSummary[]>([]);
 const selectedFrameworkId = ref<string | null>(null);
@@ -70,6 +71,7 @@ const reserveChartEl = ref<HTMLDivElement | null>(null);
 let progressChart: EChartsType | null = null;
 let reserveChart: EChartsType | null = null;
 let disposed = false;
+let themeMedia: MediaQueryList | null = null;
 
 function businessToday() {
   const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
@@ -213,33 +215,73 @@ async function setMilestoneStatus(item: MilestoneDueSummary, status: 'open' | 'c
     milestones.value = (await apiRequest<{ items: MilestoneDueSummary[] }>(`/api/milestones/due?asOf=${asOfDate.value}`)).items;
   } catch (cause) { message.error(cause instanceof Error ? cause.message : '事项状态更新失败'); }
 }
+
+function chartTheme() {
+  const styles = getComputedStyle(document.documentElement);
+  const token = (name: string, fallback: string) => styles.getPropertyValue(name).trim() || fallback;
+  return {
+    text: token('--ui-text', '#172033'),
+    textSecondary: token('--ui-text-secondary', '#667085'),
+    border: token('--ui-border', '#e4e7ec'),
+    surfaceRaised: token('--ui-surface-raised', '#ffffff'),
+    accent: token('--ui-accent', '#2563eb'),
+  };
+}
+
 async function renderCharts() {
   await nextTick();
   const chartElementsExist = progressChartEl.value || reserveChartEl.value;
   if (!chartElementsExist) return;
   const { init } = await import('../charts/echarts');
   if (disposed) return;
+  const theme = chartTheme();
+  const tooltip = { trigger: 'axis' as const, backgroundColor: theme.surfaceRaised, borderColor: theme.border, borderWidth: 1, textStyle: { color: theme.text } };
+  const axisStyle = {
+    axisLabel: { color: theme.textSecondary },
+    axisLine: { lineStyle: { color: theme.border } },
+    axisTick: { lineStyle: { color: theme.border } },
+    splitLine: { lineStyle: { color: theme.border } },
+  };
   if (progressChartEl.value) {
     progressChart ??= init(progressChartEl.value);
     progressChart.setOption({
-      tooltip: { trigger: 'axis' }, grid: { left: 56, right: 24, top: 30, bottom: 36 },
-      xAxis: { type: 'category', data: ['同期计划', '预算发生'] }, yAxis: { type: 'value' },
-      series: [{ type: 'bar', data: [progress.value?.plannedToDateFen ?? 0, progress.value?.actualToDateFen ?? 0] }],
+      tooltip, grid: { left: 16, right: 16, top: 30, bottom: 24, containLabel: true },
+      xAxis: { type: 'category', data: ['同期计划', '预算发生'], ...axisStyle, splitLine: { show: false, lineStyle: { color: theme.border } } },
+      yAxis: { type: 'value', ...axisStyle },
+      series: [{ type: 'bar', itemStyle: { color: theme.accent }, data: [progress.value?.plannedToDateFen ?? 0, progress.value?.actualToDateFen ?? 0] }],
     }, true);
   }
   if (reserveChartEl.value) {
     reserveChart ??= init(reserveChartEl.value);
     reserveChart.setOption({
-      tooltip: { trigger: 'axis' }, grid: { left: 90, right: 24, top: 20, bottom: 36 },
-      xAxis: { type: 'value' }, yAxis: { type: 'category', data: (reserve.value?.categories ?? []).map((item) => item.label) },
-      series: [{ type: 'bar', data: (reserve.value?.categories ?? []).map((item) => item.knownCurrentAmountFen) }],
+      tooltip, grid: { left: 16, right: 16, top: 20, bottom: 24, containLabel: true },
+      xAxis: { type: 'value', ...axisStyle },
+      yAxis: { type: 'category', data: (reserve.value?.categories ?? []).map((item) => item.label), ...axisStyle, splitLine: { show: false, lineStyle: { color: theme.border } } },
+      series: [{ type: 'bar', itemStyle: { color: theme.accent }, data: (reserve.value?.categories ?? []).map((item) => item.knownCurrentAmountFen) }],
     }, true);
   }
 }
 function resizeCharts() { progressChart?.resize(); reserveChart?.resize(); }
+async function handleTabChange() { await nextTick(); await renderCharts(); resizeCharts(); }
+function handleThemeChange() { void renderCharts().then(resizeCharts); }
 
-onMounted(() => { disposed = false; window.addEventListener('resize', resizeCharts); void refresh(); });
-onBeforeUnmount(() => { disposed = true; window.removeEventListener('resize', resizeCharts); progressChart?.dispose(); reserveChart?.dispose(); });
+onMounted(() => {
+  disposed = false;
+  window.addEventListener('resize', resizeCharts);
+  if (typeof window.matchMedia === 'function') {
+    themeMedia = window.matchMedia('(prefers-color-scheme: dark)');
+    themeMedia.addEventListener('change', handleThemeChange);
+  }
+  void refresh();
+});
+onBeforeUnmount(() => {
+  disposed = true;
+  window.removeEventListener('resize', resizeCharts);
+  themeMedia?.removeEventListener('change', handleThemeChange);
+  themeMedia = null;
+  progressChart?.dispose();
+  reserveChart?.dispose();
+});
 </script>
 
 <template>
@@ -271,7 +313,7 @@ onBeforeUnmount(() => { disposed = true; window.removeEventListener('resize', re
 
       <n-alert v-if="progress?.lagging" type="warning" :bordered="false" class="analysis-warning">{{ progress.frameworkName }} 当前低于规则要求；规则为 {{ progress.rule.mode === 'ratio' ? '同期计划达成率' : '年度目标落后百分点' }} {{ formatPercent(progress.rule.thresholdBasisPoints) }}。</n-alert>
 
-      <n-tabs type="line" animated>
+      <n-tabs v-model:value="activeTab" type="line" animated @update:value="handleTabChange">
         <n-tab-pane name="progress" tab="进度与缺口">
           <div class="analysis-two-column">
             <section class="analysis-panel chart-panel">
