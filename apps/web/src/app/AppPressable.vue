@@ -22,7 +22,7 @@ defineEmits<{ click: [event: MouseEvent] }>();
 </template>
 
 <style scoped>
-.app-pressable {
+:where(.app-pressable) {
   appearance: none;
   -webkit-appearance: none;
   margin: 0;
@@ -37,6 +37,6 @@ defineEmits<{ click: [event: MouseEvent] }>();
   text-decoration: none;
   cursor: pointer;
 }
-.app-pressable:disabled { cursor: not-allowed; opacity: .5; }
-.app-pressable:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 2px; }
+:where(.app-pressable):disabled { cursor: not-allowed; opacity: .5; }
+:where(.app-pressable):focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 2px; }
 </style>

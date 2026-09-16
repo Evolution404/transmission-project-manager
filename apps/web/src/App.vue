@@ -229,8 +229,8 @@ onMounted(() => {
               <span>{{ item.label }}</span>
             </app-pressable>
             <div class="sidebar-account">
-              <div class="account-avatar">{{ currentUser.displayName.slice(0, 1) }}</div>
-              <div class="account-copy"><strong>{{ currentUser.displayName }}</strong><small>{{ roleLabels[currentUser.role] }}</small></div>
+              <div class="account-avatar">{{ currentUser.username.slice(0, 1).toUpperCase() }}</div>
+              <div class="account-copy"><strong>{{ currentUser.username }}</strong><small>{{ roleLabels[currentUser.role] }}</small></div>
             </div>
           </div>
         </aside>
@@ -244,8 +244,7 @@ onMounted(() => {
             </div>
             <div class="identity-card">
               <div class="identity-copy">
-                <strong>{{ currentUser.displayName }}</strong>
-                <small>@{{ currentUser.username }}</small>
+                <strong>{{ currentUser.username }}</strong>
               </div>
               <n-button circle quaternary size="small" :loading="loggingOut" aria-label="退出登录" title="退出登录" @click="logout">
                 <template #icon><app-icon name="logout" :size="18" /></template>
@@ -275,8 +274,8 @@ onMounted(() => {
                 </app-pressable>
               </div>
               <div class="mobile-account-row">
-                <div class="account-avatar">{{ currentUser.displayName.slice(0, 1) }}</div>
-                <div><strong>{{ currentUser.displayName }}</strong><small>{{ roleLabels[currentUser.role] }} · @{{ currentUser.username }}</small></div>
+                <div class="account-avatar">{{ currentUser.username.slice(0, 1).toUpperCase() }}</div>
+                <div><strong>{{ currentUser.username }}</strong><small>{{ roleLabels[currentUser.role] }}</small></div>
                 <n-button quaternary size="small" :loading="loggingOut" @click="logout">退出</n-button>
               </div>
             </n-drawer-content>

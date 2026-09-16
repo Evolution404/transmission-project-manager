@@ -157,27 +157,27 @@ aside.app-sider .nav-item {
   display: flex;
   align-items: center;
   gap: 10px;
-  min-height: 52px;
+  min-height: 58px;
   margin-top: 8px;
-  padding: 8px 9px;
-  border-radius: 10px;
+  padding: 9px 10px;
+  border-radius: 12px;
   background: rgba(255,255,255,.035);
 }
 .account-avatar {
   display: grid;
   place-items: center;
-  width: 32px;
-  height: 32px;
+  width: 36px;
+  height: 36px;
   flex: 0 0 auto;
-  border-radius: 9px;
+  border-radius: 10px;
   background: #eaf1ff;
   color: #2459bd;
-  font-size: 13px;
-  font-weight: 750;
+  font-size: 14px;
+  font-weight: 760;
 }
 .account-copy { min-width: 0; }
 .sidebar-account strong, .sidebar-account small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sidebar-account strong { color: #eef2f7; font-size: 13px; font-weight: 650; }
+.sidebar-account strong { color: #eef2f7; font-size: 14px; font-weight: 680; }
 .sidebar-account small { margin-top: 2px; color: var(--ui-sidebar-muted); font-size: 12px; }
 
 .app-stage { min-width: 0; }
@@ -199,11 +199,18 @@ aside.app-sider .nav-item {
 .topbar-product { color: var(--ui-text-tertiary); }
 .topbar-divider { width: 1px; height: 14px; margin: 0 10px; background: var(--ui-border-strong); }
 .topbar-context strong { overflow: hidden; color: var(--ui-text); font-size: 13px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
-.identity-card { display: flex; align-items: center; gap: 10px; flex: 0 0 auto; }
+.identity-card { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; min-width: 0; }
 .identity-copy { text-align: right; }
-.identity-copy strong, .identity-copy small { display: block; }
-.identity-copy strong { color: var(--ui-text); font-size: 13px; font-weight: 650; }
-.identity-copy small { margin-top: 1px; color: var(--ui-text-tertiary); font-size: 12px; }
+.identity-copy strong {
+  display: block;
+  max-width: 180px;
+  overflow: hidden;
+  color: var(--ui-text);
+  font-size: 13px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .content-wrap {
   min-height: calc(100dvh - 58px);

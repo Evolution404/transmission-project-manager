@@ -474,8 +474,10 @@ onMounted(load);
 
 <style scoped>
 .settings-view { max-width: 1320px; }
+.settings-view > * { min-width: 0; }
 .section-count { color: var(--ui-text-tertiary); font-size: 13px; white-space: nowrap; }
 .mobile-member-list { display: none; }
+.members-panel .section-panel-body { min-width: 0; overflow-x: auto; }
 .settings-list { padding: 0; }
 .setting-row {
   display: grid;

@@ -477,6 +477,29 @@ test('compact desktop navigation keeps visible text labels instead of becoming a
   assert.match(compactSource, /\.nav-item[^}]*flex-direction:\s*column/);
 });
 
+test('pressable reset stays low-specificity so business layout styles cannot be silently overridden', () => {
+  const pressable = readFileSync(resolve(root, 'apps/web/src/app/AppPressable.vue'), 'utf8');
+  assert.match(
+    pressable,
+    /:where\(\.app-pressable\)\s*\{/,
+    'AppPressable 的基础 reset 必须使用 :where() 降低优先级，业务 padding/圆角/背景不得再被组件 reset 吃掉',
+  );
+  assert.doesNotMatch(
+    pressable,
+    /\n\.app-pressable\s*\{/,
+    '禁止恢复高优先级 .app-pressable 基础 reset；这会重新制造侧栏/卡片布局覆盖问题',
+  );
+});
+
+test('application shell uses username as the primary identity and role only as secondary metadata', () => {
+  const appSource = readFileSync(resolve(root, 'apps/web/src/App.vue'), 'utf8');
+  const identityCopy = appSource.match(/<div class="identity-copy">([\s\S]*?)<\/div>/)?.[1] ?? '';
+  assert.match(appSource, /account-avatar">\{\{\s*currentUser\.username\.slice\(0,\s*1\)/, '账号头像必须来自 username，而不是显示名/角色');
+  assert.match(appSource, /account-copy"><strong>\{\{\s*currentUser\.username\s*\}\}<\/strong><small>\{\{\s*roleLabels\[currentUser\.role\]\s*\}\}/, '侧栏账号卡必须“用户名主、角色次”');
+  assert.match(identityCopy, /<strong>\{\{\s*currentUser\.username\s*\}\}<\/strong>/, '右上角必须以 username 作为当前身份');
+  assert.doesNotMatch(identityCopy, /roleLabels\[currentUser\.role\]/, '右上角不得再次重复角色');
+});
+
 test('mobile primary navigation keeps the demand to project to task workflow at the first level', () => {
   const appSource = readFileSync(resolve(root, 'apps/web/src/App.vue'), 'utf8');
   const styleSource = readFileSync(resolve(root, 'apps/web/src/styles.css'), 'utf8');

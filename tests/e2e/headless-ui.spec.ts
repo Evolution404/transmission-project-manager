@@ -62,7 +62,7 @@ async function bootstrapThroughUi(page: Page) {
   await page.locator('[data-test="bootstrap-token"] input').fill(bootstrapToken);
   await page.locator('[data-test="login-submit"]').click();
   await expect(page.locator('.app-shell')).toBeVisible();
-  await expect(page.getByText('无头测试管理员').first()).toBeVisible();
+  await expect(page.getByText(username).first()).toBeVisible();
 }
 
 async function loginThroughUi(page: Page) {
@@ -75,8 +75,29 @@ async function loginThroughUi(page: Page) {
 }
 
 async function assertNoHorizontalOverflow(page: Page) {
-  const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1);
-  expect(overflow).toBe(false);
+  const state = await page.evaluate(() => {
+    const viewportWidth = window.innerWidth;
+    const offenders = Array.from(document.querySelectorAll<HTMLElement>('body *'))
+      .map((element) => {
+        const rect = element.getBoundingClientRect();
+        return {
+          tag: element.tagName.toLowerCase(),
+          className: String(element.className),
+          left: Math.round(rect.left * 10) / 10,
+          right: Math.round(rect.right * 10) / 10,
+          width: Math.round(rect.width * 10) / 10,
+        };
+      })
+      .filter((item) => item.right > viewportWidth + 1 || item.left < -1)
+      .slice(0, 8);
+    return {
+      overflow: document.documentElement.scrollWidth > viewportWidth + 1,
+      scrollWidth: document.documentElement.scrollWidth,
+      viewportWidth,
+      offenders,
+    };
+  });
+  expect(state.overflow, `${page.url()} 横向溢出：${JSON.stringify(state)}`).toBe(false);
 }
 
 async function assertVisibleTextFloor(page: Page) {
@@ -158,6 +179,53 @@ async function assertSidebarActiveIndicator(page: Page, title: string, path: str
   expect(indicator.iconLeft - (indicator.left + indicator.width), `${title} 激活竖条与图标间距不足`).toBeGreaterThanOrEqual(8);
 }
 
+async function assertShellIdentity(page: Page, compact = false) {
+  const sidebarAccount = page.locator('.sidebar-account');
+  await expect(sidebarAccount).toBeVisible();
+  if (compact) {
+    await expect(sidebarAccount.locator('.account-copy')).toBeHidden();
+  } else {
+    await expect(sidebarAccount.locator('strong')).toHaveText(username);
+    await expect(sidebarAccount.locator('small')).toHaveText('系统管理员');
+  }
+  await expect(sidebarAccount.locator('.account-avatar')).toHaveText(username.slice(0, 1).toUpperCase());
+
+  const identity = page.locator('.identity-card');
+  await expect(identity.locator('strong')).toHaveText(username);
+  await expect(identity).not.toContainText('系统管理员');
+  await expect(identity.locator('small')).toHaveCount(0);
+  await assertNoSiblingOverlap(page, '.identity-card', ['.identity-copy', '.n-button'], '右上账号区');
+
+  if (!compact) {
+    await expect(page.locator('.app-shell').getByText('系统管理员', { exact: true })).toHaveCount(1);
+  }
+}
+
+async function assertNoSiblingOverlap(page: Page, parentSelector: string, childSelectors: string[], label: string) {
+  const overlaps = await page.locator(parentSelector).evaluateAll((parents, selectors) => {
+    const issues: string[] = [];
+    const intersects = (a: DOMRect, b: DOMRect) => (
+      Math.min(a.right, b.right) - Math.max(a.left, b.left) > 1
+      && Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top) > 1
+    );
+    for (const [parentIndex, parent] of parents.entries()) {
+      const boxes = (selectors as string[]).map((selector) => {
+        const element = parent.querySelector<HTMLElement>(selector);
+        return element ? { selector, rect: element.getBoundingClientRect() } : null;
+      }).filter((entry): entry is { selector: string; rect: DOMRect } => Boolean(entry));
+      for (let left = 0; left < boxes.length; left += 1) {
+        for (let right = left + 1; right < boxes.length; right += 1) {
+          if (intersects(boxes[left].rect, boxes[right].rect)) {
+            issues.push(`#${parentIndex} ${boxes[left].selector} ↔ ${boxes[right].selector}`);
+          }
+        }
+      }
+    }
+    return issues;
+  }, childSelectors);
+  expect(overlaps, `${label} 出现元素重叠：${overlaps.join(' | ')}`).toEqual([]);
+}
+
 async function assertRouteLayout(page: Page, path: string, mobile: boolean) {
   await page.goto(`${baseUrl}${path}`);
   await expect(page.locator('.app-shell')).toBeVisible();
@@ -168,6 +236,7 @@ async function assertRouteLayout(page: Page, path: string, mobile: boolean) {
     await expect(page.locator('.app-sider')).toBeHidden();
     await expect(page.locator('.mobile-bottom-nav')).toBeVisible();
     await assertMobileNavigationTargets(page);
+    await assertNoSiblingOverlap(page, '.mobile-bottom-nav > button', ['.app-icon', 'small'], '手机底部导航');
   } else {
     await expect(page.locator('.app-sider')).toBeVisible();
     await expect(page.locator('.mobile-bottom-nav')).toBeHidden();
@@ -209,6 +278,7 @@ async function validateAuthenticatedUi(browser: Browser, options: {
   height: number;
   colorScheme: 'light' | 'dark';
   mobile: boolean;
+  compact?: boolean;
 }) {
   const context = await browser.newContext({
     viewport: { width: options.width, height: options.height },
@@ -232,6 +302,22 @@ async function validateAuthenticatedUi(browser: Browser, options: {
       await page.goto(`${baseUrl}/`);
       await page.getByRole('button', { name: '更多' }).click();
       await expect(page.getByRole('dialog')).toBeVisible();
+      await assertNoSiblingOverlap(
+        page,
+        '.mobile-more-grid > button',
+        [':scope > .mobile-more-icon', ':scope > span:nth-child(2)', ':scope > .mobile-more-chevron'],
+        `${options.name} 更多菜单`,
+      );
+      const mobileAccount = page.locator('.mobile-account-row');
+      await expect(mobileAccount.locator('.account-avatar')).toHaveText(username.slice(0, 1).toUpperCase());
+      await expect(mobileAccount.locator('strong')).toHaveText(username);
+      await expect(mobileAccount.locator('small')).toHaveText('系统管理员');
+      await assertNoSiblingOverlap(
+        page,
+        '.mobile-account-row',
+        ['.account-avatar', '.mobile-account-copy', '.n-button'],
+        `${options.name} 手机账号区`,
+      );
       const settingsButton = page.locator('.mobile-more-grid > button').filter({ hasText: '设置' });
       await expect(settingsButton).toBeVisible();
       await settingsButton.focus();
@@ -239,6 +325,8 @@ async function validateAuthenticatedUi(browser: Browser, options: {
       await expect(page).toHaveURL(/\/administration$/);
     } else {
       await page.goto(`${baseUrl}/`);
+      await assertShellIdentity(page, options.compact);
+      await assertNoSiblingOverlap(page, '.nav-item', ['.app-icon', 'span'], `${options.name} 侧栏图标/文字`);
       await page.locator('.nav-item[title="基础台账"]').click();
       await expect(page).toHaveURL(/\/master-data$/);
       await assertSidebarActiveIndicator(page, '基础台账', '/master-data');
@@ -297,7 +385,7 @@ test.describe.serial('无头浏览器真实认证与响应式 UI', () => {
 
   test('新浏览器会话通过账号密码重新登录', async ({ page }) => {
     await loginThroughUi(page);
-    await expect(page.locator('.identity-card')).toContainText(`@${username}`);
+    await expect(page.locator('.identity-card')).toContainText(username);
     authenticatedState = await page.context().storageState();
   });
 
@@ -324,6 +412,7 @@ test.describe.serial('无头浏览器真实认证与响应式 UI', () => {
   for (const options of [
     { name: 'desktop-light', width: 1440, height: 900, colorScheme: 'light' as const, mobile: false },
     { name: 'desktop-dark', width: 1440, height: 900, colorScheme: 'dark' as const, mobile: false },
+    { name: 'compact-light', width: 900, height: 900, colorScheme: 'light' as const, mobile: false, compact: true },
     { name: 'mobile-light', width: 390, height: 844, colorScheme: 'light' as const, mobile: true },
     { name: 'mobile-dark', width: 390, height: 844, colorScheme: 'dark' as const, mobile: true },
   ]) {
