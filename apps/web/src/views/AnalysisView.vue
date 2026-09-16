@@ -123,7 +123,7 @@ const milestoneColumns = computed(() => [
   { title: '负责人', key: 'owner', render: (row: MilestoneDueSummary) => row.owner ?? '—' },
   { title: '日期', key: 'specificDate', render: (row: MilestoneDueSummary) => row.dueDate ?? row.dueMonth ?? '待补充' },
   { title: '提醒', key: 'reminderDue', render: (row: MilestoneDueSummary) => row.status === 'completed' ? '已完成' : row.overdue ? '已逾期' : row.reminderDue ? '待处理' : '未到期' },
-  ...(canPlan.value ? [{ title: '操作', key: 'action', render: (row: MilestoneDueSummary) => row.status === 'completed' ? null : h(NButton, { size: 'small', onClick: () => setMilestoneStatus(row, 'completed') }, { default: () => '完成' }) }] : []),
+  ...(canPlan.value ? [{ title: '操作', key: 'action', render: (row: MilestoneDueSummary) => row.status === 'completed' ? null : h(NButton, { size: 'small', loading: saving.value, disabled: saving.value, onClick: () => setMilestoneStatus(row, 'completed') }, { default: () => '完成' }) }] : []),
 ]);
 const alertColumns = [
   { title: '级别', key: 'severity' }, { title: '状态', key: 'state' }, { title: '内容', key: 'message' }, { title: '周期', key: 'periodKey' },
@@ -236,10 +236,13 @@ async function createMilestone() {
   finally { saving.value = false; }
 }
 async function setMilestoneStatus(item: MilestoneDueSummary, status: 'open' | 'completed') {
+  if (saving.value) return;
+  saving.value = true;
   try {
     await apiRequest(`/api/milestones/${item.id}/status`, jsonRequestInit('PUT', { expectedVersion: item.version, status }));
     milestones.value = (await apiRequest<{ items: MilestoneDueSummary[] }>(`/api/milestones/due?asOf=${asOfDate.value}`)).items;
   } catch (cause) { message.error(cause instanceof Error ? cause.message : '事项状态更新失败'); }
+  finally { saving.value = false; }
 }
 
 function chartTheme() {
@@ -289,6 +292,7 @@ async function renderCharts() {
 }
 function resizeCharts() { progressChart?.resize(); reserveChart?.resize(); }
 async function handleTabChange(value: string | number) {
+  if (saving.value) return;
   const nextTab = String(value) as AnalysisTab;
   if (!analysisTabs.has(nextTab)) return;
   activeTab.value = nextTab;
@@ -335,9 +339,9 @@ onBeforeUnmount(() => {
     </header>
 
     <section class="analysis-toolbar">
-      <n-form-item label="统计日期"><n-input v-model:value="asOfDate" data-test="analysis-as-of" @change="changeAsOf" /></n-form-item>
-      <n-form-item label="框架"><n-select :value="selectedFrameworkId" :options="frameworkOptions" data-test="analysis-framework" @update:value="selectFramework" /></n-form-item>
-      <n-button :loading="loading" @click="refresh">刷新数据</n-button>
+      <n-form-item label="统计日期"><n-input v-model:value="asOfDate" data-test="analysis-as-of" :disabled="saving" @change="changeAsOf" /></n-form-item>
+      <n-form-item label="框架"><n-select :value="selectedFrameworkId" :options="frameworkOptions" data-test="analysis-framework" :disabled="saving" @update:value="selectFramework" /></n-form-item>
+      <n-button :loading="loading" :disabled="saving" @click="refresh">刷新数据</n-button>
     </section>
 
     <n-spin :show="loading">
@@ -386,19 +390,19 @@ onBeforeUnmount(() => {
             <div class="configuration-grid">
               <div v-if="canPlan" class="configuration-group">
                 <strong>月计划</strong>
-                <n-form-item label="子项目"><n-select v-model:value="planProjectId" data-test="plan-project" :options="planProjectOptions" /></n-form-item>
-                <div class="configuration-fields"><n-form-item label="月份"><n-select v-model:value="planMonth" data-test="plan-month" :options="monthOptions" /></n-form-item><n-form-item label="目标金额（元）"><n-input v-model:value="planAmountYuan" data-test="plan-amount" /></n-form-item></div>
+                <n-form-item label="子项目"><n-select v-model:value="planProjectId" data-test="plan-project" :disabled="saving" :options="planProjectOptions" /></n-form-item>
+                <div class="configuration-fields"><n-form-item label="月份"><n-select v-model:value="planMonth" data-test="plan-month" :disabled="saving" :options="monthOptions" /></n-form-item><n-form-item label="目标金额（元）"><n-input v-model:value="planAmountYuan" data-test="plan-amount" :disabled="saving" /></n-form-item></div>
                 <n-button type="primary" data-test="save-plan" :loading="saving" @click="savePlan">保存月计划</n-button>
               </div>
               <div v-if="isAdmin && rule" class="configuration-group">
                 <strong>滞后规则</strong>
-                <n-form-item label="模式"><n-select v-model:value="ruleMode" :options="[{ label: '同期计划达成率', value: 'ratio' }, { label: '年度目标落后百分点', value: 'gap' }]" /></n-form-item>
-                <n-form-item label="阈值（%）"><n-input v-model:value="ruleThresholdPercent" data-test="rule-threshold" /></n-form-item>
+                <n-form-item label="模式"><n-select v-model:value="ruleMode" :disabled="saving" :options="[{ label: '同期计划达成率', value: 'ratio' }, { label: '年度目标落后百分点', value: 'gap' }]" /></n-form-item>
+                <n-form-item label="阈值（%）"><n-input v-model:value="ruleThresholdPercent" data-test="rule-threshold" :disabled="saving" /></n-form-item>
                 <n-button data-test="save-rule" :loading="saving" @click="saveRule">更新规则</n-button>
               </div>
               <div v-if="canPlan" class="configuration-group">
                 <strong>月报快照</strong>
-                <n-form-item label="业务月份"><n-input v-model:value="reportMonth" /></n-form-item>
+                <n-form-item label="业务月份"><n-input v-model:value="reportMonth" :disabled="saving" /></n-form-item>
                 <n-button :loading="saving" @click="generateReport">生成新修订</n-button>
                 <div v-if="reports.length" class="report-history"><span v-for="item in reports" :key="item.id">{{ item.businessMonth }} · 修订 {{ item.revision }} · 规则 v{{ item.ruleVersion }}</span></div>
                 <span v-else class="configuration-empty">当前月份尚无报告快照</span>
@@ -425,11 +429,11 @@ onBeforeUnmount(() => {
           <section v-if="canPlan" class="analysis-panel milestone-editor">
             <div class="analysis-panel-heading"><div><h3>新增年度事项</h3><p>日期只有月份时保持月份精度，不补造具体日期</p></div></div>
             <div class="milestone-form-grid">
-              <n-form-item label="事项"><n-input v-model:value="milestoneForm.title" /></n-form-item>
-              <n-form-item label="负责人"><n-input v-model:value="milestoneForm.owner" /></n-form-item>
-              <n-form-item label="日期精度"><n-select v-model:value="milestoneForm.datePrecision" :options="[{ label: '具体日期', value: 'day' }, { label: '仅月份', value: 'month' }, { label: '待补充', value: 'unknown' }]" /></n-form-item>
-              <n-form-item v-if="milestoneForm.datePrecision !== 'unknown'" label="月份"><n-select v-model:value="milestoneForm.month" :options="monthOptions" /></n-form-item>
-              <n-form-item v-if="milestoneForm.datePrecision === 'day'" label="日期"><n-input v-model:value="milestoneForm.specificDate" /></n-form-item>
+              <n-form-item label="事项"><n-input v-model:value="milestoneForm.title" :disabled="saving" /></n-form-item>
+              <n-form-item label="负责人"><n-input v-model:value="milestoneForm.owner" :disabled="saving" /></n-form-item>
+              <n-form-item label="日期精度"><n-select v-model:value="milestoneForm.datePrecision" :disabled="saving" :options="[{ label: '具体日期', value: 'day' }, { label: '仅月份', value: 'month' }, { label: '待补充', value: 'unknown' }]" /></n-form-item>
+              <n-form-item v-if="milestoneForm.datePrecision !== 'unknown'" label="月份"><n-select v-model:value="milestoneForm.month" :disabled="saving" :options="monthOptions" /></n-form-item>
+              <n-form-item v-if="milestoneForm.datePrecision === 'day'" label="日期"><n-input v-model:value="milestoneForm.specificDate" :disabled="saving" /></n-form-item>
               <n-button :loading="saving" @click="createMilestone">新增事项</n-button>
             </div>
           </section>
@@ -440,7 +444,7 @@ onBeforeUnmount(() => {
               <div v-for="item in milestones" :key="item.id" class="analysis-mobile-row milestone-mobile-row">
                 <div class="mobile-row-head"><strong>{{ item.title }}</strong><n-tag size="small" :bordered="false" :type="item.status === 'completed' ? 'success' : item.overdue ? 'error' : item.reminderDue ? 'warning' : 'default'">{{ milestoneStateLabel(item) }}</n-tag></div>
                 <div class="mobile-facts"><span>{{ item.owner || '未指定负责人' }}</span><span>{{ item.dueDate ?? item.dueMonth ?? '日期待补充' }}</span></div>
-                <n-button v-if="canPlan && item.status !== 'completed'" size="small" secondary @click="setMilestoneStatus(item, 'completed')">标记完成</n-button>
+                <n-button v-if="canPlan && item.status !== 'completed'" size="small" secondary :loading="saving" :disabled="saving" @click="setMilestoneStatus(item, 'completed')">标记完成</n-button>
               </div>
             </div>
             <n-empty v-else description="暂无年度事项" />

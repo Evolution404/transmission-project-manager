@@ -422,6 +422,32 @@ test('primary write overlays cannot be dismissed while a mutation is in flight',
   assert.ok((masterData.match(/v-bind="writeModalGuardProps"/g) ?? []).length >= 14, '基础台账主要写弹窗必须统一应用关闭门禁');
 });
 
+test('inline finance and analysis editors lock business context during mutations', () => {
+  const finance = readFileSync(resolve(root, 'apps/web/src/views/FinanceView.vue'), 'utf8');
+  assert.match(finance, /data-test="finance-framework"[^>]*:disabled="saving"/, '资金写请求期间不得切换框架');
+  assert.match(finance, /data-test="budget-project"[^>]*:disabled="saving"/, '预算写请求期间不得切换子项目');
+  assert.match(finance, /data-test="entry-project"[^>]*:disabled="saving"/, '流水写请求期间不得切换子项目');
+  assert.match(finance, /data-test="open-framework-form"[^>]*:disabled="saving"/, '框架保存期间不得收起/切换创建表单');
+  assert.match(finance, /data-test="open-entry-form"[^>]*:disabled="saving"/, '流水保存期间不得收起登记表单');
+
+  const analysis = readFileSync(resolve(root, 'apps/web/src/views/AnalysisView.vue'), 'utf8');
+  assert.match(analysis, /data-test="analysis-as-of"[^>]*:disabled="saving"/, '分析写请求期间不得切换统计日期');
+  assert.match(analysis, /data-test="analysis-framework"[^>]*:disabled="saving"/, '分析写请求期间不得切换框架');
+  assert.match(analysis, /data-test="plan-project"[^>]*:disabled="saving"/, '月计划保存期间不得切换项目');
+  assert.match(analysis, /data-test="plan-amount"[^>]*:disabled="saving"/, '月计划保存期间不得改写当前提交金额');
+  assert.match(analysis, /async function setMilestoneStatus[^]*?if \(saving\.value\) return;[^]*?saving\.value = true;[^]*?finally \{ saving\.value = false; \}/, '年度事项状态更新必须进入统一写锁');
+  assert.match(analysis, /loading: saving\.value[^}]*disabled: saving\.value/, '桌面年度事项操作必须显示进行中并阻止重复提交');
+  assert.match(analysis, /:loading="saving"[^>]*:disabled="saving"[^>]*@click="setMilestoneStatus/, '手机年度事项操作必须阻止重复提交');
+
+  const demands = readFileSync(resolve(root, 'apps/web/src/views/DemandsView.vue'), 'utf8');
+  assert.match(demands, /const mappingBusy = computed\(/, '需求导入应统一定义映射上下文忙状态');
+  assert.match(demands, /if \(workspaceMutationBusy\.value\) return;/, '需求写入期间不得切换主工作区 Tab');
+  assert.match(demands, /data-test="mapping-template"[^>]*:disabled="mappingBusy"/, '模板保存或导入期间不得切换映射模板');
+  assert.match(demands, /mapping-source-\$\{field\.key\}`[^>]*:disabled="mappingBusy"/, '模板保存或导入期间不得修改字段映射');
+  assert.match(demands, /data-test="add-material"[^>]*:disabled="savingMaterial"/, '标准物资保存期间不得收起编辑区');
+  assert.match(demands, /data-test="material-name"[^>]*:disabled="savingMaterial"/, '标准物资保存期间不得改写名称');
+});
+
 test('mobile UI keeps usable navigation and dashboard density', () => {
   const appSource = readFileSync(resolve(root, 'apps/web/src/App.vue'), 'utf8');
   const dashboardSource = readFileSync(resolve(root, 'apps/web/src/views/DashboardView.vue'), 'utf8');

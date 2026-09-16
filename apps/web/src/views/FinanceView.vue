@@ -85,6 +85,7 @@ function returnToProject() {
 }
 
 function setActiveTab(value: string | number) {
+  if (saving.value) return;
   const nextTab = String(value) as FinanceWorkspaceTab;
   if (!financeWorkspaceTabs.has(nextTab)) return;
   activeTab.value = nextTab;
@@ -395,7 +396,7 @@ onMounted(loadInitial);
 
       <section class="finance-overview">
         <div class="finance-context">
-          <n-select data-test="finance-framework" :value="selectedFrameworkId" :options="frameworkOptions" placeholder="选择框架" @update:value="selectFramework" />
+          <n-select data-test="finance-framework" :disabled="saving" :value="selectedFrameworkId" :options="frameworkOptions" placeholder="选择框架" @update:value="selectFramework" />
           <span class="finance-context-note">预算与发生分账，不自动互转</span>
         </div>
         <div v-if="summary" class="metrics">
@@ -421,7 +422,7 @@ onMounted(loadInitial);
           <section class="workspace-panel">
             <header class="workspace-panel-header">
               <div><h3>框架</h3><p>先选择当前业务框架，再查看协议和额度使用情况。</p></div>
-              <n-button v-if="canManageStructure" data-test="open-framework-form" secondary @click="showFrameworkForm = !showFrameworkForm">
+              <n-button v-if="canManageStructure" data-test="open-framework-form" :disabled="saving" secondary @click="showFrameworkForm = !showFrameworkForm">
                 {{ showFrameworkForm ? '收起' : '新建框架' }}
               </n-button>
             </header>
@@ -442,12 +443,12 @@ onMounted(loadInitial);
               <n-empty v-else description="暂无框架。" />
             </div>
             <n-form v-if="canManageStructure && showFrameworkForm" class="form-grid edit-surface" label-placement="top">
-              <n-form-item label="框架编号"><n-input v-model:value="frameworkForm.code" data-test="framework-code" /></n-form-item>
-              <n-form-item label="框架名称"><n-input v-model:value="frameworkForm.name" data-test="framework-name" /></n-form-item>
-              <n-form-item label="框架总额（元）"><n-input v-model:value="frameworkForm.totalYuan" data-test="framework-total" /></n-form-item>
-              <n-form-item label="年度目标（元，可空）"><n-input v-model:value="frameworkForm.annualTargetYuan" /></n-form-item>
-              <n-form-item label="开始日期"><n-input v-model:value="frameworkForm.startDate" /></n-form-item>
-              <n-form-item label="结束日期"><n-input v-model:value="frameworkForm.endDate" /></n-form-item>
+              <n-form-item label="框架编号"><n-input v-model:value="frameworkForm.code" data-test="framework-code" :disabled="saving" /></n-form-item>
+              <n-form-item label="框架名称"><n-input v-model:value="frameworkForm.name" data-test="framework-name" :disabled="saving" /></n-form-item>
+              <n-form-item label="框架总额（元）"><n-input v-model:value="frameworkForm.totalYuan" data-test="framework-total" :disabled="saving" /></n-form-item>
+              <n-form-item label="年度目标（元，可空）"><n-input v-model:value="frameworkForm.annualTargetYuan" :disabled="saving" /></n-form-item>
+              <n-form-item label="开始日期"><n-input v-model:value="frameworkForm.startDate" :disabled="saving" /></n-form-item>
+              <n-form-item label="结束日期"><n-input v-model:value="frameworkForm.endDate" :disabled="saving" /></n-form-item>
               <n-form-item><n-button data-test="create-framework" type="primary" :loading="saving" @click="createFramework">新增框架</n-button></n-form-item>
             </n-form>
           </section>
@@ -455,7 +456,7 @@ onMounted(loadInitial);
           <section v-if="selectedFramework" class="workspace-panel detail-panel">
             <header class="workspace-panel-header">
               <div><h3>执行协议</h3><p>{{ selectedFramework.name }} 下的预支额度和有效期。</p></div>
-              <n-button v-if="canManageStructure" secondary @click="showAgreementForm = !showAgreementForm">
+              <n-button v-if="canManageStructure" :disabled="saving" secondary @click="showAgreementForm = !showAgreementForm">
                 {{ showAgreementForm ? '收起' : '新增协议' }}
               </n-button>
             </header>
@@ -476,12 +477,12 @@ onMounted(loadInitial);
               <n-empty v-else description="当前框架暂无执行协议。" />
             </div>
             <n-form v-if="canManageStructure && showAgreementForm" class="form-grid edit-surface" label-placement="top">
-              <n-form-item label="协议编号"><n-input v-model:value="agreementForm.code" /></n-form-item>
-              <n-form-item label="协议名称"><n-input v-model:value="agreementForm.name" /></n-form-item>
-              <n-form-item label="协议额度（元）"><n-input v-model:value="agreementForm.amountYuan" /></n-form-item>
-              <n-form-item label="有效期开始"><n-input v-model:value="agreementForm.validFrom" /></n-form-item>
-              <n-form-item label="有效期结束"><n-input v-model:value="agreementForm.validTo" /></n-form-item>
-              <n-form-item label="状态"><n-select v-model:value="agreementForm.status" :options="[{ label: '有效', value: 'active' }, { label: '暂停', value: 'paused' }, { label: '到期', value: 'expired' }]" /></n-form-item>
+              <n-form-item label="协议编号"><n-input v-model:value="agreementForm.code" :disabled="saving" /></n-form-item>
+              <n-form-item label="协议名称"><n-input v-model:value="agreementForm.name" :disabled="saving" /></n-form-item>
+              <n-form-item label="协议额度（元）"><n-input v-model:value="agreementForm.amountYuan" :disabled="saving" /></n-form-item>
+              <n-form-item label="有效期开始"><n-input v-model:value="agreementForm.validFrom" :disabled="saving" /></n-form-item>
+              <n-form-item label="有效期结束"><n-input v-model:value="agreementForm.validTo" :disabled="saving" /></n-form-item>
+              <n-form-item label="状态"><n-select v-model:value="agreementForm.status" :disabled="saving" :options="[{ label: '有效', value: 'active' }, { label: '暂停', value: 'paused' }, { label: '到期', value: 'expired' }]" /></n-form-item>
               <n-form-item><n-button type="primary" :loading="saving" @click="createAgreement">新增执行协议</n-button></n-form-item>
             </n-form>
           </section>
@@ -494,24 +495,24 @@ onMounted(loadInitial);
             </header>
             <div v-if="canManageStructure" class="binding-toolbar">
               <span>项目框架归属</span>
-              <n-select v-model:value="bindingProjectId" :options="projectOptions" placeholder="选择项目" />
-              <n-select v-model:value="bindingFrameworkId" :options="frameworkOptions" placeholder="选择框架" />
+              <n-select v-model:value="bindingProjectId" :disabled="saving" :options="projectOptions" placeholder="选择项目" />
+              <n-select v-model:value="bindingFrameworkId" :disabled="saving" :options="frameworkOptions" placeholder="选择框架" />
               <n-button :loading="saving" @click="bindProject">保存归属</n-button>
             </div>
             <div class="workspace-panel-body budget-body">
               <n-alert type="info" :bordered="false">确认预算时协议必须与项目属于同一框架并在有效期内；预算确认占用不会自动生成预算发生。</n-alert>
               <n-form class="budget-form" label-placement="top">
-              <n-form-item label="子项目"><n-select data-test="budget-project" :value="selectedBudgetProjectId" :options="currentFrameworkProjectOptions" @update:value="loadBudgetProject" /></n-form-item>
-              <n-form-item label="预算总额（元）"><n-input v-model:value="budgetTotalYuan" data-test="budget-total" :disabled="!canFinanceWrite" /></n-form-item>
-              <n-form-item label="说明"><n-input v-model:value="budgetNote" :disabled="!canFinanceWrite" /></n-form-item>
+              <n-form-item label="子项目"><n-select data-test="budget-project" :disabled="saving" :value="selectedBudgetProjectId" :options="currentFrameworkProjectOptions" @update:value="loadBudgetProject" /></n-form-item>
+              <n-form-item label="预算总额（元）"><n-input v-model:value="budgetTotalYuan" data-test="budget-total" :disabled="!canFinanceWrite || saving" /></n-form-item>
+              <n-form-item label="说明"><n-input v-model:value="budgetNote" :disabled="!canFinanceWrite || saving" /></n-form-item>
               </n-form>
               <div v-for="(split, index) in budgetSplits" :key="index" class="split-row">
-                <n-select :data-test="`budget-agreement-${index}`" v-model:value="split.agreementId" :options="agreementOptions" :disabled="!canFinanceWrite" placeholder="执行协议" />
-                <n-input :data-test="`budget-allocation-${index}`" v-model:value="split.amountYuan" :disabled="!canFinanceWrite" placeholder="分配金额（元）" />
-                <n-button v-if="canFinanceWrite" @click="removeBudgetSplit(index)">删除</n-button>
+                <n-select :data-test="`budget-agreement-${index}`" v-model:value="split.agreementId" :options="agreementOptions" :disabled="!canFinanceWrite || saving" placeholder="执行协议" />
+                <n-input :data-test="`budget-allocation-${index}`" v-model:value="split.amountYuan" :disabled="!canFinanceWrite || saving" placeholder="分配金额（元）" />
+                <n-button v-if="canFinanceWrite" :disabled="saving" @click="removeBudgetSplit(index)">删除</n-button>
               </div>
               <n-space v-if="canFinanceWrite" class="actions">
-                <n-button data-test="add-budget-split" @click="addBudgetSplit">增加协议分配</n-button>
+                <n-button data-test="add-budget-split" :disabled="saving" @click="addBudgetSplit">增加协议分配</n-button>
                 <n-button data-test="save-budget" type="primary" :loading="saving" @click="saveBudget">保存预算草稿</n-button>
                 <n-button v-if="currentBudget" type="success" :loading="saving" @click="confirmBudget">确认预算版本</n-button>
               </n-space>
@@ -524,7 +525,7 @@ onMounted(loadInitial);
           <section class="workspace-panel">
             <header class="workspace-panel-header">
               <div><h3>当前框架流水</h3><p>预算发生和实际发生分账记录；列表按服务端游标完整翻页。</p></div>
-              <n-button v-if="canFinanceWrite" data-test="open-entry-form" type="primary" @click="showEntryForm = !showEntryForm">
+              <n-button v-if="canFinanceWrite" data-test="open-entry-form" :disabled="saving" type="primary" @click="showEntryForm = !showEntryForm">
                 {{ showEntryForm ? '收起登记' : '登记流水' }}
               </n-button>
             </header>
@@ -553,19 +554,19 @@ onMounted(loadInitial);
             <div class="workspace-panel-body">
             <n-alert type="warning" :bordered="false">登记流水必须关联同框架、业务日期有效的执行协议。预算发生和实际发生是不同账目，不能相互代替。</n-alert>
             <n-form class="entry-form" label-placement="top">
-              <n-form-item label="子项目"><n-select data-test="entry-project" v-model:value="entryProjectId" :options="currentFrameworkProjectOptions" /></n-form-item>
-              <n-form-item label="流水类型"><n-select data-test="entry-type" v-model:value="entryType" :options="[{ label: '预算发生', value: 'budget_occurrence' }, { label: '实际发生', value: 'actual_cost' }]" /></n-form-item>
-              <n-form-item label="金额（元）"><n-input data-test="entry-amount" v-model:value="entryAmountYuan" /></n-form-item>
-              <n-form-item label="业务日期"><n-input data-test="entry-date" v-model:value="entryBusinessDate" /></n-form-item>
-              <n-form-item label="说明"><n-input v-model:value="entryNote" /></n-form-item>
+              <n-form-item label="子项目"><n-select data-test="entry-project" :disabled="saving" v-model:value="entryProjectId" :options="currentFrameworkProjectOptions" /></n-form-item>
+              <n-form-item label="流水类型"><n-select data-test="entry-type" :disabled="saving" v-model:value="entryType" :options="[{ label: '预算发生', value: 'budget_occurrence' }, { label: '实际发生', value: 'actual_cost' }]" /></n-form-item>
+              <n-form-item label="金额（元）"><n-input data-test="entry-amount" :disabled="saving" v-model:value="entryAmountYuan" /></n-form-item>
+              <n-form-item label="业务日期"><n-input data-test="entry-date" :disabled="saving" v-model:value="entryBusinessDate" /></n-form-item>
+              <n-form-item label="说明"><n-input v-model:value="entryNote" :disabled="saving" /></n-form-item>
             </n-form>
             <div v-for="(split, index) in entrySplits" :key="index" class="split-row">
-              <n-select :data-test="`entry-agreement-${index}`" v-model:value="split.agreementId" :options="agreementOptions" placeholder="执行协议" />
-              <n-input :data-test="`entry-allocation-${index}`" v-model:value="split.amountYuan" placeholder="分配金额（元）" />
-              <n-button @click="removeEntrySplit(index)">删除</n-button>
+              <n-select :data-test="`entry-agreement-${index}`" v-model:value="split.agreementId" :disabled="saving" :options="agreementOptions" placeholder="执行协议" />
+              <n-input :data-test="`entry-allocation-${index}`" v-model:value="split.amountYuan" :disabled="saving" placeholder="分配金额（元）" />
+              <n-button :disabled="saving" @click="removeEntrySplit(index)">删除</n-button>
             </div>
             <n-space v-if="canFinanceWrite" class="actions">
-              <n-button @click="addEntrySplit">增加协议分配</n-button>
+              <n-button :disabled="saving" @click="addEntrySplit">增加协议分配</n-button>
               <n-button data-test="post-entry" type="primary" :loading="saving" @click="postEntry">登记流水</n-button>
             </n-space>
             </div>

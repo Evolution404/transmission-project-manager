@@ -95,8 +95,11 @@ const manualDemandForm = ref({
   startTowerPositionId: '', endTowerPositionId: '', year: '', category: '', owner: '',
 });
 const manualDemandMaterials = ref<Array<{ id: string; model: string; quantity: string; unit: string }>>([]);
+const mappingBusy = computed(() => savingTemplate.value || importing.value);
+const workspaceMutationBusy = computed(() => mappingBusy.value || savingMaterial.value);
 
 function setActiveTab(value: string | number) {
+  if (workspaceMutationBusy.value) return;
   const nextTab = String(value) as DemandWorkspaceTab;
   if (!demandWorkspaceTabs.has(nextTab)) return;
   activeTab.value = nextTab;
@@ -629,20 +632,24 @@ onMounted(loadInitial);
                 <div class="import-step-body">
                   <div class="template-row">
                     <n-select
+                      data-test="mapping-template"
                       :value="selectedTemplateId"
                       :options="templateOptions"
+                      :disabled="mappingBusy"
                       clearable
                       placeholder="选择已保存的映射模板"
                       @update:value="applyTemplate"
                     />
-                    <n-input v-model:value="templateName" placeholder="新模板名称" />
-                    <n-button :loading="savingTemplate" @click="saveTemplate">保存当前映射</n-button>
+                    <n-input v-model:value="templateName" :disabled="mappingBusy" placeholder="新模板名称" />
+                    <n-button :loading="savingTemplate" :disabled="importing" @click="saveTemplate">保存当前映射</n-button>
                   </div>
                   <div class="mapping-grid">
                     <n-form-item v-for="field in fieldDefinitions" :key="field.key" :label="`${field.label}${field.required ? ' *' : ''}`">
                       <n-select
+                        :data-test="`mapping-source-${field.key}`"
                         :value="mapping[field.key] ?? null"
                         :options="headerOptions"
+                        :disabled="mappingBusy"
                         clearable
                         :placeholder="field.required ? '请选择源列' : '可选'"
                         @update:value="(value: string | null) => { if (value) mapping[field.key] = value; else delete mapping[field.key]; }"
@@ -661,7 +668,7 @@ onMounted(loadInitial);
                   <n-alert type="warning" :bordered="false" class="section-note">
                     浏览器映射不是最终真相：服务端会重新校验必填字段、数量精度和标准物资匹配。阻断错误不会进入正式需求池；未知物资只明确警告，不会当作零价或自动匹配。
                   </n-alert>
-                  <n-button data-test="start-import" type="primary" :disabled="!importReady" :loading="importing" @click="startImport">
+                  <n-button data-test="start-import" type="primary" :disabled="!importReady || savingTemplate" :loading="importing" @click="startImport">
                     开始导入并发布
                   </n-button>
                   <div v-if="importProgress" class="progress-block">
@@ -678,16 +685,16 @@ onMounted(loadInitial);
           <section class="dictionary-panel">
             <header class="dictionary-panel-header">
               <div><h3>标准物资</h3><p>按“型号 + 单位”区分；未知物资只标记待核实，不自动猜测匹配。</p></div>
-              <n-button v-if="canWrite" data-test="add-material" type="primary" @click="showMaterialForm = !showMaterialForm">
+              <n-button v-if="canWrite" data-test="add-material" :disabled="savingMaterial" type="primary" @click="showMaterialForm = !showMaterialForm">
                 {{ showMaterialForm ? '收起' : '新增物资' }}
               </n-button>
             </header>
             <div v-if="showMaterialForm && canWrite" class="dictionary-edit">
               <n-form class="material-form" label-placement="top">
-                <n-form-item label="编码（可选）"><n-input v-model:value="materialForm.code" /></n-form-item>
-                <n-form-item label="名称"><n-input v-model:value="materialForm.name" data-test="material-name" /></n-form-item>
-                <n-form-item label="型号"><n-input v-model:value="materialForm.model" data-test="material-model" /></n-form-item>
-                <n-form-item label="单位"><n-input v-model:value="materialForm.unit" data-test="material-unit" /></n-form-item>
+                <n-form-item label="编码（可选）"><n-input v-model:value="materialForm.code" :disabled="savingMaterial" /></n-form-item>
+                <n-form-item label="名称"><n-input v-model:value="materialForm.name" data-test="material-name" :disabled="savingMaterial" /></n-form-item>
+                <n-form-item label="型号"><n-input v-model:value="materialForm.model" data-test="material-model" :disabled="savingMaterial" /></n-form-item>
+                <n-form-item label="单位"><n-input v-model:value="materialForm.unit" data-test="material-unit" :disabled="savingMaterial" /></n-form-item>
                 <n-form-item><n-button data-test="save-material" type="primary" :loading="savingMaterial" @click="addMaterial">保存物资</n-button></n-form-item>
               </n-form>
             </div>
