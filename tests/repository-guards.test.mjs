@@ -372,6 +372,25 @@ test('web business UI cannot render browser-native controls directly', () => {
   assert.match(filePicker, /clip-path:\s*inset\(50%\)/);
 });
 
+test('task progress drawers cannot close while a save request is in flight', () => {
+  for (const relative of [
+    'apps/web/src/features/tasks/TaskImplementationDrawer.vue',
+    'apps/web/src/features/tasks/TaskSettlementDrawer.vue',
+  ]) {
+    const source = readFileSync(resolve(root, relative), 'utf8');
+    assert.match(source, /function setShow\(value: boolean\)/, `${relative} 必须统一守卫抽屉 show 变化`);
+    assert.match(source, /:mask-closable="!saving"/, `${relative} 保存期间不得通过遮罩关闭`);
+    assert.match(source, /:closable="!saving"/, `${relative} 保存期间不得通过右上角关闭`);
+    assert.match(source, /@update:show="setShow"/, `${relative} 不得把 update:show 无条件透传给父组件`);
+  }
+
+  const taskDetail = readFileSync(resolve(root, 'apps/web/src/views/TaskDetailView.vue'), 'utf8');
+  assert.match(taskDetail, /function setSupplyShow\(value: boolean\)/, '供应抽屉必须统一守卫 show 变化');
+  assert.match(taskDetail, /:mask-closable="!savingSupply"/, '供应保存期间不得通过遮罩关闭');
+  assert.match(taskDetail, /:closable="!savingSupply"/, '供应保存期间不得通过右上角关闭');
+  assert.match(taskDetail, /@update:show="setSupplyShow"/, '供应抽屉不得把 update:show 直接写入状态');
+});
+
 test('mobile UI keeps usable navigation and dashboard density', () => {
   const appSource = readFileSync(resolve(root, 'apps/web/src/App.vue'), 'utf8');
   const dashboardSource = readFileSync(resolve(root, 'apps/web/src/views/DashboardView.vue'), 'utf8');

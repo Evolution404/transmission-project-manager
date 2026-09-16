@@ -149,6 +149,10 @@ function closeSupply() {
   supplyOpen.value = false;
 }
 
+function setSupplyShow(value: boolean) {
+  if (!savingSupply.value || value) supplyOpen.value = value;
+}
+
 watch([supplyStage, supplyQuantity, supplyDate, supplyNote], () => {
   supplyError.value = '';
   supplyConflict.value = false;
@@ -302,7 +306,7 @@ onMounted(load);
       </template>
     </n-spin>
 
-    <n-drawer v-model:show="supplyOpen" placement="right" :width="520" :mask-closable="!savingSupply" class="supply-drawer" @mask-click="closeSupply">
+    <n-drawer :show="supplyOpen" placement="right" :width="520" :mask-closable="!savingSupply" class="supply-drawer" @update:show="setSupplyShow" @mask-click="closeSupply">
       <n-drawer-content title="登记供应进度" :closable="!savingSupply">
         <template v-if="selectedMaterial && selectedSupply">
           <div class="supply-context">

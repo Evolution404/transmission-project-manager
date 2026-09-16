@@ -76,7 +76,7 @@ async function save() {
   } catch (cause) {
     if (cause instanceof ApiRequestError && cause.status === 409) {
       conflict.value = true;
-      error.value = '项目已被其他人修改。当前选择已保留，请关闭后读取最新项目，再重新确认。';
+      error.value = '项目已被其他人修改。当前选择已保留，请读取最新项目数据后再重新确认。';
     } else {
       error.value = cause instanceof Error ? cause.message : '保存来源需求失败';
     }

@@ -66,6 +66,10 @@ function close() {
   if (!saving.value) emit('update:show', false);
 }
 
+function setShow(value: boolean) {
+  if (!saving.value || value) emit('update:show', value);
+}
+
 async function save() {
   const completedQuantityScaled = parseScaled(completedQuantity.value);
   if (completedQuantityScaled === null || completedQuantityScaled <= 0) {
@@ -129,8 +133,8 @@ async function save() {
 </script>
 
 <template>
-  <n-drawer :show="show" placement="right" :width="560" class="task-progress-drawer" @update:show="emit('update:show', $event)" @mask-click="close">
-    <n-drawer-content title="记录实施" closable>
+  <n-drawer :show="show" placement="right" :width="560" :mask-closable="!saving" class="task-progress-drawer" @update:show="setShow" @mask-click="close">
+    <n-drawer-content title="记录实施" :closable="!saving">
       <div class="progress-context">
         <strong>{{ task.name }}</strong>
         <span>实施独立于供应和结算，不以到货状态作为额外门槛。</span>

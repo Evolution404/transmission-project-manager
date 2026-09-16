@@ -75,6 +75,10 @@ function close() {
   if (!saving.value) emit('update:show', false);
 }
 
+function setShow(value: boolean) {
+  if (!saving.value || value) emit('update:show', value);
+}
+
 async function save() {
   const amountFen = parseMoneyFen(amount.value);
   const coverageQuantityScaled = parseScaled(coverageQuantity.value);
@@ -131,8 +135,8 @@ async function save() {
 </script>
 
 <template>
-  <n-drawer :show="show" placement="right" :width="560" class="task-progress-drawer" @update:show="emit('update:show', $event)" @mask-click="close">
-    <n-drawer-content title="登记结算" closable>
+  <n-drawer :show="show" placement="right" :width="560" :mask-closable="!saving" class="task-progress-drawer" @update:show="setShow" @mask-click="close">
+    <n-drawer-content title="登记结算" :closable="!saving">
       <div class="progress-context">
         <strong>{{ task.name }}</strong>
         <span>结算与实施独立，允许在实施前发生；“最终结算”仅用于明确关闭全部任务范围。</span>
