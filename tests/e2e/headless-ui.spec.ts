@@ -134,6 +134,22 @@ async function assertMobileNavigationTargets(page: Page) {
   expect(Math.min(...heights)).toBeGreaterThanOrEqual(44);
 }
 
+async function assertSidebarActiveIndicator(page: Page, title: string, path: string) {
+  await page.goto(`${baseUrl}${path}`);
+  const item = page.locator(`.nav-item[title="${title}"]`);
+  await expect(item).toHaveClass(/active/);
+  const indicator = await item.evaluate((element) => {
+    const style = getComputedStyle(element, '::before');
+    const itemRect = element.getBoundingClientRect();
+    const left = Number.parseFloat(style.left);
+    const width = Number.parseFloat(style.width);
+    return { content: style.content, left, width, itemWidth: itemRect.width };
+  });
+  expect(indicator.content).not.toBe('none');
+  expect(indicator.left).toBeGreaterThanOrEqual(0);
+  expect(indicator.left + indicator.width).toBeLessThanOrEqual(indicator.itemWidth);
+}
+
 async function assertRouteLayout(page: Page, path: string, mobile: boolean) {
   await page.goto(`${baseUrl}${path}`);
   await expect(page.locator('.app-shell')).toBeVisible();
@@ -217,6 +233,8 @@ async function validateAuthenticatedUi(browser: Browser, options: {
       await page.goto(`${baseUrl}/`);
       await page.locator('.nav-item[title="基础台账"]').click();
       await expect(page).toHaveURL(/\/master-data$/);
+      await assertSidebarActiveIndicator(page, '基础台账', '/master-data');
+      await assertSidebarActiveIndicator(page, '设置', '/administration');
     }
   } finally {
     await context.close();

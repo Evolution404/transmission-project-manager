@@ -140,13 +140,15 @@ a { color: inherit; }
 }
 .nav-item.active::before {
   position: absolute;
-  left: -7px;
+  top: 50%;
+  left: 3px;
   width: 3px;
   height: 26px;
   border-radius: 999px;
   background: #79a8ff;
   box-shadow: 0 0 10px rgba(121,168,255,.28);
   content: '';
+  transform: translateY(-50%);
 }
 .nav-item.active .app-icon { color: #a9c5ff; }
 .nav-bottom { display: grid; gap: 3px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,.07); }
@@ -305,7 +307,6 @@ code { font-family: "SFMono-Regular", Consolas, monospace; font-size: 12px; }
     text-align: center;
   }
   .nav-item > span { width: 100%; font-size: 13px; line-height: 1.15; }
-  .nav-item.active::before { left: -4px; }
   .sidebar-account { justify-content: center; padding-inline: 0; background: transparent; }
   .content-wrap { padding: 26px 24px 46px; }
 }
