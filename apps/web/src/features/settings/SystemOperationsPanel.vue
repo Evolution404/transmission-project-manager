@@ -166,7 +166,7 @@ onMounted(load);
               <div v-for="item in outbox" :key="item.id" class="record-row record-row-wide">
                 <span>{{ item.recipient }}</span>
                 <span class="record-meta">尝试 {{ item.attemptCount }} 次</span>
-                <n-tag size="small" :bordered="false" :type="statusType(item.status)">{{ deliveryStateLabels[item.status] ?? item.status }}</n-tag>
+                <n-tag size="small" :bordered="false" :type="statusType(item.status)">{{ deliveryStateLabels[item.status] ?? '未知状态' }}</n-tag>
               </div>
             </div>
             <n-empty v-else description="暂无通知发送记录" />
@@ -180,7 +180,7 @@ onMounted(load);
             <div v-if="backups.length" class="backup-list">
               <div v-for="item in backups" :key="item.id" class="backup-row">
                 <div class="backup-main"><strong>{{ item.backupDate }}</strong><small>{{ item.kind === 'monthly' ? '月度保留' : '日常备份' }} · {{ item.chunkCount }} 个分片</small></div>
-                <n-tag size="small" :bordered="false" :type="statusType(item.status)">{{ backupStateLabels[item.status] ?? item.status }}</n-tag>
+                <n-tag size="small" :bordered="false" :type="statusType(item.status)">{{ backupStateLabels[item.status] ?? '未知状态' }}</n-tag>
                 <div class="backup-actions">
                   <n-button v-if="item.status !== 'completed'" size="small" @click="stepBackup(item)">继续执行</n-button>
                   <n-button v-else size="small" :type="item.verifiedAt ? 'success' : 'default'" secondary @click="verifyBackup(item)">{{ item.verifiedAt ? '重新校验' : '校验完整性' }}</n-button>

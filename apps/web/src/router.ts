@@ -13,7 +13,7 @@ export const router = createRouter({
     { path: '/reserves', redirect: '/projects' },
     { path: '/tasks', name: 'tasks', component: () => import('./views/TaskQueueView.vue'), meta: { title: '执行任务' } },
     { path: '/delivery', redirect: '/tasks' },
-    { path: '/finance', name: 'finance', component: () => import('./views/FinanceView.vue'), meta: { title: '框架费用' } },
+    { path: '/finance', name: 'finance', component: () => import('./views/FinanceView.vue'), meta: { title: '资金管理' } },
     { path: '/analysis', name: 'analysis', component: () => import('./views/AnalysisView.vue'), meta: { title: '业务分析' } },
     { path: '/master-data', name: 'master-data', component: () => import('./views/MasterDataView.vue'), meta: { title: '基础台账' } },
     {

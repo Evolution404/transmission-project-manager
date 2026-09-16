@@ -61,7 +61,6 @@ const entryNote = ref('');
 const entrySplits = ref<Array<{ agreementId: string | null; amountYuan: string }>>([{ agreementId: null, amountYuan: '' }]);
 const bindingProjectId = ref<string | null>(null);
 const bindingFrameworkId = ref<string | null>(null);
-const metric = ref<'budget' | 'occurrence' | 'actual'>('occurrence');
 const saving = ref(false);
 const showFrameworkForm = ref(false);
 const showAgreementForm = ref(false);
@@ -85,6 +84,19 @@ function formatMoney(value: number) {
 }
 function formatPercent(value: number | null) {
   return value === null ? '未配置' : `${(value / 100).toFixed(2)}%`;
+}
+function agreementStatusLabel(status: AgreementSummary['status']) {
+  if (status === 'active') return '有效';
+  if (status === 'paused') return '暂停';
+  return '到期';
+}
+function agreementStatusType(status: AgreementSummary['status']) {
+  if (status === 'active') return 'success' as const;
+  if (status === 'paused') return 'warning' as const;
+  return 'default' as const;
+}
+function entryTypeLabel(type: FinancialEntryType) {
+  return type === 'budget_occurrence' ? '预算发生' : '实际发生';
 }
 
 const frameworkOptions = computed(() => frameworks.value.map((item) => ({ label: `${item.code} · ${item.name}`, value: item.id })));
@@ -296,11 +308,11 @@ const frameworkColumns = [
 const agreementColumns = [
   { title: '协议编号', key: 'code', width: 130 }, { title: '名称', key: 'name', minWidth: 160 },
   { title: '额度', key: 'amountFen', width: 130, render: (row: AgreementSummary) => formatMoney(row.amountFen) },
-  { title: '状态', key: 'status', width: 90, render: (row: AgreementSummary) => h(NTag, { size: 'small', type: row.status === 'active' ? 'success' : 'warning', bordered: false }, { default: () => row.status }) },
+  { title: '状态', key: 'status', width: 90, render: (row: AgreementSummary) => h(NTag, { size: 'small', type: agreementStatusType(row.status), bordered: false }, { default: () => agreementStatusLabel(row.status) }) },
 ];
 const entryColumns = [
   { title: '业务日', key: 'businessDate', width: 120 },
-  { title: '类型', key: 'type', width: 110, render: (row: FinancialEntrySummary) => row.type === 'budget_occurrence' ? '预算发生' : '实际发生' },
+  { title: '类型', key: 'type', width: 110, render: (row: FinancialEntrySummary) => entryTypeLabel(row.type) },
   { title: '项目', key: 'projectName', minWidth: 160 },
   { title: '金额', key: 'amountFen', width: 130, render: (row: FinancialEntrySummary) => formatMoney(row.amountFen) },
 ];
@@ -324,11 +336,6 @@ onMounted(loadInitial);
       <section class="finance-overview">
         <div class="finance-context">
           <n-select :value="selectedFrameworkId" :options="frameworkOptions" placeholder="选择框架" @update:value="selectFramework" />
-          <n-select v-model:value="metric" :options="[
-            { label: '预算确认占用', value: 'budget' },
-            { label: '预算发生', value: 'occurrence' },
-            { label: '实际发生', value: 'actual' },
-          ]" />
           <span class="finance-context-note">预算与发生分账，不自动互转</span>
         </div>
         <div v-if="summary" class="metrics">
@@ -359,7 +366,19 @@ onMounted(loadInitial);
               </n-button>
             </header>
             <div class="workspace-panel-body data-panel-body">
-              <n-data-table v-if="frameworks.length" :columns="frameworkColumns" :data="frameworks" :pagination="false" :scroll-x="650" />
+              <n-data-table v-if="frameworks.length" class="desktop-finance-table" :columns="frameworkColumns" :data="frameworks" :pagination="false" :scroll-x="650" />
+              <div v-if="frameworks.length" class="mobile-finance-list">
+                <div v-for="item in frameworks" :key="item.id" class="mobile-finance-row">
+                  <div class="mobile-finance-heading">
+                    <div><strong>{{ item.name }}</strong><small>{{ item.code }}</small></div>
+                    <strong class="mobile-finance-amount">{{ formatMoney(item.totalAmountFen) }}</strong>
+                  </div>
+                  <div class="mobile-finance-meta">
+                    <span>年度目标 {{ item.annualTargetFen === null ? '默认框架总额' : formatMoney(item.annualTargetFen) }}</span>
+                    <span>{{ item.startDate }} 至 {{ item.endDate }}</span>
+                  </div>
+                </div>
+              </div>
               <n-empty v-else description="暂无框架。" />
             </div>
             <n-form v-if="canManageStructure && showFrameworkForm" class="form-grid edit-surface" label-placement="top">
@@ -381,7 +400,19 @@ onMounted(loadInitial);
               </n-button>
             </header>
             <div class="workspace-panel-body data-panel-body">
-              <n-data-table v-if="agreements.length" :columns="agreementColumns" :data="agreements" :pagination="false" :scroll-x="650" />
+              <n-data-table v-if="agreements.length" class="desktop-finance-table" :columns="agreementColumns" :data="agreements" :pagination="false" :scroll-x="650" />
+              <div v-if="agreements.length" class="mobile-finance-list">
+                <div v-for="item in agreements" :key="item.id" class="mobile-finance-row">
+                  <div class="mobile-finance-heading">
+                    <div><strong>{{ item.name }}</strong><small>{{ item.code }}</small></div>
+                    <n-tag size="small" :bordered="false" :type="agreementStatusType(item.status)">{{ agreementStatusLabel(item.status) }}</n-tag>
+                  </div>
+                  <div class="mobile-finance-meta">
+                    <span>额度 {{ formatMoney(item.amountFen) }}</span>
+                    <span>{{ item.validFrom }} 至 {{ item.validTo }}</span>
+                  </div>
+                </div>
+              </div>
               <n-empty v-else description="当前框架暂无执行协议。" />
             </div>
             <n-form v-if="canManageStructure && showAgreementForm" class="form-grid edit-surface" label-placement="top">
@@ -438,7 +469,19 @@ onMounted(loadInitial);
               </n-button>
             </header>
             <div class="workspace-panel-body data-panel-body">
-              <n-data-table v-if="entries.length" :columns="entryColumns" :data="entries" :pagination="false" :scroll-x="650" />
+              <n-data-table v-if="entries.length" class="desktop-finance-table" :columns="entryColumns" :data="entries" :pagination="false" :scroll-x="650" />
+              <div v-if="entries.length" class="mobile-finance-list">
+                <div v-for="item in entries" :key="item.id" class="mobile-finance-row">
+                  <div class="mobile-finance-heading">
+                    <div><strong>{{ item.projectName }}</strong><small>{{ item.businessDate }}</small></div>
+                    <strong class="mobile-finance-amount">{{ formatMoney(item.amountFen) }}</strong>
+                  </div>
+                  <div class="mobile-finance-meta mobile-finance-meta-line">
+                    <n-tag size="small" :bordered="false">{{ entryTypeLabel(item.type) }}</n-tag>
+                    <span v-if="item.note">{{ item.note }}</span>
+                  </div>
+                </div>
+              </div>
               <n-empty v-else description="暂无资金流水。" />
               <div v-if="entryCursor" class="load-more">
                 <n-button data-test="load-more-entries" @click="loadMoreEntries">加载更多流水</n-button>
@@ -476,7 +519,7 @@ onMounted(loadInitial);
 <style scoped>
 .finance-view { gap: 18px; max-width: 1420px; }
 .finance-overview { overflow: hidden; border: 1px solid var(--ui-border); border-radius: var(--ui-radius-lg); background: var(--ui-surface); }
-.finance-context { display: grid; grid-template-columns: minmax(260px, 420px) minmax(180px, 260px) 1fr; gap: 10px; align-items: center; min-height: 64px; padding: 12px 16px; border-bottom: 1px solid var(--ui-border); }
+.finance-context { display: grid; grid-template-columns: minmax(260px, 420px) 1fr; gap: 10px; align-items: center; min-height: 64px; padding: 12px 16px; border-bottom: 1px solid var(--ui-border); }
 .finance-context-note { justify-self: end; color: var(--ui-text-tertiary); font-size: 11px; }
 .workspace-tabs :deep(.n-tabs-tab) { padding-inline: 2px; margin-right: 24px; font-size: 12px; }
 .workspace-panel { overflow: hidden; border: 1px solid var(--ui-border); border-radius: var(--ui-radius-lg); background: var(--ui-surface); }
@@ -488,6 +531,16 @@ onMounted(loadInitial);
 .data-panel-body { padding: 0; }
 .data-panel-body :deep(.n-data-table) { border: 0; border-radius: 0; }
 .data-panel-body > .n-empty { padding: 30px 16px; }
+.mobile-finance-list { display: none; }
+.mobile-finance-row { display: grid; gap: 9px; padding: 14px; border-bottom: 1px solid var(--ui-border); }
+.mobile-finance-row:last-child { border-bottom: 0; }
+.mobile-finance-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
+.mobile-finance-heading > div { display: grid; gap: 3px; min-width: 0; }
+.mobile-finance-heading strong { color: var(--ui-text); font-size: 13px; font-weight: 670; }
+.mobile-finance-heading small { color: var(--ui-text-tertiary); font-size: 10px; }
+.mobile-finance-amount { flex: 0 0 auto; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.mobile-finance-meta { display: flex; flex-wrap: wrap; gap: 5px 12px; color: var(--ui-text-secondary); font-size: 11px; line-height: 1.5; }
+.mobile-finance-meta-line { align-items: center; }
 .detail-panel { margin-top: 16px; }
 .edit-panel { border-color: var(--ui-border-strong); }
 .toolbar { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(180px, 320px) auto; gap: 10px; margin-top: 16px; align-items: center; }
@@ -513,8 +566,7 @@ onMounted(loadInitial);
 .status-line { margin-top: 12px; color: var(--ui-text-secondary); }
 .load-more { display: flex; justify-content: center; padding: 14px 0 0; }
 @media (max-width: 1000px) {
-  .finance-context { grid-template-columns: minmax(220px, 1fr) minmax(180px, 240px); }
-  .finance-context-note { display: none; }
+  .finance-context { grid-template-columns: minmax(220px, 1fr) auto; }
   .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .metrics > div:nth-child(4n) { border-right: 1px solid var(--ui-border); }
   .metrics > div:nth-child(2n) { border-right: 0; }
@@ -526,6 +578,8 @@ onMounted(loadInitial);
   .metric-row { grid-template-columns: 1fr 1fr; padding: 10px 0; }
 }
 @media (max-width: 700px) {
+  .desktop-finance-table { display: none; }
+  .mobile-finance-list { display: grid; }
   .finance-context, .toolbar, .form-grid, .budget-form, .entry-form, .split-row, .binding-toolbar { grid-template-columns: 1fr; }
   .finance-context { align-items: stretch; }
   .workspace-panel-header { align-items: flex-start; }

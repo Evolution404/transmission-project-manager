@@ -357,7 +357,7 @@ onMounted(load);
                 <span class="member-avatar">{{ row.displayName.slice(0, 1) }}</span>
                 <span class="member-mobile-copy">
                   <strong>{{ row.displayName }}</strong>
-                  <small>@{{ row.username }} · {{ roleLabel.get(row.role) ?? row.role }} · {{ scopeLabel(row) }}</small>
+                  <small>@{{ row.username }} · {{ roleLabel.get(row.role) ?? '未知角色' }} · {{ scopeLabel(row) }}</small>
                 </span>
                 <n-tag size="small" :bordered="false" :type="row.lifecycleStatus === 'active' && !row.mustChangePassword ? 'success' : row.lifecycleStatus === 'disabled' ? 'error' : 'warning'">{{ statusLabel(row) }}</n-tag>
               </app-pressable>
@@ -492,7 +492,8 @@ onMounted(load);
 .member-cell { display: grid; gap: 3px; }
 .member-cell strong { font-size: 13px; font-weight: 650; }
 .member-cell small { color: var(--ui-text-tertiary); font-size: 11px; }
-.member-modal { width: min(640px, calc(100vw - 32px)); }
+.member-modal { width: min(640px, calc(100vw - 32px)); max-height: min(88vh, 780px); }
+:deep(.member-modal .n-card__content) { overflow-y: auto; overscroll-behavior: contain; }
 .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 14px; }
 .switch-row { display: flex; align-items: center; gap: 10px; min-height: 40px; color: var(--ui-text-secondary); font-size: 12px; }
 .scope-note, .form-alert { margin-bottom: 14px; }
@@ -523,7 +524,9 @@ onMounted(load);
   .setting-row { grid-template-columns: 1fr; gap: 8px; min-height: 0; padding: 14px; }
   .setting-value { text-align: left; }
   .form-grid, .scope-row { grid-template-columns: 1fr; }
-  .scope-row .n-button { justify-self: end; }
-  .member-modal { width: calc(100vw - 20px); }
+  .scope-row .n-button { width: 100%; justify-self: stretch; }
+  .member-modal { width: calc(100vw - 20px); max-height: calc(100dvh - 20px); }
+  .modal-actions { position: sticky; bottom: -1px; z-index: 2; flex-wrap: wrap; padding: 12px 0 max(10px, env(safe-area-inset-bottom)); background: var(--ui-surface); }
+  .modal-actions .n-button:last-child { flex: 1; }
 }
 </style>

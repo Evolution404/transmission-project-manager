@@ -188,6 +188,10 @@ onMounted(() => load());
             <div class="mobile-task-meta">
               <span>{{ item.scopeText || '未填写范围' }}</span><span>{{ item.plannedDate || '未设计划日' }}</span><span>{{ item.owner || '未指定负责人' }}</span>
             </div>
+            <div class="mobile-task-status-row">
+              <n-tag size="small" :bordered="false" :type="stateType(item)">{{ stateLabel(item) }}</n-tag>
+              <span>计划 {{ formatScaled(item.plannedQuantityScaled) }} {{ item.unit }}</span>
+            </div>
             <div v-if="item.supplyTotals.length" class="mobile-supply-lines">
               <span v-for="supply in item.supplyTotals" :key="supply.taskMaterialRequirementId">{{ supply.model }} · 到货 {{ formatScaled(supply.totals.arrivedQuantityScaled) }} {{ supply.unit }}</span>
             </div>
@@ -250,6 +254,8 @@ onMounted(() => load());
   .mobile-task-heading strong { overflow: hidden; font-size: 14px; font-weight: 670; text-overflow: ellipsis; white-space: nowrap; }
   .mobile-task-heading small { overflow: hidden; color: var(--ui-text-secondary); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
   .mobile-task-meta { display: flex; flex-wrap: wrap; gap: 5px 12px; color: var(--ui-text-tertiary); font-size: 11px; }
+  .mobile-task-status-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--ui-text-secondary); font-size: 11px; }
+  .mobile-task-status-row > span { font-variant-numeric: tabular-nums; }
   .mobile-supply-lines { display: grid; gap: 3px; padding: 9px 10px; border-radius: 9px; background: var(--ui-surface-muted); color: var(--ui-text-secondary); font-size: 11px; }
   .mobile-progress-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; overflow: hidden; border: 1px solid var(--ui-border); border-radius: 9px; background: var(--ui-border); }
   .mobile-progress-grid > div { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px; background: var(--ui-surface); }

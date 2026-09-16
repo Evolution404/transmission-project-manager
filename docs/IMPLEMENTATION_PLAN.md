@@ -91,12 +91,15 @@ M6 基础台账定向结果：基础台账 API **25/25 PASS**；相关 Web **30/
 
 项目分页/路由状态工作包已经收口并验证：修复项目列表固定前 50 条且 `nextCursor:null` 的分页缺口，并让工作台 `/projects?stage=reserve`、项目列表 `stage/query`、任务队列 `/tasks?status=...&query=...` 在刷新后恢复筛选。定向仓储测试 **2/2 PASS**，Projects/Tasks 定向 **6/6 PASS**，Web/API typecheck 和 `git diff --check` 均 PASS。
 
+其后的 UI 收尾施工包进一步修复了“大项目集搜索”和手机端完成度：项目搜索改为服务端 SQL `LIMIT` 前过滤；资金页框架/协议/流水在手机使用独立对象列表；任务队列手机端直接展示四状态与计划量；成员弹窗补软键盘/安全区可达操作区；业务 View/feature 的浅色 fallback 已清理为统一设计 token；无实际效果的资金筛选控件已删除。旧入口覆盖审计确认 `/reserves`、`/delivery` 只保留兼容重定向，现有业务 Vue 组件均有真实引用。定向 Web **39/39 PASS（7 文件）**、项目查询仓储 **2/2 PASS**；完整 `npm run check` 为 Node **296/296 PASS**、Web **133/133 PASS（23 文件）**，Web/API/shared typecheck、Web production build、Worker dry-run、Node+SQLite+Filesystem 第二运行时与 `git diff --check` 均 PASS。
+
 该工作包保持以下验收条件：
 
 - `/api/reserve-projects` 的 `stage=reserve` 必须在 SQL 层按“不存在 `project_releases`”过滤，与工作台/分析统计口径一致；
 - 项目 scope/framework scope 必须在 `LIMIT` 前下推 SQL，禁止 HTTP 层过滤分页结果；
 - 项目列表使用稳定 `created_at DESC, id DESC` keyset cursor，跨页不得重复或遗漏；
 - Projects 页从 URL 恢复并同步 `stage/query`，项目详情返回时恢复原列表 URL；
+- Projects 搜索条件由服务端在 `LIMIT` 前过滤，不得退回仅搜索当前已加载页；
 - Tasks 页从 URL 恢复并同步 `status/query`；
 - 定向测试、`git diff --check`、相关 typecheck 通过后，再跑完整 `npm run check` 并独立提交。
 

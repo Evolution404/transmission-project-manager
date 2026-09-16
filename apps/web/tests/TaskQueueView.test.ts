@@ -60,6 +60,7 @@ describe('TaskQueueView', () => {
     expect(wrapper.text()).toContain('FXBW-110 · 到货 20 套');
     expect(wrapper.text()).toContain('导线 · 到货 50 米');
     expect(wrapper.text()).not.toContain('到货 70');
+    expect(wrapper.get('[data-test="mobile-open-task-t1"]').text()).toContain('未实施未结算');
     await wrapper.get('[data-test="open-task-t1"]').trigger('click');
     expect(push).toHaveBeenCalledWith('/projects/p1/tasks/t1');
   });

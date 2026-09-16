@@ -113,6 +113,13 @@ describe('FinanceView P4 behavior', () => {
     expect(wrapper.text()).toContain('80.00%');
     expect(wrapper.text()).toContain('协议一');
     expect(wrapper.text()).toContain('90.00%');
+    const tables = wrapper.findAll('[data-stub="NDataTable"]');
+    expect(tables[1]?.text()).toContain('有效');
+    expect(tables[1]?.text()).not.toContain('active');
+    const mobileLists = wrapper.findAll('.mobile-finance-list');
+    expect(mobileLists[0]?.text()).toContain('年度框架');
+    expect(mobileLists[1]?.text()).toContain('协议一');
+    expect(mobileLists[1]?.text()).toContain('有效');
   });
 
   it('creates a framework using integer fen instead of floating point yuan', async () => {

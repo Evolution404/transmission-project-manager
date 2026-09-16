@@ -891,7 +891,7 @@ onMounted(loadInitial);
 .modal-intro strong { color: var(--ui-text); font-size: 13px; }
 .modal-intro span { color: var(--ui-text-secondary); font-size: 12px; line-height: 1.5; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; }
-:deep(.demand-modal), :deep(.demand-detail-modal) { border-radius: 15px; overflow: hidden; box-shadow: 0 22px 58px rgba(18, 32, 61, .18); }
+:deep(.demand-modal), :deep(.demand-detail-modal) { border-radius: 15px; overflow: hidden; box-shadow: var(--ui-shadow-popover); }
 @media (max-width: 850px) {
   .template-row, .mapping-grid, .detail-grid, .material-form, .manual-demand-form { grid-template-columns: 1fr; }
   .manual-material-row { grid-template-columns: 28px minmax(0, 1fr); align-items: center; }

@@ -503,7 +503,7 @@ onMounted(load);
   .attachment-row { grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; padding: 10px 0; }
   .attachment-meta { grid-column: 1; grid-row: 2; }
   .attachment-action { grid-column: 2; grid-row: 1 / span 2; align-self: center; }
-  .release-actions { position: sticky; bottom: 0; padding: 12px 0 max(4px, env(safe-area-inset-bottom)); background: var(--ui-surface, #fff); }
+  .release-actions { position: sticky; bottom: 0; padding: 12px 0 max(4px, env(safe-area-inset-bottom)); background: var(--ui-surface); }
   .release-actions .n-button:last-child { flex: 1; }
 }
 </style>

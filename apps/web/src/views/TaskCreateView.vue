@@ -243,25 +243,25 @@ onMounted(() => {
 
 <style scoped>
 .task-create-view { max-width: 1260px; }
-.breadcrumb-back { justify-self: start; padding: 3px 0; border: 0; background: transparent; color: var(--ui-text-secondary, #566174); cursor: pointer; }
+.breadcrumb-back { justify-self: start; padding: 3px 0; border: 0; background: transparent; color: var(--ui-text-secondary); cursor: pointer; }
 .create-header { padding: 4px 2px 8px; }
-.object-kicker { margin-bottom: 5px; color: var(--ui-text-secondary, #566174); font-size: 13px; }
+.object-kicker { margin-bottom: 5px; color: var(--ui-text-secondary); font-size: 13px; }
 .create-header h2 { margin: 0; font-size: 28px; line-height: 1.25; letter-spacing: -.025em; }
-.create-header p { margin: 7px 0 0; color: var(--ui-text-secondary, #566174); font-size: 14px; }
+.create-header p { margin: 7px 0 0; color: var(--ui-text-secondary); font-size: 14px; }
 .task-form-layout { display: grid; grid-template-columns: minmax(340px, .8fr) minmax(460px, 1.2fr); gap: 16px; align-items: start; }
 .allocation-stack { display: grid; gap: 16px; }
-.form-surface { padding: 20px; border: 1px solid var(--ui-border, #dce2ea); border-radius: 18px; background: var(--ui-surface, #fff); }
+.form-surface { padding: 20px; border: 1px solid var(--ui-border); border-radius: var(--ui-radius-lg); background: var(--ui-surface); }
 .section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
 .section-heading h3 { margin: 0; font-size: 18px; }
-.section-heading span { display: block; margin-top: 4px; color: var(--ui-text-secondary, #566174); font-size: 12px; font-weight: 400; }
-.section-heading > strong { color: var(--ui-text-secondary, #566174); font-size: 13px; white-space: nowrap; }
+.section-heading span { display: block; margin-top: 4px; color: var(--ui-text-secondary); font-size: 12px; font-weight: 400; }
+.section-heading > strong { color: var(--ui-text-secondary); font-size: 13px; white-space: nowrap; }
 .two-column-fields, .quantity-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .quantity-fields { grid-template-columns: 1.5fr .5fr; }
 .allocation-list { display: grid; }
-.allocation-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(150px, 210px); gap: 18px; align-items: center; min-height: 68px; padding: 10px 0; border-bottom: 1px solid var(--ui-border, #dce2ea); }
+.allocation-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(150px, 210px); gap: 18px; align-items: center; min-height: 68px; padding: 10px 0; border-bottom: 1px solid var(--ui-border); }
 .allocation-row:last-child { border-bottom: 0; }
 .allocation-row > div:first-child { display: grid; gap: 4px; }
-.allocation-row span { color: var(--ui-text-secondary, #566174); font-size: 12px; }
+.allocation-row span { color: var(--ui-text-secondary); font-size: 12px; }
 .material-input { display: flex; align-items: center; gap: 8px; }
 .material-input > span { flex: 0 0 auto; }
 .form-actions { position: sticky; bottom: 0; z-index: 5; display: flex; justify-content: flex-end; gap: 10px; padding: 14px 0; background: linear-gradient(180deg, transparent, var(--ui-canvas) 24%); }
