@@ -4,7 +4,6 @@ import { useRoute } from 'vue-router';
 import {
   NAlert,
   NButton,
-  NCard,
   NDataTable,
   NEmpty,
   NForm,
@@ -352,14 +351,17 @@ onMounted(loadInitial);
 
       <n-tabs type="line" animated class="workspace-tabs">
         <n-tab-pane name="frameworks" tab="框架与协议">
-          <n-card title="框架">
-            <template #header-extra>
+          <section class="workspace-panel">
+            <header class="workspace-panel-header">
+              <div><h3>框架</h3><p>先选择当前业务框架，再查看协议和额度使用情况。</p></div>
               <n-button v-if="canManageStructure" data-test="open-framework-form" secondary @click="showFrameworkForm = !showFrameworkForm">
                 {{ showFrameworkForm ? '收起' : '新建框架' }}
               </n-button>
-            </template>
-            <n-data-table v-if="frameworks.length" :columns="frameworkColumns" :data="frameworks" :pagination="false" :scroll-x="650" />
-            <n-empty v-else description="暂无框架。" />
+            </header>
+            <div class="workspace-panel-body data-panel-body">
+              <n-data-table v-if="frameworks.length" :columns="frameworkColumns" :data="frameworks" :pagination="false" :scroll-x="650" />
+              <n-empty v-else description="暂无框架。" />
+            </div>
             <n-form v-if="canManageStructure && showFrameworkForm" class="form-grid edit-surface" label-placement="top">
               <n-form-item label="框架编号"><n-input v-model:value="frameworkForm.code" data-test="framework-code" /></n-form-item>
               <n-form-item label="框架名称"><n-input v-model:value="frameworkForm.name" data-test="framework-name" /></n-form-item>
@@ -369,16 +371,19 @@ onMounted(loadInitial);
               <n-form-item label="结束日期"><n-input v-model:value="frameworkForm.endDate" /></n-form-item>
               <n-form-item><n-button data-test="create-framework" type="primary" :loading="saving" @click="createFramework">新增框架</n-button></n-form-item>
             </n-form>
-          </n-card>
+          </section>
 
-          <n-card v-if="selectedFramework" title="执行协议" class="detail-card">
-            <template #header-extra>
+          <section v-if="selectedFramework" class="workspace-panel detail-panel">
+            <header class="workspace-panel-header">
+              <div><h3>执行协议</h3><p>{{ selectedFramework.name }} 下的预支额度和有效期。</p></div>
               <n-button v-if="canManageStructure" secondary @click="showAgreementForm = !showAgreementForm">
                 {{ showAgreementForm ? '收起' : '新增协议' }}
               </n-button>
-            </template>
-            <n-data-table v-if="agreements.length" :columns="agreementColumns" :data="agreements" :pagination="false" :scroll-x="650" />
-            <n-empty v-else description="当前框架暂无执行协议。" />
+            </header>
+            <div class="workspace-panel-body data-panel-body">
+              <n-data-table v-if="agreements.length" :columns="agreementColumns" :data="agreements" :pagination="false" :scroll-x="650" />
+              <n-empty v-else description="当前框架暂无执行协议。" />
+            </div>
             <n-form v-if="canManageStructure && showAgreementForm" class="form-grid edit-surface" label-placement="top">
               <n-form-item label="协议编号"><n-input v-model:value="agreementForm.code" /></n-form-item>
               <n-form-item label="协议名称"><n-input v-model:value="agreementForm.name" /></n-form-item>
@@ -388,52 +393,61 @@ onMounted(loadInitial);
               <n-form-item label="状态"><n-select v-model:value="agreementForm.status" :options="[{ label: '有效', value: 'active' }, { label: '暂停', value: 'paused' }, { label: '到期', value: 'expired' }]" /></n-form-item>
               <n-form-item><n-button type="primary" :loading="saving" @click="createAgreement">新增执行协议</n-button></n-form-item>
             </n-form>
-          </n-card>
+          </section>
         </n-tab-pane>
 
         <n-tab-pane name="budgets" tab="子项目预算">
-          <n-card title="项目框架归属" v-if="canManageStructure">
-            <div class="toolbar">
+          <section class="workspace-panel">
+            <header class="workspace-panel-header">
+              <div><h3>子项目预算</h3><p>预算草稿允许不完整；确认时协议分配必须精确等于预算总额。</p></div>
+            </header>
+            <div v-if="canManageStructure" class="binding-toolbar">
+              <span>项目框架归属</span>
               <n-select v-model:value="bindingProjectId" :options="projectOptions" placeholder="选择项目" />
               <n-select v-model:value="bindingFrameworkId" :options="frameworkOptions" placeholder="选择框架" />
               <n-button :loading="saving" @click="bindProject">保存归属</n-button>
             </div>
-          </n-card>
-          <n-card title="预算草稿 / 确认" class="detail-card">
-            <n-alert type="info" :bordered="false">预算草稿可以不完整；确认预算时协议分配合计必须等于预算总额，且协议必须与项目同框架并在有效期内。</n-alert>
-            <n-form class="budget-form" label-placement="top">
+            <div class="workspace-panel-body budget-body">
+              <n-alert type="info" :bordered="false">确认预算时协议必须与项目属于同一框架并在有效期内；预算确认占用不会自动生成预算发生。</n-alert>
+              <n-form class="budget-form" label-placement="top">
               <n-form-item label="子项目"><n-select data-test="budget-project" :value="selectedBudgetProjectId" :options="projectOptions" @update:value="loadBudgetProject" /></n-form-item>
               <n-form-item label="预算总额（元）"><n-input v-model:value="budgetTotalYuan" data-test="budget-total" :disabled="!canFinanceWrite" /></n-form-item>
               <n-form-item label="说明"><n-input v-model:value="budgetNote" :disabled="!canFinanceWrite" /></n-form-item>
-            </n-form>
-            <div v-for="(split, index) in budgetSplits" :key="index" class="split-row">
-              <n-select :data-test="`budget-agreement-${index}`" v-model:value="split.agreementId" :options="agreementOptions" :disabled="!canFinanceWrite" placeholder="执行协议" />
-              <n-input :data-test="`budget-allocation-${index}`" v-model:value="split.amountYuan" :disabled="!canFinanceWrite" placeholder="分配金额（元）" />
-              <n-button v-if="canFinanceWrite" @click="removeBudgetSplit(index)">删除</n-button>
+              </n-form>
+              <div v-for="(split, index) in budgetSplits" :key="index" class="split-row">
+                <n-select :data-test="`budget-agreement-${index}`" v-model:value="split.agreementId" :options="agreementOptions" :disabled="!canFinanceWrite" placeholder="执行协议" />
+                <n-input :data-test="`budget-allocation-${index}`" v-model:value="split.amountYuan" :disabled="!canFinanceWrite" placeholder="分配金额（元）" />
+                <n-button v-if="canFinanceWrite" @click="removeBudgetSplit(index)">删除</n-button>
+              </div>
+              <n-space v-if="canFinanceWrite" class="actions">
+                <n-button data-test="add-budget-split" @click="addBudgetSplit">增加协议分配</n-button>
+                <n-button data-test="save-budget" type="primary" :loading="saving" @click="saveBudget">保存预算草稿</n-button>
+                <n-button v-if="currentBudget" type="success" :loading="saving" @click="confirmBudget">确认预算版本</n-button>
+              </n-space>
+              <div v-if="currentBudget" class="status-line">当前：{{ currentBudget.status === 'confirmed' ? `已确认 v${currentBudget.budgetVersion}` : '草稿' }}；对象版本 {{ currentBudget.version }}</div>
             </div>
-            <n-space v-if="canFinanceWrite" class="actions">
-              <n-button data-test="add-budget-split" @click="addBudgetSplit">增加协议分配</n-button>
-              <n-button data-test="save-budget" type="primary" :loading="saving" @click="saveBudget">保存预算草稿</n-button>
-              <n-button v-if="currentBudget" type="success" :loading="saving" @click="confirmBudget">确认预算版本</n-button>
-            </n-space>
-            <div v-if="currentBudget" class="status-line">当前：{{ currentBudget.status === 'confirmed' ? `已确认 v${currentBudget.budgetVersion}` : '草稿' }}；对象版本 {{ currentBudget.version }}</div>
-          </n-card>
+          </section>
         </n-tab-pane>
 
         <n-tab-pane name="entries" tab="资金流水">
-          <n-card title="当前框架流水">
-            <template #header-extra>
+          <section class="workspace-panel">
+            <header class="workspace-panel-header">
+              <div><h3>当前框架流水</h3><p>预算发生和实际发生分账记录；列表按服务端游标完整翻页。</p></div>
               <n-button v-if="canFinanceWrite" data-test="open-entry-form" type="primary" @click="showEntryForm = !showEntryForm">
                 {{ showEntryForm ? '收起登记' : '登记流水' }}
               </n-button>
-            </template>
-            <n-data-table v-if="entries.length" :columns="entryColumns" :data="entries" :pagination="false" :scroll-x="650" />
-            <n-empty v-else description="暂无资金流水。" />
-            <div v-if="entryCursor" class="load-more">
-              <n-button data-test="load-more-entries" @click="loadMoreEntries">加载更多流水</n-button>
+            </header>
+            <div class="workspace-panel-body data-panel-body">
+              <n-data-table v-if="entries.length" :columns="entryColumns" :data="entries" :pagination="false" :scroll-x="650" />
+              <n-empty v-else description="暂无资金流水。" />
+              <div v-if="entryCursor" class="load-more">
+                <n-button data-test="load-more-entries" @click="loadMoreEntries">加载更多流水</n-button>
+              </div>
             </div>
-          </n-card>
-          <n-card v-if="showEntryForm && canFinanceWrite" title="登记预算发生 / 实际发生" class="detail-card edit-card">
+          </section>
+          <section v-if="showEntryForm && canFinanceWrite" class="workspace-panel detail-panel edit-panel">
+            <header class="workspace-panel-header"><div><h3>登记预算发生 / 实际发生</h3><p>该操作新增不可变资金事实；错误记录通过冲销留痕。</p></div></header>
+            <div class="workspace-panel-body">
             <n-alert type="warning" :bordered="false">登记流水必须关联同框架、业务日期有效的执行协议。预算发生和实际发生是不同账目，不能相互代替。</n-alert>
             <n-form class="entry-form" label-placement="top">
               <n-form-item label="子项目"><n-select data-test="entry-project" v-model:value="entryProjectId" :options="projectOptions" /></n-form-item>
@@ -451,7 +465,8 @@ onMounted(loadInitial);
               <n-button @click="addEntrySplit">增加协议分配</n-button>
               <n-button data-test="post-entry" type="primary" :loading="saving" @click="postEntry">登记流水</n-button>
             </n-space>
-          </n-card>
+            </div>
+          </section>
         </n-tab-pane>
       </n-tabs>
     </div>
@@ -464,7 +479,20 @@ onMounted(loadInitial);
 .finance-context { display: grid; grid-template-columns: minmax(260px, 420px) minmax(180px, 260px) 1fr; gap: 10px; align-items: center; min-height: 64px; padding: 12px 16px; border-bottom: 1px solid var(--ui-border); }
 .finance-context-note { justify-self: end; color: var(--ui-text-tertiary); font-size: 11px; }
 .workspace-tabs :deep(.n-tabs-tab) { padding-inline: 2px; margin-right: 24px; font-size: 12px; }
+.workspace-panel { overflow: hidden; border: 1px solid var(--ui-border); border-radius: var(--ui-radius-lg); background: var(--ui-surface); }
+.workspace-panel + .workspace-panel { margin-top: 16px; }
+.workspace-panel-header { display: flex; align-items: center; justify-content: space-between; gap: 20px; min-height: 60px; padding: 13px 16px; border-bottom: 1px solid var(--ui-border); }
+.workspace-panel-header h3 { margin: 0; font-size: 14px; font-weight: 680; }
+.workspace-panel-header p { margin: 3px 0 0; color: var(--ui-text-secondary); font-size: 11px; line-height: 1.5; }
+.workspace-panel-body { padding: 16px; }
+.data-panel-body { padding: 0; }
+.data-panel-body :deep(.n-data-table) { border: 0; border-radius: 0; }
+.data-panel-body > .n-empty { padding: 30px 16px; }
+.detail-panel { margin-top: 16px; }
+.edit-panel { border-color: var(--ui-border-strong); }
 .toolbar { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(180px, 320px) auto; gap: 10px; margin-top: 16px; align-items: center; }
+.binding-toolbar { display: grid; grid-template-columns: auto minmax(220px, 1fr) minmax(180px, 320px) auto; gap: 10px; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--ui-border); background: var(--ui-surface-subtle); }
+.binding-toolbar > span { color: var(--ui-text-secondary); font-size: 11px; font-weight: 650; white-space: nowrap; }
 .metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .metrics > div { display: grid; align-content: center; gap: 6px; min-height: 92px; padding: 16px 18px; border-right: 1px solid var(--ui-border); border-bottom: 1px solid var(--ui-border); background: var(--ui-surface); }
 .metrics > div:nth-child(4n) { border-right: 0; }
@@ -476,9 +504,8 @@ onMounted(loadInitial);
 .metric-row:last-child { border-bottom: 0; }
 .metric-row strong { color: var(--ui-text); font-size: 12px; font-weight: 650; }
 .form-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0 12px; margin-top: 16px; align-items: end; }
-.edit-surface { padding: 16px; border: 1px solid var(--ui-border); border-radius: 12px; background: var(--ui-surface-subtle); }
-.detail-card { margin-top: 16px; }
-.edit-card { border-color: var(--ui-border-strong) !important; }
+.edit-surface { margin: 0; padding: 16px; border-top: 1px solid var(--ui-border); background: var(--ui-surface-subtle); }
+.budget-body { display: grid; gap: 12px; }
 .budget-form, .entry-form { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 12px; margin-top: 16px; }
 .entry-form { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 .split-row { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(150px, 240px) auto; gap: 10px; margin: 8px 0; }
@@ -494,11 +521,16 @@ onMounted(loadInitial);
   .metrics > div:nth-last-child(-n+4) { border-bottom: 1px solid var(--ui-border); }
   .metrics > div:nth-last-child(-n+2) { border-bottom: 0; }
   .form-grid, .entry-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .binding-toolbar { grid-template-columns: 1fr 1fr auto; }
+  .binding-toolbar > span { grid-column: 1 / -1; }
   .metric-row { grid-template-columns: 1fr 1fr; padding: 10px 0; }
 }
 @media (max-width: 700px) {
-  .finance-context, .toolbar, .form-grid, .budget-form, .entry-form, .split-row { grid-template-columns: 1fr; }
+  .finance-context, .toolbar, .form-grid, .budget-form, .entry-form, .split-row, .binding-toolbar { grid-template-columns: 1fr; }
   .finance-context { align-items: stretch; }
+  .workspace-panel-header { align-items: flex-start; }
+  .workspace-panel-header .n-button { flex: 0 0 auto; }
+  .binding-toolbar > span { grid-column: auto; }
   .metrics { grid-template-columns: 1fr 1fr; }
   .metrics > div { min-height: 82px; padding: 13px; }
   .metrics strong { font-size: 16px; }
