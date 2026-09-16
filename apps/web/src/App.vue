@@ -20,6 +20,8 @@ import LoginView from './views/LoginView.vue';
 import ChangePasswordView from './views/ChangePasswordView.vue';
 import AppIcon from './app/AppIcon.vue';
 import AppPressable from './app/AppPressable.vue';
+import BrandLockup from './brand/BrandLockup.vue';
+import { BRAND_SUBTITLE } from './brand/brand';
 
 const route = useRoute();
 const router = useRouter();
@@ -79,7 +81,7 @@ const activeKey = computed(() => {
   if (route.path === '/delivery' || route.path.startsWith('/tasks')) return '/tasks';
   return route.path;
 });
-const pageTitle = computed(() => String(route.meta.title ?? '输电项目全流程管理台'));
+const pageTitle = computed(() => String(route.meta.title ?? BRAND_SUBTITLE));
 const naiveTheme = computed(() => prefersDark.value ? darkTheme : null);
 
 async function loadIdentity() {
@@ -178,11 +180,7 @@ onMounted(() => {
       <div v-else class="app-shell">
         <aside class="app-sider" aria-label="主导航">
           <app-pressable class="brand-block" aria-label="返回工作台" @click="navigate('/')">
-            <span class="brand-mark" aria-hidden="true"><span></span></span>
-            <span class="brand-copy">
-              <strong>输电项目</strong>
-              <small>全流程管理</small>
-            </span>
+            <BrandLockup :icon-size="52" />
           </app-pressable>
 
           <div class="nav-scroll">

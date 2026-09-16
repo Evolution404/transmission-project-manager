@@ -4,6 +4,7 @@ import { NAlert, NButton, NForm, NFormItem, NInput } from 'naive-ui';
 import type { ApiResponse, CredentialKdfDescriptor, CurrentUser } from '@tpm/shared';
 import { parseApiResponse } from '../api/response';
 import { createDerivedCredential, deriveCredential, validatePasswordForClient } from '../auth/credentials';
+import BrandLockup from '../brand/BrandLockup.vue';
 
 const props = defineProps<{ currentUser: CurrentUser }>();
 const emit = defineEmits<{ changed: [user: CurrentUser] }>();
@@ -66,7 +67,7 @@ async function submit() {
   <div class="login-page">
     <div class="auth-shell auth-shell-password">
       <section class="auth-brand-panel">
-        <div class="auth-brand-mark" aria-hidden="true"><span></span></div>
+        <BrandLockup class="auth-brand-lockup" :icon-size="68" />
         <div class="auth-brand-copy">
           <span>账号安全</span>
           <h1>完成账号安全设置</h1>

@@ -9,6 +9,7 @@ import {
   normalizeUsername,
   validatePasswordForClient,
 } from '../auth/credentials';
+import BrandLockup from '../brand/BrandLockup.vue';
 
 const emit = defineEmits<{ authenticated: [user: CurrentUser] }>();
 const initialized = ref<boolean | null>(null);
@@ -125,10 +126,10 @@ onMounted(loadStatus);
   <div class="login-page">
     <div class="auth-shell">
       <section class="auth-brand-panel">
-        <div class="auth-brand-mark" aria-hidden="true"><span></span></div>
+        <BrandLockup class="auth-brand-lockup" :icon-size="68" />
         <div class="auth-brand-copy">
-          <span>输电项目管理</span>
-          <h1>输电项目全流程管理</h1>
+          <span>内部业务系统</span>
+          <h1>项目全流程协同管理</h1>
           <p>需求、储备、执行、资金和分析保持同一业务上下文，桌面与移动端使用同一套真实数据。</p>
         </div>
         <div class="auth-brand-foot">南京供电 · 内部业务系统</div>
