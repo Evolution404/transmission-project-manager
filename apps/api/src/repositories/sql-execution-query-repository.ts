@@ -257,7 +257,7 @@ export class SqlExecutionQueryRepository implements ExecutionQueryRepository {
               SELECT task_id,id,ROW_NUMBER() OVER (PARTITION BY task_id ORDER BY settlement_date DESC,created_at DESC,id DESC) AS row_number
               FROM task_settlements WHERE final=1 AND voided_at IS NULL
             )
-            SELECT pt.id,pt.project_id,p.name AS project_name,p.year AS project_year,p.owner AS project_owner,
+            SELECT pt.id,pt.project_id,p.name AS project_name,p.business_year AS project_year,p.owner AS project_owner,
                    pt.name,pt.scope_text,pt.owner,pt.planned_date,pt.planned_quantity_scaled,pt.unit,
                    COALESCE(implementation.total,0) AS implemented_quantity_scaled,
                    COALESCE(settlement.total,0) AS settled_quantity_scaled,

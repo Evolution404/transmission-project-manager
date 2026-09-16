@@ -7,7 +7,7 @@ import { SqlExecutionQueryRepository } from '../apps/api/src/repositories/sql-ex
 function fixture() {
   const sqlite = new DatabaseSync(':memory:');
   sqlite.exec(`
-    CREATE TABLE projects (id TEXT PRIMARY KEY,name TEXT,year INTEGER,owner TEXT,framework_id TEXT,version INTEGER NOT NULL);
+    CREATE TABLE projects (id TEXT PRIMARY KEY,name TEXT,business_year INTEGER,owner TEXT,framework_id TEXT,version INTEGER NOT NULL);
     CREATE TABLE member_scopes (id TEXT PRIMARY KEY,member_id TEXT,scope_type TEXT,scope_id TEXT);
     CREATE TABLE project_releases (id TEXT PRIMARY KEY,project_id TEXT NOT NULL);
     CREATE TABLE demands (id TEXT PRIMARY KEY,sequence_no TEXT,line_name TEXT,section_text TEXT);
