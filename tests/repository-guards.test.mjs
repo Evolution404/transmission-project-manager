@@ -12,6 +12,19 @@ function sha256(path) {
   return createHash('sha256').update(readFileSync(path)).digest('hex');
 }
 
+function relativeLuminance(hex) {
+  const rgb = hex.match(/[a-f\d]{2}/gi)?.map((part) => Number.parseInt(part, 16) / 255) ?? [];
+  assert.equal(rgb.length, 3, `无效颜色：${hex}`);
+  const [r, g, b] = rgb.map((value) => (value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4));
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+function contrastRatio(foreground, background) {
+  const first = relativeLuminance(foreground);
+  const second = relativeLuminance(background);
+  return (Math.max(first, second) + 0.05) / (Math.min(first, second) + 0.05);
+}
+
 test('development schema stays on one resettable baseline until the user explicitly enters operation stage', () => {
   const migrationFiles = readdirSync(migrationsDir)
     .filter((name) => /^\d{4}_.+\.sql$/.test(name))
@@ -531,6 +544,20 @@ test('business UI does not use tiny action buttons', () => {
       return source.includes('size="tiny"') || source.includes("size='tiny'");
     });
   assert.deepEqual(tinyButtons, [], `业务操作禁止使用 tiny 按钮：${tinyButtons.join(', ')}`);
+});
+
+test('light-theme text tokens keep readable contrast on common surfaces', () => {
+  const source = readFileSync(resolve(root, 'apps/web/src/styles.css'), 'utf8');
+  const rootBlock = source.match(/:root\s*\{[\s\S]*?\n\}/)?.[0] ?? '';
+  const token = (name) => rootBlock.match(new RegExp(`--${name}:\\s*(#[0-9a-fA-F]{6})`))?.[1];
+  const tertiary = token('ui-text-tertiary');
+  const surfaces = ['ui-surface', 'ui-canvas', 'ui-surface-muted'].map((name) => [name, token(name)]);
+  assert.ok(tertiary, '缺少 --ui-text-tertiary');
+  for (const [name, background] of surfaces) {
+    assert.ok(background, `缺少 --${name}`);
+    const ratio = contrastRatio(tertiary, background);
+    assert.ok(ratio >= 4.5, `浅色主题 --ui-text-tertiary 对 --${name} 的对比度仅 ${ratio.toFixed(2)}:1，12–13px 业务文字不可读`);
+  }
 });
 
 test('error recovery actions use real buttons instead of collapsed text-only hit targets', () => {

@@ -13,6 +13,10 @@ const username = 'e2e-admin-with-a-very-long-username-for-layout-audit-2026';
 const password = 'HeadlessOnly-2026!';
 const bootstrapToken = 'headless-e2e-bootstrap-token';
 const credentialPepper = 'headless-e2e-credential-pepper';
+const longProjectName = 'E2E 超长项目名称用于验证紧凑桌面与手机端标题不会挤压操作区并且能够自然换行显示完整业务语义';
+const longTaskName = 'E2E 超长执行任务名称用于验证任务队列和任务详情在窄屏条件下不会产生横向滚动或遮挡操作入口';
+const longOwner = '输电运检中心超长责任人名称压力测试';
+const longMaterialModel = 'E2E-MATERIAL-VERY-LONG-MODEL-220KV-TRANSMISSION-MAINTENANCE-RESPONSIVE-AUDIT-2026';
 
 let stateRoot = '';
 let baseUrl = '';
@@ -94,13 +98,13 @@ async function createDrawerFixture(page: Page) {
     '/api/reserve-projects',
     'e2e-drawer-project',
     {
-      name: 'E2E 抽屉响应式验收项目',
+      name: longProjectName,
       year: 2026,
-      owner: 'E2E',
+      owner: longOwner,
       demandIds: [],
       materials: [{
         materialId: null,
-        model: 'E2E-MATERIAL',
+        model: longMaterialModel,
         unit: '件',
         requiredQuantityScaled: 10000,
         unitPriceScaled: null,
@@ -132,10 +136,10 @@ async function createDrawerFixture(page: Page) {
     {
       projectId,
       expectedProjectVersion: released.data.projectVersion,
-      name: 'E2E 抽屉验收任务',
+      name: longTaskName,
       description: null,
       scopeText: null,
-      owner: 'E2E',
+      owner: longOwner,
       plannedDate: null,
       plannedQuantityScaled: 10000,
       unit: '项',
@@ -192,6 +196,26 @@ async function assertVisibleTextFloor(page: Page) {
     return results;
   });
   expect(offenders, `${page.url()} 发现低于 12px 的可见业务文字：${offenders.join(' | ')}`).toEqual([]);
+}
+
+async function assertVisibleButtonsHaveNames(page: Page) {
+  const offenders = await page.locator('button').evaluateAll((buttons) => buttons
+    .map((button) => {
+      const element = button as HTMLElement;
+      const rect = element.getBoundingClientRect();
+      const text = element.innerText.trim();
+      const aria = element.getAttribute('aria-label')?.trim() ?? '';
+      const title = element.getAttribute('title')?.trim() ?? '';
+      return {
+        visible: rect.width > 0 && rect.height > 0 && getComputedStyle(element).visibility !== 'hidden',
+        text,
+        aria,
+        title,
+        className: element.className,
+      };
+    })
+    .filter((item) => item.visible && !item.text && !item.aria && !item.title));
+  expect(offenders, `${page.url()} 存在无文字/无 aria-label/title 的可见按钮：${JSON.stringify(offenders)}`).toEqual([]);
 }
 
 async function assertNoVisibleLoadError(page: Page) {
@@ -322,6 +346,23 @@ async function assertMobileContentTouchTargets(page: Page) {
   expect(offenders, `${page.url()} 手机内容区发现低于 36px 的按钮：${JSON.stringify(offenders)}`).toEqual([]);
 }
 
+async function assertMobileFormControlTargets(page: Page) {
+  const offenders = await page.locator('.content-wrap .n-input, .content-wrap .n-base-selection, .content-wrap .n-date-picker, .content-wrap .n-tabs-tab').evaluateAll((controls) => controls
+    .map((control) => {
+      const element = control as HTMLElement;
+      const rect = element.getBoundingClientRect();
+      return {
+        text: (element.innerText || element.getAttribute('placeholder') || element.getAttribute('aria-label') || '').trim().slice(0, 40),
+        height: Math.round(rect.height * 10) / 10,
+        width: Math.round(rect.width * 10) / 10,
+        className: element.className,
+        visible: rect.width > 0 && rect.height > 0 && getComputedStyle(element).visibility !== 'hidden',
+      };
+    })
+    .filter((item) => item.visible && item.height < 36));
+  expect(offenders, `${page.url()} 手机内容区发现低于 36px 的表单/页签触控目标：${JSON.stringify(offenders)}`).toEqual([]);
+}
+
 async function assertSidebarActiveIndicator(page: Page, title: string, path: string) {
   await page.goto(`${baseUrl}${path}`);
   const item = page.locator(`.nav-item[title="${title}"]`);
@@ -400,11 +441,13 @@ async function assertRouteLayout(page: Page, path: string, mobile: boolean) {
   await assertNoVisibleLoadError(page);
   await assertNoHorizontalOverflow(page);
   await assertVisibleTextFloor(page);
+  await assertVisibleButtonsHaveNames(page);
   if (mobile) {
     await expect(page.locator('.app-sider')).toBeHidden();
     await expect(page.locator('.mobile-bottom-nav')).toBeVisible();
     await assertMobileNavigationTargets(page);
     await assertMobileContentTouchTargets(page);
+    await assertMobileFormControlTargets(page);
     await assertNoSiblingOverlap(page, '.mobile-bottom-nav > button', ['.app-icon', 'small'], '手机底部导航');
   } else {
     await expect(page.locator('.app-sider')).toBeVisible();
@@ -479,6 +522,43 @@ async function validateBusinessDrawers(browser: Browser, width: number, height: 
     await page.locator('[data-test="task-section-settlement"]').click();
     await page.locator('[data-test="open-settlement"]').click();
     await assertOverlayWithinViewport(page, page.locator('.task-progress-drawer.n-drawer'), '结算抽屉');
+  } finally {
+    await context.close();
+  }
+}
+
+async function validateLongBusinessText(browser: Browser, width: number, height: number, mobile: boolean) {
+  if (!drawerFixture) throw new Error('长文本布局测试夹具尚未创建');
+  const context = await browser.newContext({
+    viewport: { width, height },
+    colorScheme: 'light',
+    isMobile: mobile,
+    hasTouch: mobile,
+    storageState: authenticatedState,
+  });
+  try {
+    const page = await context.newPage();
+    const projectUrl = `${baseUrl}/projects/${encodeURIComponent(drawerFixture.projectId)}`;
+    const taskUrl = `${projectUrl}/tasks/${encodeURIComponent(drawerFixture.taskId)}`;
+
+    await page.goto(projectUrl);
+    await expect(page.getByText(longProjectName).first()).toBeVisible();
+    await assertNoVisibleLoadError(page);
+    await assertNoHorizontalOverflow(page);
+    await assertVisibleTextFloor(page);
+
+    await page.goto(taskUrl);
+    await expect(page.getByText(longTaskName).first()).toBeVisible();
+    await assertNoVisibleLoadError(page);
+    await assertNoHorizontalOverflow(page);
+    await assertVisibleTextFloor(page);
+
+    await page.goto(`${baseUrl}/tasks`);
+    const taskList = page.locator(mobile ? '.mobile-task-list' : '.desktop-task-list');
+    await expect(taskList.getByText(longTaskName).first()).toBeVisible();
+    await assertNoVisibleLoadError(page);
+    await assertNoHorizontalOverflow(page);
+    await assertVisibleTextFloor(page);
   } finally {
     await context.close();
   }
@@ -674,5 +754,17 @@ test.describe.serial('无头浏览器真实认证与响应式 UI', () => {
 
   test('窄屏手机业务抽屉不超出视口', async ({ browser }) => {
     await validateBusinessDrawers(browser, 320, 700);
+  });
+
+  test('紧凑桌面长业务文本不撑破页面', async ({ browser }) => {
+    await validateLongBusinessText(browser, 768, 700, false);
+  });
+
+  test('手机长业务文本不撑破页面', async ({ browser }) => {
+    await validateLongBusinessText(browser, 390, 844, true);
+  });
+
+  test('窄屏手机长业务文本不撑破页面', async ({ browser }) => {
+    await validateLongBusinessText(browser, 320, 700, true);
   });
 });
