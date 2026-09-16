@@ -1,6 +1,6 @@
 # Cloudflare 运行、成本与部署说明
 
-核对日期：2026-09-14。
+核对日期：2026-09-16。
 
 ## 1. 当前部署状态
 
@@ -9,6 +9,8 @@
 `7a49b44275038dddd3803cb17de9b7e4fe06ba33`
 
 PR #1 合并前 CI 与合并后的 `main` CI #31 均通过。Cloudflare Workers + D1 仍是当前计算/数据库部署基线；对象存储统一经 `ObjectStorePort`。当前正式方案选择 Notion，保留 Cloudflare R2 与 Node Filesystem 可替换后端；Node + SQLite + Filesystem 仍作为普通服务器第二运行时。
+
+最新生产代码基线为 `main@bc59cf18befb3058d47848e8dae6f9589187c9dd`。2026-09-16 的 `Production promote` run `35108487959` 完整 PASS；数据保留评估确认 source/target schema fingerprint 一致、`rebuildRequired=false`，因此未重建 D1。当前 Worker Version ID 为 `c943338c-e5a3-4731-ac83-9f4b990e8505`，公网 health/schema readiness 与匿名鉴权拒绝已独立复核。
 
 生产 workflow 已通过 PR #2 合入 `main@bc4774767c159068d59e16d6726444c5c1525dd6`，合并后的 CI #37 PASS。仓库现有四类 Actions：
 

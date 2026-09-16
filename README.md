@@ -2,7 +2,7 @@
 
 面向 20 人以内团队的项目管理应用，计划采用 Cloudflare Workers、D1、R2，免费额度内运行，支持电脑和手机访问。
 
-**当前状态：P0–P6、最终业务模型、基础台账对象化和后端可移植化均已完成；Cloudflare Workers + D1 是当前生产基线，Node + SQLite + Filesystem 第二运行时保持可用。全站 UI 重构正在施工分支收口，P7 真实业务、性能、网络、恢复和运维移交继续按生产验收矩阵推进。**
+**当前状态：P0–P6、最终业务模型、基础台账对象化、后端可移植化和全站 UI 重构均已完成并发布生产；Cloudflare Workers + D1 是当前生产基线，Node + SQLite + Filesystem 第二运行时保持可用。当前施工重点转为工程化加固与 P7 真实业务、性能、网络、恢复和运维移交。**
 当前业务认证完全由系统自身维护：用户使用 `username + 密码` 登录，浏览器 Web Worker 负责 Argon2id 派生，服务端只保存带运行时 pepper 的 HMAC verifier，并签发 7 天 HttpOnly 会话。邮箱不参与账号体系。需求、储备、资金、实施结算、提醒与分片备份均已有本地实现。
 
 ## 交给其他 AI 的入口
@@ -31,8 +31,9 @@ make dev
 
 ```sh
 make check      # TypeScript + build + Node/Web 全量门禁
-make test       # make check + Headless Chromium UI E2E
+make test       # make check + Headless Chromium UI E2E（复用 check 已生成的 Web build）
 make test-ui    # 仅运行真实无头 UI 验收
+make audit      # Git 真源工程卫生 + production dependency security audit
 ```
 
 该命令是统一质量门禁：运行生产代码和测试代码 TypeScript 检查、前端构建、Worker **dry-run** 打包、当前开发迁移基线检查、真实本地 workerd + D1 集成测试、production 认证、会话/权限/并发/原子性，以及 Vue 行为合同测试。Node 测试均使用独立临时 D1，不污染日常本地库。详细规则见 `docs/TESTING.md`。
@@ -45,11 +46,11 @@ make test-ui    # 仅运行真实无头 UI 验收
 apps/web/                Vue 3 + Vite + Router + Naive UI 管理台
 apps/api/                Hono + Workers 业务接口与 Wrangler 配置
 apps/api/migrations/     当前开发期 D1 数据库基线；正式上线后改为追加式迁移
-packages/shared/         前后端共享接口类型
+packages/shared/         按业务域拆分的前后端共享契约，@tpm/shared 保持统一公共入口
 tests/                   迁移守卫、Workers+D1、并发/原子性、production 鉴权测试
 apps/web/tests/          Vue 行为合同测试
 docs/                   完整设计、实施计划、测试策略、数据模型、部署与 AI 交接
-.github/workflows/      仅检查、不部署的 CI
+.github/workflows/       CI、只读生产预检/清单与受保护 Production promote
 ```
 
 ## 已确定的业务边界
