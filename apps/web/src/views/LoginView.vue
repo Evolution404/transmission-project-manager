@@ -137,7 +137,7 @@ onMounted(loadStatus);
 
       <section class="auth-form-panel">
         <div class="auth-form-header">
-          <span>{{ initialized === false ? 'SYSTEM SETUP' : 'ACCOUNT' }}</span>
+          <span>{{ initialized === false ? '首次配置' : '账号登录' }}</span>
           <h2>{{ initialized === false ? '初始化系统管理员' : '登录管理台' }}</h2>
           <p>{{ initialized === false ? '仅首次部署需要完成此步骤。' : '使用系统账号继续进入项目工作区。' }}</p>
         </div>

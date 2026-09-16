@@ -334,7 +334,7 @@ test('web decorative labels stay Chinese instead of reintroducing English chrome
     if (!file.endsWith('.vue')) continue;
     const source = readFileSync(file, 'utf8');
     assert.doesNotMatch(source, /class="page-eyebrow"[^>]*>\s*[A-Z][A-Z\s/&-]{2,}\s*</, `${file} 的页面眉标仍使用纯英文装饰文案`);
-    assert.doesNotMatch(source, /<span>\s*(?:TRANSMISSION PROJECTS|ACCOUNT SECURITY|SECURITY)\s*<\/span>/, `${file} 的认证界面仍使用纯英文装饰文案`);
+    assert.doesNotMatch(source, /(?:TRANSMISSION PROJECTS|SYSTEM SETUP|ACCOUNT SECURITY|ACCOUNT|SECURITY)/, `${file} 的认证界面仍使用纯英文装饰文案`);
     assert.doesNotMatch(source, /class="object-kicker"[^>]*>\s*PROJECT\b/, `${file} 的对象眉标仍使用英文 PROJECT`);
   }
 });
