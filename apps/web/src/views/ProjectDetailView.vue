@@ -1,19 +1,27 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { NButton, NEmpty, NProgress, NSpin, NTag } from 'naive-ui';
+import { NAlert, NButton, NDatePicker, NEmpty, NForm, NFormItem, NInput, NModal, NProgress, NSpin, NTag, useMessage } from 'naive-ui';
 import type { CurrentUser, ProjectExecutionSummary, ReserveProjectSummary } from '@tpm/shared';
-import { apiRequest } from '../api/client';
+import { ApiRequestError, apiRequest, jsonRequestInit } from '../api/client';
 
 const props = defineProps<{ currentUser: CurrentUser }>();
 const route = useRoute();
 const router = useRouter();
+const message = useMessage();
 const projectId = computed(() => String(route.params.projectId));
 const project = ref<ReserveProjectSummary | null>(null);
 const execution = ref<ProjectExecutionSummary | null>(null);
 const loading = ref(true);
 const error = ref('');
 const tab = ref(String(route.query.tab || 'overview'));
+const releaseOpen = ref(false);
+const releasing = ref(false);
+const releaseDate = ref(Date.now());
+const releaseNote = ref('');
+const releaseError = ref('');
+const releaseConflict = ref(false);
+const releaseIdempotencyKey = ref('');
 
 const canManage = computed(() => ['admin', 'project_manager'].includes(props.currentUser.role));
 const implementationProgress = computed(() => {
@@ -31,6 +39,12 @@ const settlementProgress = computed(() => {
 
 function formatMoneyFen(value: number) {
   return new Intl.NumberFormat('zh-CN', { style: 'currency', currency: 'CNY' }).format(value / 100);
+}
+
+function businessDateFromTimestamp(value: number) {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date(value));
 }
 
 async function load() {
@@ -51,6 +65,52 @@ async function load() {
 function backToProjects() { void router.push('/projects'); }
 function openTask(taskId: string) { void router.push(`/projects/${encodeURIComponent(projectId.value)}/tasks/${encodeURIComponent(taskId)}`); }
 function openLegacyExecution() { void router.push('/delivery'); }
+
+function openProjectRelease() {
+  releaseDate.value = Date.now();
+  releaseNote.value = '';
+  releaseError.value = '';
+  releaseConflict.value = false;
+  releaseIdempotencyKey.value = crypto.randomUUID();
+  releaseOpen.value = true;
+}
+
+async function confirmProjectRelease() {
+  if (!project.value || !releaseDate.value) return;
+  releasing.value = true;
+  releaseError.value = '';
+  releaseConflict.value = false;
+  try {
+    await apiRequest('/api/project-releases', jsonRequestInit('POST', {
+      projectId: project.value.id,
+      expectedProjectVersion: project.value.version,
+      releaseDate: businessDateFromTimestamp(releaseDate.value),
+      note: releaseNote.value.trim() || null,
+    }, releaseIdempotencyKey.value));
+    releaseOpen.value = false;
+    await load();
+    message.success('项目已出库，正式进入执行阶段');
+  } catch (cause) {
+    if (cause instanceof ApiRequestError && cause.status === 409) {
+      releaseConflict.value = true;
+      releaseError.value = '项目已被更新。当前输入已保留，请读取最新数据后重新确认。';
+    } else {
+      releaseError.value = cause instanceof Error ? cause.message : '项目出库失败';
+    }
+  } finally {
+    releasing.value = false;
+  }
+}
+
+async function reloadReleaseProject() {
+  const note = releaseNote.value;
+  await load();
+  releaseNote.value = note;
+  releaseConflict.value = false;
+  releaseError.value = '';
+  releaseIdempotencyKey.value = crypto.randomUUID();
+  if (execution.value?.released) releaseOpen.value = false;
+}
 
 function setTab(value: string) {
   tab.value = value;
@@ -78,7 +138,7 @@ onMounted(load);
               <span>储备 v{{ project.reserveVersion }}</span>
             </div>
           </div>
-          <n-button v-if="canManage && project.status === 'confirmed' && !execution.released" type="primary" @click="openLegacyExecution">前往项目出库</n-button>
+          <n-button v-if="canManage && project.status === 'confirmed' && !execution.released" data-test="open-project-release" type="primary" @click="openProjectRelease">项目出库</n-button>
           <n-button v-else-if="execution.released && !execution.tasks.length" type="primary" @click="openLegacyExecution">前往创建任务</n-button>
           <n-button v-else-if="execution.tasks.length" type="primary" @click="setTab('tasks')">查看执行任务</n-button>
         </section>
@@ -146,6 +206,37 @@ onMounted(load);
         </section>
       </template>
     </n-spin>
+
+    <n-modal
+      v-model:show="releaseOpen"
+      preset="card"
+      title="确认项目出库"
+      :mask-closable="!releasing"
+      class="release-modal"
+      :style="{ width: 'min(520px, calc(100vw - 24px))' }"
+    >
+      <template v-if="project">
+        <div class="release-intro">
+          <strong>项目出库是进入执行阶段的一次正式确认</strong>
+          <p>它不是物资发货，不登记仓库数量，也不会自动创建执行任务或资金流水。</p>
+        </div>
+        <div class="release-facts">
+          <div><span>储备版本</span><strong>v{{ project.reserveVersion }}</strong></div>
+          <div><span>来源需求</span><strong data-test="release-demand-count">{{ project.demandLinks.length }} 项</strong></div>
+          <div><span>项目物资</span><strong data-test="release-material-count">{{ project.materialRequirements.length }} 项</strong></div>
+        </div>
+        <n-alert v-if="releaseError" :type="releaseConflict ? 'warning' : 'error'" :bordered="false" class="release-error">{{ releaseError }}</n-alert>
+        <n-button v-if="releaseConflict" data-test="reload-release-project" secondary block class="release-reload" @click="reloadReleaseProject">读取最新项目数据</n-button>
+        <n-form label-placement="top">
+          <n-form-item label="出库日期"><n-date-picker v-model:value="releaseDate" type="date" :clearable="false" /></n-form-item>
+          <n-form-item label="备注"><n-input v-model:value="releaseNote" data-test="release-note" type="textarea" :autosize="{ minRows: 2, maxRows: 4 }" placeholder="可选：记录本次进入执行阶段的说明" /></n-form-item>
+        </n-form>
+        <div class="release-actions">
+          <n-button :disabled="releasing" @click="releaseOpen = false">取消</n-button>
+          <n-button data-test="confirm-project-release" type="primary" :loading="releasing" @click="confirmProjectRelease">确认项目出库</n-button>
+        </div>
+      </template>
+    </n-modal>
   </div>
 </template>
 
@@ -183,6 +274,15 @@ onMounted(load);
 .row-chevron { font-size: 22px; }
 .fact-list > div { display: flex; justify-content: space-between; gap: 20px; padding: 13px 2px; border-bottom: 1px solid var(--ui-border, #dce2ea); }
 .detail-error { padding: 14px 16px; border-radius: 12px; background: #fff4f3; color: #b42318; }
+.release-intro { margin-bottom: 18px; padding: 14px 15px; border-radius: 14px; background: var(--ui-surface-muted, #eef1f5); }
+.release-intro strong { font-size: 14px; }
+.release-intro p { margin: 6px 0 0; color: var(--ui-text-secondary, #566174); font-size: 13px; line-height: 1.6; }
+.release-facts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 18px; }
+.release-facts > div { display: grid; gap: 4px; padding: 11px 12px; border: 1px solid var(--ui-border, #dce2ea); border-radius: 12px; }
+.release-facts span { color: var(--ui-text-secondary, #566174); font-size: 12px; }
+.release-facts strong { font-size: 14px; }
+.release-error, .release-reload { margin-bottom: 14px; }
+.release-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 4px; }
 @media (max-width: 767px) {
   .object-header { align-items: flex-start; flex-direction: column; gap: 16px; }
   .object-header h2 { font-size: 24px; }
@@ -199,5 +299,8 @@ onMounted(load);
   .task-row { grid-template-columns: 1fr 20px; gap: 12px; }
   .task-progress-pair { grid-column: 1 / -1; justify-content: flex-start; }
   .row-chevron { grid-column: 2; grid-row: 1; }
+  .release-facts { grid-template-columns: 1fr; }
+  .release-actions { position: sticky; bottom: 0; padding: 12px 0 max(4px, env(safe-area-inset-bottom)); background: var(--ui-surface, #fff); }
+  .release-actions .n-button:last-child { flex: 1; }
 }
 </style>
