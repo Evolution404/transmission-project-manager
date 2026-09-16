@@ -106,12 +106,13 @@
 - 异步上下文竞态继续收口：Finance 的框架汇总/协议/流水、预算项目和流水分页使用 request sequence，旧框架/旧项目请求晚到后直接丢弃；Analysis 的框架进度/缺口/计划/月报同样使用框架请求序号，统计日期相关事项统一经 `loadMilestones()` 的单一请求序号处理，页面刷新、改日期、新增事项和状态更新不再维护多套竞态逻辑。新增 4 个行为测试主动让旧请求最后返回，Finance/Analysis 定向 **20/20 PASS**；最新完整 `npm run check` 为 Node **307/307 PASS**、Web **155/155 PASS（23 文件）**。
 - 当前上下文失败恢复也已收口：Finance 切框架/切预算项目、Analysis 切框架/切统计日期的当前请求失败会进入页面内错误提示和“重新加载”，不会再产生 Vue 未处理 Promise；重试保持当前框架/预算项目/统计日期并真实重新请求，旧上下文失败则由请求序号静默丢弃。Analysis 在新框架读取开始时同步清空旧进度图，失败后不会残留上一框架图表。新增 4 个失败/重试行为测试后 Finance/Analysis 定向 **24/24 PASS**；最新完整 `npm run check` 为 Node **307/307 PASS**、Web **159/159 PASS（23 文件）**。
 - Finance / Analysis 写后刷新语义进一步拆分：框架、协议、项目归属、预算草稿/确认、资金流水、月计划、分析规则、月报、年度事项创建/状态更新，mutation 成功后统一经 `refreshAfterCommittedWrite()` 刷新。刷新失败时页面明确显示“操作已成功，但最新数据刷新失败”，并发 warning 引导重新加载；不会再进入“预算保存失败 / 月计划保存失败”等 mutation error。两条真实“写成功、刷新失败”行为测试先红后绿，新增 repository guard 锁定规则；Finance/Analysis 定向 **26/26 PASS**，完整 `npm run check` 为 Node **308/308 PASS**、Web **161/161 PASS（23 文件）**。
+- Demands 已继续按同一语义收口：手工需求创建、需求物资追加、标准物资新增、批量导入发布在服务端写入成功后，后续列表/字典刷新失败不得再误报为“创建失败/保存失败/导入失败”；统一通过 `refreshAfterCommittedWrite()` 提示“操作已成功，但最新数据刷新失败，请重新加载”，并保留页面级恢复入口。代表性“标准物资 POST 已成功、字典刷新失败”测试已先红后绿，repository guard 锁定四条需求写路径。定向 Demands **11/11 PASS**；最新完整 `npm run check` 为 Node **309/309 PASS**、Web **162/162 PASS（23 文件）**，TypeScript、Web production build、Worker dry-run 与 Node + SQLite + Filesystem 第二运行时全部通过。
 
 ## 下一步施工顺序
 
-1. 使用正常认证流程补齐真实浏览器桌面/手机、浅色/暗色截图和关键交互验收；不得通过伪造会话绕过认证。自动测试不能替代最终真实浏览器验收。
-2. 对真实浏览器验收发现的问题继续小批修复、定向回归；若没有新问题则停止继续机械改样式。
-3. 真实浏览器验收完成后最终再次运行完整 `npm run check`，确认全站功能迁移和交互验收都完成后才可标记 UI 重构完成。
+1. 继续审计剩余“mutation 成功 → reload 失败”路径，重点是 `MasterDataView.vue`、`ReserveClassificationPanel.vue` 等；只修真正会把已生效写入误报失败的路径，`ProjectDetailView` / `TaskDetailView` 这类 `load()` 已自行吞刷新异常并显示页面错误的路径不要机械重构。
+2. 使用正常认证流程补齐真实浏览器桌面/手机、浅色/暗色截图和关键交互验收；不得通过伪造会话绕过认证。自动测试不能替代最终真实浏览器验收。
+3. 对真实浏览器验收发现的问题继续小批修复、定向回归；若没有新问题则停止继续机械改样式。最终再次运行完整 `npm run check` 后再标记 UI 重构完成。
 
 ## 必须保持的业务/工程边界
 

@@ -5,6 +5,9 @@ import type { CurrentUser, ImportFieldMapping } from '@tpm/shared';
 
 const routeQuery = vi.hoisted(() => ({} as Record<string, string>));
 const replace = vi.fn();
+const messageSuccess = vi.fn();
+const messageError = vi.fn();
+const messageWarning = vi.fn();
 vi.mock('vue-router', () => ({ useRoute: () => ({ query: routeQuery }), useRouter: () => ({ replace }) }));
 
 const { parseFileInWorker, sha256File, executeImportWorkflow, ImportReviewRequiredError, downloadDemandImportTemplate } = vi.hoisted(() => {
@@ -97,7 +100,7 @@ vi.mock('naive-ui', async () => {
     NAlert: wrap('NAlert'), NButton, NCard: wrap('NCard'), NDataTable, NEmpty: wrap('NEmpty'),
     NForm: wrap('NForm'), NFormItem: wrap('NFormItem'), NInput, NModal, NProgress: wrap('NProgress'), NSelect,
     NSpace: wrap('NSpace'), NSpin: wrap('NSpin'), NTabPane, NTabs, NTag: wrap('NTag'),
-    useMessage: () => ({ success: vi.fn(), error: vi.fn(), warning: vi.fn() }),
+    useMessage: () => ({ success: messageSuccess, error: messageError, warning: messageWarning }),
   };
 });
 
@@ -123,6 +126,9 @@ describe('DemandsView P2 behavior', () => {
   beforeEach(() => {
     for (const key of Object.keys(routeQuery)) delete routeQuery[key];
     replace.mockReset();
+    messageSuccess.mockReset();
+    messageError.mockReset();
+    messageWarning.mockReset();
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url === '/api/imports/batch-review') return ok({
@@ -295,6 +301,34 @@ describe('DemandsView P2 behavior', () => {
     expect(createCall).toBeTruthy();
     expect(JSON.parse(String(createCall![1]!.body))).toEqual({ code: null, name: '线夹', model: 'JX-01', unit: '套' });
     expect(fetchMock.mock.calls.filter(([url]) => String(url).startsWith('/api/materials')).length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('does not report a committed standard material as failed when the dictionary refresh fails', async () => {
+    const wrapper = mount(DemandsView, { props: { currentUser: admin } });
+    await flushPromises();
+    await wrapper.get('[data-test="add-material"]').trigger('click');
+    await wrapper.get('[data-test="material-name"]').setValue('线夹');
+    await wrapper.get('[data-test="material-model"]').setValue('JX-01');
+    await wrapper.get('[data-test="material-unit"]').setValue('套');
+
+    const fallback = vi.mocked(fetch).getMockImplementation()!;
+    let committed = false;
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === '/api/materials' && init?.method === 'POST') {
+        committed = true;
+        return fallback(input, init);
+      }
+      if (committed && url.startsWith('/api/materials')) throw new Error('物资字典刷新失败');
+      return fallback(input, init);
+    });
+
+    await wrapper.get('[data-test="save-material"]').trigger('click');
+    await flushPromises();
+    expect(committed).toBe(true);
+    expect(messageError).not.toHaveBeenCalled();
+    expect(messageWarning).toHaveBeenCalledWith('标准物资已添加，但最新数据刷新失败，请重新加载');
+    expect(wrapper.text()).toContain('标准物资已添加，但最新数据刷新失败');
   });
 
   it('shows row-level validation errors when an import requires review', async () => {

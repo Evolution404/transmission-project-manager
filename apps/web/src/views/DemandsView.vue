@@ -170,6 +170,18 @@ const importReady = computed(() => Boolean(
   mapping.value.materialModel && mapping.value.materialQuantity,
 ));
 
+async function refreshAfterCommittedWrite(successMessage: string, refresh: () => Promise<unknown>) {
+  try {
+    await refresh();
+    error.value = '';
+    message.success(successMessage);
+  } catch (cause) {
+    const detail = cause instanceof Error ? cause.message : '读取最新数据失败';
+    error.value = `${successMessage}，但最新数据刷新失败：${detail}`;
+    message.warning(`${successMessage}，但最新数据刷新失败，请重新加载`);
+  }
+}
+
 function parseDecimalScaled(value: string, digits = 4): number | null {
   const raw = value.trim();
   const match = raw.match(/^(\d+)(?:\.(\d+))?$/);
@@ -321,6 +333,7 @@ async function startImport() {
   importError.value = '';
   importProgress.value = null;
   reviewRows.value = [];
+  let publishedRows: number;
   try {
     const fileHash = await sha256File(selectedFile.value);
     const result = await executeImportWorkflow({
@@ -331,8 +344,7 @@ async function startImport() {
       rows: flattenParsedSheets(parsedFile.value),
       onProgress: (progress) => { importProgress.value = progress; },
     });
-    message.success(`导入完成，已发布 ${result.publishedRows} 行需求`);
-    await loadDemands();
+    publishedRows = result.publishedRows;
   } catch (cause) {
     importError.value = cause instanceof Error ? cause.message : '导入失败';
     if (cause instanceof ImportReviewRequiredError) {
@@ -344,9 +356,11 @@ async function startImport() {
         importError.value = `${importError.value}；${detailMessage}`;
       }
     }
+    return;
   } finally {
     importing.value = false;
   }
+  await refreshAfterCommittedWrite(`导入完成，已发布 ${publishedRows} 行需求`, loadDemands);
 }
 
 async function openDemand(row: DemandSummary) {
@@ -414,27 +428,29 @@ async function createManualDemand() {
 
   savingManualDemand.value = true;
   try {
-    await apiRequest<DemandDetail>('/api/demands', jsonRequestInit('POST', {
-      sequenceNo: form.sequenceNo.trim(),
-      voltageLevelId: form.voltageLevelId,
-      lineId: form.lineId,
-      locationType: form.locationType,
-      startTowerPositionId: form.locationType === 'whole_line' ? null : form.startTowerPositionId,
-      endTowerPositionId: form.locationType === 'tower_range' ? form.endTowerPositionId : form.locationType === 'tower' ? form.startTowerPositionId : null,
-      materials,
-      year,
-      category: form.category.trim() || null,
-      owner: form.owner.trim() || null,
-    }));
+    try {
+      await apiRequest<DemandDetail>('/api/demands', jsonRequestInit('POST', {
+        sequenceNo: form.sequenceNo.trim(),
+        voltageLevelId: form.voltageLevelId,
+        lineId: form.lineId,
+        locationType: form.locationType,
+        startTowerPositionId: form.locationType === 'whole_line' ? null : form.startTowerPositionId,
+        endTowerPositionId: form.locationType === 'tower_range' ? form.endTowerPositionId : form.locationType === 'tower' ? form.startTowerPositionId : null,
+        materials,
+        year,
+        category: form.category.trim() || null,
+        owner: form.owner.trim() || null,
+      }));
+    } catch (cause) {
+      message.error(cause instanceof Error ? cause.message : '需求创建失败');
+      return;
+    }
     manualDemandForm.value = {
       sequenceNo: '', voltageLevelId: '', lineId: '', locationType: 'tower_range', startTowerPositionId: '', endTowerPositionId: '', year: '', category: '', owner: '',
     };
     manualDemandMaterials.value = [];
     manualDemandModalOpen.value = false;
-    await loadDemands();
-    message.success('需求已创建');
-  } catch (cause) {
-    message.error(cause instanceof Error ? cause.message : '需求创建失败');
+    await refreshAfterCommittedWrite('需求已创建', loadDemands);
   } finally {
     savingManualDemand.value = false;
   }
@@ -450,16 +466,19 @@ async function addDemandMaterial() {
   }
   savingDemandMaterial.value = true;
   try {
-    const updated = await apiRequest<DemandDetail>(`/api/demands/${selectedDemand.value.id}/materials`, jsonRequestInit('POST', {
-      expectedVersion: selectedDemand.value.version,
-      materials: [{ rawModel, quantityScaled, unit: demandMaterialForm.value.unit.trim() || null, materialId: null }],
-    }));
+    let updated: DemandDetail;
+    try {
+      updated = await apiRequest<DemandDetail>(`/api/demands/${selectedDemand.value.id}/materials`, jsonRequestInit('POST', {
+        expectedVersion: selectedDemand.value.version,
+        materials: [{ rawModel, quantityScaled, unit: demandMaterialForm.value.unit.trim() || null, materialId: null }],
+      }));
+    } catch (cause) {
+      message.error(cause instanceof Error ? cause.message : '需求物资添加失败');
+      return;
+    }
     selectedDemand.value = updated;
     demandMaterialForm.value = { rawModel: '', quantity: '', unit: '' };
-    await loadDemands();
-    message.success('需求物资子明细已添加');
-  } catch (cause) {
-    message.error(cause instanceof Error ? cause.message : '需求物资添加失败');
+    await refreshAfterCommittedWrite('需求物资子明细已添加', loadDemands);
   } finally {
     savingDemandMaterial.value = false;
   }
@@ -478,13 +497,15 @@ async function addMaterial() {
   }
   savingMaterial.value = true;
   try {
-    await apiRequest<MaterialSummary>('/api/materials', jsonRequestInit('POST', payload));
+    try {
+      await apiRequest<MaterialSummary>('/api/materials', jsonRequestInit('POST', payload));
+    } catch (cause) {
+      message.error(cause instanceof Error ? cause.message : '物资保存失败');
+      return;
+    }
     materialForm.value = { code: '', name: '', model: '', unit: '' };
     showMaterialForm.value = false;
-    await loadMaterials();
-    message.success('标准物资已添加');
-  } catch (cause) {
-    message.error(cause instanceof Error ? cause.message : '物资保存失败');
+    await refreshAfterCommittedWrite('标准物资已添加', loadMaterials);
   } finally {
     savingMaterial.value = false;
   }

@@ -117,6 +117,8 @@ M6 基础台账定向结果：基础台账 API **25/25 PASS**；相关 Web **30/
 
 随后开始收口“写入成功但刷新失败”的错误语义，先覆盖金额/预算风险最高的 Finance 与 Analysis。两页所有关键 mutation 均拆成“mutation 失败”和“mutation 已提交后的 refresh 失败”两阶段；后者只提示操作已经成功、最新数据刷新失败并要求重新加载，禁止误报保存失败。新增真实预算/月计划写后刷新失败测试及 repository guard；Finance/Analysis 定向 **26/26 PASS**，完整 `npm run check` 为 Node **308/308 PASS**、Web **161/161 PASS（23 文件）**。
 
+随后将同一规则扩展到需求管理：手工需求创建、需求物资追加、标准物资新增、批量导入发布都已拆分 mutation 与 post-write refresh。刷新失败时不允许把已成功写入重新包装成“创建失败/物资保存失败/导入失败”，而是提示业务事实已经生效并要求重新加载最新数据。代表性标准物资行为测试先红后绿，并新增 repository guard 覆盖四条需求写路径。Demands 定向 **11/11 PASS**；最新完整 `npm run check` 为 Node **309/309 PASS**、Web **162/162 PASS（23 文件）**，TypeScript、Web production build、Worker dry-run 与 Node + SQLite + Filesystem 第二运行时全部通过。
+
 该工作包保持以下验收条件：
 
 - `/api/reserve-projects` 的 `stage=reserve` 必须在 SQL 层按“不存在 `project_releases`”过滤，与工作台/分析统计口径一致；
@@ -126,6 +128,7 @@ M6 基础台账定向结果：基础台账 API **25/25 PASS**；相关 Web **30/
 - Projects 搜索条件由服务端在 `LIMIT` 前过滤，不得退回仅搜索当前已加载页；
 - Tasks 页从 URL 恢复并同步 `status/query`；
 - 定向测试、`git diff --check`、相关 typecheck 通过后，再跑完整 `npm run check` 并独立提交。
+- 所有会先提交业务事实、再刷新页面投影的写操作，都必须区分“mutation 失败”和“mutation 已成功但刷新失败”；后者不得诱导用户重复提交。需求、资金、分析已纳入静态门禁，剩余页面按实际风险继续审计，不做机械式重构。
 
 真实浏览器最终验收仍是未完成项。当前项目未引入 Playwright/Puppeteer；本机 Chrome headless 在该环境会被 Updater/Crashpad 拖住，不能稳定批量生成桌面/手机/明暗截图。不得通过伪造认证会话规避登录；最终应使用正常认证会话完成关键页面真实浏览器验收后再宣布 UI 重构完成。
 

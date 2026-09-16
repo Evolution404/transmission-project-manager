@@ -233,3 +233,5 @@ CI/CD 优先使用 Cloudflare account-owned API token 作为服务身份，按�
 阶段、依赖、责任边界及测试场景见 [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)。技术数据合同见 [DATA_MODEL.md](DATA_MODEL.md)，部署前提见 [DEPLOYMENT.md](DEPLOYMENT.md)。
 
 当前已完成 P0–P6 的实现与自动验收；P6 已包含服务端定时任务、通知 outbox、D1→`ObjectStorePort` 分片备份及独立 D1 实际恢复测试。P7 负责标准模板填报数据的真实业务抽检、真实邮件、生产部署、云配额/CPU、目标地区网络、正式恢复和运维移交，不得用本地合成结果宣称已上线。
+
+前端写操作采用“两阶段结果语义”：服务端 mutation 的成功/失败与 mutation 之后的页面投影刷新成功/失败必须分开处理。若 mutation 已提交成功而后续 GET/reload 失败，界面必须明确告知“操作已成功，但最新数据刷新失败”，并提供重新加载；禁止把刷新异常重新包装成“保存失败/创建失败/导入失败”，避免用户重复提交已经生效的业务事实。该规则当前已覆盖资金、分析和需求主流程，并由行为测试与 repository guard 约束。

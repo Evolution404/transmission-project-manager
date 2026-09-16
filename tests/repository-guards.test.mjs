@@ -549,6 +549,16 @@ test('committed finance and analysis writes distinguish refresh failure from mut
   assert.match(analysis, /最新数据刷新失败，请重新加载/, '分析页刷新失败必须明确说明写入已成功并提供恢复指引');
 });
 
+test('committed demand writes distinguish refresh failure from mutation failure', () => {
+  const demands = readFileSync(resolve(root, 'apps/web/src/views/DemandsView.vue'), 'utf8');
+  assert.match(demands, /async function refreshAfterCommittedWrite\(/, '需求页必须统一处理已提交后的刷新失败');
+  for (const message of ['需求已创建', '需求物资子明细已添加', '标准物资已添加']) {
+    assert.match(demands, new RegExp(`refreshAfterCommittedWrite\\('${message}'`), `需求写入“${message}”必须区分提交失败与刷新失败`);
+  }
+  assert.match(demands, /refreshAfterCommittedWrite\(`导入完成，已发布 \$\{publishedRows\} 行需求`/, '导入发布完成后的需求池刷新失败不得反向标记导入失败');
+  assert.match(demands, /最新数据刷新失败，请重新加载/, '需求页刷新失败必须明确说明写入已成功并提供恢复指引');
+});
+
 test('local API development rebuilds the local D1 when the single development baseline changes', () => {
   const apiPackage = JSON.parse(readFileSync(resolve(root, 'apps/api/package.json'), 'utf8'));
   assert.equal(apiPackage.scripts.dev, 'node ../../scripts/dev/api-dev.mjs');
