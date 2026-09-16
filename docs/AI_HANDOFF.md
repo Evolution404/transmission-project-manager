@@ -37,7 +37,7 @@
 - 已建立 UI 硬门禁：业务源码禁止直接渲染原生 `<button>` / `<input>` / `<select>` / `<textarea>` 和动态 `h('button')`；原生 file input 只能隐藏在设计系统 primitive 内。门禁位于 `tests/repository-guards.test.mjs`。
 - 设计系统 primitive：`apps/web/src/app/AppPressable.vue`、`AppFilePicker.vue`。
 
-最近一次完整 `npm run check`：Node **307/307 PASS**、Web **159/159 PASS（23 个测试文件）**；TypeScript、Web production build、Worker `wrangler deploy --dry-run`、Node + SQLite + Filesystem 第二运行时均 PASS。
+最近一次完整 `npm run check`：Node **308/308 PASS**、Web **161/161 PASS（23 个测试文件）**；TypeScript、Web production build、Worker `wrangler deploy --dry-run`、Node + SQLite + Filesystem 第二运行时均 PASS。
 
 最近 UI 提交：
 
@@ -105,6 +105,7 @@
 - 操作可达性继续收口：业务 Vue 源码禁止 `size="tiny"`，基础台账线路操作和杆塔排序统一提升为 small；手机上的线路“编辑/删除”和杆塔“上移/下移”至少 36px 高。项目详情、任务详情/新建任务、基础台账的文本式返回操作桌面至少 36px、手机至少 44px 命中高度，外观仍保持轻量文本导航。两条 repository guard 已锁定；完整 `npm run check` 为 Node **306/306 PASS**、Web **151/151 PASS（23 文件）**。
 - 异步上下文竞态继续收口：Finance 的框架汇总/协议/流水、预算项目和流水分页使用 request sequence，旧框架/旧项目请求晚到后直接丢弃；Analysis 的框架进度/缺口/计划/月报同样使用框架请求序号，统计日期相关事项统一经 `loadMilestones()` 的单一请求序号处理，页面刷新、改日期、新增事项和状态更新不再维护多套竞态逻辑。新增 4 个行为测试主动让旧请求最后返回，Finance/Analysis 定向 **20/20 PASS**；最新完整 `npm run check` 为 Node **307/307 PASS**、Web **155/155 PASS（23 文件）**。
 - 当前上下文失败恢复也已收口：Finance 切框架/切预算项目、Analysis 切框架/切统计日期的当前请求失败会进入页面内错误提示和“重新加载”，不会再产生 Vue 未处理 Promise；重试保持当前框架/预算项目/统计日期并真实重新请求，旧上下文失败则由请求序号静默丢弃。Analysis 在新框架读取开始时同步清空旧进度图，失败后不会残留上一框架图表。新增 4 个失败/重试行为测试后 Finance/Analysis 定向 **24/24 PASS**；最新完整 `npm run check` 为 Node **307/307 PASS**、Web **159/159 PASS（23 文件）**。
+- Finance / Analysis 写后刷新语义进一步拆分：框架、协议、项目归属、预算草稿/确认、资金流水、月计划、分析规则、月报、年度事项创建/状态更新，mutation 成功后统一经 `refreshAfterCommittedWrite()` 刷新。刷新失败时页面明确显示“操作已成功，但最新数据刷新失败”，并发 warning 引导重新加载；不会再进入“预算保存失败 / 月计划保存失败”等 mutation error。两条真实“写成功、刷新失败”行为测试先红后绿，新增 repository guard 锁定规则；Finance/Analysis 定向 **26/26 PASS**，完整 `npm run check` 为 Node **308/308 PASS**、Web **161/161 PASS（23 文件）**。
 
 ## 下一步施工顺序
 

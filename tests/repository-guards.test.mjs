@@ -533,6 +533,22 @@ test('async workspace context loaders ignore stale responses', () => {
   assert.match(analysis, /const milestonePromise = loadMilestones\(requestedAsOf\)/, '分析全量刷新也必须复用事项竞态门禁');
 });
 
+test('committed finance and analysis writes distinguish refresh failure from mutation failure', () => {
+  const finance = readFileSync(resolve(root, 'apps/web/src/views/FinanceView.vue'), 'utf8');
+  assert.match(finance, /async function refreshAfterCommittedWrite\(/, '资金页必须统一处理已提交后的刷新失败');
+  for (const message of ['框架已创建', '执行协议已创建', '项目框架归属已更新', '预算草稿已保存', '预算已确认；不会自动生成预算发生流水', '资金流水已登记']) {
+    assert.match(finance, new RegExp(`refreshAfterCommittedWrite\\('${message.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}'`), `资金写入“${message}”必须区分提交失败与刷新失败`);
+  }
+  assert.match(finance, /最新数据刷新失败，请重新加载/, '资金页刷新失败必须明确说明写入已成功并提供恢复指引');
+
+  const analysis = readFileSync(resolve(root, 'apps/web/src/views/AnalysisView.vue'), 'utf8');
+  assert.match(analysis, /async function refreshAfterCommittedWrite\(/, '分析页必须统一处理已提交后的刷新失败');
+  for (const message of ['月计划已保存', '分析规则已更新', '月报修订已生成', '年度事项已创建', '事项状态已更新']) {
+    assert.match(analysis, new RegExp(`refreshAfterCommittedWrite\\('${message.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}'`), `分析写入“${message}”必须区分提交失败与刷新失败`);
+  }
+  assert.match(analysis, /最新数据刷新失败，请重新加载/, '分析页刷新失败必须明确说明写入已成功并提供恢复指引');
+});
+
 test('local API development rebuilds the local D1 when the single development baseline changes', () => {
   const apiPackage = JSON.parse(readFileSync(resolve(root, 'apps/api/package.json'), 'utf8'));
   assert.equal(apiPackage.scripts.dev, 'node ../../scripts/dev/api-dev.mjs');

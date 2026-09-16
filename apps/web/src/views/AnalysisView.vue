@@ -108,6 +108,18 @@ function alertStateLabel(state: string) { return state === 'active' ? '处理中
 function alertSeverityLabel(severity: string) { return severity === 'warning' ? '预警' : severity === 'critical' ? '严重' : severity === 'info' ? '提示' : '未知级别'; }
 function milestoneStateLabel(row: MilestoneDueSummary) { return row.status === 'completed' ? '已完成' : row.overdue ? '已逾期' : row.reminderDue ? '待处理' : '未到期'; }
 
+async function refreshAfterCommittedWrite(successMessage: string, refresh: () => Promise<unknown>) {
+  try {
+    await refresh();
+    error.value = '';
+    message.success(successMessage);
+  } catch (cause) {
+    const detail = cause instanceof Error ? cause.message : '读取最新数据失败';
+    error.value = `${successMessage}，但最新数据刷新失败：${detail}`;
+    message.warning(`${successMessage}，但最新数据刷新失败，请重新加载`);
+  }
+}
+
 const frameworkOptions = computed(() => frameworks.value.map((item) => ({ label: `${item.code} · ${item.name}`, value: item.id })));
 const planProjectOptions = computed(() => projects.value.filter((item) => item.frameworkId === selectedFrameworkId.value).map((item) => ({ label: item.name, value: item.id })));
 const monthOptions = Array.from({ length: 12 }, (_, index) => ({ label: `${index + 1} 月`, value: index + 1 }));
@@ -240,9 +252,14 @@ async function savePlan() {
   const current = plans.value.find((item) => item.projectId === planProjectId.value && item.month === Number(planMonth.value));
   saving.value = true;
   try {
-    await apiRequest(`/api/analysis/plans/${encodeURIComponent(planProjectId.value)}/${analysisYear.value}/${Number(planMonth.value)}`, jsonRequestInit('PUT', { expectedVersion: current?.version ?? null, targetAmountFen }));
-    await loadFrameworkContext(); message.success('月计划已保存');
-  } catch (cause) { message.error(cause instanceof Error ? cause.message : '月计划保存失败'); }
+    try {
+      await apiRequest(`/api/analysis/plans/${encodeURIComponent(planProjectId.value)}/${analysisYear.value}/${Number(planMonth.value)}`, jsonRequestInit('PUT', { expectedVersion: current?.version ?? null, targetAmountFen }));
+    } catch (cause) {
+      message.error(cause instanceof Error ? cause.message : '月计划保存失败');
+      return;
+    }
+    await refreshAfterCommittedWrite('月计划已保存', loadFrameworkContext);
+  }
   finally { saving.value = false; }
 }
 async function saveRule() {
@@ -250,18 +267,28 @@ async function saveRule() {
   const thresholdBasisPoints = parsePercentBasisPoints(ruleThresholdPercent.value); if (thresholdBasisPoints === null) { message.warning('阈值请输入 0–100%'); return; }
   saving.value = true;
   try {
-    rule.value = await apiRequest<AnalysisRuleSummary>('/api/analysis/rules', jsonRequestInit('PUT', { expectedVersion: rule.value.version, mode: ruleMode.value, thresholdBasisPoints }));
-    await loadFrameworkContext(); message.success('分析规则已更新');
-  } catch (cause) { message.error(cause instanceof Error ? cause.message : '规则更新失败'); }
+    try {
+      rule.value = await apiRequest<AnalysisRuleSummary>('/api/analysis/rules', jsonRequestInit('PUT', { expectedVersion: rule.value.version, mode: ruleMode.value, thresholdBasisPoints }));
+    } catch (cause) {
+      message.error(cause instanceof Error ? cause.message : '规则更新失败');
+      return;
+    }
+    await refreshAfterCommittedWrite('分析规则已更新', loadFrameworkContext);
+  }
   finally { saving.value = false; }
 }
 async function generateReport() {
   if (!selectedFrameworkId.value) return;
   saving.value = true;
   try {
-    await apiRequest('/api/reports/monthly', jsonRequestInit('POST', { frameworkId: selectedFrameworkId.value, businessMonth: reportMonth.value, dataCutoffDate: asOfDate.value }));
-    await loadFrameworkContext(); message.success('月报修订已生成');
-  } catch (cause) { message.error(cause instanceof Error ? cause.message : '月报生成失败'); }
+    try {
+      await apiRequest('/api/reports/monthly', jsonRequestInit('POST', { frameworkId: selectedFrameworkId.value, businessMonth: reportMonth.value, dataCutoffDate: asOfDate.value }));
+    } catch (cause) {
+      message.error(cause instanceof Error ? cause.message : '月报生成失败');
+      return;
+    }
+    await refreshAfterCommittedWrite('月报修订已生成', loadFrameworkContext);
+  }
   finally { saving.value = false; }
 }
 async function createMilestone() {
@@ -271,19 +298,29 @@ async function createMilestone() {
   const specificDate = precision === 'day' ? milestoneForm.value.specificDate : null;
   saving.value = true;
   try {
-    await apiRequest('/api/milestones', jsonRequestInit('POST', { businessYear: analysisYear.value, title, owner: milestoneForm.value.owner.trim() || null, projectId: null, datePrecision: precision, month, specificDate: specificDate || null, leadDays: [7, 3, 0] }));
+    try {
+      await apiRequest('/api/milestones', jsonRequestInit('POST', { businessYear: analysisYear.value, title, owner: milestoneForm.value.owner.trim() || null, projectId: null, datePrecision: precision, month, specificDate: specificDate || null, leadDays: [7, 3, 0] }));
+    } catch (cause) {
+      message.error(cause instanceof Error ? cause.message : '事项创建失败');
+      return;
+    }
     milestoneForm.value = { title: '', owner: '', datePrecision: 'unknown', month: null, specificDate: '' };
-    await loadMilestones(); message.success('年度事项已创建');
-  } catch (cause) { message.error(cause instanceof Error ? cause.message : '事项创建失败'); }
+    await refreshAfterCommittedWrite('年度事项已创建', loadMilestones);
+  }
   finally { saving.value = false; }
 }
 async function setMilestoneStatus(item: MilestoneDueSummary, status: 'open' | 'completed') {
   if (saving.value) return;
   saving.value = true;
   try {
-    await apiRequest(`/api/milestones/${item.id}/status`, jsonRequestInit('PUT', { expectedVersion: item.version, status }));
-    await loadMilestones();
-  } catch (cause) { message.error(cause instanceof Error ? cause.message : '事项状态更新失败'); }
+    try {
+      await apiRequest(`/api/milestones/${item.id}/status`, jsonRequestInit('PUT', { expectedVersion: item.version, status }));
+    } catch (cause) {
+      message.error(cause instanceof Error ? cause.message : '事项状态更新失败');
+      return;
+    }
+    await refreshAfterCommittedWrite('事项状态已更新', loadMilestones);
+  }
   finally { saving.value = false; }
 }
 

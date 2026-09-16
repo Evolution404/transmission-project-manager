@@ -5,6 +5,9 @@ import type { CurrentUser } from '@tpm/shared';
 const { chartSetOption, chartResize, chartClear } = vi.hoisted(() => ({ chartSetOption: vi.fn(), chartResize: vi.fn(), chartClear: vi.fn() }));
 const routeQuery = vi.hoisted(() => ({} as Record<string, string>));
 const replace = vi.fn();
+const messageSuccess = vi.fn();
+const messageError = vi.fn();
+const messageWarning = vi.fn();
 vi.mock('vue-router', () => ({ useRoute: () => ({ query: routeQuery }), useRouter: () => ({ replace }) }));
 vi.mock('../src/charts/echarts', () => ({ init: () => ({ setOption: chartSetOption, resize: chartResize, clear: chartClear, dispose: vi.fn() }) }));
 vi.mock('naive-ui', async () => {
@@ -27,7 +30,7 @@ vi.mock('naive-ui', async () => {
   const NTabPane = vue.defineComponent({ name: 'NTabPane', props: { name: String, tab: String }, setup(props, { slots }) { return () => vue.h('section', { 'data-tab': props.name }, [vue.h('h3', props.tab), slots.default?.()]); } });
   const NTabs = vue.defineComponent({ name: 'NTabs', props: { value: String }, emits: ['update:value'], setup(props, { slots, attrs }) { return () => vue.h('div', { ...attrs, 'data-stub': 'NTabs', 'data-value': props.value }, slots.default?.()); } });
   const NStatistic = vue.defineComponent({ name: 'NStatistic', props: { label: String, value: [String, Number] }, setup(props) { return () => vue.h('div', `${props.label ?? ''}${props.value ?? ''}`); } });
-  return { NAlert: wrap('NAlert'), NButton, NCard: wrap('NCard'), NDataTable, NEmpty: wrap('NEmpty'), NForm: wrap('NForm'), NFormItem: wrap('NFormItem'), NGrid: wrap('NGrid'), NGridItem: wrap('NGridItem'), NInput, NSelect, NSpace: wrap('NSpace'), NSpin: wrap('NSpin'), NStatistic, NTabPane, NTabs, NTag: wrap('NTag'), useMessage: () => ({ success: vi.fn(), error: vi.fn(), warning: vi.fn() }) };
+  return { NAlert: wrap('NAlert'), NButton, NCard: wrap('NCard'), NDataTable, NEmpty: wrap('NEmpty'), NForm: wrap('NForm'), NFormItem: wrap('NFormItem'), NGrid: wrap('NGrid'), NGridItem: wrap('NGridItem'), NInput, NSelect, NSpace: wrap('NSpace'), NSpin: wrap('NSpin'), NStatistic, NTabPane, NTabs, NTag: wrap('NTag'), useMessage: () => ({ success: messageSuccess, error: messageError, warning: messageWarning }) };
 });
 
 import AnalysisView from '../src/views/AnalysisView.vue';
@@ -79,6 +82,9 @@ describe('AnalysisView P6 behavior', () => {
   beforeEach(() => {
     for (const key of Object.keys(routeQuery)) delete routeQuery[key];
     replace.mockReset();
+    messageSuccess.mockReset();
+    messageError.mockReset();
+    messageWarning.mockReset();
     chartSetOption.mockReset();
     chartResize.mockReset();
     chartClear.mockReset();
@@ -250,6 +256,33 @@ describe('AnalysisView P6 behavior', () => {
     await flushPromises();
     const call = vi.mocked(fetch).mock.calls.find(([url, init]) => String(url) === '/api/analysis/plans/p1/2026/9' && init?.method === 'PUT');
     expect(JSON.parse(String(call![1]!.body))).toEqual({ expectedVersion: 4, targetAmountFen: 123456 });
+  });
+
+  it('does not report a committed monthly plan as failed when the post-write refresh fails', async () => {
+    const wrapper = mount(AnalysisView, { props: { currentUser: admin } });
+    await flushPromises();
+    await wrapper.get('[data-test="plan-project"]').setValue('p1');
+    await wrapper.get('[data-test="plan-month"]').setValue('9');
+    await wrapper.get('[data-test="plan-amount"]').setValue('1234.56');
+
+    const fallback = vi.mocked(fetch).getMockImplementation()!;
+    let committed = false;
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === '/api/analysis/plans/p1/2026/9' && init?.method === 'PUT') {
+        committed = true;
+        return fallback(input, init);
+      }
+      if (committed && url.startsWith('/api/analysis/frameworks/fw1/progress?')) throw new Error('分析刷新失败');
+      return fallback(input, init);
+    });
+
+    await wrapper.get('[data-test="save-plan"]').trigger('click');
+    await flushPromises();
+    expect(committed).toBe(true);
+    expect(messageError).not.toHaveBeenCalled();
+    expect(messageWarning).toHaveBeenCalledWith('月计划已保存，但最新数据刷新失败，请重新加载');
+    expect(wrapper.text()).toContain('月计划已保存，但最新数据刷新失败');
   });
 
   it('converts the rule percentage to basis points without loading system operations', async () => {

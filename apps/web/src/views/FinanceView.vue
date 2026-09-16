@@ -130,6 +130,18 @@ function entryTypeLabel(type: FinancialEntryType) {
   return type === 'budget_occurrence' ? '预算发生' : '实际发生';
 }
 
+async function refreshAfterCommittedWrite(successMessage: string, refresh: () => Promise<unknown>) {
+  try {
+    await refresh();
+    error.value = '';
+    message.success(successMessage);
+  } catch (cause) {
+    const detail = cause instanceof Error ? cause.message : '读取最新数据失败';
+    error.value = `${successMessage}，但最新数据刷新失败：${detail}`;
+    message.warning(`${successMessage}，但最新数据刷新失败，请重新加载`);
+  }
+}
+
 const frameworkOptions = computed(() => frameworks.value.map((item) => ({ label: `${item.code} · ${item.name}`, value: item.id })));
 const projectOptions = computed(() => projects.value.map((item) => ({ label: `${item.name}${item.frameworkId ? '' : '（未绑定框架）'}`, value: item.id })));
 const currentFrameworkProjectOptions = computed(() => projects.value
@@ -305,14 +317,19 @@ async function createFramework() {
   }
   saving.value = true;
   try {
-    await apiRequest('/api/frameworks', jsonRequestInit('POST', {
-      code: frameworkForm.value.code.trim(), name: frameworkForm.value.name.trim(), totalAmountFen, annualTargetFen,
-      startDate: frameworkForm.value.startDate, endDate: frameworkForm.value.endDate,
-    }));
+    try {
+      await apiRequest('/api/frameworks', jsonRequestInit('POST', {
+        code: frameworkForm.value.code.trim(), name: frameworkForm.value.name.trim(), totalAmountFen, annualTargetFen,
+        startDate: frameworkForm.value.startDate, endDate: frameworkForm.value.endDate,
+      }));
+    } catch (cause) {
+      message.error(cause instanceof Error ? cause.message : '框架创建失败');
+      return;
+    }
     frameworkForm.value.code = ''; frameworkForm.value.name = ''; frameworkForm.value.totalYuan = ''; frameworkForm.value.annualTargetYuan = '';
     showFrameworkForm.value = false;
-    await loadBase(); await loadFrameworkContext(); message.success('框架已创建');
-  } catch (cause) { message.error(cause instanceof Error ? cause.message : '框架创建失败'); }
+    await refreshAfterCommittedWrite('框架已创建', async () => { await loadBase(); await loadFrameworkContext(); });
+  }
   finally { saving.value = false; }
 }
 
@@ -321,14 +338,19 @@ async function createAgreement() {
   if (!frameworkId || !agreementForm.value.code.trim() || !agreementForm.value.name.trim() || amountFen === null) { message.warning('请完整填写协议信息'); return; }
   saving.value = true;
   try {
-    await apiRequest('/api/agreements', jsonRequestInit('POST', {
-      frameworkId, code: agreementForm.value.code.trim(), name: agreementForm.value.name.trim(), amountFen,
-      validFrom: agreementForm.value.validFrom, validTo: agreementForm.value.validTo, status: agreementForm.value.status,
-    }));
+    try {
+      await apiRequest('/api/agreements', jsonRequestInit('POST', {
+        frameworkId, code: agreementForm.value.code.trim(), name: agreementForm.value.name.trim(), amountFen,
+        validFrom: agreementForm.value.validFrom, validTo: agreementForm.value.validTo, status: agreementForm.value.status,
+      }));
+    } catch (cause) {
+      message.error(cause instanceof Error ? cause.message : '协议创建失败');
+      return;
+    }
     agreementForm.value.code = ''; agreementForm.value.name = ''; agreementForm.value.amountYuan = '';
     showAgreementForm.value = false;
-    await loadFrameworkContext(); message.success('执行协议已创建');
-  } catch (cause) { message.error(cause instanceof Error ? cause.message : '协议创建失败'); }
+    await refreshAfterCommittedWrite('执行协议已创建', loadFrameworkContext);
+  }
   finally { saving.value = false; }
 }
 
@@ -337,9 +359,14 @@ async function bindProject() {
   if (!project || !bindingFrameworkId.value) { message.warning('请选择项目和框架'); return; }
   saving.value = true;
   try {
-    await apiRequest(`/api/projects/${project.id}/framework`, jsonRequestInit('PUT', { expectedVersion: project.version, frameworkId: bindingFrameworkId.value }));
-    await loadBase(); message.success('项目框架归属已更新');
-  } catch (cause) { message.error(cause instanceof Error ? cause.message : '项目绑定失败'); }
+    try {
+      await apiRequest(`/api/projects/${project.id}/framework`, jsonRequestInit('PUT', { expectedVersion: project.version, frameworkId: bindingFrameworkId.value }));
+    } catch (cause) {
+      message.error(cause instanceof Error ? cause.message : '项目绑定失败');
+      return;
+    }
+    await refreshAfterCommittedWrite('项目框架归属已更新', loadBase);
+  }
   finally { saving.value = false; }
 }
 
@@ -354,14 +381,19 @@ async function saveBudget() {
   const payload = { projectId, totalAmountFen, note: budgetNote.value.trim() || null, allocations: allocations.map((item) => ({ agreementId: item.agreementId, amountFen: item.amountFen! })) };
   saving.value = true;
   try {
-    if (currentBudget.value) {
-      const { projectId: _ignored, ...update } = payload;
-      await apiRequest(`/api/budgets/${currentBudget.value.id}`, jsonRequestInit('PUT', { expectedVersion: currentBudget.value.version, ...update }));
-    } else {
-      await apiRequest('/api/budgets', jsonRequestInit('POST', payload));
+    try {
+      if (currentBudget.value) {
+        const { projectId: _ignored, ...update } = payload;
+        await apiRequest(`/api/budgets/${currentBudget.value.id}`, jsonRequestInit('PUT', { expectedVersion: currentBudget.value.version, ...update }));
+      } else {
+        await apiRequest('/api/budgets', jsonRequestInit('POST', payload));
+      }
+    } catch (cause) {
+      message.error(cause instanceof Error ? cause.message : '预算保存失败');
+      return;
     }
-    await loadBudgetProject(projectId); await loadFrameworkContext(); message.success('预算草稿已保存');
-  } catch (cause) { message.error(cause instanceof Error ? cause.message : '预算保存失败'); }
+    await refreshAfterCommittedWrite('预算草稿已保存', async () => { await loadBudgetProject(projectId); await loadFrameworkContext(); });
+  }
   finally { saving.value = false; }
 }
 
@@ -369,9 +401,14 @@ async function confirmBudget() {
   const budget = currentBudget.value; if (!budget) return;
   saving.value = true;
   try {
-    await apiRequest(`/api/budgets/${budget.id}/confirm`, jsonRequestInit('POST', { expectedVersion: budget.version }));
-    await loadBudgetProject(budget.projectId); await loadFrameworkContext(); message.success('预算已确认；不会自动生成预算发生流水');
-  } catch (cause) { message.error(cause instanceof Error ? cause.message : '预算确认失败'); }
+    try {
+      await apiRequest(`/api/budgets/${budget.id}/confirm`, jsonRequestInit('POST', { expectedVersion: budget.version }));
+    } catch (cause) {
+      message.error(cause instanceof Error ? cause.message : '预算确认失败');
+      return;
+    }
+    await refreshAfterCommittedWrite('预算已确认；不会自动生成预算发生流水', async () => { await loadBudgetProject(budget.projectId); await loadFrameworkContext(); });
+  }
   finally { saving.value = false; }
 }
 
@@ -385,15 +422,20 @@ async function postEntry() {
   if (allocations.some((item) => !item.agreementId || item.amountFen === null)) { message.warning('流水协议分配需完整填写'); return; }
   saving.value = true;
   try {
-    await apiRequest('/api/financial-entries', jsonRequestInit('POST', {
-      type: entryType.value, projectId: project.id, amountFen, businessDate: entryBusinessDate.value, note: entryNote.value.trim() || null,
-      allocations: allocations.map((item) => ({ agreementId: item.agreementId, amountFen: item.amountFen! })),
-    }));
+    try {
+      await apiRequest('/api/financial-entries', jsonRequestInit('POST', {
+        type: entryType.value, projectId: project.id, amountFen, businessDate: entryBusinessDate.value, note: entryNote.value.trim() || null,
+        allocations: allocations.map((item) => ({ agreementId: item.agreementId, amountFen: item.amountFen! })),
+      }));
+    } catch (cause) {
+      message.error(cause instanceof Error ? cause.message : '流水登记失败');
+      return;
+    }
     entryAmountYuan.value = ''; entryNote.value = ''; entrySplits.value = [{ agreementId: null, amountYuan: '' }];
     showEntryForm.value = false;
     if (project.frameworkId && project.frameworkId !== selectedFrameworkId.value) selectedFrameworkId.value = project.frameworkId;
-    await loadFrameworkContext(); message.success('资金流水已登记');
-  } catch (cause) { message.error(cause instanceof Error ? cause.message : '流水登记失败'); }
+    await refreshAfterCommittedWrite('资金流水已登记', loadFrameworkContext);
+  }
   finally { saving.value = false; }
 }
 

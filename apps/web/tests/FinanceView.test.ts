@@ -5,6 +5,9 @@ import type { CurrentUser } from '@tpm/shared';
 const routeQuery = vi.hoisted(() => ({} as Record<string, string>));
 const push = vi.fn();
 const replace = vi.fn();
+const messageSuccess = vi.fn();
+const messageError = vi.fn();
+const messageWarning = vi.fn();
 vi.mock('vue-router', () => ({ useRoute: () => ({ query: routeQuery }), useRouter: () => ({ push, replace }) }));
 
 vi.mock('naive-ui', async () => {
@@ -50,7 +53,7 @@ vi.mock('naive-ui', async () => {
     NAlert: wrap('NAlert'), NButton, NCard: wrap('NCard'), NDataTable, NEmpty: wrap('NEmpty'), NForm: wrap('NForm'),
     NFormItem: wrap('NFormItem'), NInput, NSelect, NSpace: wrap('NSpace'), NSpin: wrap('NSpin'), NStatistic: wrap('NStatistic'),
     NTabPane, NTabs, NTag: wrap('NTag'),
-    useMessage: () => ({ success: vi.fn(), error: vi.fn(), warning: vi.fn() }),
+    useMessage: () => ({ success: messageSuccess, error: messageError, warning: messageWarning }),
   };
 });
 
@@ -123,6 +126,9 @@ function installFetch({ withEntryCursor = false } = {}) {
 describe('FinanceView P4 behavior', () => {
   beforeEach(() => {
     for (const key of Object.keys(routeQuery)) delete routeQuery[key];
+    messageSuccess.mockReset();
+    messageError.mockReset();
+    messageWarning.mockReset();
     installFetch();
   });
   afterEach(() => { vi.unstubAllGlobals(); push.mockReset(); replace.mockReset(); });
@@ -177,6 +183,35 @@ describe('FinanceView P4 behavior', () => {
       projectId: 'p1', totalAmountFen: 700_000, note: null,
       allocations: [{ agreementId: 'ag1', amountFen: 400_000 }, { agreementId: 'ag2', amountFen: 300_000 }],
     });
+  });
+
+  it('does not report a committed budget write as failed when the post-write refresh fails', async () => {
+    const wrapper = mount(FinanceView, { props: { currentUser: admin } });
+    await flushPromises();
+    await wrapper.get('[data-test="budget-project"]').setValue('p1');
+    await flushPromises();
+    await wrapper.get('[data-test="budget-total"]').setValue('7000');
+    await wrapper.get('[data-test="budget-agreement-0"]').setValue('ag1');
+    await wrapper.get('[data-test="budget-allocation-0"]').setValue('7000');
+
+    const fallback = vi.mocked(fetch).getMockImplementation()!;
+    let committed = false;
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === '/api/budgets' && init?.method === 'POST') {
+        committed = true;
+        return fallback(input, init);
+      }
+      if (committed && url === '/api/budgets?projectId=p1') throw new Error('预算刷新失败');
+      return fallback(input, init);
+    });
+
+    await wrapper.get('[data-test="save-budget"]').trigger('click');
+    await flushPromises();
+    expect(committed).toBe(true);
+    expect(messageError).not.toHaveBeenCalled();
+    expect(messageWarning).toHaveBeenCalledWith('预算草稿已保存，但最新数据刷新失败，请重新加载');
+    expect(wrapper.text()).toContain('预算草稿已保存，但最新数据刷新失败');
   });
 
   it('loads additional financial-entry pages when the server returns a cursor', async () => {
