@@ -11,6 +11,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const apiDir = resolve(root, 'apps/api');
 const migrationsDir = resolve(apiDir, 'migrations');
 const lockPath = resolve(root, 'tests/migrations.lock.json');
+const envPath = resolve(root, '.env');
 const stateDir = resolve(apiDir, '.wrangler/state');
 const ledgerPath = resolve(apiDir, '.wrangler/development-schema-checksum.json');
 const require = createRequire(new URL('../../apps/api/package.json', import.meta.url));
@@ -109,6 +110,7 @@ console.log('[dev-db] 本地 D1 schema 已就绪。');
 const worker = spawn(process.execPath, [
   wranglerCli,
   'dev', '--local', '--ip', '127.0.0.1', '--port', '8787',
+  ...(existsSync(envPath) ? ['--env-file', envPath] : []),
 ], {
   cwd: apiDir,
   env: childEnv,

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, h, onMounted, ref } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import {
   NAlert, NButton, NDataTable, NDropdown, NEmpty, NForm, NFormItem, NInput, NModal, NSelect,
   NSpace, NSwitch, NTabPane, NTabs, NTag, useMessage,
@@ -23,6 +24,8 @@ import {
 import { apiRequest, jsonRequestInit } from '../api/client';
 import { formatBusinessDateTime } from '../businessTime';
 import { parseFileInWorker } from '../imports/workerClient';
+import AppPressable from '../app/AppPressable.vue';
+import AppFilePicker from '../app/AppFilePicker.vue';
 import {
   buildTowerImportPreview,
   completeTowerCoverageErrors,
@@ -36,6 +39,8 @@ import {
 } from '../imports/towerImport';
 
 const props = defineProps<{ currentUser: CurrentUser }>();
+const route = useRoute();
+const router = useRouter();
 const message = useMessage();
 const isAdmin = computed(() => props.currentUser.role === 'admin');
 
@@ -49,15 +54,19 @@ const towerTypes = ref<TowerTypeSummary[]>([]);
 const customFields = ref<CustomFieldDefinitionSummary[]>([]);
 const lineCursor = ref<string | null>(null);
 const towerCursor = ref<string | null>(null);
-const lineVoltageFilter = ref('all');
-const lineStatusFilter = ref<'all' | 'enabled' | 'disabled'>('all');
-const lineSearch = ref('');
+const requestedLineStatus = typeof route.query.status === 'string' ? route.query.status : '';
+const lineVoltageFilter = ref(typeof route.query.voltage === 'string' && route.query.voltage ? route.query.voltage : 'all');
+const lineStatusFilter = ref<'all' | 'enabled' | 'disabled'>(['enabled', 'disabled'].includes(requestedLineStatus)
+  ? requestedLineStatus as 'enabled' | 'disabled'
+  : 'all');
+const lineSearch = ref(typeof route.query.query === 'string' ? route.query.query : '');
 const towerSearch = ref('');
 const loading = ref(false);
 const towerLoading = ref(false);
 const error = ref('');
 let lineRequest = 0;
 let towerRequest = 0;
+let committedRefreshRetry: { successMessage: string; refresh: () => Promise<unknown> } | null = null;
 
 const selectedLine = computed(() => activeLine.value);
 const selectedVoltage = computed(() => activeLine.value ? voltageLevels.value.find((item) => item.id === activeLine.value!.voltageLevelId) ?? null : null);
@@ -124,6 +133,7 @@ async function loadTowers(append = false) {
 }
 
 async function loadAll() {
+  committedRefreshRetry = null;
   error.value = '';
   loading.value = true;
   try {
@@ -137,12 +147,61 @@ async function loadAll() {
   }
 }
 
+async function refreshAfterCommittedWrite(successMessage: string, refresh: () => Promise<unknown>) {
+  try {
+    await refresh();
+    committedRefreshRetry = null;
+    error.value = '';
+    message.success(successMessage);
+  } catch (cause) {
+    const detail = cause instanceof Error ? cause.message : '读取最新数据失败';
+    committedRefreshRetry = { successMessage, refresh };
+    error.value = `${successMessage}，但最新数据刷新失败：${detail}`;
+    message.warning(`${successMessage}，但最新数据刷新失败，请重新加载`);
+  }
+}
+
+async function retryMasterData() {
+  const pending = committedRefreshRetry;
+  if (!pending) {
+    await loadAll();
+    return;
+  }
+  loading.value = true;
+  try {
+    await pending.refresh();
+    if (committedRefreshRetry === pending) committedRefreshRetry = null;
+    error.value = '';
+    message.success('最新数据已重新加载');
+  } catch (cause) {
+    const detail = cause instanceof Error ? cause.message : '读取最新数据失败';
+    error.value = `${pending.successMessage}，但最新数据刷新失败：${detail}`;
+  } finally {
+    loading.value = false;
+  }
+}
+
 async function openLineDetail(item: TransmissionLineSummary) {
   activeLine.value = item;
   towerSearch.value = '';
   towers.value = [];
   towerCursor.value = null;
   await loadTowers();
+}
+
+function syncLineFilters() {
+  const query: Record<string, string> = {};
+  if (lineVoltageFilter.value !== 'all') query.voltage = lineVoltageFilter.value;
+  if (lineStatusFilter.value !== 'all') query.status = lineStatusFilter.value;
+  const term = lineSearch.value.trim();
+  if (term) query.query = term;
+  void router.replace({ query });
+}
+
+async function applyLineSearch() {
+  lineCursor.value = null;
+  syncLineFilters();
+  await loadLines();
 }
 
 function backToLines() {
@@ -155,12 +214,14 @@ function backToLines() {
 async function setVoltageFilter(value: string) {
   lineVoltageFilter.value = value;
   lineCursor.value = null;
+  syncLineFilters();
   await loadLines();
 }
 
 async function setStatusFilter(value: 'all' | 'enabled' | 'disabled') {
   lineStatusFilter.value = value;
   lineCursor.value = null;
+  syncLineFilters();
   await loadLines();
 }
 
@@ -211,7 +272,8 @@ async function removeObject(kind: DeleteKind, item: { id: string; version: numbe
         }
       }
     } else {
-      await loadConfigChoices();
+      await refreshAfterCommittedWrite('已删除未引用的台账对象', loadConfigChoices);
+      return;
     }
     message.success('已删除未引用的台账对象');
   } catch (cause) { message.error(cause instanceof Error ? cause.message : '删除失败'); }
@@ -239,6 +301,11 @@ const editingPhysicalTower = ref<PhysicalTowerSummary | null>(null);
 const rebindTower = ref<LineTowerPositionSummary | null>(null);
 const customValuesTower = ref<PhysicalTowerSummary | null>(null);
 const saving = ref(false);
+const writeModalGuardProps = computed(() => ({
+  maskClosable: !saving.value,
+  closeOnEsc: !saving.value,
+  closable: !saving.value,
+}));
 const voltageForm = ref({ displayName: '', code: '', systemType: 'AC' as VoltageSystemType, nominalKv: '', sortOrder: '', enabled: true });
 const teamForm = ref({ code: '', name: '', enabled: true });
 const towerTypeForm = ref({ code: '', label: '', sortOrder: '', enabled: true });
@@ -274,8 +341,8 @@ const customFieldTypeOptions: Array<{ label: string; value: CustomFieldDataType 
   { label: '年度', value: 'year' }, { label: '布尔值', value: 'boolean' }, { label: '日期', value: 'date' },
   { label: '单选', value: 'single_select' }, { label: '多选', value: 'multi_select' },
 ];
-const customFieldEntityLabel = (value: CustomFieldEntityType) => customFieldEntityOptions.find((item) => item.value === value)?.label ?? value;
-const customFieldTypeLabel = (value: CustomFieldDataType) => customFieldTypeOptions.find((item) => item.value === value)?.label ?? value;
+const customFieldEntityLabel = (value: CustomFieldEntityType) => customFieldEntityOptions.find((item) => item.value === value)?.label ?? '未知对象类型';
+const customFieldTypeLabel = (value: CustomFieldDataType) => customFieldTypeOptions.find((item) => item.value === value)?.label ?? '未知字段类型';
 const customFieldNeedsOptions = computed(() => customFieldForm.value.dataType === 'single_select' || customFieldForm.value.dataType === 'multi_select');
 const customFieldIsNumeric = computed(() => ['integer', 'quantity', 'year'].includes(customFieldForm.value.dataType));
 const physicalCustomFields = computed(() => customFields.value.filter((item) => item.entityType === 'physical_tower' && item.enabled));
@@ -328,9 +395,12 @@ async function saveVoltage() {
     if (editingVoltage.value) await apiRequest(`/api/master/voltage-levels/${editingVoltage.value.id}`, jsonRequestInit('PATCH', { ...body, expectedVersion: editingVoltage.value.version }));
     else await apiRequest('/api/master/voltage-levels', jsonRequestInit('POST', body));
     voltageModal.value = false;
-    await loadVoltageLevels();
-    await loadLines();
-    message.success('电压等级已保存');
+    await refreshAfterCommittedWrite('电压等级已保存', async () => {
+      await loadVoltageLevels();
+      error.value = '';
+      await loadLines();
+      if (error.value) throw new Error(error.value);
+    });
   } catch (cause) { message.error(cause instanceof Error ? cause.message : '保存失败'); }
   finally { saving.value = false; }
 }
@@ -350,8 +420,7 @@ async function saveTeam() {
     if (editingTeam.value) await apiRequest(`/api/master/teams/${editingTeam.value.id}`, jsonRequestInit('PATCH', { ...body, expectedVersion: editingTeam.value.version }));
     else await apiRequest('/api/master/teams', jsonRequestInit('POST', body));
     teamModal.value = false;
-    await loadConfigChoices();
-    message.success('班组配置已保存');
+    await refreshAfterCommittedWrite('班组配置已保存', loadConfigChoices);
   } catch (cause) { message.error(cause instanceof Error ? cause.message : '班组保存失败'); }
   finally { saving.value = false; }
 }
@@ -373,8 +442,7 @@ async function saveTowerType() {
     if (editingTowerType.value) await apiRequest(`/api/master/tower-types/${editingTowerType.value.id}`, jsonRequestInit('PATCH', { ...body, expectedVersion: editingTowerType.value.version }));
     else await apiRequest('/api/master/tower-types', jsonRequestInit('POST', body));
     towerTypeModal.value = false;
-    await loadConfigChoices();
-    message.success('杆塔类型已保存');
+    await refreshAfterCommittedWrite('杆塔类型已保存', loadConfigChoices);
   } catch (cause) { message.error(cause instanceof Error ? cause.message : '杆塔类型保存失败'); }
   finally { saving.value = false; }
 }
@@ -449,8 +517,7 @@ async function saveCustomField() {
     if (editingCustomField.value) await apiRequest(`/api/master/custom-fields/${editingCustomField.value.id}`, jsonRequestInit('PATCH', { ...body, expectedVersion: editingCustomField.value.version }));
     else await apiRequest('/api/master/custom-fields', jsonRequestInit('POST', body));
     customFieldModal.value = false;
-    await loadConfigChoices();
-    message.success('自定义字段已保存');
+    await refreshAfterCommittedWrite('自定义字段已保存', loadConfigChoices);
   } catch (cause) { message.error(cause instanceof Error ? cause.message : '自定义字段保存失败'); }
   finally { saving.value = false; }
 }
@@ -569,8 +636,12 @@ async function savePhysicalTower() {
       enabled: physicalTowerForm.value.enabled,
     }));
     physicalTowerModal.value = false;
-    await Promise.all([loadTowers(), loadPhysicalTowerChoices()]);
-    message.success('物理杆塔属性已保存');
+    await refreshAfterCommittedWrite('物理杆塔属性已保存', async () => {
+      await loadPhysicalTowerChoices();
+      error.value = '';
+      await loadTowers();
+      if (error.value) throw new Error(error.value);
+    });
   } catch (cause) { message.error(cause instanceof Error ? cause.message : '物理杆塔保存失败'); }
   finally { saving.value = false; }
 }
@@ -649,8 +720,7 @@ async function saveCustomValues() {
     }));
     customValuesVersion.value = data.version;
     customValuesModal.value = false;
-    await loadPhysicalTowerChoices();
-    message.success('物理杆塔自定义字段已保存');
+    await refreshAfterCommittedWrite('物理杆塔自定义字段已保存', loadPhysicalTowerChoices);
   } catch (cause) { message.error(cause instanceof Error ? cause.message : '自定义字段保存失败'); }
   finally { saving.value = false; }
 }
@@ -895,12 +965,14 @@ const lineMoreOptions = [
   { label: '编辑线路属性', key: 'edit' },
   { label: '线路更名', key: 'rename' },
   { label: '名称历史', key: 'history' },
+  { label: '删除线路', key: 'delete' },
 ];
 function handleLineMoreAction(key: string) {
   if (!activeLine.value) return;
   if (key === 'edit') openLine(activeLine.value);
   else if (key === 'rename') openLineRename();
   else if (key === 'history') void openLineHistory();
+  else if (key === 'delete') requestDelete('lines', activeLine.value, `线路“${activeLine.value.lineName}”`);
 }
 const towerMoreOptions = [
   { label: '编辑物理杆塔', key: 'physical' },
@@ -944,38 +1016,47 @@ onMounted(loadAll);
 <template>
   <div class="view-stack master-data-view">
     <n-alert v-if="error" type="error" title="读取失败">
-      <div class="error-recovery"><span>{{ error }}</span><n-button data-test="retry-master-data" size="small" @click="loadAll">重新加载</n-button></div>
+      <div class="error-recovery"><span>{{ error }}</span><n-button data-test="retry-master-data" size="small" @click="retryMasterData">重新加载</n-button></div>
     </n-alert>
 
     <section v-if="!selectedLine" class="line-home" data-test="line-home">
       <header class="page-heading">
-        <div><span class="eyebrow">基础台账</span><h2>线路台账</h2><p>以线路为主维护设备位置；电压等级仅作为筛选和线路属性。</p></div>
-        <n-space v-if="isAdmin"><n-button data-test="open-master-settings" @click="openSettings">台账设置</n-button><n-button type="primary" @click="openLine()">新增线路</n-button></n-space>
+        <div class="page-heading-copy"><span class="eyebrow">基础台账</span><h2>线路台账</h2><p>以线路为入口维护线路节点与真实物理杆塔；电压等级、班组和塔型作为稳定配置对象。</p></div>
+        <n-space v-if="isAdmin" class="page-heading-actions"><n-button data-test="open-master-settings" @click="openSettings">台账设置</n-button><n-button type="primary" @click="openLine()">新增线路</n-button></n-space>
       </header>
-      <div class="line-toolbar">
-        <n-select data-test="voltage-filter" :value="lineVoltageFilter" :options="lineVoltageOptions" @update:value="setVoltageFilter" />
-        <n-input v-model:value="lineSearch" data-test="line-search" placeholder="搜索当前线路名或曾用名" @keyup.enter="loadLines()" />
-        <n-select data-test="line-status-filter" :value="lineStatusFilter" :options="lineStatusOptions" @update:value="setStatusFilter" />
-        <n-button :loading="loading" @click="loadLines()">查询</n-button>
-      </div>
-      <div class="line-list">
-        <article v-for="item in lines" :key="item.id" class="line-card">
-          <button class="line-open" :data-test="`select-line-${item.id}`" @click="openLineDetail(item)">
-            <div class="line-card-title"><n-tag size="small" :bordered="false">{{ item.voltageLevelName }}</n-tag><strong>{{ item.lineName }}</strong></div>
-            <p v-if="item.matchedHistoricalName" class="history-match">曾用名匹配：{{ item.matchedHistoricalName }}</p>
-            <div class="line-card-meta"><span>{{ item.towerCount ?? 0 }} 基杆塔</span><span>{{ item.enabled ? '启用' : '停用' }}</span><span v-if="item.lineCode">{{ item.lineCode }}</span></div>
-          </button>
-          <div v-if="isAdmin" class="line-card-actions"><n-button text size="tiny" @click="openLine(item)">编辑属性</n-button><n-button text size="tiny" :disabled="saving" @click="requestDelete('lines',item,`线路“${item.lineName}”`)">删除</n-button></div>
-        </article>
-      </div>
-      <n-empty v-if="!lines.length && !loading" description="没有符合条件的线路" />
-      <n-button v-if="lineCursor" :loading="loading" @click="loadLines(true)">加载更多线路</n-button>
+      <section class="line-list-surface">
+        <div class="line-toolbar">
+          <n-select data-test="voltage-filter" :value="lineVoltageFilter" :options="lineVoltageOptions" @update:value="setVoltageFilter" />
+          <n-input v-model:value="lineSearch" data-test="line-search" placeholder="搜索当前线路名或曾用名" @keyup.enter="applyLineSearch" />
+          <n-select data-test="line-status-filter" :value="lineStatusFilter" :options="lineStatusOptions" @update:value="setStatusFilter" />
+          <n-button data-test="line-search-submit" :loading="loading" @click="applyLineSearch">查询</n-button>
+        </div>
+        <div v-if="lines.length" class="line-table-head" aria-hidden="true"><span>线路</span><span>杆塔</span><span>状态</span><span>线路编码</span><span></span></div>
+        <div class="line-list">
+          <article v-for="item in lines" :key="item.id" class="line-card">
+            <app-pressable class="line-open" :data-test="`select-line-${item.id}`" @click="openLineDetail(item)">
+              <div class="line-card-primary">
+                <div class="line-card-title"><n-tag size="small" :bordered="false">{{ item.voltageLevelName }}</n-tag><strong>{{ item.lineName }}</strong></div>
+                <p v-if="item.matchedHistoricalName" class="history-match">曾用名匹配：{{ item.matchedHistoricalName }}</p>
+              </div>
+              <span class="line-fact">{{ item.towerCount ?? 0 }} 基</span>
+              <span class="line-state" :class="{ disabled: !item.enabled }">{{ item.enabled ? '启用' : '停用' }}</span>
+              <span class="line-code">{{ item.lineCode || '—' }}</span>
+              <span class="line-chevron">›</span>
+            </app-pressable>
+            <div v-if="isAdmin" class="line-card-actions"><n-button text size="small" @click="openLine(item)">编辑属性</n-button><n-button text size="small" :disabled="saving" @click="requestDelete('lines',item,`线路“${item.lineName}”`)">删除</n-button></div>
+          </article>
+        </div>
+        <n-empty v-if="!lines.length && !loading" description="没有符合条件的线路" />
+        <div v-if="lineCursor" class="load-more"><n-button :loading="loading" @click="loadLines(true)">加载更多线路</n-button></div>
+      </section>
     </section>
 
     <section v-else class="line-detail" data-test="line-detail">
-      <button class="back-button" data-test="back-lines" @click="backToLines">← 返回线路台账</button>
+      <app-pressable class="back-button" data-test="back-lines" @click="backToLines">← 返回线路台账</app-pressable>
       <header class="detail-heading">
         <div>
+          <span class="eyebrow">线路详情</span>
           <div class="detail-title-row"><n-tag :bordered="false">{{ selectedLine.voltageLevelName }}</n-tag><h2>{{ selectedLine.lineName }}</h2></div>
           <p>{{ selectedLine.towerCount ?? towers.length }} 基杆塔 · {{ selectedLine.enabled ? '启用' : '停用' }}<template v-if="selectedLine.lineCode"> · {{ selectedLine.lineCode }}</template></p>
           <p v-if="selectedLine.matchedHistoricalName" class="history-match">由曾用名“{{ selectedLine.matchedHistoricalName }}”匹配到当前线路</p>
@@ -989,16 +1070,17 @@ onMounted(loadAll);
           </n-dropdown>
         </n-space>
       </header>
-      <div class="tower-toolbar">
-        <n-input v-model:value="towerSearch" placeholder="输入 10、10-1 等当前或曾用编号" @keyup.enter="loadTowers()" />
-        <n-button :loading="towerLoading" @click="loadTowers()">查找杆塔</n-button>
-        <n-button v-if="towerSearch" @click="towerSearch='';loadTowers()">清除</n-button>
-      </div>
-      <div v-if="towerRows.length" class="tower-desktop-table">
-        <n-data-table :columns="towerColumns" :data="towerRows" :pagination="false" :loading="towerLoading" :scroll-x="760" />
-      </div>
-      <div v-if="towerRows.length" class="tower-mobile-list" data-test="tower-mobile-list">
-        <article v-for="row in towerRows" :key="row.id" class="tower-mobile-card" :data-test="`tower-mobile-card-${row.id}`">
+      <section class="tower-data-surface">
+        <div class="tower-toolbar">
+          <n-input v-model:value="towerSearch" placeholder="输入 10、10-1 等当前或曾用编号" @keyup.enter="loadTowers()" />
+          <n-button :loading="towerLoading" @click="loadTowers()">查找杆塔</n-button>
+          <n-button v-if="towerSearch" @click="towerSearch='';loadTowers()">清除</n-button>
+        </div>
+        <div v-if="towerRows.length" class="tower-desktop-table">
+          <n-data-table :columns="towerColumns" :data="towerRows" :pagination="false" :loading="towerLoading" :scroll-x="760" />
+        </div>
+        <div v-if="towerRows.length" class="tower-mobile-list" data-test="tower-mobile-list">
+          <article v-for="row in towerRows" :key="row.id" class="tower-mobile-card" :data-test="`tower-mobile-card-${row.id}`">
           <div class="tower-mobile-main">
             <span class="tower-mobile-order">{{ row.displayOrder }}</span>
             <div>
@@ -1017,13 +1099,14 @@ onMounted(loadAll);
               <n-button size="small">更多</n-button>
             </n-dropdown>
           </div>
-        </article>
-      </div>
-      <n-empty v-else-if="!towerLoading" description="当前线路下暂无匹配杆塔" />
-      <n-button v-if="towerCursor" :loading="towerLoading" @click="loadTowers(true)">加载更多杆塔</n-button>
+          </article>
+        </div>
+        <n-empty v-else-if="!towerLoading" description="当前线路下暂无匹配杆塔" />
+        <div v-if="towerCursor" class="load-more"><n-button :loading="towerLoading" @click="loadTowers(true)">加载更多杆塔</n-button></div>
+      </section>
     </section>
 
-    <n-modal v-model:show="settingsModal" preset="card" title="台账与字段配置" style="width:min(820px,calc(100vw - 32px))">
+    <n-modal v-model:show="settingsModal" preset="card" title="台账与字段配置" class="master-data-modal" style="width:min(820px,calc(100vw - 32px))">
       <n-alert type="info" :bordered="false">电压等级、班组、杆塔类型都是稳定配置对象；自定义字段用于长尾业务属性，不需要新增数据库列。已被业务数据使用的配置只能停用，不能直接删除。</n-alert>
       <n-tabs v-model:value="settingsTab" type="line" animated>
         <n-tab-pane name="voltage" tab="电压等级">
@@ -1048,28 +1131,28 @@ onMounted(loadAll);
       </n-tabs>
     </n-modal>
 
-    <n-modal v-model:show="deleteConfirmModal" preset="card" title="确认删除" style="width:min(480px,calc(100vw - 32px))">
+    <n-modal v-model:show="deleteConfirmModal" v-bind="writeModalGuardProps" preset="card" title="确认删除" class="master-data-modal" style="width:min(480px,calc(100vw - 32px))">
       <n-alert type="warning" :bordered="false">删除只允许用于尚未被业务引用的台账对象，删除后不可通过界面恢复。</n-alert>
       <p>确定删除{{ deleteTarget?.label }}吗？</p>
-      <template #footer><div class="actions"><n-button @click="deleteConfirmModal=false;deleteTarget=null">取消</n-button><n-button data-test="confirm-master-delete" type="error" :loading="saving" @click="confirmDelete">确认删除</n-button></div></template>
+      <template #footer><div class="actions"><n-button :disabled="saving" @click="deleteConfirmModal=false;deleteTarget=null">取消</n-button><n-button data-test="confirm-master-delete" type="error" :loading="saving" @click="confirmDelete">确认删除</n-button></div></template>
     </n-modal>
 
-    <n-modal v-model:show="voltageModal" preset="card" title="电压等级" style="width:min(560px,calc(100vw - 32px))">
+    <n-modal v-model:show="voltageModal" v-bind="writeModalGuardProps" preset="card" title="电压等级" class="master-data-modal" style="width:min(560px,calc(100vw - 32px))">
       <n-form label-placement="top"><n-form-item label="显示名称"><n-input v-model:value="voltageForm.displayName" /></n-form-item><n-form-item label="内部编码"><n-input v-model:value="voltageForm.code" /></n-form-item><n-form-item label="制式"><n-select v-model:value="voltageForm.systemType" :options="systemOptions" /></n-form-item><n-form-item label="标称电压 kV"><n-input v-model:value="voltageForm.nominalKv" /></n-form-item><n-form-item label="排序"><n-input v-model:value="voltageForm.sortOrder" /></n-form-item><n-form-item label="启用"><n-switch v-model:value="voltageForm.enabled" /></n-form-item></n-form>
-      <template #footer><div class="actions"><n-button @click="voltageModal=false">取消</n-button><n-button type="primary" :loading="saving" @click="saveVoltage">保存</n-button></div></template>
+      <template #footer><div class="actions"><n-button :disabled="saving" @click="voltageModal=false">取消</n-button><n-button type="primary" :loading="saving" @click="saveVoltage">保存</n-button></div></template>
     </n-modal>
 
-    <n-modal v-model:show="teamModal" preset="card" :title="editingTeam ? '编辑班组' : '新增班组'" style="width:min(520px,calc(100vw - 32px))">
+    <n-modal v-model:show="teamModal" v-bind="writeModalGuardProps" preset="card" :title="editingTeam ? '编辑班组' : '新增班组'" class="master-data-modal" style="width:min(520px,calc(100vw - 32px))">
       <n-form label-placement="top"><n-form-item label="班组名称"><n-input data-test="team-name-input" v-model:value="teamForm.name" /></n-form-item><n-form-item label="班组编码（可选）"><n-input v-model:value="teamForm.code" /></n-form-item><n-form-item label="启用"><n-switch v-model:value="teamForm.enabled" /></n-form-item></n-form>
-      <template #footer><div class="actions"><n-button @click="teamModal=false">取消</n-button><n-button data-test="save-team" type="primary" :loading="saving" @click="saveTeam">保存</n-button></div></template>
+      <template #footer><div class="actions"><n-button :disabled="saving" @click="teamModal=false">取消</n-button><n-button data-test="save-team" type="primary" :loading="saving" @click="saveTeam">保存</n-button></div></template>
     </n-modal>
 
-    <n-modal v-model:show="towerTypeModal" preset="card" :title="editingTowerType ? '编辑杆塔类型' : '新增杆塔类型'" style="width:min(520px,calc(100vw - 32px))">
+    <n-modal v-model:show="towerTypeModal" v-bind="writeModalGuardProps" preset="card" :title="editingTowerType ? '编辑杆塔类型' : '新增杆塔类型'" class="master-data-modal" style="width:min(520px,calc(100vw - 32px))">
       <n-form label-placement="top"><n-form-item label="类型名称"><n-input data-test="tower-type-label-input" v-model:value="towerTypeForm.label" /></n-form-item><n-form-item label="类型编码（可选）"><n-input v-model:value="towerTypeForm.code" /></n-form-item><n-form-item label="排序"><n-input v-model:value="towerTypeForm.sortOrder" /></n-form-item><n-form-item label="启用"><n-switch v-model:value="towerTypeForm.enabled" /></n-form-item></n-form>
-      <template #footer><div class="actions"><n-button @click="towerTypeModal=false">取消</n-button><n-button data-test="save-tower-type" type="primary" :loading="saving" @click="saveTowerType">保存</n-button></div></template>
+      <template #footer><div class="actions"><n-button :disabled="saving" @click="towerTypeModal=false">取消</n-button><n-button data-test="save-tower-type" type="primary" :loading="saving" @click="saveTowerType">保存</n-button></div></template>
     </n-modal>
 
-    <n-modal v-model:show="customFieldModal" preset="card" :title="editingCustomField ? '编辑自定义字段' : '新增自定义字段'" style="width:min(640px,calc(100vw - 32px))">
+    <n-modal v-model:show="customFieldModal" v-bind="writeModalGuardProps" preset="card" :title="editingCustomField ? '编辑自定义字段' : '新增自定义字段'" class="master-data-modal" style="width:min(640px,calc(100vw - 32px))">
       <n-alert v-if="editingCustomField" type="info" :bordered="false">对象类型、字段键和数据类型决定已保存值的语义，因此创建后锁定。需要变更时请新建字段并停用旧字段。</n-alert>
       <n-form label-placement="top">
         <n-form-item label="所属对象"><n-select data-test="custom-field-entity" v-model:value="customFieldForm.entityType" :options="customFieldEntityOptions" :disabled="Boolean(editingCustomField)" /></n-form-item>
@@ -1087,21 +1170,21 @@ onMounted(loadAll);
         <n-form-item label="可筛选"><n-switch v-model:value="customFieldForm.filterable" /></n-form-item>
         <n-form-item label="启用"><n-switch v-model:value="customFieldForm.enabled" /></n-form-item>
       </n-form>
-      <template #footer><div class="actions"><n-button @click="customFieldModal=false">取消</n-button><n-button data-test="save-custom-field" type="primary" :loading="saving" @click="saveCustomField">保存</n-button></div></template>
+      <template #footer><div class="actions"><n-button :disabled="saving" @click="customFieldModal=false">取消</n-button><n-button data-test="save-custom-field" type="primary" :loading="saving" @click="saveCustomField">保存</n-button></div></template>
     </n-modal>
 
-    <n-modal v-model:show="lineModal" preset="card" :title="editingLine ? '编辑线路属性' : '新增线路'" style="width:min(560px,calc(100vw - 32px))">
+    <n-modal v-model:show="lineModal" v-bind="writeModalGuardProps" preset="card" :title="editingLine ? '编辑线路属性' : '新增线路'" class="master-data-modal" style="width:min(560px,calc(100vw - 32px))">
       <n-form label-placement="top"><n-form-item label="电压等级"><n-select v-model:value="lineForm.voltageLevelId" :options="voltageOptions" /></n-form-item><n-form-item label="线路名称"><span v-if="editingLine">{{ editingLine.lineName }}（更名请使用“线路更名”）</span><n-input v-else v-model:value="lineForm.lineName" placeholder="请输入线路名称" /></n-form-item><n-form-item label="线路编码（可选）"><n-input v-model:value="lineForm.lineCode" /></n-form-item><n-form-item label="启用"><n-switch v-model:value="lineForm.enabled" /></n-form-item></n-form>
-      <template #footer><div class="actions"><n-button @click="lineModal=false">取消</n-button><n-button type="primary" :loading="saving" @click="saveLine">保存</n-button></div></template>
+      <template #footer><div class="actions"><n-button :disabled="saving" @click="lineModal=false">取消</n-button><n-button type="primary" :loading="saving" @click="saveLine">保存</n-button></div></template>
     </n-modal>
 
-    <n-modal v-model:show="lineRenameModal" preset="card" title="线路更名" style="width:min(520px,calc(100vw - 32px))">
-      <n-alert type="info" :bordered="false">更名不会创建新线路；稳定 ID 不变，旧名称永久进入历史并可继续搜索。</n-alert>
+    <n-modal v-model:show="lineRenameModal" v-bind="writeModalGuardProps" preset="card" title="线路更名" class="master-data-modal" style="width:min(520px,calc(100vw - 32px))">
+      <n-alert type="info" :bordered="false">更名不会创建新线路；对象身份不变，旧名称永久进入历史并可继续搜索。</n-alert>
       <n-form label-placement="top"><n-form-item label="新线路名称"><n-input data-test="line-rename-input" v-model:value="lineRenameForm.lineName" /></n-form-item><n-form-item label="更名原因（可选）"><n-input v-model:value="lineRenameForm.reason" /></n-form-item></n-form>
-      <template #footer><div class="actions"><n-button @click="lineRenameModal=false">取消</n-button><n-button data-test="save-line-rename" type="primary" :loading="saving" @click="saveLineRename">确认更名</n-button></div></template>
+      <template #footer><div class="actions"><n-button :disabled="saving" @click="lineRenameModal=false">取消</n-button><n-button data-test="save-line-rename" type="primary" :loading="saving" @click="saveLineRename">确认更名</n-button></div></template>
     </n-modal>
 
-    <n-modal v-model:show="towerModal" preset="card" :title="editingTower ? '编辑线路杆塔节点' : '新增线路杆塔节点'" style="width:min(620px,calc(100vw - 32px))">
+    <n-modal v-model:show="towerModal" v-bind="writeModalGuardProps" preset="card" :title="editingTower ? '编辑线路杆塔节点' : '新增线路杆塔节点'" class="master-data-modal" style="width:min(620px,calc(100vw - 32px))">
       <n-form label-placement="top">
         <n-form-item label="所属线路"><span>{{ selectedLine?.lineName }}</span></n-form-item>
         <n-form-item label="杆塔编号"><span v-if="editingTower">{{ editingTower.towerNo }}（更名请使用“杆塔更名”）</span><n-input v-else v-model:value="towerForm.towerNo" data-test="tower-number-input" placeholder="例如：10-1" /></n-form-item>
@@ -1123,10 +1206,10 @@ onMounted(loadAll);
         <n-form-item label="同塔位置标识（可选）"><n-input v-model:value="towerForm.positionLabel" placeholder="例如：左回、右回、上层" /></n-form-item>
         <n-form-item label="启用"><n-switch v-model:value="towerForm.enabled" /></n-form-item>
       </n-form>
-      <template #footer><div class="actions"><n-button @click="towerModal=false">取消</n-button><n-button data-test="save-tower" type="primary" :loading="saving" @click="saveTower">保存</n-button></div></template>
+      <template #footer><div class="actions"><n-button :disabled="saving" @click="towerModal=false">取消</n-button><n-button data-test="save-tower" type="primary" :loading="saving" @click="saveTower">保存</n-button></div></template>
     </n-modal>
 
-    <n-modal v-model:show="physicalTowerModal" preset="card" title="编辑物理杆塔" style="width:min(560px,calc(100vw - 32px))">
+    <n-modal v-model:show="physicalTowerModal" v-bind="writeModalGuardProps" preset="card" title="编辑物理杆塔" class="master-data-modal" style="width:min(560px,calc(100vw - 32px))">
       <n-alert type="info" :bordered="false">这里修改的是一基真实物理杆塔的公共属性。若该物理塔承载多回线路，所有关联线路节点都会看到相同的塔型和班组。</n-alert>
       <n-form label-placement="top">
         <n-form-item label="物理资产编号"><n-input data-test="physical-asset-code" v-model:value="physicalTowerForm.assetCode" /></n-form-item>
@@ -1134,19 +1217,19 @@ onMounted(loadAll);
         <n-form-item label="运维班组"><n-select v-model:value="physicalTowerForm.maintenanceTeamId" :options="teamOptions" clearable placeholder="请选择班组" /></n-form-item>
         <n-form-item label="启用"><n-switch v-model:value="physicalTowerForm.enabled" /></n-form-item>
       </n-form>
-      <template #footer><div class="actions"><n-button @click="physicalTowerModal=false">取消</n-button><n-button data-test="save-physical-tower" type="primary" :loading="saving" @click="savePhysicalTower">保存物理属性</n-button></div></template>
+      <template #footer><div class="actions"><n-button :disabled="saving" @click="physicalTowerModal=false">取消</n-button><n-button data-test="save-physical-tower" type="primary" :loading="saving" @click="savePhysicalTower">保存物理属性</n-button></div></template>
     </n-modal>
 
-    <n-modal v-model:show="rebindPhysicalModal" preset="card" title="重新关联物理杆塔" style="width:min(600px,calc(100vw - 32px))">
-      <n-alert type="warning" :bordered="false">该操作只改变“这个线路编号属于哪一基物理杆塔”，不会改变线路、杆塔编号、更名历史或需求位置 ID。用于把原先分别录入的多回线路节点合并到同一基物理塔。</n-alert>
+    <n-modal v-model:show="rebindPhysicalModal" v-bind="writeModalGuardProps" preset="card" title="重新关联物理杆塔" class="master-data-modal" style="width:min(600px,calc(100vw - 32px))">
+      <n-alert type="warning" :bordered="false">该操作只改变“这个线路编号属于哪一基物理杆塔”，不会改变线路、杆塔编号、更名历史或既有需求定位。用于把原先分别录入的多回线路节点合并到同一基物理塔。</n-alert>
       <n-form label-placement="top">
         <n-form-item label="当前线路杆塔"><span>{{ rebindTower?.lineName }} {{ rebindTower?.towerNo }}</span></n-form-item>
         <n-form-item label="目标物理杆塔"><n-select data-test="rebind-physical-select" v-model:value="rebindPhysicalTowerId" :options="physicalTowerOptions" filterable /></n-form-item>
       </n-form>
-      <template #footer><div class="actions"><n-button @click="rebindPhysicalModal=false">取消</n-button><n-button data-test="save-rebind-physical" type="primary" :loading="saving" @click="saveRebindPhysical">确认关联</n-button></div></template>
+      <template #footer><div class="actions"><n-button :disabled="saving" @click="rebindPhysicalModal=false">取消</n-button><n-button data-test="save-rebind-physical" type="primary" :loading="saving" @click="saveRebindPhysical">确认关联</n-button></div></template>
     </n-modal>
 
-    <n-modal v-model:show="customValuesModal" preset="card" title="物理杆塔自定义字段" style="width:min(620px,calc(100vw - 32px))">
+    <n-modal v-model:show="customValuesModal" v-bind="writeModalGuardProps" preset="card" title="物理杆塔自定义字段" class="master-data-modal" style="width:min(620px,calc(100vw - 32px))">
       <n-alert type="info" :bordered="false">字段由“台账与字段配置”统一定义。这里保存的是当前物理杆塔的字段值，使用独立版本控制，不会修改线路节点版本。</n-alert>
       <n-form v-if="physicalCustomFields.length" label-placement="top">
         <n-form-item v-for="field in physicalCustomFields" :key="field.id" :label="`${field.label}${field.required ? ' *' : ''}`">
@@ -1157,43 +1240,153 @@ onMounted(loadAll);
         </n-form-item>
       </n-form>
       <n-empty v-else description="尚未配置物理杆塔自定义字段" />
-      <template #footer><div class="actions"><n-button @click="customValuesModal=false">取消</n-button><n-button data-test="save-custom-values" type="primary" :disabled="!physicalCustomFields.length" :loading="saving" @click="saveCustomValues">保存字段值</n-button></div></template>
+      <template #footer><div class="actions"><n-button :disabled="saving" @click="customValuesModal=false">取消</n-button><n-button data-test="save-custom-values" type="primary" :disabled="!physicalCustomFields.length" :loading="saving" @click="saveCustomValues">保存字段值</n-button></div></template>
     </n-modal>
 
-    <n-modal v-model:show="towerRenameModal" preset="card" title="杆塔更名" style="width:min(520px,calc(100vw - 32px))">
-      <n-alert type="info" :bordered="false">更名只改变当前编号；杆塔稳定 ID、业务引用和历史链保持不变。</n-alert>
+    <n-modal v-model:show="towerRenameModal" v-bind="writeModalGuardProps" preset="card" title="杆塔更名" class="master-data-modal" style="width:min(520px,calc(100vw - 32px))">
+      <n-alert type="info" :bordered="false">更名只改变当前编号；杆塔对象身份、业务引用和历史链保持不变。</n-alert>
       <n-form label-placement="top"><n-form-item label="新杆塔编号"><n-input data-test="tower-rename-input" v-model:value="towerRenameForm.towerNo" placeholder="例如：21-1" /></n-form-item><n-form-item label="更名原因（可选）"><n-input v-model:value="towerRenameForm.reason" /></n-form-item></n-form>
-      <template #footer><div class="actions"><n-button @click="towerRenameModal=false">取消</n-button><n-button data-test="save-tower-rename" type="primary" :loading="saving" @click="saveTowerRename">确认更名</n-button></div></template>
+      <template #footer><div class="actions"><n-button :disabled="saving" @click="towerRenameModal=false">取消</n-button><n-button data-test="save-tower-rename" type="primary" :loading="saving" @click="saveTowerRename">确认更名</n-button></div></template>
     </n-modal>
 
-    <n-modal v-model:show="historyModal" preset="card" :title="historyTitle" style="width:min(640px,calc(100vw - 32px))">
+    <n-modal v-model:show="historyModal" preset="card" :title="historyTitle" class="master-data-modal" style="width:min(640px,calc(100vw - 32px))">
       <p>当前：<strong>{{ historyCurrent }}</strong></p>
       <div v-if="historyRows.length" class="history-list"><div v-for="row in historyRows" :key="`${row.value}-${row.validFrom}`"><strong>{{ row.value }}</strong><span>{{ row.validFrom }} → {{ row.validTo }}</span><small v-if="row.reason">{{ row.reason }}</small></div></div>
       <n-empty v-else description="暂无更名历史" />
     </n-modal>
 
-    <n-modal v-model:show="orderModal" preset="card" title="调整杆塔顺序" style="width:min(720px,calc(100vw - 32px))">
-      <p>桌面可拖动；手机可直接上移/下移。跨很长距离时，使用“移动杆塔 → 目标杆塔 → 目标前/后”。保存时一次性提交完整稳定 ID 顺序。</p>
+    <n-modal v-model:show="orderModal" v-bind="writeModalGuardProps" preset="card" title="调整杆塔顺序" class="master-data-modal" style="width:min(720px,calc(100vw - 32px))">
+      <p>桌面可拖动；手机可直接上移/下移。跨很长距离时，使用“移动杆塔 → 目标杆塔 → 目标前/后”。保存时一次性提交完整对象顺序。</p>
       <div class="order-controls"><n-select data-test="order-moving" v-model:value="orderMoving" :options="orderOptions" /><n-select data-test="order-target" v-model:value="orderTarget" :options="orderOptions" /><n-select v-model:value="orderPlacement" :options="placementOptions" /><n-button data-test="apply-order-move" @click="applyOrderMove">应用移动</n-button></div>
-      <div class="order-list"><div v-for="(item,index) in orderDraft" :key="item.id" class="order-row" draggable="true" @dragstart="draggingTowerId=item.id" @dragover.prevent @drop="dropOrder(item.id)"><span class="drag-handle">≡</span><b>{{ index+1 }}</b><strong>{{ item.towerNo }}</strong><span>{{ item.towerTypeLabel ?? item.positionLabel ?? '—' }}</span><div class="order-row-actions"><n-button size="tiny" :data-test="`order-up-${item.id}`" :disabled="index===0" @click="moveDraftStep(item.id,-1)">上移</n-button><n-button size="tiny" :data-test="`order-down-${item.id}`" :disabled="index===orderDraft.length-1" @click="moveDraftStep(item.id,1)">下移</n-button></div></div></div>
-      <template #footer><div class="actions"><n-button @click="orderModal=false">取消</n-button><n-button data-test="save-order" type="primary" :loading="saving" @click="saveOrder">保存顺序</n-button></div></template>
+      <div class="order-list"><div v-for="(item,index) in orderDraft" :key="item.id" class="order-row" draggable="true" @dragstart="draggingTowerId=item.id" @dragover.prevent @drop="dropOrder(item.id)"><span class="drag-handle">≡</span><b>{{ index+1 }}</b><strong>{{ item.towerNo }}</strong><span>{{ item.towerTypeLabel ?? item.positionLabel ?? '—' }}</span><div class="order-row-actions"><n-button size="small" :data-test="`order-up-${item.id}`" :disabled="index===0" @click="moveDraftStep(item.id,-1)">上移</n-button><n-button size="small" :data-test="`order-down-${item.id}`" :disabled="index===orderDraft.length-1" @click="moveDraftStep(item.id,1)">下移</n-button></div></div></div>
+      <template #footer><div class="actions"><n-button :disabled="saving" @click="orderModal=false">取消</n-button><n-button data-test="save-order" type="primary" :loading="saving" @click="saveOrder">保存顺序</n-button></div></template>
     </n-modal>
 
-    <n-modal v-model:show="bulkModal" preset="card" title="导入杆塔" style="width:min(780px,calc(100vw - 32px))">
+    <n-modal v-model:show="bulkModal" v-bind="writeModalGuardProps" preset="card" title="导入杆塔" class="master-data-modal" style="width:min(780px,calc(100vw - 32px))">
       <p>当前线路：{{ selectedLine?.lineName }}。可选择 .xlsx / .csv，或直接从表格粘贴“杆塔编号、同塔位置标识、状态”。系统会先规范编号并与完整线路台账对比，再一次确认导入。批量新增默认每个线路节点创建独立物理杆塔；同塔关联请使用单个新增。</p>
       <n-form-item label="导入模式"><n-select data-test="tower-import-mode" :value="bulkMode" :options="bulkModeOptions" @update:value="setBulkMode" /></n-form-item>
       <n-alert v-if="bulkMode==='full-order'" type="warning" :bordered="false">完整清单模式要求当前线路每个杆塔对象都在文件中唯一出现；不会把缺失行当作删除。导入完成后，文件行顺序将成为线路顺序。</n-alert>
-      <div class="tower-import-source"><input data-test="tower-import-file" type="file" accept=".xlsx,.csv" :disabled="bulkPreparing || saving" @change="onBulkFile" /><span>或</span><n-button size="small" :loading="bulkPreparing" data-test="preview-bulk-towers" @click="previewBulkPaste">预览粘贴数据</n-button></div>
+      <div class="tower-import-source"><app-file-picker test-id="tower-import-file" accept=".xlsx,.csv" label="选择台账文件" :selected-name="bulkSourceLabel || null" :disabled="bulkPreparing || saving" @change="onBulkFile" /><span>或</span><n-button size="small" :loading="bulkPreparing" data-test="preview-bulk-towers" @click="previewBulkPaste">预览粘贴数据</n-button></div>
       <n-input v-model:value="bulkText" data-test="bulk-tower-text" type="textarea" :rows="8" placeholder="杆塔编号[TAB]同塔位置标识[TAB]状态，例如：10-1    左回    启用。第一行也可以带表头。" />
       <div v-if="bulkPreview" class="tower-import-preview" data-test="tower-import-preview"><p><strong>{{ bulkSourceLabel }}</strong>：共 {{ bulkPreview.counts.total }} 行；新增 {{ bulkPreview.counts.create }}，更新 {{ bulkPreview.counts.update }}，无变化 {{ bulkPreview.counts.unchanged }}，错误 {{ bulkPreview.counts.error }}。</p><p v-if="!bulkPreview.counts.error && !bulkGlobalErrors.length">{{ bulkMode==='full-order' ? '完整清单校验通过；属性变化会先自动分批写入，随后按文件顺序原子重排。' : '系统将自动分批写入；新增杆塔按规范编号自动插入合适位置，不改变已有杆塔的人工顺序。' }}</p><div v-if="bulkPreview.counts.error" class="tower-import-errors"><p v-for="row in bulkPreview.rows.filter(item => item.action === 'error').slice(0,20)" :key="`${row.source}-${row.rowNumber}`">{{ row.source }}第 {{ row.rowNumber }} 行：{{ row.message }}</p><p v-if="bulkPreview.counts.error > 20">另有 {{ bulkPreview.counts.error - 20 }} 条错误，请修正后重新预览。</p></div><div v-if="bulkGlobalErrors.length" class="tower-import-errors"><p v-for="issue in bulkGlobalErrors" :key="issue">{{ issue }}</p></div><p v-if="bulkChunks.length">进度：{{ bulkProcessed }} / {{ bulkChunks.reduce((total, chunk) => total + chunk.length, 0) }} 条需要写入的数据。</p></div>
-      <template #footer><div class="actions"><n-button @click="bulkModal=false">取消</n-button><n-button data-test="save-bulk-towers" type="primary" :loading="saving" :disabled="!bulkPreview || bulkPreview.counts.error>0 || bulkGlobalErrors.length>0" @click="saveBulk">{{ bulkNextChunk > 0 ? '继续导入' : '开始导入' }}</n-button></div></template>
+      <template #footer><div class="actions"><n-button :disabled="saving" @click="bulkModal=false">取消</n-button><n-button data-test="save-bulk-towers" type="primary" :loading="saving" :disabled="!bulkPreview || bulkPreview.counts.error>0 || bulkGlobalErrors.length>0" @click="saveBulk">{{ bulkNextChunk > 0 ? '继续导入' : '开始导入' }}</n-button></div></template>
     </n-modal>
   </div>
 </template>
 
 <style scoped>
-.master-data-view{max-width:1480px;margin:0 auto}.error-recovery{display:flex;align-items:center;justify-content:space-between;gap:12px}.page-heading,.detail-heading{display:flex;justify-content:space-between;gap:20px;align-items:flex-start;padding:20px 22px;border:1px solid #e5e9f0;border-radius:16px;background:#fff}.eyebrow{font-size:11px;font-weight:700;color:#315fd3;letter-spacing:.08em}.page-heading h2,.detail-heading h2{margin:4px 0 5px;font-size:24px}.page-heading p,.detail-heading p{margin:0;color:#7b8493}.line-toolbar,.tower-toolbar{display:grid;grid-template-columns:minmax(170px,220px) minmax(240px,1fr) minmax(150px,190px) auto;gap:10px;margin:16px 0}.tower-toolbar{grid-template-columns:minmax(260px,1fr) auto auto}.line-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.line-card{border:1px solid #e5e9f0;border-radius:14px;background:#fff;overflow:hidden}.line-open{display:block;width:100%;padding:17px;text-align:left;border:0;background:transparent;color:inherit;cursor:pointer}.line-open:hover{background:#f8faff}.line-card-title{display:flex;align-items:center;gap:10px;font-size:16px}.line-card-meta{display:flex;gap:16px;margin-top:12px;color:#737d8d;font-size:12px}.history-match{color:#7a5af8!important;font-size:12px}.line-card-actions{display:flex;gap:14px;padding:0 17px 13px}.back-button{border:0;background:transparent;color:#315fd3;cursor:pointer;padding:4px 0 10px}.detail-title-row{display:flex;align-items:center;gap:10px}.detail-actions{justify-content:flex-end}.actions{display:flex;justify-content:flex-end;gap:10px}.settings-head{display:flex;justify-content:space-between;align-items:center}.setting-row{display:flex;justify-content:space-between;gap:15px;align-items:center;padding:12px 0;border-top:1px solid #edf0f4}.setting-row div:first-child{display:flex;flex-direction:column;gap:3px}.setting-row small{color:#7b8493}.history-list>div{display:grid;grid-template-columns:minmax(120px,1fr) minmax(220px,1.6fr);gap:6px 14px;padding:11px 0;border-top:1px solid #edf0f4}.history-list small{grid-column:1/-1;color:#7b8493}.tower-mobile-list{display:none}.tower-mobile-card{border:1px solid #e5e9f0;border-radius:12px;background:#fff;padding:13px}.tower-mobile-main{display:grid;grid-template-columns:30px minmax(0,1fr) auto;gap:10px;align-items:center}.tower-mobile-main strong,.tower-mobile-main small{display:block}.tower-mobile-main small{margin-top:3px}.tower-mobile-order{display:grid;place-items:center;width:28px;height:28px;border-radius:8px;background:#f3f6fb;color:#667085;font-size:12px;font-weight:700}.tower-mobile-meta{display:flex;justify-content:space-between;gap:12px;margin-top:10px;padding-top:10px;border-top:1px solid #edf0f4;font-size:12px}.tower-mobile-meta span{color:#7b8493}.tower-mobile-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:10px}.order-controls{display:grid;grid-template-columns:1fr 1fr 150px auto;gap:8px;margin:12px 0}.order-list{max-height:420px;overflow:auto;border:1px solid #e5e9f0;border-radius:10px}.order-row{display:grid;grid-template-columns:26px 42px 120px 1fr auto;gap:8px;align-items:center;padding:9px 12px;border-bottom:1px solid #edf0f4;background:#fff}.order-row-actions{display:flex;gap:6px}.drag-handle{cursor:grab;color:#8a94a4}.tower-import-source{display:flex;align-items:center;gap:10px;margin:12px 0}.tower-import-preview{margin-top:14px;padding:12px 14px;border-radius:10px;background:#f7f9fc;border:1px solid #e6eaf1}.tower-import-preview p{margin:5px 0}.tower-import-errors{max-height:180px;overflow:auto;color:#b42318}
-@media(max-width:900px){.line-list{grid-template-columns:1fr}.page-heading,.detail-heading{flex-direction:column}.line-toolbar{grid-template-columns:1fr 1fr}.detail-actions{justify-content:flex-start}.order-controls{grid-template-columns:1fr 1fr}.order-row{grid-template-columns:24px 34px 100px 1fr auto}}
-@media(max-width:720px){.tower-desktop-table{display:none}.tower-mobile-list{display:grid;gap:10px}}
-@media(max-width:600px){.error-recovery{align-items:flex-start;flex-direction:column}.line-toolbar,.tower-toolbar,.order-controls{grid-template-columns:1fr}.page-heading,.detail-heading{padding:16px}.page-heading h2,.detail-heading h2{font-size:20px}.line-card-meta{flex-wrap:wrap}.tower-import-source{align-items:flex-start;flex-direction:column}}
+.master-data-view { max-width: 1480px; margin: 0 auto; }
+.line-home, .line-detail { display: grid; gap: 16px; }
+.error-recovery { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.page-heading, .detail-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; padding: 4px 0 6px; }
+.page-heading-copy { min-width: 0; }
+.eyebrow { display: block; margin-bottom: 6px; color: var(--ui-text-tertiary); font-size: 12px; font-weight: 700; letter-spacing: .06em; }
+.page-heading h2, .detail-heading h2 { margin: 0; color: var(--ui-text); font-size: 28px; font-weight: 720; line-height: 1.22; letter-spacing: -.025em; }
+.page-heading p, .detail-heading p { max-width: 760px; margin: 7px 0 0; color: var(--ui-text-secondary); font-size: 13px; line-height: 1.55; }
+.page-heading-actions, .detail-actions { flex: 0 0 auto; }
+
+.line-list-surface, .tower-data-surface { overflow: hidden; border: 1px solid var(--ui-border); border-radius: var(--ui-radius-lg); background: var(--ui-surface); }
+.line-toolbar, .tower-toolbar { display: grid; grid-template-columns: minmax(170px, 220px) minmax(240px, 1fr) minmax(150px, 190px) auto; gap: 10px; padding: 13px 15px; border-bottom: 1px solid var(--ui-border); background: var(--ui-surface); }
+.tower-toolbar { grid-template-columns: minmax(260px, 1fr) auto auto; }
+.line-table-head { display: grid; grid-template-columns: minmax(280px, 1.8fr) 90px 90px minmax(120px, .8fr) 24px; gap: 16px; padding: 10px 16px; border-bottom: 1px solid var(--ui-border); background: var(--ui-surface-subtle); color: var(--ui-text-tertiary); font-size: 13px; font-weight: 650; }
+.line-list { display: grid; }
+.line-card { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; border-bottom: 1px solid var(--ui-border); background: var(--ui-surface); }
+.line-card:last-child { border-bottom: 0; }
+.line-open { display: grid; grid-template-columns: minmax(280px, 1.8fr) 90px 90px minmax(120px, .8fr) 24px; gap: 16px; align-items: center; width: 100%; min-height: 68px; padding: 12px 16px; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
+.line-open:hover { background: var(--ui-surface-subtle); }
+.line-card-primary { min-width: 0; }
+.line-card-title { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.line-card-title strong { overflow: hidden; font-size: 14px; font-weight: 670; text-overflow: ellipsis; white-space: nowrap; }
+.line-fact, .line-state, .line-code { color: var(--ui-text-secondary); font-size: 13px; }
+.line-state { color: var(--ui-success); font-weight: 650; }
+.line-state.disabled { color: var(--ui-text-tertiary); }
+.line-code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.line-chevron { color: var(--ui-text-tertiary); font-size: 20px; }
+.line-card-actions { display: none; position: absolute; right: 42px; top: 50%; gap: 8px; align-items: center; transform: translateY(-50%); }
+.line-card:hover .line-card-actions { display: flex; }
+.line-card:hover .line-code, .line-card:hover .line-chevron { opacity: .18; }
+.history-match { margin: 4px 0 0 !important; color: var(--ui-info) !important; font-size: 13px !important; }
+.load-more { display: flex; justify-content: center; padding: 13px 16px; border-top: 1px solid var(--ui-border); }
+
+.back-button { justify-self: start; padding: 3px 0; border: 0; background: transparent; color: var(--ui-text-secondary); font-size: 13px; cursor: pointer; }
+.back-button:hover { color: var(--ui-accent); }
+.detail-title-row { display: flex; align-items: center; gap: 10px; }
+.tower-desktop-table { padding: 0; }
+.tower-data-surface :deep(.n-data-table) { border: 0; border-radius: 0; }
+.actions { display: flex; justify-content: flex-end; gap: 10px; }
+
+.settings-head { display: flex; justify-content: space-between; align-items: center; gap: 18px; }
+.setting-row { display: flex; justify-content: space-between; gap: 15px; align-items: center; padding: 12px 0; border-top: 1px solid var(--ui-border); }
+.setting-row div:first-child { display: flex; flex-direction: column; gap: 3px; }
+.setting-row small { color: var(--ui-text-secondary); }
+.history-list > div { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(220px, 1.6fr); gap: 6px 14px; padding: 11px 0; border-top: 1px solid var(--ui-border); }
+.history-list small { grid-column: 1 / -1; color: var(--ui-text-secondary); }
+
+.tower-mobile-list { display: none; }
+.tower-mobile-card { border-bottom: 1px solid var(--ui-border); background: var(--ui-surface); padding: 14px; }
+.tower-mobile-card:last-child { border-bottom: 0; }
+.tower-mobile-main { display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; gap: 10px; align-items: center; }
+.tower-mobile-main strong, .tower-mobile-main small { display: block; }
+.tower-mobile-main small { margin-top: 3px; }
+.tower-mobile-order { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 8px; background: var(--ui-surface-muted); color: var(--ui-text-secondary); font-size: 12px; font-weight: 700; }
+.tower-mobile-meta { display: flex; justify-content: space-between; gap: 12px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--ui-border); font-size: 13px; }
+.tower-mobile-meta span { color: var(--ui-text-secondary); }
+.tower-mobile-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+
+.order-controls { display: grid; grid-template-columns: 1fr 1fr 150px auto; gap: 8px; margin: 12px 0; }
+.order-list { max-height: 420px; overflow: auto; border: 1px solid var(--ui-border); border-radius: 10px; }
+.order-row { display: grid; grid-template-columns: 26px 42px 120px 1fr auto; gap: 8px; align-items: center; padding: 9px 12px; border-bottom: 1px solid var(--ui-border); background: var(--ui-surface); }
+.order-row-actions { display: flex; gap: 6px; }
+.drag-handle { cursor: grab; color: var(--ui-text-tertiary); }
+.tower-import-source { display: flex; align-items: center; gap: 10px; margin: 12px 0; }
+.tower-import-preview { margin-top: 14px; padding: 12px 14px; border: 1px solid var(--ui-border); border-radius: 10px; background: var(--ui-surface-subtle); }
+.tower-import-preview p { margin: 5px 0; }
+.tower-import-errors { max-height: 180px; overflow: auto; color: var(--ui-danger); }
+
+@media (max-width: 980px) {
+  .page-heading, .detail-heading { align-items: flex-start; flex-direction: column; }
+  .line-toolbar { grid-template-columns: 1fr 1fr; }
+  .detail-actions { justify-content: flex-start; }
+  .order-controls { grid-template-columns: 1fr 1fr; }
+  .order-row { grid-template-columns: 24px 34px 100px 1fr auto; }
+  .line-table-head, .line-open { grid-template-columns: minmax(240px, 1.8fr) 76px 76px minmax(90px, .7fr) 20px; gap: 10px; }
+}
+
+@media (max-width: 767px) {
+  :global(.master-data-modal) { max-height: calc(100dvh - 20px); }
+  :global(.master-data-modal .n-card__content) { max-height: calc(100dvh - 150px); overflow-y: auto; overscroll-behavior: contain; }
+  :global(.master-data-modal .n-card__footer) { padding-bottom: max(14px, env(safe-area-inset-bottom)); background: var(--ui-surface); }
+  .page-heading, .detail-heading { gap: 16px; }
+  .page-heading h2, .detail-heading h2 { font-size: 24px; }
+  .page-heading-actions, .detail-actions { width: 100%; }
+  .page-heading-actions :deep(.n-space), .detail-actions :deep(.n-space) { width: 100%; }
+  .line-table-head { display: none; }
+  .line-card { display: block; }
+  .line-open { display: grid; grid-template-columns: 1fr auto; gap: 10px 14px; min-height: 0; padding: 15px 14px; }
+  .line-card-primary { grid-column: 1 / -1; }
+  .line-fact, .line-state, .line-code { align-self: center; }
+  .line-fact::before { content: '杆塔 '; color: var(--ui-text-tertiary); }
+  .line-code { display: none; }
+  .line-chevron { grid-column: 2; grid-row: 2; }
+  .line-card-actions { position: static; display: flex; justify-content: flex-end; padding: 0 14px 12px; transform: none; }
+  .line-card-actions :deep(.n-button), .order-row-actions :deep(.n-button) { min-height: 36px; }
+  .line-card:hover .line-code, .line-card:hover .line-chevron { opacity: 1; }
+  .tower-desktop-table { display: none; }
+  .tower-mobile-list { display: grid; }
+  .tower-toolbar { grid-template-columns: 1fr auto; }
+  .tower-toolbar > .n-button:last-child { grid-column: 1 / -1; }
+}
+
+@media (max-width: 600px) {
+  .error-recovery { align-items: flex-start; flex-direction: column; }
+  .line-toolbar, .tower-toolbar, .order-controls { grid-template-columns: 1fr; }
+  .page-heading-actions, .detail-actions { display: grid !important; grid-template-columns: 1fr 1fr; gap: 8px !important; }
+  .page-heading-actions :deep(.n-button), .detail-actions :deep(.n-button) { width: 100%; }
+  .detail-actions :deep(.n-button:first-child) { grid-column: 1 / -1; }
+  .detail-title-row { align-items: flex-start; flex-direction: column; gap: 7px; }
+  .settings-head { align-items: flex-start; flex-direction: column; }
+  .setting-row { align-items: flex-start; flex-direction: column; }
+  .tower-import-source { align-items: stretch; flex-direction: column; }
+  .tower-import-source :deep(.n-button) { width: 100%; }
+}
 </style>

@@ -27,3 +27,25 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check
+
+  headless-ui:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      WRANGLER_SEND_METRICS: 'false'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:ui:headless
+      - name: Upload Playwright diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: headless-ui-diagnostics
+          path: test-results/
+          if-no-files-found: ignore

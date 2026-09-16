@@ -12,6 +12,19 @@ function sha256(path) {
   return createHash('sha256').update(readFileSync(path)).digest('hex');
 }
 
+function relativeLuminance(hex) {
+  const rgb = hex.match(/[a-f\d]{2}/gi)?.map((part) => Number.parseInt(part, 16) / 255) ?? [];
+  assert.equal(rgb.length, 3, `无效颜色：${hex}`);
+  const [r, g, b] = rgb.map((value) => (value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4));
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+function contrastRatio(foreground, background) {
+  const first = relativeLuminance(foreground);
+  const second = relativeLuminance(background);
+  return (Math.max(first, second) + 0.05) / (Math.min(first, second) + 0.05);
+}
+
 test('development schema stays on one resettable baseline until the user explicitly enters operation stage', () => {
   const migrationFiles = readdirSync(migrationsDir)
     .filter((name) => /^\d{4}_.+\.sql$/.test(name))
@@ -329,26 +342,344 @@ test('web form defaults are Chinese and English default placeholders are forbidd
   }
 });
 
+test('web decorative labels stay Chinese instead of reintroducing English chrome', () => {
+  for (const file of collectSourceFiles(resolve(root, 'apps/web/src'))) {
+    if (!file.endsWith('.vue')) continue;
+    const source = readFileSync(file, 'utf8');
+    assert.doesNotMatch(source, /class="page-eyebrow"[^>]*>\s*[A-Z][A-Z\s/&-]{2,}\s*</, `${file} 的页面眉标仍使用纯英文装饰文案`);
+    assert.doesNotMatch(source, /(?:TRANSMISSION PROJECTS|SYSTEM SETUP|ACCOUNT SECURITY|ACCOUNT|SECURITY)/, `${file} 的认证界面仍使用纯英文装饰文案`);
+    assert.doesNotMatch(source, /class="object-kicker"[^>]*>\s*PROJECT\b/, `${file} 的对象眉标仍使用英文 PROJECT`);
+  }
+});
+
+test('primary workspaces provide an explicit retry action for load failures', () => {
+  const retryContracts = [
+    ['DashboardView.vue', 'loadDashboard'],
+    ['DemandsView.vue', 'loadInitial'],
+    ['FinanceView.vue', 'loadInitial'],
+    ['AnalysisView.vue', 'refresh'],
+    ['AdministrationView.vue', 'load'],
+  ];
+  for (const [name, handler] of retryContracts) {
+    const source = readFileSync(resolve(root, 'apps/web/src/views', name), 'utf8');
+    assert.match(source, new RegExp(`@click=["']${handler}["'][^>]*>\\s*重新加载`), `${name} 的加载失败提示缺少明确重新加载动作`);
+  }
+});
+
+test('web business UI cannot render browser-native controls directly', () => {
+  const pressableFile = resolve(root, 'apps/web/src/app/AppPressable.vue');
+  const filePickerFile = resolve(root, 'apps/web/src/app/AppFilePicker.vue');
+  const primitiveFiles = new Set([pressableFile, filePickerFile]);
+  for (const file of collectSourceFiles(resolve(root, 'apps/web/src'))) {
+    if (!file.endsWith('.vue') || primitiveFiles.has(file)) continue;
+    const source = readFileSync(file, 'utf8');
+    assert.doesNotMatch(source, /<(?:button|input|select|textarea)\b/i, `${file} 直接渲染了浏览器原生表单控件；请使用设计系统组件`);
+    assert.doesNotMatch(source, /\bh\(\s*['"](?:button|input|select|textarea)['"]/i, `${file} 动态渲染了浏览器原生表单控件；请使用设计系统组件`);
+  }
+  const pressable = readFileSync(pressableFile, 'utf8');
+  assert.match(pressable, /appearance:\s*none/);
+  assert.match(pressable, /border:\s*0/);
+  assert.match(pressable, /background:\s*transparent/);
+  const filePicker = readFileSync(filePickerFile, 'utf8');
+  assert.match(filePicker, /class="native-file-input"/);
+  assert.match(filePicker, /clip-path:\s*inset\(50%\)/);
+});
+
+test('task progress drawers cannot close while a save request is in flight', () => {
+  for (const relative of [
+    'apps/web/src/features/tasks/TaskImplementationDrawer.vue',
+    'apps/web/src/features/tasks/TaskSettlementDrawer.vue',
+  ]) {
+    const source = readFileSync(resolve(root, relative), 'utf8');
+    assert.match(source, /function setShow\(value: boolean\)/, `${relative} 必须统一守卫抽屉 show 变化`);
+    assert.match(source, /:mask-closable="!saving"/, `${relative} 保存期间不得通过遮罩关闭`);
+    assert.match(source, /:closable="!saving"/, `${relative} 保存期间不得通过右上角关闭`);
+    assert.match(source, /@update:show="setShow"/, `${relative} 不得把 update:show 无条件透传给父组件`);
+  }
+
+  const taskDetail = readFileSync(resolve(root, 'apps/web/src/views/TaskDetailView.vue'), 'utf8');
+  assert.match(taskDetail, /function setSupplyShow\(value: boolean\)/, '供应抽屉必须统一守卫 show 变化');
+  assert.match(taskDetail, /:mask-closable="!savingSupply"/, '供应保存期间不得通过遮罩关闭');
+  assert.match(taskDetail, /:closable="!savingSupply"/, '供应保存期间不得通过右上角关闭');
+  assert.match(taskDetail, /@update:show="setSupplyShow"/, '供应抽屉不得把 update:show 直接写入状态');
+});
+
+test('primary write overlays cannot be dismissed while a mutation is in flight', () => {
+  const projects = readFileSync(resolve(root, 'apps/web/src/views/ProjectsView.vue'), 'utf8');
+  assert.match(projects, /function setCreateOpen\(value: boolean\)/, '项目新建抽屉必须守卫 show 变化');
+  assert.match(projects, /:mask-closable="!creating"/);
+  assert.match(projects, /:close-on-esc="!creating"/);
+  assert.match(projects, /:closable="!creating"/);
+
+  const demands = readFileSync(resolve(root, 'apps/web/src/views/DemandsView.vue'), 'utf8');
+  assert.match(demands, /function setManualDemandOpen\(value: boolean\)/, '需求新建弹窗必须守卫 show 变化');
+  assert.match(demands, /function setDemandDetailOpen\(value: boolean\)/, '需求详情写入期间必须守卫 show 变化');
+  assert.match(demands, /:close-on-esc="!savingManualDemand"/);
+  assert.match(demands, /:closable="!savingManualDemand"/);
+  assert.match(demands, /:mask-closable="!savingDemandMaterial"/);
+  assert.match(demands, /:close-on-esc="!savingDemandMaterial"/);
+  assert.match(demands, /:closable="!savingDemandMaterial"/);
+
+  const projectDetail = readFileSync(resolve(root, 'apps/web/src/views/ProjectDetailView.vue'), 'utf8');
+  assert.match(projectDetail, /:close-on-esc="!reserveConfirming"/);
+  assert.match(projectDetail, /:closable="!reserveConfirming"/);
+  assert.match(projectDetail, /:close-on-esc="!releasing"/);
+  assert.match(projectDetail, /:closable="!releasing"/);
+
+  const administration = readFileSync(resolve(root, 'apps/web/src/views/AdministrationView.vue'), 'utf8');
+  assert.ok((administration.match(/:close-on-esc="!saving"/g) ?? []).length >= 2, '成员编辑和重置密码都必须禁止保存中 Esc 关闭');
+  assert.ok((administration.match(/:closable="!saving"/g) ?? []).length >= 2, '成员编辑和重置密码都必须禁止保存中右上角关闭');
+
+  const masterData = readFileSync(resolve(root, 'apps/web/src/views/MasterDataView.vue'), 'utf8');
+  assert.match(masterData, /const writeModalGuardProps = computed\(/, '基础台账写弹窗应共享同一保存期关闭门禁');
+  assert.ok((masterData.match(/v-bind="writeModalGuardProps"/g) ?? []).length >= 14, '基础台账主要写弹窗必须统一应用关闭门禁');
+});
+
+test('inline finance and analysis editors lock business context during mutations', () => {
+  const finance = readFileSync(resolve(root, 'apps/web/src/views/FinanceView.vue'), 'utf8');
+  assert.match(finance, /data-test="finance-framework"[^>]*:disabled="saving"/, '资金写请求期间不得切换框架');
+  assert.match(finance, /data-test="budget-project"[^>]*:disabled="saving"/, '预算写请求期间不得切换子项目');
+  assert.match(finance, /data-test="entry-project"[^>]*:disabled="saving"/, '流水写请求期间不得切换子项目');
+  assert.match(finance, /data-test="open-framework-form"[^>]*:disabled="saving"/, '框架保存期间不得收起/切换创建表单');
+  assert.match(finance, /data-test="open-entry-form"[^>]*:disabled="saving"/, '流水保存期间不得收起登记表单');
+
+  const analysis = readFileSync(resolve(root, 'apps/web/src/views/AnalysisView.vue'), 'utf8');
+  assert.match(analysis, /data-test="analysis-as-of"[^>]*:disabled="saving"/, '分析写请求期间不得切换统计日期');
+  assert.match(analysis, /data-test="analysis-framework"[^>]*:disabled="saving"/, '分析写请求期间不得切换框架');
+  assert.match(analysis, /data-test="plan-project"[^>]*:disabled="saving"/, '月计划保存期间不得切换项目');
+  assert.match(analysis, /data-test="plan-amount"[^>]*:disabled="saving"/, '月计划保存期间不得改写当前提交金额');
+  assert.match(analysis, /async function setMilestoneStatus[^]*?if \(saving\.value\) return;[^]*?saving\.value = true;[^]*?finally \{ saving\.value = false; \}/, '年度事项状态更新必须进入统一写锁');
+  assert.match(analysis, /loading: saving\.value[^}]*disabled: saving\.value/, '桌面年度事项操作必须显示进行中并阻止重复提交');
+  assert.match(analysis, /:loading="saving"[^>]*:disabled="saving"[^>]*@click="setMilestoneStatus/, '手机年度事项操作必须阻止重复提交');
+
+  const demands = readFileSync(resolve(root, 'apps/web/src/views/DemandsView.vue'), 'utf8');
+  assert.match(demands, /const mappingBusy = computed\(/, '需求导入应统一定义映射上下文忙状态');
+  assert.match(demands, /if \(workspaceMutationBusy\.value\) return;/, '需求写入期间不得切换主工作区 Tab');
+  assert.match(demands, /data-test="mapping-template"[^>]*:disabled="mappingBusy"/, '模板保存或导入期间不得切换映射模板');
+  assert.match(demands, /mapping-source-\$\{field\.key\}`[^>]*:disabled="mappingBusy"/, '模板保存或导入期间不得修改字段映射');
+  assert.match(demands, /data-test="add-material"[^>]*:disabled="savingMaterial"/, '标准物资保存期间不得收起编辑区');
+  assert.match(demands, /data-test="material-name"[^>]*:disabled="savingMaterial"/, '标准物资保存期间不得改写名称');
+});
+
 test('mobile UI keeps usable navigation and dashboard density', () => {
   const appSource = readFileSync(resolve(root, 'apps/web/src/App.vue'), 'utf8');
   const dashboardSource = readFileSync(resolve(root, 'apps/web/src/views/DashboardView.vue'), 'utf8');
   const styleSource = readFileSync(resolve(root, 'apps/web/src/styles.css'), 'utf8');
-  assert.match(appSource, /mobile-menu-button/);
+  assert.match(appSource, /mobile-bottom-nav/);
   assert.match(appSource, /n-drawer/);
-  assert.match(styleSource, /@media \(max-width: 720px\)/);
-  assert.match(styleSource, /\.mobile-menu-button \{ display: inline-flex !important; \}/);
-  assert.match(dashboardSource, /metrics-grid/);
-  assert.match(dashboardSource, /grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/);
+  assert.match(styleSource, /@media \(max-width: (?:7\d\d|6\d\d)px\)/);
+  assert.match(styleSource, /\.mobile-bottom-nav/);
+  assert.match(styleSource, /\.app-sider\s*\{\s*display:\s*none/);
+  assert.match(styleSource, /env\(safe-area-inset-bottom\)/);
+  assert.match(dashboardSource, /overview-strip/);
+  assert.match(dashboardSource, /grid-template-columns:\s*1fr 1fr/);
   assert.doesNotMatch(dashboardSource, /:cols="5"/);
+});
+
+test('compact desktop navigation keeps visible text labels instead of becoming an icon-only rail', () => {
+  const styleSource = readFileSync(resolve(root, 'apps/web/src/styles.css'), 'utf8');
+  const compactStart = styleSource.indexOf('@media (max-width: 1100px) and (min-width: 768px)');
+  const mobileStart = styleSource.indexOf('@media (max-width: 767px)');
+  assert.ok(compactStart >= 0 && mobileStart > compactStart, 'missing compact desktop navigation breakpoint');
+  const compactSource = styleSource.slice(compactStart, mobileStart);
+  assert.doesNotMatch(
+    compactSource,
+    /\.nav-item\s*>\s*span[^}]*display:\s*none/,
+    'compact desktop navigation must keep business labels visible; icon-only navigation is not usable on touch laptops/tablets',
+  );
+  assert.match(compactSource, /\.nav-item[^}]*flex-direction:\s*column/);
+});
+
+test('pressable reset stays low-specificity so business layout styles cannot be silently overridden', () => {
+  const pressable = readFileSync(resolve(root, 'apps/web/src/app/AppPressable.vue'), 'utf8');
+  assert.match(
+    pressable,
+    /:where\(\.app-pressable\)\s*\{/,
+    'AppPressable 的基础 reset 必须使用 :where() 降低优先级，业务 padding/圆角/背景不得再被组件 reset 吃掉',
+  );
+  assert.doesNotMatch(
+    pressable,
+    /\n\.app-pressable\s*\{/,
+    '禁止恢复高优先级 .app-pressable 基础 reset；这会重新制造侧栏/卡片布局覆盖问题',
+  );
+});
+
+test('application shell uses username as the primary identity and role only as secondary metadata', () => {
+  const appSource = readFileSync(resolve(root, 'apps/web/src/App.vue'), 'utf8');
+  const identityCopy = appSource.match(/<div class="identity-copy">([\s\S]*?)<\/div>/)?.[1] ?? '';
+  assert.match(appSource, /account-avatar">\{\{\s*currentUser\.username\.slice\(0,\s*1\)/, '账号头像必须来自 username，而不是显示名/角色');
+  assert.match(appSource, /account-copy"><strong>\{\{\s*currentUser\.username\s*\}\}<\/strong><small>\{\{\s*roleLabels\[currentUser\.role\]\s*\}\}/, '侧栏账号卡必须“用户名主、角色次”');
+  assert.match(identityCopy, /<strong>\{\{\s*currentUser\.username\s*\}\}<\/strong>/, '右上角必须以 username 作为当前身份');
+  assert.doesNotMatch(identityCopy, /roleLabels\[currentUser\.role\]/, '右上角不得再次重复角色');
+});
+
+test('mobile primary navigation keeps the demand to project to task workflow at the first level', () => {
+  const appSource = readFileSync(resolve(root, 'apps/web/src/App.vue'), 'utf8');
+  const styleSource = readFileSync(resolve(root, 'apps/web/src/styles.css'), 'utf8');
+  const mobileNav = appSource.match(/<nav class="mobile-bottom-nav"[\s\S]*?<\/nav>/)?.[0] ?? '';
+  assert.match(mobileNav, /navigateMobile\('\/demands'\)/, '需求必须是手机一级导航，而不是藏在“更多”里');
+  assert.match(mobileNav, /navigateMobile\('\/projects'\)/);
+  assert.match(mobileNav, /navigateMobile\('\/tasks'\)/);
+  assert.match(styleSource, /\.mobile-bottom-nav[\s\S]*grid-template-columns:\s*repeat\(5,\s*1fr\)/);
+});
+
+test('web business typography never drops below the 12px readability floor', () => {
+  for (const file of collectSourceFiles(resolve(root, 'apps/web/src'))) {
+    if (!file.endsWith('.vue') && !file.endsWith('.css')) continue;
+    const source = readFileSync(file, 'utf8');
+    assert.doesNotMatch(
+      source,
+      /font-size:\s*(?:10|11)px\b/,
+      `${file} 仍包含低于 12px 的业务界面文字；辅助信息也必须保持可读`,
+    );
+  }
+});
+
+test('business UI does not use tiny action buttons', () => {
+  const webRoot = resolve(root, 'apps/web/src');
+  const tinyButtons = collectSourceFiles(webRoot)
+    .filter((path) => path.endsWith('.vue'))
+    .filter((path) => {
+      const source = readFileSync(path, 'utf8');
+      return source.includes('size="tiny"') || source.includes("size='tiny'");
+    });
+  assert.deepEqual(tinyButtons, [], `业务操作禁止使用 tiny 按钮：${tinyButtons.join(', ')}`);
+});
+
+test('light-theme text tokens keep readable contrast on common surfaces', () => {
+  const source = readFileSync(resolve(root, 'apps/web/src/styles.css'), 'utf8');
+  const rootBlock = source.match(/:root\s*\{[\s\S]*?\n\}/)?.[0] ?? '';
+  const token = (name) => rootBlock.match(new RegExp(`--${name}:\\s*(#[0-9a-fA-F]{6})`))?.[1];
+  const tertiary = token('ui-text-tertiary');
+  const surfaces = ['ui-surface', 'ui-canvas', 'ui-surface-muted'].map((name) => [name, token(name)]);
+  assert.ok(tertiary, '缺少 --ui-text-tertiary');
+  for (const [name, background] of surfaces) {
+    assert.ok(background, `缺少 --${name}`);
+    const ratio = contrastRatio(tertiary, background);
+    assert.ok(ratio >= 4.5, `浅色主题 --ui-text-tertiary 对 --${name} 的对比度仅 ${ratio.toFixed(2)}:1，12–13px 业务文字不可读`);
+  }
+});
+
+test('error recovery actions use real buttons instead of collapsed text-only hit targets', () => {
+  for (const file of collectSourceFiles(resolve(root, 'apps/web/src'))) {
+    if (!file.endsWith('.vue')) continue;
+    const source = readFileSync(file, 'utf8');
+    assert.doesNotMatch(
+      source,
+      /<n-button[^>]*\btext\b[^>]*>\s*重新加载\s*<\/n-button>/,
+      `${file} 的“重新加载”不得使用 text-only 按钮；错误恢复动作必须保留真实可点击高度`,
+    );
+  }
+});
+
+test('line deletion has a non-hover detail action for touch desktop users', () => {
+  const source = readFileSync(resolve(root, 'apps/web/src/views/MasterDataView.vue'), 'utf8');
+  const options = source.match(/const lineMoreOptions = \[[\s\S]*?\];/)?.[0] ?? '';
+  const handler = source.match(/function handleLineMoreAction\(key: string\) \{[\s\S]*?\n\}/)?.[0] ?? '';
+  assert.match(options, /label:\s*'删除线路'[^}]*key:\s*'delete'/, '线路详情“更多操作”必须提供删除入口，不能只依赖 hover 快捷操作');
+  assert.match(handler, /key === 'delete'[\s\S]*requestDelete\('lines'/, '详情删除入口必须走既有线路删除确认流程');
+});
+
+test('drawer responsive selectors target the NDrawer root instead of a nonexistent descendant', () => {
+  for (const file of collectSourceFiles(resolve(root, 'apps/web/src'))) {
+    if (!file.endsWith('.vue') && !file.endsWith('.css')) continue;
+    const source = readFileSync(file, 'utf8');
+    assert.doesNotMatch(
+      source,
+      /:global\(\.[\w-]*drawer\s+\.n-drawer\)/,
+      `${file} 将 drawer class 直接挂在 NDrawer 根节点时，不得再用后代选择器匹配 .n-drawer`,
+    );
+  }
+});
+
+test('text-style return navigation keeps a usable touch target', () => {
+  const styleSource = readFileSync(resolve(root, 'apps/web/src/styles.css'), 'utf8');
+  assert.match(styleSource, /\.breadcrumb-back,\s*\.back-button\s*\{[^}]*min-height:\s*36px/);
+  const mobile = styleSource.match(/@media \(max-width:\s*767px\)[\s\S]*$/)?.[0] ?? '';
+  assert.match(mobile, /\.breadcrumb-back,\s*\.back-button\s*\{[^}]*min-height:\s*44px/, '手机返回导航命中高度不得低于 44px');
+});
+
+test('async workspace context loaders ignore stale responses', () => {
+  const finance = readFileSync(resolve(root, 'apps/web/src/views/FinanceView.vue'), 'utf8');
+  assert.match(finance, /let frameworkContextSequence = 0;/, '资金框架上下文必须有请求序号');
+  assert.match(finance, /sequence !== frameworkContextSequence \|\| selectedFrameworkId\.value !== frameworkId/, '旧框架响应不得覆盖当前框架');
+  assert.match(finance, /let budgetProjectSequence = 0;/, '预算项目切换必须有请求序号');
+  assert.match(finance, /sequence !== budgetProjectSequence \|\| selectedBudgetProjectId\.value !== projectId/, '旧预算项目响应不得覆盖当前项目');
+  assert.match(finance, /contextSequence !== frameworkContextSequence[^]*?entryCursor\.value !== cursor/, '旧流水分页响应不得追加到新框架');
+
+  const analysis = readFileSync(resolve(root, 'apps/web/src/views/AnalysisView.vue'), 'utf8');
+  assert.match(analysis, /let frameworkContextSequence = 0;/, '分析框架上下文必须有请求序号');
+  assert.match(analysis, /sequence !== frameworkContextSequence \|\| selectedFrameworkId\.value !== frameworkId/, '旧分析框架响应不得覆盖当前框架');
+  assert.match(analysis, /let milestoneRequestSequence = 0;/, '事项读取必须有统一请求序号');
+  assert.match(analysis, /sequence !== milestoneRequestSequence \|\| asOfDate\.value !== requestedAsOf/, '旧统计日期事项响应不得覆盖当前日期');
+  assert.match(analysis, /const milestonePromise = loadMilestones\(requestedAsOf\)/, '分析全量刷新也必须复用事项竞态门禁');
+});
+
+test('committed finance and analysis writes distinguish refresh failure from mutation failure', () => {
+  const finance = readFileSync(resolve(root, 'apps/web/src/views/FinanceView.vue'), 'utf8');
+  assert.match(finance, /async function refreshAfterCommittedWrite\(/, '资金页必须统一处理已提交后的刷新失败');
+  for (const message of ['框架已创建', '执行协议已创建', '项目框架归属已更新', '预算草稿已保存', '预算已确认；不会自动生成预算发生流水', '资金流水已登记']) {
+    assert.match(finance, new RegExp(`refreshAfterCommittedWrite\\('${message.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}'`), `资金写入“${message}”必须区分提交失败与刷新失败`);
+  }
+  assert.match(finance, /最新数据刷新失败，请重新加载/, '资金页刷新失败必须明确说明写入已成功并提供恢复指引');
+
+  const analysis = readFileSync(resolve(root, 'apps/web/src/views/AnalysisView.vue'), 'utf8');
+  assert.match(analysis, /async function refreshAfterCommittedWrite\(/, '分析页必须统一处理已提交后的刷新失败');
+  for (const message of ['月计划已保存', '分析规则已更新', '月报修订已生成', '年度事项已创建', '事项状态已更新']) {
+    assert.match(analysis, new RegExp(`refreshAfterCommittedWrite\\('${message.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}'`), `分析写入“${message}”必须区分提交失败与刷新失败`);
+  }
+  assert.match(analysis, /最新数据刷新失败，请重新加载/, '分析页刷新失败必须明确说明写入已成功并提供恢复指引');
+});
+
+test('committed demand writes distinguish refresh failure from mutation failure', () => {
+  const demands = readFileSync(resolve(root, 'apps/web/src/views/DemandsView.vue'), 'utf8');
+  assert.match(demands, /async function refreshAfterCommittedWrite\(/, '需求页必须统一处理已提交后的刷新失败');
+  for (const message of ['需求已创建', '需求物资子明细已添加', '标准物资已添加']) {
+    assert.match(demands, new RegExp(`refreshAfterCommittedWrite\\('${message}'`), `需求写入“${message}”必须区分提交失败与刷新失败`);
+  }
+  assert.match(demands, /refreshAfterCommittedWrite\(`导入完成，已发布 \$\{publishedRows\} 行需求`/, '导入发布完成后的需求池刷新失败不得反向标记导入失败');
+  assert.match(demands, /最新数据刷新失败，请重新加载/, '需求页刷新失败必须明确说明写入已成功并提供恢复指引');
+});
+
+test('committed master-data writes distinguish refresh failure from mutation failure', () => {
+  const masterData = readFileSync(resolve(root, 'apps/web/src/views/MasterDataView.vue'), 'utf8');
+  assert.match(masterData, /async function refreshAfterCommittedWrite\(/, '基础台账必须统一处理已提交后的刷新失败');
+  for (const message of [
+    '已删除未引用的台账对象',
+    '电压等级已保存',
+    '班组配置已保存',
+    '杆塔类型已保存',
+    '自定义字段已保存',
+    '物理杆塔属性已保存',
+    '物理杆塔自定义字段已保存',
+  ]) {
+    assert.match(masterData, new RegExp(`refreshAfterCommittedWrite\\('${message}'`), `基础台账写入“${message}”必须区分提交失败与刷新失败`);
+  }
+  assert.match(masterData, /committedRefreshRetry/, '基础台账写后刷新失败必须保留原刷新动作供页面内重试');
+  assert.match(masterData, /async function retryMasterData\(/, '基础台账重新加载必须能恢复最近一次已提交写入的刷新');
+  assert.match(masterData, /最新数据刷新失败，请重新加载/, '基础台账刷新失败必须明确说明写入已成功并提供恢复指引');
+});
+
+test('committed system-operation writes distinguish refresh failure from mutation failure', () => {
+  const operations = readFileSync(resolve(root, 'apps/web/src/features/settings/SystemOperationsPanel.vue'), 'utf8');
+  assert.match(operations, /async function refreshAfterCommittedWrite\(/, '通知与备份写入必须统一处理已提交后的刷新失败');
+  for (const message of ['通知地址已保存', '备份任务已创建', '备份任务已推进', '完整性校验完成']) {
+    assert.match(operations, new RegExp(`refreshAfterCommittedWrite\\('${message}'`), `通知与备份写入“${message}”必须区分提交失败与刷新失败`);
+  }
+  assert.match(operations, /最新数据刷新失败，请重新加载/, '通知与备份刷新失败必须明确说明写入已成功并提供恢复指引');
 });
 
 test('local API development rebuilds the local D1 when the single development baseline changes', () => {
   const apiPackage = JSON.parse(readFileSync(resolve(root, 'apps/api/package.json'), 'utf8'));
   assert.equal(apiPackage.scripts.dev, 'node ../../scripts/dev/api-dev.mjs');
   const source = readFileSync(resolve(root, 'scripts/dev/api-dev.mjs'), 'utf8');
+  const localWrangler = readFileSync(resolve(root, 'apps/api/wrangler.jsonc'), 'utf8');
   assert.match(source, /0001_initial_schema|baseline|基线/);
   assert.match(source, /重建本地 D1/);
   assert.match(source, /'d1',\s*'migrations',\s*'apply'/);
+  assert.match(source, /--env-file/);
+  assert.match(source, /resolve\(root, '\.env'\)/);
+  assert.match(localWrangler, /"required"\s*:\s*\["AUTH_CREDENTIAL_PEPPER",\s*"BOOTSTRAP_TOKEN"\]/);
   assert.doesNotMatch(source, /watch\(/);
 });
 
@@ -382,6 +713,30 @@ test('committed tests cannot silently bypass the quality gate', () => {
     assert.doesNotMatch(source, /\b(?:test|it|describe)\.(?:skip|only|todo)\s*\(/, `${file} contains a skipped/isolated test`);
     assert.doesNotMatch(source, /\b(?:test|it)\.todo\s*\(/, `${file} contains test.todo`);
   }
+});
+
+test('CI keeps isolated headless browser acceptance as its own job', () => {
+  const workflow = readFileSync(resolve(root, '.github/workflows/ci.yml'), 'utf8');
+  const packageJson = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8'));
+  assert.equal(packageJson.scripts?.['test:ui:headless'], 'npm run build:web && playwright test --config playwright.config.ts');
+  assert.match(workflow, /^\s{2}headless-ui:\s*$/m, 'CI must keep a dedicated headless-ui job');
+  assert.match(workflow, /playwright install --with-deps chromium/, 'CI headless-ui job must install Chromium and its Linux dependencies');
+  assert.match(workflow, /npm run test:ui:headless/, 'CI headless-ui job must execute the repository E2E command');
+});
+
+test('Makefile is the single ergonomic entry point without bypassing production governance', () => {
+  const makefilePath = resolve(root, 'Makefile');
+  assert.equal(existsSync(makefilePath), true, '仓库根目录必须提供 Makefile 作为统一工程入口');
+  const source = readFileSync(makefilePath, 'utf8');
+  for (const target of ['help', 'install', 'dev', 'test', 'check', 'test-ui', 'build', 'ci', 'production-preflight', 'production', 'production-inventory']) {
+    assert.match(source, new RegExp(`^${target}:`, 'm'), `Makefile 缺少 ${target} target`);
+  }
+  assert.match(source, /npm run dev\b/, 'make dev 必须复用仓库正式本地启动入口');
+  assert.match(source, /npm run check\b/, 'Makefile 必须保留完整 npm check 门禁');
+  assert.match(source, /npm run test:ui:headless\b/, 'Makefile 必须暴露无头浏览器 UI 验收');
+  assert.match(source, /scripts\/engineering\/github-workflow\.mjs production-promote\.yml --ref main --require-main-sync/, '生产一键发布必须走受保护的 Production promote workflow');
+  assert.doesNotMatch(source, /wrangler\s+deploy/, 'Makefile 不得直接执行 wrangler deploy 绕过生产治理');
+  assert.doesNotMatch(source, /git\s+(?:reset|clean)\b/, 'Makefile 不得提供破坏工作区的 reset/clean 快捷入口');
 });
 
 test('Node runtime gate exercises the real app, SQLite, Filesystem, and the single schema baseline', () => {

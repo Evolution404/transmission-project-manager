@@ -3,17 +3,13 @@ import { computed, h, onMounted, ref } from 'vue';
 import {
   NAlert,
   NButton,
-  NCard,
   NDataTable,
-  NDescriptions,
-  NDescriptionsItem,
   NEmpty,
   NForm,
   NFormItem,
   NInput,
   NModal,
   NSelect,
-  NSpace,
   NSpin,
   NSwitch,
   NTag,
@@ -30,6 +26,9 @@ import type {
 } from '@tpm/shared';
 import { apiRequest, jsonRequestInit } from '../api/client';
 import { createDerivedCredential, normalizeUsername, validatePasswordForClient } from '../auth/credentials';
+import AppPressable from '../app/AppPressable.vue';
+import ReserveClassificationPanel from '../features/settings/ReserveClassificationPanel.vue';
+import SystemOperationsPanel from '../features/settings/SystemOperationsPanel.vue';
 
 const props = defineProps<{ currentUser: CurrentUser }>();
 const message = useMessage();
@@ -95,6 +94,38 @@ function scopeLabel(row: MemberSummary) {
   return [frameworks ? `${frameworks} 个框架` : '', projects ? `${projects} 个项目` : ''].filter(Boolean).join('、');
 }
 
+const settingMeta: Record<string, { label: string; description: string }> = {
+  'business.timezone': { label: '业务时区', description: '日期、月报、提醒和业务截止日统一使用。' },
+  'pagination.default': { label: '默认分页', description: '控制列表默认每页数量与服务端单页上限。' },
+};
+
+function settingLabel(item: SettingVersion) {
+  return settingMeta[item.key]?.label ?? item.key;
+}
+
+function settingDescription(item: SettingVersion) {
+  return settingMeta[item.key]?.description ?? '版本化系统配置。';
+}
+
+function settingValue(item: SettingVersion) {
+  if (item.key === 'business.timezone') {
+    const value = item.value as { timezone?: unknown };
+    return typeof value.timezone === 'string' ? value.timezone : '未配置';
+  }
+  if (item.key === 'pagination.default') {
+    const value = item.value as { defaultPageSize?: unknown; maxPageSize?: unknown };
+    const defaultSize = typeof value.defaultPageSize === 'number' ? `${value.defaultPageSize} 条/页` : '默认值未配置';
+    const maxSize = typeof value.maxPageSize === 'number' ? `上限 ${value.maxPageSize} 条` : '上限未配置';
+    return `${defaultSize} · ${maxSize}`;
+  }
+  if (item.value && typeof item.value === 'object' && !Array.isArray(item.value)) {
+    return Object.entries(item.value as Record<string, unknown>)
+      .map(([key, value]) => `${key}: ${Array.isArray(value) ? value.join('、') : String(value)}`)
+      .join(' · ');
+  }
+  return String(item.value ?? '未配置');
+}
+
 async function load() {
   loading.value = true;
   error.value = '';
@@ -145,6 +176,13 @@ function openReset(row: MemberSummary) {
   resetPasswordConfirm.value = '';
   resetError.value = '';
   resetModalOpen.value = true;
+}
+
+function openResetFromEdit() {
+  if (!editing.value) return;
+  const target = editing.value;
+  modalOpen.value = false;
+  openReset(target);
 }
 
 function addScope() {
@@ -250,16 +288,6 @@ async function resetCredential() {
   }
 }
 
-async function toggleMember(row: MemberSummary) {
-  try {
-    await apiRequest<MemberSummary>(`/api/members/${row.id}`, jsonRequestInit('PATCH', { expectedVersion: row.version, enabled: !row.enabled }));
-    message.success(row.enabled ? '账号已停用' : '账号已恢复');
-    await load();
-  } catch (cause) {
-    message.error(cause instanceof Error ? cause.message : '操作失败');
-  }
-}
-
 const memberColumns = [
   {
     title: '成员', key: 'displayName', minWidth: 160,
@@ -267,7 +295,7 @@ const memberColumns = [
       return h('div', { class: 'member-cell' }, [h('strong', row.displayName), h('small', row.username)]);
     },
   },
-  { title: '角色', key: 'role', width: 110, render: (row: MemberSummary) => roleLabel.get(row.role) ?? row.role },
+  { title: '角色', key: 'role', width: 110, render: (row: MemberSummary) => roleLabel.get(row.role) ?? '未知角色' },
   {
     title: '状态', key: 'status', width: 120,
     render(row: MemberSummary) {
@@ -278,18 +306,9 @@ const memberColumns = [
   { title: '授权范围', key: 'scopes', minWidth: 130, render: scopeLabel },
   { title: '最近登录', key: 'lastLoginAt', minWidth: 150, render: (row: MemberSummary) => formatTime(row.lastLoginAt) },
   {
-    title: '操作', key: 'actions', width: 230,
+    title: '', key: 'actions', width: 90,
     render(row: MemberSummary) {
-      return h(NSpace, { size: 8 }, {
-        default: () => [
-          h(NButton, { size: 'small', onClick: () => openEdit(row) }, { default: () => '编辑' }),
-          h(NButton, { size: 'small', secondary: true, onClick: () => openReset(row) }, { default: () => '重置密码' }),
-          h(NButton, {
-            size: 'small', type: row.enabled ? 'error' : 'success', secondary: true,
-            onClick: () => void toggleMember(row),
-          }, { default: () => row.enabled ? '停用' : '恢复' }),
-        ],
-      });
+      return h(NButton, { size: 'small', quaternary: true, onClick: () => openEdit(row) }, { default: () => '管理' });
     },
   },
 ];
@@ -299,44 +318,87 @@ onMounted(load);
 
 <template>
   <n-spin :show="loading">
-    <div class="view-stack">
-      <n-alert v-if="error" type="error" title="读取失败">{{ error }}</n-alert>
+    <div class="view-stack settings-view" data-test="settings-page">
+      <n-alert v-if="error" type="error" title="读取失败">
+        <div class="load-error-content"><span>{{ error }}</span><n-button size="small" secondary @click="load">重新加载</n-button></div>
+      </n-alert>
 
-      <n-card title="账号与权限">
-        <template #header-extra>
+      <header class="page-header">
+        <div class="page-header-copy">
+          <span class="page-eyebrow">系统设置</span>
+          <h2 class="page-title">设置</h2>
+          <p class="page-description">集中管理账号、权限与运行配置。业务数据维护仍在对应业务模块完成。</p>
+        </div>
+        <div class="page-actions">
           <n-button v-if="currentUser.role === 'admin'" type="primary" @click="openCreate">新增成员</n-button>
-          <n-tag v-else :bordered="false">仅管理员可管理</n-tag>
-        </template>
+          <n-tag v-else :bordered="false">只读</n-tag>
+        </div>
+      </header>
 
-        <n-alert v-if="currentUser.role === 'admin'" type="info" :bordered="false" class="member-hint">
-          账号、密码、角色和业务范围全部由本系统管理。初始密码和重置密码只在浏览器本地派生，服务端不接收明文密码。
-        </n-alert>
+      <section class="section-panel members-panel">
+        <div class="section-panel-header">
+          <div>
+            <h3>账号与权限</h3>
+            <p>系统自维护账号、角色与业务范围；成员密码不以明文发送到服务端。</p>
+          </div>
+          <span v-if="currentUser.role === 'admin'" class="section-count">{{ members.length }} 个成员</span>
+        </div>
+        <div class="section-panel-body">
+          <template v-if="currentUser.role === 'admin'">
+            <n-data-table
+              v-if="members.length"
+              class="desktop-member-table"
+              :columns="memberColumns"
+              :data="members"
+              :pagination="false"
+              :bordered="false"
+              :scroll-x="820"
+            />
+            <div v-if="members.length" class="mobile-member-list" data-test="mobile-member-list">
+              <app-pressable v-for="row in members" :key="row.id" class="member-mobile-row" @click="openEdit(row)">
+                <span class="member-avatar">{{ row.displayName.slice(0, 1) }}</span>
+                <span class="member-mobile-copy">
+                  <strong>{{ row.displayName }}</strong>
+                  <small>@{{ row.username }} · {{ roleLabel.get(row.role) ?? '未知角色' }} · {{ scopeLabel(row) }}</small>
+                </span>
+                <n-tag size="small" :bordered="false" :type="row.lifecycleStatus === 'active' && !row.mustChangePassword ? 'success' : row.lifecycleStatus === 'disabled' ? 'error' : 'warning'">{{ statusLabel(row) }}</n-tag>
+              </app-pressable>
+            </div>
+            <n-empty v-else description="暂无成员账号" />
+          </template>
+          <n-empty v-else description="当前角色没有成员管理权限" />
+        </div>
+      </section>
 
-        <n-data-table
-          v-if="currentUser.role === 'admin'"
-          :columns="memberColumns"
-          :data="members"
-          :pagination="false"
-          :bordered="false"
-          :scroll-x="980"
-        />
-        <n-empty v-else description="当前角色没有成员管理权限" />
-      </n-card>
+      <section class="section-panel settings-panel">
+        <div class="section-panel-header">
+          <div>
+            <h3>系统配置</h3>
+            <p>当前生效的版本化运行参数。这里展示业务含义，不暴露底层数据结构。</p>
+          </div>
+          <n-tag :bordered="false">版本化</n-tag>
+        </div>
+        <div class="settings-list section-panel-body" v-if="settings.length">
+          <div v-for="item in settings" :key="item.id" class="setting-row">
+            <div class="setting-copy">
+              <strong>{{ settingLabel(item) }}</strong>
+              <small>{{ settingDescription(item) }}</small>
+            </div>
+            <div class="setting-value">
+              <strong>{{ settingValue(item) }}</strong>
+              <small>版本 {{ item.version }}</small>
+            </div>
+          </div>
+        </div>
+        <div v-else class="section-panel-body"><n-empty description="暂无基础配置" /></div>
+      </section>
 
-      <n-card title="基础配置">
-        <template #header-extra><n-tag :bordered="false">版本化</n-tag></template>
-        <n-descriptions v-if="settings.length" :column="1" bordered label-placement="left">
-          <n-descriptions-item v-for="item in settings" :key="item.id" :label="item.key">
-            <code>{{ JSON.stringify(item.value) }}</code>
-            <span class="setting-version">v{{ item.version }}</span>
-          </n-descriptions-item>
-        </n-descriptions>
-        <n-empty v-else description="暂无基础配置" />
-      </n-card>
+      <reserve-classification-panel v-if="currentUser.role === 'admin'" />
+      <system-operations-panel v-if="currentUser.role === 'admin'" :members="members" />
     </div>
   </n-spin>
 
-  <n-modal v-model:show="modalOpen" preset="card" :title="editing ? '编辑成员' : '新增成员'" class="member-modal" :mask-closable="!saving">
+  <n-modal v-model:show="modalOpen" preset="card" :title="editing ? '编辑成员' : '新增成员'" class="member-modal" :mask-closable="!saving" :close-on-esc="!saving" :closable="!saving">
     <n-form label-placement="top">
       <n-alert v-if="formError" type="error" class="form-alert">{{ formError }}</n-alert>
 
@@ -382,13 +444,15 @@ onMounted(load);
       </div>
 
       <div class="modal-actions">
+        <n-button v-if="editing" secondary @click="openResetFromEdit">重置密码</n-button>
+        <span class="modal-spacer"></span>
         <n-button :disabled="saving" @click="modalOpen = false">取消</n-button>
         <n-button type="primary" :loading="saving" @click="saveMember">保存</n-button>
       </div>
     </n-form>
   </n-modal>
 
-  <n-modal v-model:show="resetModalOpen" preset="card" title="重置密码" class="member-modal" :mask-closable="!saving">
+  <n-modal v-model:show="resetModalOpen" preset="card" title="重置密码" class="member-modal" :mask-closable="!saving" :close-on-esc="!saving" :closable="!saving">
     <n-form label-placement="top">
       <n-alert v-if="resetError" type="error" class="form-alert">{{ resetError }}</n-alert>
       <n-alert type="warning" :bordered="false" class="form-alert">
@@ -407,3 +471,66 @@ onMounted(load);
     </n-form>
   </n-modal>
 </template>
+
+<style scoped>
+.settings-view { max-width: 1320px; }
+.settings-view > * { min-width: 0; }
+.section-count { color: var(--ui-text-tertiary); font-size: 13px; white-space: nowrap; }
+.mobile-member-list { display: none; }
+.members-panel .section-panel-body { min-width: 0; overflow-x: auto; }
+.settings-list { padding: 0; }
+.setting-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(240px, auto);
+  gap: 30px;
+  align-items: center;
+  min-height: 76px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--ui-border);
+}
+.setting-row:last-child { border-bottom: 0; }
+.setting-copy, .setting-value { display: grid; gap: 4px; min-width: 0; }
+.setting-copy strong, .setting-value strong { color: var(--ui-text); font-size: 13px; font-weight: 650; }
+.setting-copy small, .setting-value small { color: var(--ui-text-tertiary); font-size: 13px; line-height: 1.5; }
+.setting-value { text-align: right; }
+:global(.settings-view .member-cell) { display: grid; gap: 3px; }
+:global(.settings-view .member-cell strong) { font-size: 13px; font-weight: 650; }
+:global(.settings-view .member-cell small) { color: var(--ui-text-tertiary); font-size: 13px; }
+.member-modal { width: min(640px, calc(100vw - 32px)); max-height: min(88vh, 780px); }
+:deep(.member-modal .n-card__content) { overflow-y: auto; overscroll-behavior: contain; }
+.form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 14px; }
+.switch-row { display: flex; align-items: center; gap: 10px; min-height: 40px; color: var(--ui-text-secondary); font-size: 13px; }
+.scope-note, .form-alert { margin-bottom: 14px; }
+.scope-editor { display: grid; gap: 10px; margin: 4px 0 18px; }
+.scope-row { display: grid; grid-template-columns: 140px minmax(0, 1fr) auto; gap: 10px; align-items: center; }
+.modal-actions { display: flex; align-items: center; gap: 10px; margin-top: 18px; }
+.modal-spacer { flex: 1; }
+@media (max-width: 767px) {
+  .desktop-member-table { display: none; }
+  .mobile-member-list { display: grid; margin: -18px; }
+  .member-mobile-row {
+    display: grid;
+    grid-template-columns: 38px minmax(0, 1fr) auto;
+    gap: 11px;
+    align-items: center;
+    min-height: 68px;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--ui-border);
+    background: transparent;
+    color: inherit;
+    text-align: left;
+  }
+  .member-mobile-row:last-child { border-bottom: 0; }
+  .member-avatar { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 10px; background: var(--ui-surface-muted); color: var(--ui-text-secondary); font-size: 13px; font-weight: 700; }
+  .member-mobile-copy { display: grid; gap: 3px; min-width: 0; }
+  .member-mobile-copy strong { overflow: hidden; font-size: 13px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+  .member-mobile-copy small { overflow: hidden; color: var(--ui-text-tertiary); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+  .setting-row { grid-template-columns: 1fr; gap: 8px; min-height: 0; padding: 14px; }
+  .setting-value { text-align: left; }
+  .form-grid, .scope-row { grid-template-columns: 1fr; }
+  .scope-row .n-button { width: 100%; justify-self: stretch; }
+  .member-modal { width: calc(100vw - 20px); max-height: calc(100dvh - 20px); }
+  .modal-actions { position: sticky; bottom: -1px; z-index: 2; flex-wrap: wrap; padding: 12px 0 max(10px, env(safe-area-inset-bottom)); background: var(--ui-surface); }
+  .modal-actions .n-button:last-child { flex: 1; }
+}
+</style>

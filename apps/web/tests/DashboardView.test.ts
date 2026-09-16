@@ -2,6 +2,9 @@ import { flushPromises, mount } from '@vue/test-utils';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CurrentUser } from '@tpm/shared';
 
+const push = vi.fn();
+vi.mock('vue-router', () => ({ useRouter: () => ({ push }) }));
+
 vi.mock('naive-ui', async () => {
   const vue = await import('vue');
   const wrap = (name: string) => vue.defineComponent({ name, props: { label: String, value: [String, Number] }, setup(props, { slots }) { return () => vue.h('div', { 'data-stub': name }, [props.label, props.value, slots['header-extra']?.(), slots.default?.()]); } });
@@ -16,7 +19,7 @@ describe('DashboardView P6 statistics', () => {
   beforeEach(() => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ ok: true, data: { asOf: '2026-09-12', projectCount: 12, demandCount: 34, unreleasedProjectCount: 5, pendingSettlementCount: 3, activeAlertCount: 2 } }), { status: 200, headers: { 'Content-Type': 'application/json' } })));
   });
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(() => { vi.unstubAllGlobals(); push.mockReset(); });
 
   it('loads current business statistics instead of placeholder dashes', async () => {
     const wrapper = mount(DashboardView, { props: { currentUser: user } });

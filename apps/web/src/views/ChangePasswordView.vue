@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { ref } from 'vue';
-import { NAlert, NButton, NCard, NForm, NFormItem, NInput } from 'naive-ui';
+import { NAlert, NButton, NForm, NFormItem, NInput } from 'naive-ui';
 import type { ApiResponse, CredentialKdfDescriptor, CurrentUser } from '@tpm/shared';
 import { parseApiResponse } from '../api/response';
 import { createDerivedCredential, deriveCredential, validatePasswordForClient } from '../auth/credentials';
+import BrandLockup from '../brand/BrandLockup.vue';
 
 const props = defineProps<{ currentUser: CurrentUser }>();
 const emit = defineEmits<{ changed: [user: CurrentUser] }>();
@@ -64,46 +65,31 @@ async function submit() {
 
 <template>
   <div class="login-page">
-    <n-card class="login-card" title="修改密码">
-      <n-alert v-if="currentUser.mustChangePassword" type="warning" class="login-alert">
-        首次登录必须修改密码，完成后才能进入业务页面。
-      </n-alert>
-      <n-alert v-if="error" type="error" class="login-alert">{{ error }}</n-alert>
-      <n-form label-placement="top">
-        <n-form-item label="当前密码">
-          <n-input
-            v-model:value="currentPassword"
-            data-test="current-password"
-            type="password"
-            autocomplete="current-password"
-          />
-        </n-form-item>
-        <n-form-item label="新密码">
-          <n-input
-            v-model:value="newPassword"
-            data-test="new-password"
-            type="password"
-            autocomplete="new-password"
-          />
-        </n-form-item>
-        <n-form-item label="确认新密码">
-          <n-input
-            v-model:value="confirmPassword"
-            data-test="confirm-password"
-            type="password"
-            autocomplete="new-password"
-          />
-        </n-form-item>
-        <n-button
-          data-test="change-password-submit"
-          type="primary"
-          block
-          :loading="saving"
-          @click="submit"
-        >
-          保存新密码
-        </n-button>
-      </n-form>
-    </n-card>
+    <div class="auth-shell auth-shell-password">
+      <section class="auth-brand-panel">
+        <BrandLockup class="auth-brand-lockup" :icon-size="68" />
+        <div class="auth-brand-copy">
+          <span>账号安全</span>
+          <h1>完成账号安全设置</h1>
+          <p>密码派生在浏览器本地完成；修改成功后旧会话按系统安全策略失效。</p>
+        </div>
+        <div class="auth-brand-foot">当前账号 · {{ currentUser.displayName }}</div>
+      </section>
+      <section class="auth-form-panel">
+        <div class="auth-form-header">
+          <span>安全设置</span>
+          <h2>修改密码</h2>
+          <p>设置新的登录密码后继续进入业务页面。</p>
+        </div>
+        <n-alert v-if="currentUser.mustChangePassword" type="warning" class="login-alert">首次登录必须修改密码，完成后才能进入业务页面。</n-alert>
+        <n-alert v-if="error" type="error" class="login-alert">{{ error }}</n-alert>
+        <n-form label-placement="top">
+          <n-form-item label="当前密码"><n-input v-model:value="currentPassword" data-test="current-password" type="password" autocomplete="current-password" /></n-form-item>
+          <n-form-item label="新密码"><n-input v-model:value="newPassword" data-test="new-password" type="password" autocomplete="new-password" /></n-form-item>
+          <n-form-item label="确认新密码"><n-input v-model:value="confirmPassword" data-test="confirm-password" type="password" autocomplete="new-password" /></n-form-item>
+          <n-button data-test="change-password-submit" type="primary" block :loading="saving" @click="submit">保存新密码</n-button>
+        </n-form>
+      </section>
+    </div>
   </div>
 </template>

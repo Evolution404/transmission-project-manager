@@ -113,6 +113,8 @@ describe('LoginView local account contract', () => {
 
     const wrapper = mount(LoginView);
     await flushPromises();
+    expect(wrapper.text()).toContain('首次配置');
+    expect(wrapper.text()).not.toContain('SYSTEM SETUP');
     expect(wrapper.text()).toContain('初始化令牌仅用于首次创建系统管理员');
     expect(wrapper.get('[data-test="login-username"]').attributes('placeholder')).toBe('请输入管理员账号');
     expect(wrapper.get('[data-test="login-password"]').attributes('placeholder')).toBe('请输入密码');
@@ -123,6 +125,8 @@ describe('LoginView local account contract', () => {
   it('uses account and password only, with no email verification UI', async () => {
     const wrapper = mount(LoginView);
     await flushPromises();
+    expect(wrapper.text()).toContain('账号登录');
+    expect(wrapper.text()).not.toContain('ACCOUNT');
     expect(wrapper.text()).toContain('账号');
     expect(wrapper.text()).toContain('密码');
     expect(wrapper.text()).toContain('忘记密码请联系管理员');

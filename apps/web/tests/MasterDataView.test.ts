@@ -2,6 +2,11 @@ import { flushPromises, mount } from '@vue/test-utils';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { CurrentUser } from '@tpm/shared';
 
+const routeQuery = vi.hoisted(() => ({} as Record<string, string>));
+const replace = vi.fn();
+const messageMocks = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), warning: vi.fn() }));
+vi.mock('vue-router', () => ({ useRoute: () => ({ query: routeQuery }), useRouter: () => ({ replace }) }));
+
 vi.mock('naive-ui', async () => {
   const { defineComponent, h } = await import('vue');
   const wrap = (name: string) => defineComponent({ name, setup(_, { slots }) { return () => h('div', [slots['header-extra']?.(), slots.default?.(), slots.footer?.()]); } });
@@ -14,7 +19,7 @@ vi.mock('naive-ui', async () => {
     NSwitch: wrap('NSwitch'),
     NModal: defineComponent({ props: ['show'], setup(p, { slots }) { return () => p.show ? h('div', [slots.default?.(), slots.footer?.()]) : null; } }),
     NDataTable: defineComponent({ props: ['data', 'columns'], setup(p) { return () => h('div', p.data.map((r: Record<string, unknown>) => h('div', p.columns.map((c: { key: string; render?: (r: Record<string, unknown>) => unknown }) => h('span', c.render ? c.render(r) as never : String(r[c.key] ?? '')))))); } }),
-    useMessage: () => ({ success: vi.fn(), error: vi.fn(), warning: vi.fn() }),
+    useMessage: () => messageMocks,
   };
 });
 import MasterDataView from '../src/views/MasterDataView.vue';
@@ -30,6 +35,11 @@ const data = (value: unknown) => new Response(JSON.stringify({ ok: true, data: v
 let importOrderVersion = 1;
 beforeEach(() => {
   importOrderVersion = 1;
+  replace.mockReset();
+  messageMocks.success.mockReset();
+  messageMocks.error.mockReset();
+  messageMocks.warning.mockReset();
+  for (const key of Object.keys(routeQuery)) delete routeQuery[key];
   vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
   if (init?.method && url.endsWith('/towers/import-chunk')) {
     const body = JSON.parse(String(init.body)) as { items: Array<{ action: string }> };
@@ -64,6 +74,31 @@ beforeEach(() => {
   }));
 });
 afterEach(() => vi.unstubAllGlobals());
+
+it('restores line list filters from the URL and keeps explicit filter/search changes refresh-safe', async () => {
+  routeQuery.voltage = 'v1';
+  routeQuery.status = 'disabled';
+  routeQuery.query = '甲线';
+  const w = mount(MasterDataView, { props: { currentUser: admin } });
+  await flushPromises();
+
+  expect(w.get('[data-test="voltage-filter"]').attributes('value')).toBe('v1');
+  expect(w.get('[data-test="line-status-filter"]').attributes('value')).toBe('disabled');
+  expect((w.get('[data-test="line-search"]').element as HTMLTextAreaElement).value).toBe('甲线');
+  expect(vi.mocked(fetch).mock.calls.some(([u]) => {
+    const url = String(u);
+    return url.includes('/api/master/lines?') && url.includes('voltageLevelId=v1') && url.includes('enabled=false') && url.includes('query=%E7%94%B2%E7%BA%BF');
+  })).toBe(true);
+
+  await w.get('[data-test="line-status-filter"]').setValue('enabled');
+  await flushPromises();
+  expect(replace).toHaveBeenCalledWith({ query: { voltage: 'v1', status: 'enabled', query: '甲线' } });
+
+  await w.get('[data-test="line-search"]').setValue('乙线');
+  await w.get('[data-test="line-search-submit"]').trigger('click');
+  await flushPromises();
+  expect(replace).toHaveBeenLastCalledWith({ query: { voltage: 'v1', status: 'enabled', query: '乙线' } });
+});
 
 it('starts with a line-centric list and opens a full-width line detail without a three-column hierarchy', async () => {
   const w = mount(MasterDataView, { props: { currentUser: admin } }); await flushPromises();
@@ -191,6 +226,50 @@ it('master settings create configurable teams and custom fields instead of hard-
   const fieldCall = vi.mocked(fetch).mock.calls.find(([u, init]) => String(u) === '/api/master/custom-fields' && init?.method === 'POST');
   expect(fieldCall).toBeTruthy();
   expect(JSON.parse(String(fieldCall![1]!.body))).toMatchObject({ entityType: 'physical_tower', fieldKey: 'owner_unit', label: '产权单位', dataType: 'text' });
+});
+
+it('keeps a committed team save successful when the config refresh fails and retries that refresh in place', async () => {
+  let teamReads = 0;
+  let created = false;
+  vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+    const method = init?.method ?? 'GET';
+    if (url === '/api/master/voltage-levels' && method === 'GET') return ok(voltages);
+    if (url.startsWith('/api/master/lines?') && method === 'GET') return ok([line]);
+    if (url === '/api/master/teams' && method === 'GET') {
+      teamReads += 1;
+      if (teamReads === 2) {
+        return new Response(JSON.stringify({ ok: false, error: { code: 'TEMPORARY_FAILURE', message: '配置刷新暂时失败' } }), {
+          status: 503,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return ok(created ? [{ id: 'team-1', code: null, name: '城北班', enabled: true, version: 1 }] : []);
+    }
+    if (url === '/api/master/tower-types' && method === 'GET') return ok([]);
+    if (url === '/api/master/custom-fields' && method === 'GET') return ok([]);
+    if (url === '/api/master/teams' && method === 'POST') {
+      created = true;
+      return data({ id: 'team-1', code: null, name: '城北班', enabled: true, version: 1 });
+    }
+    throw new Error(`unexpected ${method} ${url}`);
+  }));
+
+  const w = mount(MasterDataView, { props: { currentUser: admin } }); await flushPromises();
+  await w.get('[data-test="open-master-settings"]').trigger('click'); await flushPromises();
+  await w.get('[data-test="open-new-team"]').trigger('click');
+  await w.get('[data-test="team-name-input"]').setValue('城北班');
+  await w.get('[data-test="save-team"]').trigger('click'); await flushPromises();
+
+  expect(created).toBe(true);
+  expect(messageMocks.error).not.toHaveBeenCalled();
+  expect(messageMocks.warning).toHaveBeenCalledWith('班组配置已保存，但最新数据刷新失败，请重新加载');
+  expect(w.text()).toContain('班组配置已保存，但最新数据刷新失败：配置刷新暂时失败');
+  expect(teamReads).toBe(2);
+
+  await w.get('[data-test="retry-master-data"]').trigger('click'); await flushPromises();
+  expect(teamReads).toBe(3);
+  expect(w.text()).toContain('城北班');
+  expect(w.text()).not.toContain('配置刷新暂时失败');
 });
 
 it('physical tower metadata and shared-tower rebind use dedicated APIs and independent versions', async () => {

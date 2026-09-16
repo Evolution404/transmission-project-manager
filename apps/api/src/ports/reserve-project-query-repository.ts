@@ -32,8 +32,23 @@ export interface ProjectMaterialRevisionSummary {
   createdAt: string;
 }
 
+export type ReserveProjectListStage = 'all' | 'reserve';
+
+export interface ReserveProjectListCursor {
+  createdAt: string;
+  id: string;
+}
+
+export interface ReserveProjectListInput {
+  limit: number;
+  stage: ReserveProjectListStage;
+  query: string | null;
+  cursor: ReserveProjectListCursor | null;
+  access: { projectIds: readonly string[]; frameworkIds: readonly string[] } | null;
+}
+
 export interface ReserveProjectQueryRepository {
-  list(limit: number): Promise<readonly ReserveProjectSummary[]>;
+  list(input: ReserveProjectListInput): Promise<readonly ReserveProjectSummary[]>;
   find(projectId: string): Promise<ReserveProjectSummary | null>;
   findState(projectId: string): Promise<ReserveProjectState | null>;
   validateDemandIds(ids: readonly string[]): Promise<boolean>;

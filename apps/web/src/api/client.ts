@@ -1,10 +1,25 @@
 import { parseApiResponse } from './response';
 
+export class ApiRequestError extends Error {
+  readonly status: number;
+  readonly code: string;
+  readonly details?: unknown;
+
+  constructor(status: number, code: string, message: string, details?: unknown) {
+    super(message);
+    this.name = 'ApiRequestError';
+    this.status = status;
+    this.code = code;
+    this.details = details;
+  }
+}
+
 export async function apiRequest<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init);
   const result = await parseApiResponse<T>(response);
   if (!response.ok || !result.ok) {
-    throw new Error(result.ok ? `HTTP ${response.status}` : result.error.message);
+    if (!result.ok) throw new ApiRequestError(response.status, result.error.code, result.error.message, result.error.details);
+    throw new ApiRequestError(response.status, 'HTTP_ERROR', `HTTP ${response.status}`);
   }
   return result.data;
 }

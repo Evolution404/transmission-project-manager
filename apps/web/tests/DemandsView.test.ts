@@ -3,6 +3,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { defineComponent, h } from 'vue';
 import type { CurrentUser, ImportFieldMapping } from '@tpm/shared';
 
+const routeQuery = vi.hoisted(() => ({} as Record<string, string>));
+const replace = vi.fn();
+const messageSuccess = vi.fn();
+const messageError = vi.fn();
+const messageWarning = vi.fn();
+vi.mock('vue-router', () => ({ useRoute: () => ({ query: routeQuery }), useRouter: () => ({ replace }) }));
+
 const { parseFileInWorker, sha256File, executeImportWorkflow, ImportReviewRequiredError, downloadDemandImportTemplate } = vi.hoisted(() => {
   class ReviewError extends Error {
     batchId: string;
@@ -85,11 +92,15 @@ vi.mock('naive-ui', async () => {
     name: 'NTabPane', props: { name: String, tab: String },
     setup(props, { slots }) { return () => vue.h('section', { 'data-tab': props.name }, [vue.h('h3', props.tab), slots.default?.()]); },
   });
+  const NTabs = vue.defineComponent({
+    name: 'NTabs', props: { value: String }, emits: ['update:value'],
+    setup(props, { slots, attrs }) { return () => vue.h('div', { ...attrs, 'data-stub': 'NTabs', 'data-value': props.value }, slots.default?.()); },
+  });
   return {
     NAlert: wrap('NAlert'), NButton, NCard: wrap('NCard'), NDataTable, NEmpty: wrap('NEmpty'),
     NForm: wrap('NForm'), NFormItem: wrap('NFormItem'), NInput, NModal, NProgress: wrap('NProgress'), NSelect,
-    NSpace: wrap('NSpace'), NSpin: wrap('NSpin'), NTabPane, NTabs: wrap('NTabs'), NTag: wrap('NTag'),
-    useMessage: () => ({ success: vi.fn(), error: vi.fn(), warning: vi.fn() }),
+    NSpace: wrap('NSpace'), NSpin: wrap('NSpin'), NTabPane, NTabs, NTag: wrap('NTag'),
+    useMessage: () => ({ success: messageSuccess, error: messageError, warning: messageWarning }),
   };
 });
 
@@ -113,6 +124,11 @@ const expectedMapping: ImportFieldMapping = {
 
 describe('DemandsView P2 behavior', () => {
   beforeEach(() => {
+    for (const key of Object.keys(routeQuery)) delete routeQuery[key];
+    replace.mockReset();
+    messageSuccess.mockReset();
+    messageError.mockReset();
+    messageWarning.mockReset();
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url === '/api/imports/batch-review') return ok({
@@ -143,7 +159,7 @@ describe('DemandsView P2 behavior', () => {
         { id: 'tower-2', lineId: 'line-1', lineName: '手工需求线', towerNo: '#002', sortRank: 2000, towerType: null, enabled: true, version: 1 },
       ] });
       if (url === '/api/materials' && init?.method === 'POST') return new Response(JSON.stringify({ ok: true, data: { id: 'm1', code: null, name: '线夹', model: 'JX-01', unit: '套', enabled: true, version: 1 } }), { status: 201, headers: { 'Content-Type': 'application/json' } });
-      if (url.startsWith('/api/materials')) return ok({ items: [] });
+      if (url.startsWith('/api/materials')) return ok({ items: [{ id: 'm1', code: 'MAT-001', name: '线夹', model: 'JX-01', unit: '套', enabled: true, version: 1 }] });
       throw new Error(`unexpected request ${url}`);
     }));
     parseFileInWorker.mockReset();
@@ -154,10 +170,38 @@ describe('DemandsView P2 behavior', () => {
 
   afterEach(() => vi.unstubAllGlobals());
 
+  it('restores the workspace tab from the URL and persists later tab changes', async () => {
+    routeQuery.tab = 'materials';
+    const wrapper = mount(DemandsView, { props: { currentUser: admin } });
+    await flushPromises();
+    const tabs = wrapper.findComponent({ name: 'NTabs' });
+    expect(tabs.props('value')).toBe('materials');
+    tabs.vm.$emit('update:value', 'import');
+    await flushPromises();
+    expect(replace).toHaveBeenCalledWith({ query: { tab: 'import' } });
+  });
+
+  it('restores demand search from the URL and keeps explicit searches refresh-safe', async () => {
+    routeQuery.query = '龙城';
+    const wrapper = mount(DemandsView, { props: { currentUser: admin } });
+    await flushPromises();
+
+    expect(wrapper.get('[data-test="demand-search"]').attributes('value')).toBe('龙城');
+    expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes('/api/demands?limit=50&query=%E9%BE%99%E5%9F%8E'))).toBe(true);
+
+    await wrapper.get('[data-test="demand-search"]').setValue('新线');
+    await wrapper.get('[data-test="demand-search-submit"]').trigger('click');
+    await flushPromises();
+    expect(replace).toHaveBeenCalledWith({ query: { query: '新线' } });
+    expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes('query=%E6%96%B0%E7%BA%BF'))).toBe(true);
+  });
+
   it('loads the demand pool for readonly users but does not expose import/write controls', async () => {
     const wrapper = mount(DemandsView, { props: { currentUser: readonly } });
     await flushPromises();
     expect(wrapper.text()).toContain('龙城线');
+    expect(wrapper.find('[data-test="mobile-demand-d1"]').exists()).toBe(true);
+    expect(wrapper.find('[data-test="mobile-material-m1"]').exists()).toBe(true);
     expect(wrapper.text()).toContain('仅管理员或项目管理角色可以导入需求');
     expect(wrapper.find('[data-test="file-input"]').exists()).toBe(false);
     expect(wrapper.find('[data-test="add-material"]').exists()).toBe(false);
@@ -257,6 +301,34 @@ describe('DemandsView P2 behavior', () => {
     expect(createCall).toBeTruthy();
     expect(JSON.parse(String(createCall![1]!.body))).toEqual({ code: null, name: '线夹', model: 'JX-01', unit: '套' });
     expect(fetchMock.mock.calls.filter(([url]) => String(url).startsWith('/api/materials')).length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('does not report a committed standard material as failed when the dictionary refresh fails', async () => {
+    const wrapper = mount(DemandsView, { props: { currentUser: admin } });
+    await flushPromises();
+    await wrapper.get('[data-test="add-material"]').trigger('click');
+    await wrapper.get('[data-test="material-name"]').setValue('线夹');
+    await wrapper.get('[data-test="material-model"]').setValue('JX-01');
+    await wrapper.get('[data-test="material-unit"]').setValue('套');
+
+    const fallback = vi.mocked(fetch).getMockImplementation()!;
+    let committed = false;
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === '/api/materials' && init?.method === 'POST') {
+        committed = true;
+        return fallback(input, init);
+      }
+      if (committed && url.startsWith('/api/materials')) throw new Error('物资字典刷新失败');
+      return fallback(input, init);
+    });
+
+    await wrapper.get('[data-test="save-material"]').trigger('click');
+    await flushPromises();
+    expect(committed).toBe(true);
+    expect(messageError).not.toHaveBeenCalled();
+    expect(messageWarning).toHaveBeenCalledWith('标准物资已添加，但最新数据刷新失败，请重新加载');
+    expect(wrapper.text()).toContain('标准物资已添加，但最新数据刷新失败');
   });
 
   it('shows row-level validation errors when an import requires review', async () => {

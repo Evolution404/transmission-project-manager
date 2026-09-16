@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, h, onMounted, ref } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import {
   NAlert,
   NButton,
-  NCard,
   NDataTable,
   NEmpty,
   NForm,
@@ -43,16 +43,25 @@ import {
   sha256File,
   type ImportWorkflowProgress,
 } from '../imports/workflow';
+import AppFilePicker from '../app/AppFilePicker.vue';
+import AppPressable from '../app/AppPressable.vue';
 
 const props = defineProps<{ currentUser: CurrentUser }>();
+const route = useRoute();
+const router = useRouter();
 const message = useMessage();
 const canWrite = computed(() => props.currentUser.role === 'admin' || props.currentUser.role === 'project_manager');
+
+type DemandWorkspaceTab = 'pool' | 'import' | 'materials';
+const demandWorkspaceTabs = new Set<DemandWorkspaceTab>(['pool', 'import', 'materials']);
 
 const loading = ref(true);
 const error = ref('');
 const demands = ref<DemandSummary[]>([]);
 const demandCursor = ref<string | null>(null);
-const demandQuery = ref('');
+const demandQuery = ref(typeof route.query.query === 'string' ? route.query.query : '');
+const requestedTab = typeof route.query.tab === 'string' ? route.query.tab : '';
+const activeTab = ref<DemandWorkspaceTab>(demandWorkspaceTabs.has(requestedTab as DemandWorkspaceTab) ? requestedTab as DemandWorkspaceTab : 'pool');
 const selectedDemand = ref<DemandDetail | null>(null);
 const materials = ref<MaterialSummary[]>([]);
 const mappingTemplates = ref<ImportMappingTemplate[]>([]);
@@ -86,6 +95,33 @@ const manualDemandForm = ref({
   startTowerPositionId: '', endTowerPositionId: '', year: '', category: '', owner: '',
 });
 const manualDemandMaterials = ref<Array<{ id: string; model: string; quantity: string; unit: string }>>([]);
+const mappingBusy = computed(() => savingTemplate.value || importing.value);
+const workspaceMutationBusy = computed(() => mappingBusy.value || savingMaterial.value);
+
+function setActiveTab(value: string | number) {
+  if (workspaceMutationBusy.value) return;
+  const nextTab = String(value) as DemandWorkspaceTab;
+  if (!demandWorkspaceTabs.has(nextTab)) return;
+  activeTab.value = nextTab;
+  const query = { ...route.query };
+  if (nextTab === 'pool') delete query.tab;
+  else query.tab = nextTab;
+  void router.replace({ query });
+}
+
+function syncDemandQuery() {
+  const query = { ...route.query };
+  const term = demandQuery.value.trim();
+  if (term) query.query = term;
+  else delete query.query;
+  void router.replace({ query });
+}
+
+async function applyDemandQuery() {
+  demandCursor.value = null;
+  syncDemandQuery();
+  await loadDemands();
+}
 
 const fieldDefinitions: Array<{ key: keyof ImportFieldMapping; label: string; required: boolean }> = [
   { key: 'sequenceNo', label: '序号', required: true },
@@ -133,6 +169,18 @@ const importReady = computed(() => Boolean(
   mapping.value.sequenceNo && mapping.value.voltage && mapping.value.lineName && mapping.value.section &&
   mapping.value.materialModel && mapping.value.materialQuantity,
 ));
+
+async function refreshAfterCommittedWrite(successMessage: string, refresh: () => Promise<unknown>) {
+  try {
+    await refresh();
+    error.value = '';
+    message.success(successMessage);
+  } catch (cause) {
+    const detail = cause instanceof Error ? cause.message : '读取最新数据失败';
+    error.value = `${successMessage}，但最新数据刷新失败：${detail}`;
+    message.warning(`${successMessage}，但最新数据刷新失败，请重新加载`);
+  }
+}
 
 function parseDecimalScaled(value: string, digits = 4): number | null {
   const raw = value.trim();
@@ -285,6 +333,7 @@ async function startImport() {
   importError.value = '';
   importProgress.value = null;
   reviewRows.value = [];
+  let publishedRows: number;
   try {
     const fileHash = await sha256File(selectedFile.value);
     const result = await executeImportWorkflow({
@@ -295,8 +344,7 @@ async function startImport() {
       rows: flattenParsedSheets(parsedFile.value),
       onProgress: (progress) => { importProgress.value = progress; },
     });
-    message.success(`导入完成，已发布 ${result.publishedRows} 行需求`);
-    await loadDemands();
+    publishedRows = result.publishedRows;
   } catch (cause) {
     importError.value = cause instanceof Error ? cause.message : '导入失败';
     if (cause instanceof ImportReviewRequiredError) {
@@ -308,9 +356,11 @@ async function startImport() {
         importError.value = `${importError.value}；${detailMessage}`;
       }
     }
+    return;
   } finally {
     importing.value = false;
   }
+  await refreshAfterCommittedWrite(`导入完成，已发布 ${publishedRows} 行需求`, loadDemands);
 }
 
 async function openDemand(row: DemandSummary) {
@@ -319,6 +369,15 @@ async function openDemand(row: DemandSummary) {
   } catch (cause) {
     message.error(cause instanceof Error ? cause.message : '需求详情读取失败');
   }
+}
+
+function setManualDemandOpen(value: boolean) {
+  if (!savingManualDemand.value || value) manualDemandModalOpen.value = value;
+}
+
+function setDemandDetailOpen(value: boolean) {
+  if (!value && savingDemandMaterial.value) return;
+  if (!value) selectedDemand.value = null;
 }
 
 function addManualDemandMaterial() {
@@ -369,27 +428,29 @@ async function createManualDemand() {
 
   savingManualDemand.value = true;
   try {
-    await apiRequest<DemandDetail>('/api/demands', jsonRequestInit('POST', {
-      sequenceNo: form.sequenceNo.trim(),
-      voltageLevelId: form.voltageLevelId,
-      lineId: form.lineId,
-      locationType: form.locationType,
-      startTowerPositionId: form.locationType === 'whole_line' ? null : form.startTowerPositionId,
-      endTowerPositionId: form.locationType === 'tower_range' ? form.endTowerPositionId : form.locationType === 'tower' ? form.startTowerPositionId : null,
-      materials,
-      year,
-      category: form.category.trim() || null,
-      owner: form.owner.trim() || null,
-    }));
+    try {
+      await apiRequest<DemandDetail>('/api/demands', jsonRequestInit('POST', {
+        sequenceNo: form.sequenceNo.trim(),
+        voltageLevelId: form.voltageLevelId,
+        lineId: form.lineId,
+        locationType: form.locationType,
+        startTowerPositionId: form.locationType === 'whole_line' ? null : form.startTowerPositionId,
+        endTowerPositionId: form.locationType === 'tower_range' ? form.endTowerPositionId : form.locationType === 'tower' ? form.startTowerPositionId : null,
+        materials,
+        year,
+        category: form.category.trim() || null,
+        owner: form.owner.trim() || null,
+      }));
+    } catch (cause) {
+      message.error(cause instanceof Error ? cause.message : '需求创建失败');
+      return;
+    }
     manualDemandForm.value = {
       sequenceNo: '', voltageLevelId: '', lineId: '', locationType: 'tower_range', startTowerPositionId: '', endTowerPositionId: '', year: '', category: '', owner: '',
     };
     manualDemandMaterials.value = [];
     manualDemandModalOpen.value = false;
-    await loadDemands();
-    message.success('需求已创建');
-  } catch (cause) {
-    message.error(cause instanceof Error ? cause.message : '需求创建失败');
+    await refreshAfterCommittedWrite('需求已创建', loadDemands);
   } finally {
     savingManualDemand.value = false;
   }
@@ -405,16 +466,19 @@ async function addDemandMaterial() {
   }
   savingDemandMaterial.value = true;
   try {
-    const updated = await apiRequest<DemandDetail>(`/api/demands/${selectedDemand.value.id}/materials`, jsonRequestInit('POST', {
-      expectedVersion: selectedDemand.value.version,
-      materials: [{ rawModel, quantityScaled, unit: demandMaterialForm.value.unit.trim() || null, materialId: null }],
-    }));
+    let updated: DemandDetail;
+    try {
+      updated = await apiRequest<DemandDetail>(`/api/demands/${selectedDemand.value.id}/materials`, jsonRequestInit('POST', {
+        expectedVersion: selectedDemand.value.version,
+        materials: [{ rawModel, quantityScaled, unit: demandMaterialForm.value.unit.trim() || null, materialId: null }],
+      }));
+    } catch (cause) {
+      message.error(cause instanceof Error ? cause.message : '需求物资添加失败');
+      return;
+    }
     selectedDemand.value = updated;
     demandMaterialForm.value = { rawModel: '', quantity: '', unit: '' };
-    await loadDemands();
-    message.success('需求物资子明细已添加');
-  } catch (cause) {
-    message.error(cause instanceof Error ? cause.message : '需求物资添加失败');
+    await refreshAfterCommittedWrite('需求物资子明细已添加', loadDemands);
   } finally {
     savingDemandMaterial.value = false;
   }
@@ -433,13 +497,15 @@ async function addMaterial() {
   }
   savingMaterial.value = true;
   try {
-    await apiRequest<MaterialSummary>('/api/materials', jsonRequestInit('POST', payload));
+    try {
+      await apiRequest<MaterialSummary>('/api/materials', jsonRequestInit('POST', payload));
+    } catch (cause) {
+      message.error(cause instanceof Error ? cause.message : '物资保存失败');
+      return;
+    }
     materialForm.value = { code: '', name: '', model: '', unit: '' };
     showMaterialForm.value = false;
-    await loadMaterials();
-    message.success('标准物资已添加');
-  } catch (cause) {
-    message.error(cause instanceof Error ? cause.message : '物资保存失败');
+    await refreshAfterCommittedWrite('标准物资已添加', loadMaterials);
   } finally {
     savingMaterial.value = false;
   }
@@ -476,39 +542,60 @@ onMounted(loadInitial);
 
 <template>
   <n-spin :show="loading">
-    <div class="view-stack">
-      <n-alert v-if="error" type="error" title="读取失败">{{ error }}</n-alert>
+    <div class="view-stack demands-view">
+      <n-alert v-if="error" type="error" title="读取失败">
+        <div class="load-error-content"><span>{{ error }}</span><n-button size="small" secondary @click="loadInitial">重新加载</n-button></div>
+      </n-alert>
 
-      <n-tabs type="line" animated>
+      <header class="page-header">
+        <div class="page-header-copy">
+          <span class="page-eyebrow">需求管理</span>
+          <h2 class="page-title">项目需求</h2>
+          <p class="page-description">维护抽象需求及来源事实；需求物资只属于需求阶段，不自动变成项目物资。</p>
+        </div>
+        <div class="page-actions">
+          <n-button v-if="canWrite" data-test="open-manual-demand" type="primary" @click="manualDemandModalOpen = true">新增需求</n-button>
+        </div>
+      </header>
+
+      <n-tabs :value="activeTab" type="line" animated class="workspace-tabs" @update:value="setActiveTab">
         <n-tab-pane name="pool" tab="需求池">
-          <div class="pool-toolbar">
-            <div class="pool-heading">
-              <span class="eyebrow">项目需求</span>
-              <h2>需求池</h2>
-              <p>维护抽象需求及其物资子明细；需求进入项目后，再独立形成项目物资计划。</p>
-            </div>
-            <div class="pool-actions">
-              <n-button v-if="canWrite" data-test="open-manual-demand" type="primary" @click="manualDemandModalOpen = true">新增需求</n-button>
-            </div>
-          </div>
-
           <n-alert v-if="!canWrite" type="info" title="只读模式" class="section-note">
             仅管理员或项目管理角色可以手工新增或批量导入需求。
           </n-alert>
 
-          <n-card title="需求清单" class="primary-surface">
-            <template #header-extra>
-              <n-space>
-                <n-input v-model:value="demandQuery" class="search-input" placeholder="输入线路、杆段或序号" clearable @keyup.enter="loadDemands()" />
-                <n-button @click="loadDemands()">查询</n-button>
-              </n-space>
-            </template>
-            <n-data-table v-if="demands.length" :columns="demandColumns" :data="demands" :pagination="false" :scroll-x="900" />
+          <section class="demand-list-surface">
+            <div class="demand-list-toolbar">
+              <n-input v-model:value="demandQuery" class="search-input" data-test="demand-search" placeholder="搜索线路、杆段或序号" clearable @keyup.enter="applyDemandQuery" />
+              <n-button data-test="demand-search-submit" secondary @click="applyDemandQuery">查询</n-button>
+              <span class="list-count">已加载 {{ demands.length }} 条</span>
+            </div>
+            <n-data-table v-if="demands.length" class="desktop-demand-table" :columns="demandColumns" :data="demands" :pagination="false" :scroll-x="900" />
+            <div v-if="demands.length" class="mobile-demand-list">
+              <app-pressable
+                v-for="item in demands"
+                :key="item.id"
+                class="mobile-demand-item"
+                :data-test="`mobile-demand-${item.id}`"
+                @click="openDemand(item)"
+              >
+                <div class="mobile-demand-heading">
+                  <div><strong>{{ item.sequenceNo }}</strong><span>{{ item.voltageRaw }}</span></div>
+                  <span class="mobile-demand-chevron">›</span>
+                </div>
+                <strong class="mobile-demand-line">{{ item.lineName }}</strong>
+                <div class="mobile-demand-meta">
+                  <span>{{ item.section }}</span>
+                  <span>{{ item.year ?? '未设年度' }}</span>
+                  <span>{{ item.category ?? '未分类' }}</span>
+                </div>
+              </app-pressable>
+            </div>
             <n-empty v-else description="暂无正式需求；可新增需求或通过模板导入。" />
             <div v-if="demandCursor" class="load-more">
               <n-button secondary @click="loadDemands(false)">加载更多</n-button>
             </div>
-          </n-card>
+          </section>
         </n-tab-pane>
 
         <n-tab-pane name="import" tab="导入需求">
@@ -517,105 +604,148 @@ onMounted(loadInitial);
           </n-alert>
 
           <template v-else>
-            <n-card title="1. 下载模板并选择文件">
-              <template #header-extra>
-                <n-button data-test="download-demand-template" secondary @click="downloadTemplate">下载标准模板</n-button>
-              </template>
-              <n-alert type="info" :bordered="false" class="section-note">
-                推荐先下载系统标准模板填写后导入；标准模板可直接自动映射。文件仅在浏览器 Web Worker 中解析；同时兼容 .xlsx 和 UTF-8 .csv，旧 .xls 请先另存为 .xlsx。
-              </n-alert>
-              <input data-test="file-input" type="file" accept=".xlsx,.csv" :disabled="parsing || importing" @change="onFileChange" />
-              <div v-if="parsing" class="status-line">正在后台解析文件…</div>
-              <div v-else-if="parsedFile" class="status-line">
-                <n-tag type="success" :bordered="false">{{ parsedFile.fileType.toUpperCase() }}</n-tag>
-                <span>{{ selectedFile?.name }}</span>
-                <strong>识别到 {{ parsedRowsCount }} 行</strong>
-                <span>{{ parsedFile.sheets.length }} 个工作表</span>
-              </div>
-              <n-alert v-if="importError" type="error" title="导入未完成" class="section-note">{{ importError }}</n-alert>
-              <div v-if="reviewRows.length" class="review-list">
-                <div v-for="row in reviewRows" :key="row.id" class="review-row">
-                  <strong>{{ row.sheetName }} / 第 {{ row.rowNumber }} 行</strong>
-                  <div v-for="issue in row.errors" :key="`error-${issue.code}-${issue.field ?? ''}`" class="review-issue error">
-                    错误：{{ issue.message }}<span v-if="issue.field">（{{ issue.field }}）</span>
+            <section class="import-workflow">
+              <div class="import-step">
+                <header class="import-step-header">
+                  <span class="step-number">1</span>
+                  <div><h3>准备文件</h3><p>下载标准模板，填写后选择 .xlsx 或 UTF-8 .csv。</p></div>
+                  <n-button data-test="download-demand-template" secondary @click="downloadTemplate">下载标准模板</n-button>
+                </header>
+                <div class="import-step-body">
+                  <n-alert type="info" :bordered="false" class="section-note">
+                    标准模板可直接自动映射；文件仅在浏览器 Web Worker 中解析。旧 .xls 请先另存为 .xlsx。
+                  </n-alert>
+                  <app-file-picker
+                    test-id="file-input"
+                    accept=".xlsx,.csv"
+                    label="选择需求文件"
+                    :selected-name="selectedFile?.name ?? null"
+                    :disabled="parsing || importing"
+                    @change="onFileChange"
+                  />
+                  <div v-if="parsing" class="status-line">正在后台解析文件…</div>
+                  <div v-else-if="parsedFile" class="status-line">
+                    <n-tag type="success" :bordered="false">{{ parsedFile.fileType.toUpperCase() }}</n-tag>
+                    <span>{{ selectedFile?.name }}</span>
+                    <strong>识别到 {{ parsedRowsCount }} 行</strong>
+                    <span>{{ parsedFile.sheets.length }} 个工作表</span>
                   </div>
-                  <div v-for="issue in row.warnings" :key="`warning-${issue.code}-${issue.field ?? ''}`" class="review-issue warning">
-                    警告：{{ issue.message }}<span v-if="issue.field">（{{ issue.field }}）</span>
+                  <n-alert v-if="importError" type="error" title="导入未完成" class="section-note">{{ importError }}</n-alert>
+                  <div v-if="reviewRows.length" class="review-list">
+                    <div v-for="row in reviewRows" :key="row.id" class="review-row">
+                      <strong>{{ row.sheetName }} / 第 {{ row.rowNumber }} 行</strong>
+                      <div v-for="issue in row.errors" :key="`error-${issue.code}-${issue.field ?? ''}`" class="review-issue error">
+                        错误：{{ issue.message }}<span v-if="issue.field">（{{ issue.field }}）</span>
+                      </div>
+                      <div v-for="issue in row.warnings" :key="`warning-${issue.code}-${issue.field ?? ''}`" class="review-issue warning">
+                        警告：{{ issue.message }}<span v-if="issue.field">（{{ issue.field }}）</span>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
-            </n-card>
 
-            <n-card v-if="parsedFile" title="2. 字段映射">
-              <div class="template-row">
-                <n-select
-                  :value="selectedTemplateId"
-                  :options="templateOptions"
-                  clearable
-                  placeholder="选择已保存的映射模板"
-                  @update:value="applyTemplate"
-                />
-                <n-input v-model:value="templateName" placeholder="新模板名称" />
-                <n-button :loading="savingTemplate" @click="saveTemplate">保存当前映射</n-button>
+              <div v-if="parsedFile" class="import-step">
+                <header class="import-step-header">
+                  <span class="step-number">2</span>
+                  <div><h3>确认字段映射</h3><p>标准模板会自动映射；其他文件可复用已保存的映射规则。</p></div>
+                </header>
+                <div class="import-step-body">
+                  <div class="template-row">
+                    <n-select
+                      data-test="mapping-template"
+                      :value="selectedTemplateId"
+                      :options="templateOptions"
+                      :disabled="mappingBusy"
+                      clearable
+                      placeholder="选择已保存的映射模板"
+                      @update:value="applyTemplate"
+                    />
+                    <n-input v-model:value="templateName" :disabled="mappingBusy" placeholder="新模板名称" />
+                    <n-button :loading="savingTemplate" :disabled="importing" @click="saveTemplate">保存当前映射</n-button>
+                  </div>
+                  <div class="mapping-grid">
+                    <n-form-item v-for="field in fieldDefinitions" :key="field.key" :label="`${field.label}${field.required ? ' *' : ''}`">
+                      <n-select
+                        :data-test="`mapping-source-${field.key}`"
+                        :value="mapping[field.key] ?? null"
+                        :options="headerOptions"
+                        :disabled="mappingBusy"
+                        clearable
+                        :placeholder="field.required ? '请选择源列' : '可选'"
+                        @update:value="(value: string | null) => { if (value) mapping[field.key] = value; else delete mapping[field.key]; }"
+                      />
+                    </n-form-item>
+                  </div>
+                </div>
               </div>
-              <div class="mapping-grid">
-                <n-form-item v-for="field in fieldDefinitions" :key="field.key" :label="`${field.label}${field.required ? ' *' : ''}`">
-                  <n-select
-                    :value="mapping[field.key] ?? null"
-                    :options="headerOptions"
-                    clearable
-                    :placeholder="field.required ? '请选择源列' : '可选'"
-                    @update:value="(value: string | null) => { if (value) mapping[field.key] = value; else delete mapping[field.key]; }"
-                  />
-                </n-form-item>
-              </div>
-            </n-card>
 
-            <n-card v-if="parsedFile" title="3. 服务端校验并发布">
-              <n-alert type="warning" :bordered="false" class="section-note">
-                浏览器映射不是最终真相：服务端会重新校验必填字段、数量精度和标准物资匹配。阻断错误不会进入正式需求池；未知物资会明确警告，不会当作零价或自动匹配。
-              </n-alert>
-              <n-button data-test="start-import" type="primary" :disabled="!importReady" :loading="importing" @click="startImport">
-                开始导入并发布
-              </n-button>
-              <div v-if="importProgress" class="progress-block">
-                <n-progress type="line" :percentage="Math.round(importProgress.total ? importProgress.current / importProgress.total * 100 : 0)" />
-                <span>{{ importProgress.message }}</span>
+              <div v-if="parsedFile" class="import-step final-step">
+                <header class="import-step-header">
+                  <span class="step-number">3</span>
+                  <div><h3>校验并发布</h3><p>服务端重新验证业务字段后，才会写入正式需求池。</p></div>
+                </header>
+                <div class="import-step-body">
+                  <n-alert type="warning" :bordered="false" class="section-note">
+                    浏览器映射不是最终真相：服务端会重新校验必填字段、数量精度和标准物资匹配。阻断错误不会进入正式需求池；未知物资只明确警告，不会当作零价或自动匹配。
+                  </n-alert>
+                  <n-button data-test="start-import" type="primary" :disabled="!importReady || savingTemplate" :loading="importing" @click="startImport">
+                    开始导入并发布
+                  </n-button>
+                  <div v-if="importProgress" class="progress-block">
+                    <n-progress type="line" :percentage="Math.round(importProgress.total ? importProgress.current / importProgress.total * 100 : 0)" />
+                    <span>{{ importProgress.message }}</span>
+                  </div>
+                </div>
               </div>
-            </n-card>
+            </section>
           </template>
         </n-tab-pane>
 
         <n-tab-pane name="materials" tab="物资字典">
-          <n-card title="标准物资">
-            <template #header-extra>
-              <n-button v-if="canWrite" data-test="add-material" type="primary" @click="showMaterialForm = !showMaterialForm">
+          <section class="dictionary-panel">
+            <header class="dictionary-panel-header">
+              <div><h3>标准物资</h3><p>按“型号 + 单位”区分；未知物资只标记待核实，不自动猜测匹配。</p></div>
+              <n-button v-if="canWrite" data-test="add-material" :disabled="savingMaterial" type="primary" @click="showMaterialForm = !showMaterialForm">
                 {{ showMaterialForm ? '收起' : '新增物资' }}
               </n-button>
-            </template>
-            <n-alert type="info" :bordered="false" class="section-note">
-              标准物资按“型号 + 单位”区分；相同型号不同单位不会自动合并。导入时找不到完全匹配项只产生警告。
-            </n-alert>
-            <n-form v-if="showMaterialForm && canWrite" class="material-form" label-placement="top">
-              <n-form-item label="编码（可选）"><n-input v-model:value="materialForm.code" /></n-form-item>
-              <n-form-item label="名称"><n-input v-model:value="materialForm.name" data-test="material-name" /></n-form-item>
-              <n-form-item label="型号"><n-input v-model:value="materialForm.model" data-test="material-model" /></n-form-item>
-              <n-form-item label="单位"><n-input v-model:value="materialForm.unit" data-test="material-unit" /></n-form-item>
-              <n-form-item><n-button data-test="save-material" type="primary" :loading="savingMaterial" @click="addMaterial">保存物资</n-button></n-form-item>
-            </n-form>
-            <n-data-table v-if="materials.length" :columns="materialColumns" :data="materials" :pagination="false" :scroll-x="720" />
-            <n-empty v-else description="暂无标准物资。导入需求可以先进行，但未知物资会被标记为待核实。" />
-          </n-card>
+            </header>
+            <div v-if="showMaterialForm && canWrite" class="dictionary-edit">
+              <n-form class="material-form" label-placement="top">
+                <n-form-item label="编码（可选）"><n-input v-model:value="materialForm.code" :disabled="savingMaterial" /></n-form-item>
+                <n-form-item label="名称"><n-input v-model:value="materialForm.name" data-test="material-name" :disabled="savingMaterial" /></n-form-item>
+                <n-form-item label="型号"><n-input v-model:value="materialForm.model" data-test="material-model" :disabled="savingMaterial" /></n-form-item>
+                <n-form-item label="单位"><n-input v-model:value="materialForm.unit" data-test="material-unit" :disabled="savingMaterial" /></n-form-item>
+                <n-form-item><n-button data-test="save-material" type="primary" :loading="savingMaterial" @click="addMaterial">保存物资</n-button></n-form-item>
+              </n-form>
+            </div>
+            <div class="dictionary-data">
+              <n-data-table v-if="materials.length" class="desktop-material-table" :columns="materialColumns" :data="materials" :pagination="false" :scroll-x="720" />
+              <div v-if="materials.length" class="mobile-material-list">
+                <div v-for="item in materials" :key="item.id" class="mobile-material-item" :data-test="`mobile-material-${item.id}`">
+                  <div class="mobile-material-head">
+                    <div><strong>{{ item.name }}</strong><span>{{ item.code || '无编码' }}</span></div>
+                    <n-tag size="small" :bordered="false" :type="item.enabled ? 'success' : 'default'">{{ item.enabled ? '启用' : '停用' }}</n-tag>
+                  </div>
+                  <div class="mobile-material-facts"><span>型号 {{ item.model }}</span><span>单位 {{ item.unit }}</span></div>
+                </div>
+              </div>
+              <n-empty v-else description="暂无标准物资。导入需求可以先进行，但未知物资会被标记为待核实。" />
+            </div>
+          </section>
         </n-tab-pane>
       </n-tabs>
 
       <n-modal
-        v-model:show="manualDemandModalOpen"
+        :show="manualDemandModalOpen"
         preset="card"
         title="新增需求"
         class="demand-modal"
         style="width: min(760px, calc(100vw - 32px))"
         :mask-closable="!savingManualDemand"
+        :close-on-esc="!savingManualDemand"
+        :closable="!savingManualDemand"
+        @update:show="setManualDemandOpen"
       >
         <div class="modal-intro">
           <strong>先建立需求事项，再按需要附加物资。</strong>
@@ -686,7 +816,7 @@ onMounted(loadInitial);
         </n-form>
         <template #footer>
           <div class="modal-actions">
-            <n-button :disabled="savingManualDemand" @click="manualDemandModalOpen = false">取消</n-button>
+            <n-button :disabled="savingManualDemand" @click="setManualDemandOpen(false)">取消</n-button>
             <n-button data-test="save-manual-demand" type="primary" :loading="savingManualDemand" @click="createManualDemand">创建需求</n-button>
           </div>
         </template>
@@ -698,7 +828,10 @@ onMounted(loadInitial);
         title="需求详情与来源"
         class="demand-detail-modal"
         style="width: min(900px, calc(100vw - 32px))"
-        @update:show="(show: boolean) => { if (!show) selectedDemand = null; }"
+        :mask-closable="!savingDemandMaterial"
+        :close-on-esc="!savingDemandMaterial"
+        :closable="!savingDemandMaterial"
+        @update:show="setDemandDetailOpen"
       >
         <template v-if="selectedDemand">
           <div class="detail-grid detail-grid-polished">
@@ -743,56 +876,61 @@ onMounted(loadInitial);
 </template>
 
 <style scoped>
+.demands-view { max-width: 1420px; }
 .section-note { margin-bottom: 16px; }
-.pool-toolbar {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: end;
-  gap: 22px;
-  margin: 2px 0 16px;
-  padding: 6px 2px 2px;
-}
-.pool-heading { min-width: 0; }
-.pool-toolbar h2 { margin: 3px 0 5px; font-size: 22px; letter-spacing: -.015em; color: #182033; }
-.pool-toolbar p { margin: 0; max-width: 720px; color: #7b8596; font-size: 13px; line-height: 1.6; }
-.pool-actions { display: flex; align-items: center; justify-content: flex-end; padding-bottom: 2px; }
-.pool-actions .n-button { min-width: 104px; }
-.eyebrow { color: #2457d6; font-size: 11px; font-weight: 700; letter-spacing: .08em; }
-.primary-surface { overflow: hidden; }
-.search-input { width: min(310px, 40vw); }
+.workspace-tabs :deep(.n-tabs-nav) { margin-bottom: 2px; }
+.workspace-tabs :deep(.n-tabs-tab) { padding-inline: 2px; margin-right: 24px; font-size: 14px; }
+.demand-list-surface { overflow: hidden; border: 1px solid var(--ui-border); border-radius: var(--ui-radius-lg); background: var(--ui-surface); }
+.demand-list-toolbar { display: flex; align-items: center; gap: 10px; min-height: 64px; padding: 12px 16px; border-bottom: 1px solid var(--ui-border); }
+.search-input { width: min(360px, 42vw); }
+.list-count { margin-left: auto; color: var(--ui-text-tertiary); font-size: 13px; white-space: nowrap; }
+.mobile-demand-list { display: none; }
+.import-workflow, .dictionary-panel { overflow: hidden; border: 1px solid var(--ui-border); border-radius: var(--ui-radius-lg); background: var(--ui-surface); }
+.import-step + .import-step { border-top: 1px solid var(--ui-border); }
+.import-step-header, .dictionary-panel-header { display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; gap: 12px; align-items: center; min-height: 64px; padding: 13px 16px; }
+.dictionary-panel-header { grid-template-columns: minmax(0, 1fr) auto; border-bottom: 1px solid var(--ui-border); }
+.import-step-header h3, .dictionary-panel-header h3 { margin: 0; color: var(--ui-text); font-size: 14px; font-weight: 680; }
+.import-step-header p, .dictionary-panel-header p { margin: 3px 0 0; color: var(--ui-text-secondary); font-size: 13px; line-height: 1.5; }
+.step-number { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 9px; background: var(--ui-accent-soft); color: var(--ui-accent); font-size: 12px; font-weight: 750; }
+.import-step-body { padding: 0 16px 18px 58px; }
+.final-step .import-step-body { padding-bottom: 20px; }
+.dictionary-edit { padding: 16px; border-bottom: 1px solid var(--ui-border); background: var(--ui-surface-subtle); }
+.dictionary-data :deep(.n-data-table) { border: 0; border-radius: 0; }
+.dictionary-data > .n-empty { padding: 32px 16px; }
+.mobile-material-list { display: none; }
 .status-line { margin-top: 14px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .template-row { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr) auto; gap: 10px; margin-bottom: 18px; }
 .mapping-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 18px; }
 .progress-block { display: grid; gap: 8px; margin-top: 18px; }
 .review-list { display: grid; gap: 10px; margin-top: 14px; }
-.review-row { display: grid; gap: 5px; padding: 12px; border: 1px solid #e5e9f0; border-radius: 9px; background: #fafbfc; }
+.review-row { display: grid; gap: 5px; padding: 12px; border: 1px solid var(--ui-border); border-radius: 10px; background: var(--ui-surface-subtle); }
 .review-issue { font-size: 13px; }
-.review-issue.error { color: #b42318; }
-.review-issue.warning { color: #a15c00; }
-.load-more { display: flex; justify-content: center; margin-top: 16px; }
+.review-issue.error { color: var(--ui-danger); }
+.review-issue.warning { color: var(--ui-warning); }
+.load-more { display: flex; justify-content: center; padding: 14px 16px; border-top: 1px solid var(--ui-border); }
 .detail-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
-.detail-grid div { display: grid; gap: 4px; padding: 12px 13px; border: 1px solid #edf0f4; border-radius: 10px; background: #f9fafc; }
-.detail-grid span { color: #7c8798; font-size: 11px; }
-.detail-grid strong { color: #25314a; font-size: 13px; }
+.detail-grid div { display: grid; gap: 4px; padding: 12px 13px; border: 1px solid var(--ui-border); border-radius: 10px; background: var(--ui-surface-subtle); }
+.detail-grid span { color: var(--ui-text-tertiary); font-size: 13px; }
+.detail-grid strong { color: var(--ui-text); font-size: 13px; }
 .detail-grid-polished { margin-bottom: 6px; }
 .material-lines { display: grid; gap: 8px; margin-top: 20px; }
-.material-lines > strong { color: #35405a; font-size: 13px; }
-.material-line { display: grid; grid-template-columns: 1fr 150px minmax(160px, auto); align-items: center; gap: 12px; padding: 10px 2px; border-top: 1px solid #edf0f4; }
-.material-form { display: grid; grid-template-columns: 1fr 1fr 1fr 120px auto; gap: 12px; align-items: end; margin-bottom: 18px; }
-.material-form-inline { margin: 14px 0 0; padding-top: 14px; border-top: 1px solid #edf0f4; }
+.material-lines > strong { color: var(--ui-text); font-size: 13px; }
+.material-line { display: grid; grid-template-columns: 1fr 150px minmax(160px, auto); align-items: center; gap: 12px; padding: 10px 2px; border-top: 1px solid var(--ui-border); }
+.material-form { display: grid; grid-template-columns: 1fr 1fr 1fr 120px auto; gap: 12px; align-items: end; margin: 0; }
+.material-form-inline { margin: 14px 0 0; padding-top: 14px; border-top: 1px solid var(--ui-border); }
 .manual-demand-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 16px; }
 .form-section-title {
   grid-column: 1 / -1;
   margin: 2px 0 10px;
-  color: #2c3851;
-  font-size: 12px;
+  color: var(--ui-text);
+  font-size: 13px;
   font-weight: 700;
 }
-.form-section-wide { margin-top: 8px; padding-top: 14px; border-top: 1px solid #edf0f4; }
+.form-section-wide { margin-top: 8px; padding-top: 14px; border-top: 1px solid var(--ui-border); }
 .material-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .material-section-heading > div { display: grid; gap: 3px; }
-.material-section-heading strong { color: #2c3851; font-size: 12px; }
-.material-section-heading span { color: #8a94a4; font-size: 11px; font-weight: 400; }
+.material-section-heading strong { color: var(--ui-text); font-size: 13px; }
+.material-section-heading span { color: var(--ui-text-tertiary); font-size: 13px; font-weight: 400; }
 .manual-material-list { display: grid; gap: 10px; }
 .manual-material-row {
   display: grid;
@@ -800,9 +938,9 @@ onMounted(loadInitial);
   gap: 10px;
   align-items: end;
   padding: 12px;
-  border: 1px solid #e6eaf0;
+  border: 1px solid var(--ui-border);
   border-radius: 11px;
-  background: #fafbfc;
+  background: var(--ui-surface-subtle);
 }
 .manual-material-row .n-form-item { margin-bottom: 0; }
 .manual-material-index {
@@ -812,18 +950,18 @@ onMounted(loadInitial);
   height: 26px;
   margin-bottom: 7px;
   border-radius: 8px;
-  background: #edf3ff;
-  color: #2457d6;
-  font-size: 11px;
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent);
+  font-size: 13px;
   font-weight: 750;
 }
 .manual-material-remove { margin-bottom: 2px; }
 .manual-material-empty {
   padding: 14px 16px;
-  border: 1px dashed #d9e0ea;
+  border: 1px dashed var(--ui-border-strong);
   border-radius: 10px;
-  background: #fbfcfe;
-  color: #8a94a4;
+  background: var(--ui-surface-subtle);
+  color: var(--ui-text-tertiary);
   font-size: 12px;
   line-height: 1.6;
 }
@@ -832,19 +970,26 @@ onMounted(loadInitial);
   gap: 4px;
   margin: -2px 0 16px;
   padding: 12px 14px;
-  border: 1px solid #dce6fb;
+  border: 1px solid var(--ui-border);
   border-radius: 10px;
-  background: #f5f8ff;
+  background: var(--ui-accent-soft);
 }
-.modal-intro strong { color: #29457f; font-size: 13px; }
-.modal-intro span { color: #74819a; font-size: 12px; line-height: 1.5; }
+.modal-intro strong { color: var(--ui-text); font-size: 13px; }
+.modal-intro span { color: var(--ui-text-secondary); font-size: 13px; line-height: 1.5; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; }
-:deep(.demand-modal), :deep(.demand-detail-modal) { border-radius: 15px; overflow: hidden; box-shadow: 0 22px 58px rgba(18, 32, 61, .18); }
+:global(.demand-modal), :global(.demand-detail-modal) {
+  max-height: calc(100dvh - 32px);
+  border-radius: 15px;
+  overflow: hidden;
+  box-shadow: var(--ui-shadow-popover);
+}
+:global(.demand-modal .n-card__content), :global(.demand-detail-modal .n-card__content) {
+  min-height: 0;
+  max-height: calc(100dvh - 154px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
 @media (max-width: 850px) {
-  .pool-toolbar { grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 2px 0 4px; }
-  .pool-toolbar h2 { font-size: 20px; }
-  .pool-toolbar p { font-size: 12px; line-height: 1.55; }
-  .pool-actions .n-button { min-width: 96px; }
   .template-row, .mapping-grid, .detail-grid, .material-form, .manual-demand-form { grid-template-columns: 1fr; }
   .manual-material-row { grid-template-columns: 28px minmax(0, 1fr); align-items: center; }
   .manual-material-row .n-form-item { grid-column: 2; }
@@ -854,9 +999,42 @@ onMounted(loadInitial);
   .material-line { grid-template-columns: 1fr; }
   .search-input { width: 100%; }
 }
+@media (max-width: 767px) {
+  :global(.demand-modal), :global(.demand-detail-modal) { width: calc(100vw - 20px) !important; max-height: calc(100dvh - 20px); }
+  :global(.demand-modal .n-card__content), :global(.demand-detail-modal .n-card__content) { max-height: calc(100dvh - 142px); }
+  :global(.demand-modal .n-card__footer) { padding-bottom: max(14px, env(safe-area-inset-bottom)); background: var(--ui-surface); }
+  .modal-actions { position: sticky; bottom: 0; }
+  .modal-actions .n-button:last-child { flex: 1; }
+  .import-step-header, .dictionary-panel-header { grid-template-columns: 30px minmax(0, 1fr); align-items: start; }
+  .import-step-header > .n-button, .dictionary-panel-header > .n-button { grid-column: 2; justify-self: start; }
+  .dictionary-panel-header > div { grid-column: 1 / -1; }
+  .dictionary-panel-header > .n-button { grid-column: 1 / -1; width: 100%; }
+  .import-step-body { padding: 0 14px 16px; }
+  .demand-list-toolbar { align-items: stretch; flex-wrap: wrap; min-height: 0; padding: 12px 13px; }
+  .demand-list-toolbar .search-input { flex: 1 1 calc(100% - 84px); }
+  .list-count { width: 100%; margin-left: 0; }
+  .desktop-demand-table { display: none; }
+  .mobile-demand-list { display: grid; }
+  .mobile-demand-item { display: grid; gap: 8px; width: 100%; padding: 15px 14px; border-bottom: 1px solid var(--ui-border); text-align: left; }
+  .mobile-demand-item:last-child { border-bottom: 0; }
+  .mobile-demand-heading { display: grid; grid-template-columns: minmax(0,1fr) 18px; align-items: center; gap: 12px; }
+  .mobile-demand-heading > div { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+  .mobile-demand-heading strong { font-size: 13px; font-weight: 700; }
+  .mobile-demand-heading span { color: var(--ui-text-tertiary); font-size: 13px; }
+  .mobile-demand-chevron { justify-self: end; color: var(--ui-text-tertiary) !important; font-size: 20px !important; }
+  .mobile-demand-line { font-size: 14px; font-weight: 650; line-height: 1.45; overflow-wrap: anywhere; }
+  .mobile-demand-meta { display: flex; flex-wrap: wrap; gap: 5px 12px; color: var(--ui-text-secondary); font-size: 13px; }
+  .desktop-material-table { display: none; }
+  .mobile-material-list { display: grid; }
+  .mobile-material-item { display: grid; gap: 8px; padding: 14px; border-bottom: 1px solid var(--ui-border); }
+  .mobile-material-item:last-child { border-bottom: 0; }
+  .mobile-material-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+  .mobile-material-head > div { display: grid; gap: 3px; min-width: 0; }
+  .mobile-material-head strong { font-size: 13px; font-weight: 680; line-height: 1.45; overflow-wrap: anywhere; }
+  .mobile-material-head span { color: var(--ui-text-tertiary); font-size: 13px; }
+  .mobile-material-facts { display: flex; flex-wrap: wrap; gap: 5px 14px; color: var(--ui-text-secondary); font-size: 13px; }
+}
 @media (max-width: 560px) {
-  .pool-toolbar p { display: none; }
-  .pool-toolbar { margin-bottom: 12px; }
   .material-section-heading { align-items: flex-start; }
   .material-section-heading span { max-width: 210px; }
 }

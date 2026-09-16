@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { apiRequest, jsonRequestInit } from '../src/api/client';
+import { ApiRequestError, apiRequest, jsonRequestInit } from '../src/api/client';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -23,6 +23,24 @@ describe('shared API client', () => {
     })));
 
     await expect(apiRequest('/api/example')).rejects.toThrow('数据已变化，请刷新后重试');
+  });
+
+  it('preserves status and business error code for conflict recovery', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      ok: false,
+      error: { code: 'VERSION_CONFLICT', message: '数据已变化，请刷新后重试', details: { currentVersion: 4 } },
+    }), {
+      status: 409,
+      headers: { 'Content-Type': 'application/json' },
+    })));
+
+    await expect(apiRequest('/api/example')).rejects.toMatchObject({
+      name: 'ApiRequestError',
+      status: 409,
+      code: 'VERSION_CONFLICT',
+      message: '数据已变化，请刷新后重试',
+      details: { currentVersion: 4 },
+    } satisfies Partial<ApiRequestError>);
   });
 
   it('builds JSON mutation requests with a stable supplied idempotency key', () => {

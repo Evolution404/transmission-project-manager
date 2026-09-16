@@ -30,6 +30,7 @@ export type { DatabasePort, DatabaseRunResult, DatabaseStatement, DatabaseValue,
 export type { DemandRepository, ResolvedDemandLine, ResolvedDemandTowerPosition } from './demand-repository';
 export type { AppendDemandMaterialsRecord, DemandMaterialWrite, DemandMaterialWriteRepository, DemandMaterialWriteState } from './demand-material-write-repository';
 export type { DemandPage, DemandPageCursor, DemandQueryRepository } from './demand-query-repository';
+export type { TaskQueueCursor, TaskQueuePageResult } from './execution-query-repository';
 export type { IdempotencyReplayRecord, IdempotencyRepository } from './idempotency-repository';
 export type { LegacyExecutionRepository, LegacyImplementationState, LegacyProjectState, LegacyReleaseLineState, LegacyScopeItem, LegacySettlementState, LegacyWriteMeta } from './legacy-execution-repository';
 export type { CreateImportMappingRecord, ImportMappingRepository } from './import-mapping-repository';

@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, h, onMounted, ref } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import {
   NAlert,
   NButton,
-  NCard,
   NDataTable,
   NEmpty,
   NForm,
@@ -31,9 +31,13 @@ import type {
 } from '@tpm/shared';
 
 const props = defineProps<{ currentUser: CurrentUser }>();
+const route = useRoute();
+const router = useRouter();
 const message = useMessage();
 const canManageStructure = computed(() => props.currentUser.role === 'admin' || props.currentUser.role === 'project_manager');
 const canFinanceWrite = computed(() => ['admin', 'project_manager', 'finance'].includes(props.currentUser.role));
+type FinanceWorkspaceTab = 'frameworks' | 'budgets' | 'entries';
+const financeWorkspaceTabs = new Set<FinanceWorkspaceTab>(['frameworks', 'budgets', 'entries']);
 
 const loading = ref(true);
 const error = ref('');
@@ -60,8 +64,38 @@ const entryNote = ref('');
 const entrySplits = ref<Array<{ agreementId: string | null; amountYuan: string }>>([{ agreementId: null, amountYuan: '' }]);
 const bindingProjectId = ref<string | null>(null);
 const bindingFrameworkId = ref<string | null>(null);
-const metric = ref<'budget' | 'occurrence' | 'actual'>('occurrence');
 const saving = ref(false);
+const showFrameworkForm = ref(false);
+const showAgreementForm = ref(false);
+const showEntryForm = ref(false);
+let frameworkContextSequence = 0;
+let budgetProjectSequence = 0;
+const requestedTab = typeof route.query.tab === 'string' ? route.query.tab : '';
+const requestedFrameworkId = typeof route.query.framework === 'string' ? route.query.framework : '';
+const activeTab = ref<FinanceWorkspaceTab>(
+  financeWorkspaceTabs.has(requestedTab as FinanceWorkspaceTab)
+    ? requestedTab as FinanceWorkspaceTab
+    : typeof route.query.projectId === 'string' ? 'budgets' : 'frameworks',
+);
+const projectReturnTarget = computed(() => {
+  const from = typeof route.query.from === 'string' ? route.query.from : '';
+  return from.startsWith('/projects/') ? from : null;
+});
+
+function returnToProject() {
+  if (projectReturnTarget.value) void router.push(projectReturnTarget.value);
+}
+
+function setActiveTab(value: string | number) {
+  if (saving.value) return;
+  const nextTab = String(value) as FinanceWorkspaceTab;
+  if (!financeWorkspaceTabs.has(nextTab)) return;
+  activeTab.value = nextTab;
+  const query = { ...route.query };
+  if (nextTab === 'frameworks') delete query.tab;
+  else query.tab = nextTab;
+  void router.replace({ query });
+}
 
 function businessToday() {
   const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
@@ -82,9 +116,37 @@ function formatMoney(value: number) {
 function formatPercent(value: number | null) {
   return value === null ? '未配置' : `${(value / 100).toFixed(2)}%`;
 }
+function agreementStatusLabel(status: AgreementSummary['status']) {
+  if (status === 'active') return '有效';
+  if (status === 'paused') return '暂停';
+  return '到期';
+}
+function agreementStatusType(status: AgreementSummary['status']) {
+  if (status === 'active') return 'success' as const;
+  if (status === 'paused') return 'warning' as const;
+  return 'default' as const;
+}
+function entryTypeLabel(type: FinancialEntryType) {
+  return type === 'budget_occurrence' ? '预算发生' : '实际发生';
+}
+
+async function refreshAfterCommittedWrite(successMessage: string, refresh: () => Promise<unknown>) {
+  try {
+    await refresh();
+    error.value = '';
+    message.success(successMessage);
+  } catch (cause) {
+    const detail = cause instanceof Error ? cause.message : '读取最新数据失败';
+    error.value = `${successMessage}，但最新数据刷新失败：${detail}`;
+    message.warning(`${successMessage}，但最新数据刷新失败，请重新加载`);
+  }
+}
 
 const frameworkOptions = computed(() => frameworks.value.map((item) => ({ label: `${item.code} · ${item.name}`, value: item.id })));
 const projectOptions = computed(() => projects.value.map((item) => ({ label: `${item.name}${item.frameworkId ? '' : '（未绑定框架）'}`, value: item.id })));
+const currentFrameworkProjectOptions = computed(() => projects.value
+  .filter((item) => item.frameworkId === selectedFrameworkId.value)
+  .map((item) => ({ label: item.name, value: item.id })));
 const agreementOptions = computed(() => agreements.value.filter((item) => item.status === 'active').map((item) => ({ label: `${item.code} · ${item.name}`, value: item.id })));
 const currentBudget = computed(() => budgets.value[0] ?? null);
 const selectedFramework = computed(() => frameworks.value.find((item) => item.id === selectedFrameworkId.value) ?? null);
@@ -96,56 +158,89 @@ async function loadBase() {
   ]);
   frameworks.value = fw.items;
   projects.value = projectData.items;
-  if (!selectedFrameworkId.value && fw.items[0]) selectedFrameworkId.value = fw.items[0].id;
+  if (!selectedFrameworkId.value) {
+    selectedFrameworkId.value = fw.items.some((item) => item.id === requestedFrameworkId)
+      ? requestedFrameworkId
+      : fw.items[0]?.id ?? null;
+  }
 }
 
 async function loadFrameworkContext() {
+  const sequence = ++frameworkContextSequence;
   const frameworkId = selectedFrameworkId.value;
+  agreements.value = [];
+  summary.value = null;
+  entries.value = [];
+  entryCursor.value = null;
   if (!frameworkId) {
-    agreements.value = [];
-    summary.value = null;
-    entries.value = [];
-    entryCursor.value = null;
-    return;
+    return false;
   }
-  const [agreementData, summaryData, entryData] = await Promise.all([
-    apiRequest<{ items: AgreementSummary[] }>(`/api/agreements?frameworkId=${encodeURIComponent(frameworkId)}`),
-    apiRequest<FrameworkFinanceSummary>(`/api/finance/summary?frameworkId=${encodeURIComponent(frameworkId)}&asOf=${businessToday()}`),
-    apiRequest<FinancialEntryPage>(`/api/financial-entries?frameworkId=${encodeURIComponent(frameworkId)}&limit=50`),
-  ]);
+  let agreementData: { items: AgreementSummary[] };
+  let summaryData: FrameworkFinanceSummary;
+  let entryData: FinancialEntryPage;
+  try {
+    [agreementData, summaryData, entryData] = await Promise.all([
+      apiRequest<{ items: AgreementSummary[] }>(`/api/agreements?frameworkId=${encodeURIComponent(frameworkId)}`),
+      apiRequest<FrameworkFinanceSummary>(`/api/finance/summary?frameworkId=${encodeURIComponent(frameworkId)}&asOf=${businessToday()}`),
+      apiRequest<FinancialEntryPage>(`/api/financial-entries?frameworkId=${encodeURIComponent(frameworkId)}&limit=50`),
+    ]);
+  } catch (cause) {
+    if (sequence !== frameworkContextSequence || selectedFrameworkId.value !== frameworkId) return false;
+    throw cause;
+  }
+  if (sequence !== frameworkContextSequence || selectedFrameworkId.value !== frameworkId) return;
   agreements.value = agreementData.items;
   summary.value = summaryData;
   entries.value = entryData.items;
   entryCursor.value = entryData.nextCursor;
+  return true;
 }
 
 async function loadMoreEntries() {
   const frameworkId = selectedFrameworkId.value;
   const cursor = entryCursor.value;
+  const contextSequence = frameworkContextSequence;
   if (!frameworkId || !cursor) return;
   try {
     const data = await apiRequest<FinancialEntryPage>(`/api/financial-entries?frameworkId=${encodeURIComponent(frameworkId)}&limit=50&cursor=${encodeURIComponent(cursor)}`);
+    if (contextSequence !== frameworkContextSequence || selectedFrameworkId.value !== frameworkId || entryCursor.value !== cursor) return;
     const known = new Set(entries.value.map((item) => item.id));
     entries.value = [...entries.value, ...data.items.filter((item) => !known.has(item.id))];
     entryCursor.value = data.nextCursor;
   } catch (cause) {
+    if (contextSequence !== frameworkContextSequence || selectedFrameworkId.value !== frameworkId || entryCursor.value !== cursor) return;
     message.error(cause instanceof Error ? cause.message : '加载更多资金流水失败');
   }
 }
 
-async function loadBudgetProject(projectId: string | null) {
-  selectedBudgetProjectId.value = projectId;
+function clearBudgetProjectContext() {
+  budgetProjectSequence += 1;
+  selectedBudgetProjectId.value = null;
   budgets.value = [];
   budgetTotalYuan.value = '';
   budgetNote.value = '';
   budgetSplits.value = [{ agreementId: null, amountYuan: '' }];
+}
+
+async function loadBudgetProject(projectId: string | null) {
+  clearBudgetProjectContext();
+  const sequence = budgetProjectSequence;
   if (!projectId) return;
+  selectedBudgetProjectId.value = projectId;
   const project = projects.value.find((item) => item.id === projectId);
   if (project?.frameworkId && project.frameworkId !== selectedFrameworkId.value) {
     selectedFrameworkId.value = project.frameworkId;
     await loadFrameworkContext();
   }
-  const data = await apiRequest<{ items: ProjectBudgetSummary[] }>(`/api/budgets?projectId=${encodeURIComponent(projectId)}`);
+  if (sequence !== budgetProjectSequence || selectedBudgetProjectId.value !== projectId) return;
+  let data: { items: ProjectBudgetSummary[] };
+  try {
+    data = await apiRequest<{ items: ProjectBudgetSummary[] }>(`/api/budgets?projectId=${encodeURIComponent(projectId)}`);
+  } catch (cause) {
+    if (sequence !== budgetProjectSequence || selectedBudgetProjectId.value !== projectId) return;
+    throw cause;
+  }
+  if (sequence !== budgetProjectSequence || selectedBudgetProjectId.value !== projectId) return;
   budgets.value = data.items;
   const budget = data.items[0];
   if (budget) {
@@ -168,7 +263,12 @@ async function loadInitial() {
     agreementForm.value.validTo = `${year}-12-31`;
     entryBusinessDate.value = businessToday();
     await loadBase();
+    const routeProjectId = typeof route.query.projectId === 'string' ? route.query.projectId : null;
+    const projectId = routeProjectId ?? selectedBudgetProjectId.value;
+    const routeProject = projectId ? projects.value.find((item) => item.id === projectId) ?? null : null;
+    if (routeProject?.frameworkId) selectedFrameworkId.value = routeProject.frameworkId;
     await loadFrameworkContext();
+    if (routeProject) await loadBudgetProject(routeProject.id);
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : '读取资金数据失败';
   } finally {
@@ -177,9 +277,36 @@ async function loadInitial() {
 }
 
 async function selectFramework(value: string | null) {
+  error.value = '';
   selectedFrameworkId.value = value;
   bindingFrameworkId.value = value;
-  await loadFrameworkContext();
+  const selectedBudgetProject = projects.value.find((item) => item.id === selectedBudgetProjectId.value);
+  const clearBudgetProject = Boolean(selectedBudgetProject && selectedBudgetProject.frameworkId !== value);
+  if (clearBudgetProject) clearBudgetProjectContext();
+  const selectedEntryProject = projects.value.find((item) => item.id === entryProjectId.value);
+  if (selectedEntryProject && selectedEntryProject.frameworkId !== value) {
+    entryProjectId.value = null;
+    entrySplits.value = [{ agreementId: null, amountYuan: '' }];
+  }
+  const query = { ...route.query };
+  if (value) query.framework = value;
+  else delete query.framework;
+  if (clearBudgetProject) delete query.projectId;
+  void router.replace({ query });
+  try {
+    await loadFrameworkContext();
+  } catch (cause) {
+    if (selectedFrameworkId.value === value) error.value = cause instanceof Error ? cause.message : '读取资金数据失败';
+  }
+}
+
+async function selectBudgetProject(projectId: string | null) {
+  error.value = '';
+  try {
+    await loadBudgetProject(projectId);
+  } catch (cause) {
+    if (selectedBudgetProjectId.value === projectId) error.value = cause instanceof Error ? cause.message : '读取项目预算失败';
+  }
 }
 
 async function createFramework() {
@@ -190,13 +317,19 @@ async function createFramework() {
   }
   saving.value = true;
   try {
-    await apiRequest('/api/frameworks', jsonRequestInit('POST', {
-      code: frameworkForm.value.code.trim(), name: frameworkForm.value.name.trim(), totalAmountFen, annualTargetFen,
-      startDate: frameworkForm.value.startDate, endDate: frameworkForm.value.endDate,
-    }));
+    try {
+      await apiRequest('/api/frameworks', jsonRequestInit('POST', {
+        code: frameworkForm.value.code.trim(), name: frameworkForm.value.name.trim(), totalAmountFen, annualTargetFen,
+        startDate: frameworkForm.value.startDate, endDate: frameworkForm.value.endDate,
+      }));
+    } catch (cause) {
+      message.error(cause instanceof Error ? cause.message : '框架创建失败');
+      return;
+    }
     frameworkForm.value.code = ''; frameworkForm.value.name = ''; frameworkForm.value.totalYuan = ''; frameworkForm.value.annualTargetYuan = '';
-    await loadBase(); await loadFrameworkContext(); message.success('框架已创建');
-  } catch (cause) { message.error(cause instanceof Error ? cause.message : '框架创建失败'); }
+    showFrameworkForm.value = false;
+    await refreshAfterCommittedWrite('框架已创建', async () => { await loadBase(); await loadFrameworkContext(); });
+  }
   finally { saving.value = false; }
 }
 
@@ -205,13 +338,19 @@ async function createAgreement() {
   if (!frameworkId || !agreementForm.value.code.trim() || !agreementForm.value.name.trim() || amountFen === null) { message.warning('请完整填写协议信息'); return; }
   saving.value = true;
   try {
-    await apiRequest('/api/agreements', jsonRequestInit('POST', {
-      frameworkId, code: agreementForm.value.code.trim(), name: agreementForm.value.name.trim(), amountFen,
-      validFrom: agreementForm.value.validFrom, validTo: agreementForm.value.validTo, status: agreementForm.value.status,
-    }));
+    try {
+      await apiRequest('/api/agreements', jsonRequestInit('POST', {
+        frameworkId, code: agreementForm.value.code.trim(), name: agreementForm.value.name.trim(), amountFen,
+        validFrom: agreementForm.value.validFrom, validTo: agreementForm.value.validTo, status: agreementForm.value.status,
+      }));
+    } catch (cause) {
+      message.error(cause instanceof Error ? cause.message : '协议创建失败');
+      return;
+    }
     agreementForm.value.code = ''; agreementForm.value.name = ''; agreementForm.value.amountYuan = '';
-    await loadFrameworkContext(); message.success('执行协议已创建');
-  } catch (cause) { message.error(cause instanceof Error ? cause.message : '协议创建失败'); }
+    showAgreementForm.value = false;
+    await refreshAfterCommittedWrite('执行协议已创建', loadFrameworkContext);
+  }
   finally { saving.value = false; }
 }
 
@@ -220,9 +359,14 @@ async function bindProject() {
   if (!project || !bindingFrameworkId.value) { message.warning('请选择项目和框架'); return; }
   saving.value = true;
   try {
-    await apiRequest(`/api/projects/${project.id}/framework`, jsonRequestInit('PUT', { expectedVersion: project.version, frameworkId: bindingFrameworkId.value }));
-    await loadBase(); message.success('项目框架归属已更新');
-  } catch (cause) { message.error(cause instanceof Error ? cause.message : '项目绑定失败'); }
+    try {
+      await apiRequest(`/api/projects/${project.id}/framework`, jsonRequestInit('PUT', { expectedVersion: project.version, frameworkId: bindingFrameworkId.value }));
+    } catch (cause) {
+      message.error(cause instanceof Error ? cause.message : '项目绑定失败');
+      return;
+    }
+    await refreshAfterCommittedWrite('项目框架归属已更新', loadBase);
+  }
   finally { saving.value = false; }
 }
 
@@ -237,14 +381,19 @@ async function saveBudget() {
   const payload = { projectId, totalAmountFen, note: budgetNote.value.trim() || null, allocations: allocations.map((item) => ({ agreementId: item.agreementId, amountFen: item.amountFen! })) };
   saving.value = true;
   try {
-    if (currentBudget.value) {
-      const { projectId: _ignored, ...update } = payload;
-      await apiRequest(`/api/budgets/${currentBudget.value.id}`, jsonRequestInit('PUT', { expectedVersion: currentBudget.value.version, ...update }));
-    } else {
-      await apiRequest('/api/budgets', jsonRequestInit('POST', payload));
+    try {
+      if (currentBudget.value) {
+        const { projectId: _ignored, ...update } = payload;
+        await apiRequest(`/api/budgets/${currentBudget.value.id}`, jsonRequestInit('PUT', { expectedVersion: currentBudget.value.version, ...update }));
+      } else {
+        await apiRequest('/api/budgets', jsonRequestInit('POST', payload));
+      }
+    } catch (cause) {
+      message.error(cause instanceof Error ? cause.message : '预算保存失败');
+      return;
     }
-    await loadBudgetProject(projectId); await loadFrameworkContext(); message.success('预算草稿已保存');
-  } catch (cause) { message.error(cause instanceof Error ? cause.message : '预算保存失败'); }
+    await refreshAfterCommittedWrite('预算草稿已保存', async () => { await loadBudgetProject(projectId); await loadFrameworkContext(); });
+  }
   finally { saving.value = false; }
 }
 
@@ -252,9 +401,14 @@ async function confirmBudget() {
   const budget = currentBudget.value; if (!budget) return;
   saving.value = true;
   try {
-    await apiRequest(`/api/budgets/${budget.id}/confirm`, jsonRequestInit('POST', { expectedVersion: budget.version }));
-    await loadBudgetProject(budget.projectId); await loadFrameworkContext(); message.success('预算已确认；不会自动生成预算发生流水');
-  } catch (cause) { message.error(cause instanceof Error ? cause.message : '预算确认失败'); }
+    try {
+      await apiRequest(`/api/budgets/${budget.id}/confirm`, jsonRequestInit('POST', { expectedVersion: budget.version }));
+    } catch (cause) {
+      message.error(cause instanceof Error ? cause.message : '预算确认失败');
+      return;
+    }
+    await refreshAfterCommittedWrite('预算已确认；不会自动生成预算发生流水', async () => { await loadBudgetProject(budget.projectId); await loadFrameworkContext(); });
+  }
   finally { saving.value = false; }
 }
 
@@ -268,14 +422,20 @@ async function postEntry() {
   if (allocations.some((item) => !item.agreementId || item.amountFen === null)) { message.warning('流水协议分配需完整填写'); return; }
   saving.value = true;
   try {
-    await apiRequest('/api/financial-entries', jsonRequestInit('POST', {
-      type: entryType.value, projectId: project.id, amountFen, businessDate: entryBusinessDate.value, note: entryNote.value.trim() || null,
-      allocations: allocations.map((item) => ({ agreementId: item.agreementId, amountFen: item.amountFen! })),
-    }));
+    try {
+      await apiRequest('/api/financial-entries', jsonRequestInit('POST', {
+        type: entryType.value, projectId: project.id, amountFen, businessDate: entryBusinessDate.value, note: entryNote.value.trim() || null,
+        allocations: allocations.map((item) => ({ agreementId: item.agreementId, amountFen: item.amountFen! })),
+      }));
+    } catch (cause) {
+      message.error(cause instanceof Error ? cause.message : '流水登记失败');
+      return;
+    }
     entryAmountYuan.value = ''; entryNote.value = ''; entrySplits.value = [{ agreementId: null, amountYuan: '' }];
+    showEntryForm.value = false;
     if (project.frameworkId && project.frameworkId !== selectedFrameworkId.value) selectedFrameworkId.value = project.frameworkId;
-    await loadFrameworkContext(); message.success('资金流水已登记');
-  } catch (cause) { message.error(cause instanceof Error ? cause.message : '流水登记失败'); }
+    await refreshAfterCommittedWrite('资金流水已登记', loadFrameworkContext);
+  }
   finally { saving.value = false; }
 }
 
@@ -287,11 +447,11 @@ const frameworkColumns = [
 const agreementColumns = [
   { title: '协议编号', key: 'code', width: 130 }, { title: '名称', key: 'name', minWidth: 160 },
   { title: '额度', key: 'amountFen', width: 130, render: (row: AgreementSummary) => formatMoney(row.amountFen) },
-  { title: '状态', key: 'status', width: 90, render: (row: AgreementSummary) => h(NTag, { size: 'small', type: row.status === 'active' ? 'success' : 'warning', bordered: false }, { default: () => row.status }) },
+  { title: '状态', key: 'status', width: 90, render: (row: AgreementSummary) => h(NTag, { size: 'small', type: agreementStatusType(row.status), bordered: false }, { default: () => agreementStatusLabel(row.status) }) },
 ];
 const entryColumns = [
   { title: '业务日', key: 'businessDate', width: 120 },
-  { title: '类型', key: 'type', width: 110, render: (row: FinancialEntrySummary) => row.type === 'budget_occurrence' ? '预算发生' : '实际发生' },
+  { title: '类型', key: 'type', width: 110, render: (row: FinancialEntrySummary) => entryTypeLabel(row.type) },
   { title: '项目', key: 'projectName', minWidth: 160 },
   { title: '金额', key: 'amountFen', width: 130, render: (row: FinancialEntrySummary) => formatMoney(row.amountFen) },
 ];
@@ -302,19 +462,25 @@ onMounted(loadInitial);
 <template>
   <n-spin :show="loading">
     <div class="view-stack finance-view">
-      <n-alert v-if="error" type="error" title="读取失败">{{ error }}</n-alert>
+      <n-alert v-if="error" type="error" title="读取失败">
+        <div class="load-error-content"><span>{{ error }}</span><n-button data-test="retry-finance" size="small" secondary @click="loadInitial">重新加载</n-button></div>
+      </n-alert>
 
-      <n-card title="资金口径">
-        <n-alert type="info" :bordered="false">
-          预算确认占用、预算发生、实际发生分别保存、分别统计。确认预算不会自动生成预算发生流水；80%/90%和预算超框架仅预警，不自动阻断合法记录。
-        </n-alert>
-        <div class="toolbar">
-          <n-select :value="selectedFrameworkId" :options="frameworkOptions" placeholder="选择框架" @update:value="selectFramework" />
-          <n-select v-model:value="metric" :options="[
-            { label: '预算确认占用', value: 'budget' },
-            { label: '预算发生', value: 'occurrence' },
-            { label: '实际发生', value: 'actual' },
-          ]" />
+      <header class="page-header">
+        <div class="page-header-copy">
+          <span class="page-eyebrow">资金管理</span>
+          <h2 class="page-title">资金管理</h2>
+          <p class="page-description">框架额度、预算确认、预算发生和实际发生保持独立账目，先看状态，再按需登记。</p>
+        </div>
+        <div v-if="projectReturnTarget" class="page-actions">
+          <n-button data-test="back-to-project" secondary @click="returnToProject">返回项目</n-button>
+        </div>
+      </header>
+
+      <section class="finance-overview">
+        <div class="finance-context">
+          <n-select data-test="finance-framework" :disabled="saving" :value="selectedFrameworkId" :options="frameworkOptions" placeholder="选择框架" @update:value="selectFramework" />
+          <span class="finance-context-note">预算与发生分账，不自动互转</span>
         </div>
         <div v-if="summary" class="metrics">
           <div><span>框架总额</span><strong>{{ formatMoney(summary.framework.totalAmountFen) }}</strong></div>
@@ -332,95 +498,162 @@ onMounted(loadInitial);
             <span>使用率 {{ formatPercent(item.usageBasisPoints) }}</span><n-tag v-if="item.usageWarning" type="warning" :bordered="false">≥90%</n-tag>
           </div>
         </div>
-      </n-card>
+      </section>
 
-      <n-tabs type="line" animated>
+      <n-tabs :value="activeTab" type="line" animated class="workspace-tabs" @update:value="setActiveTab">
         <n-tab-pane name="frameworks" tab="框架与协议">
-          <n-card title="框架">
-            <n-data-table v-if="frameworks.length" :columns="frameworkColumns" :data="frameworks" :pagination="false" :scroll-x="650" />
-            <n-empty v-else description="暂无框架。" />
-            <n-form v-if="canManageStructure" class="form-grid" label-placement="top">
-              <n-form-item label="框架编号"><n-input v-model:value="frameworkForm.code" data-test="framework-code" /></n-form-item>
-              <n-form-item label="框架名称"><n-input v-model:value="frameworkForm.name" data-test="framework-name" /></n-form-item>
-              <n-form-item label="框架总额（元）"><n-input v-model:value="frameworkForm.totalYuan" data-test="framework-total" /></n-form-item>
-              <n-form-item label="年度目标（元，可空）"><n-input v-model:value="frameworkForm.annualTargetYuan" /></n-form-item>
-              <n-form-item label="开始日期"><n-input v-model:value="frameworkForm.startDate" /></n-form-item>
-              <n-form-item label="结束日期"><n-input v-model:value="frameworkForm.endDate" /></n-form-item>
+          <section class="workspace-panel">
+            <header class="workspace-panel-header">
+              <div><h3>框架</h3><p>先选择当前业务框架，再查看协议和额度使用情况。</p></div>
+              <n-button v-if="canManageStructure" data-test="open-framework-form" :disabled="saving" secondary @click="showFrameworkForm = !showFrameworkForm">
+                {{ showFrameworkForm ? '收起' : '新建框架' }}
+              </n-button>
+            </header>
+            <div class="workspace-panel-body data-panel-body">
+              <n-data-table v-if="frameworks.length" class="desktop-finance-table" :columns="frameworkColumns" :data="frameworks" :pagination="false" :scroll-x="650" />
+              <div v-if="frameworks.length" class="mobile-finance-list">
+                <div v-for="item in frameworks" :key="item.id" class="mobile-finance-row">
+                  <div class="mobile-finance-heading">
+                    <div><strong>{{ item.name }}</strong><small>{{ item.code }}</small></div>
+                    <strong class="mobile-finance-amount">{{ formatMoney(item.totalAmountFen) }}</strong>
+                  </div>
+                  <div class="mobile-finance-meta">
+                    <span>年度目标 {{ item.annualTargetFen === null ? '默认框架总额' : formatMoney(item.annualTargetFen) }}</span>
+                    <span>{{ item.startDate }} 至 {{ item.endDate }}</span>
+                  </div>
+                </div>
+              </div>
+              <n-empty v-else description="暂无框架。" />
+            </div>
+            <n-form v-if="canManageStructure && showFrameworkForm" class="form-grid edit-surface" label-placement="top">
+              <n-form-item label="框架编号"><n-input v-model:value="frameworkForm.code" data-test="framework-code" :disabled="saving" /></n-form-item>
+              <n-form-item label="框架名称"><n-input v-model:value="frameworkForm.name" data-test="framework-name" :disabled="saving" /></n-form-item>
+              <n-form-item label="框架总额（元）"><n-input v-model:value="frameworkForm.totalYuan" data-test="framework-total" :disabled="saving" /></n-form-item>
+              <n-form-item label="年度目标（元，可空）"><n-input v-model:value="frameworkForm.annualTargetYuan" :disabled="saving" /></n-form-item>
+              <n-form-item label="开始日期"><n-input v-model:value="frameworkForm.startDate" :disabled="saving" /></n-form-item>
+              <n-form-item label="结束日期"><n-input v-model:value="frameworkForm.endDate" :disabled="saving" /></n-form-item>
               <n-form-item><n-button data-test="create-framework" type="primary" :loading="saving" @click="createFramework">新增框架</n-button></n-form-item>
             </n-form>
-          </n-card>
+          </section>
 
-          <n-card v-if="selectedFramework" title="执行协议" class="detail-card">
-            <n-data-table v-if="agreements.length" :columns="agreementColumns" :data="agreements" :pagination="false" :scroll-x="650" />
-            <n-empty v-else description="当前框架暂无执行协议。" />
-            <n-form v-if="canManageStructure" class="form-grid" label-placement="top">
-              <n-form-item label="协议编号"><n-input v-model:value="agreementForm.code" /></n-form-item>
-              <n-form-item label="协议名称"><n-input v-model:value="agreementForm.name" /></n-form-item>
-              <n-form-item label="协议额度（元）"><n-input v-model:value="agreementForm.amountYuan" /></n-form-item>
-              <n-form-item label="有效期开始"><n-input v-model:value="agreementForm.validFrom" /></n-form-item>
-              <n-form-item label="有效期结束"><n-input v-model:value="agreementForm.validTo" /></n-form-item>
-              <n-form-item label="状态"><n-select v-model:value="agreementForm.status" :options="[{ label: '有效', value: 'active' }, { label: '暂停', value: 'paused' }, { label: '到期', value: 'expired' }]" /></n-form-item>
+          <section v-if="selectedFramework" class="workspace-panel detail-panel">
+            <header class="workspace-panel-header">
+              <div><h3>执行协议</h3><p>{{ selectedFramework.name }} 下的预支额度和有效期。</p></div>
+              <n-button v-if="canManageStructure" :disabled="saving" secondary @click="showAgreementForm = !showAgreementForm">
+                {{ showAgreementForm ? '收起' : '新增协议' }}
+              </n-button>
+            </header>
+            <div class="workspace-panel-body data-panel-body">
+              <n-data-table v-if="agreements.length" class="desktop-finance-table" :columns="agreementColumns" :data="agreements" :pagination="false" :scroll-x="650" />
+              <div v-if="agreements.length" class="mobile-finance-list">
+                <div v-for="item in agreements" :key="item.id" class="mobile-finance-row">
+                  <div class="mobile-finance-heading">
+                    <div><strong>{{ item.name }}</strong><small>{{ item.code }}</small></div>
+                    <n-tag size="small" :bordered="false" :type="agreementStatusType(item.status)">{{ agreementStatusLabel(item.status) }}</n-tag>
+                  </div>
+                  <div class="mobile-finance-meta">
+                    <span>额度 {{ formatMoney(item.amountFen) }}</span>
+                    <span>{{ item.validFrom }} 至 {{ item.validTo }}</span>
+                  </div>
+                </div>
+              </div>
+              <n-empty v-else description="当前框架暂无执行协议。" />
+            </div>
+            <n-form v-if="canManageStructure && showAgreementForm" class="form-grid edit-surface" label-placement="top">
+              <n-form-item label="协议编号"><n-input v-model:value="agreementForm.code" :disabled="saving" /></n-form-item>
+              <n-form-item label="协议名称"><n-input v-model:value="agreementForm.name" :disabled="saving" /></n-form-item>
+              <n-form-item label="协议额度（元）"><n-input v-model:value="agreementForm.amountYuan" :disabled="saving" /></n-form-item>
+              <n-form-item label="有效期开始"><n-input v-model:value="agreementForm.validFrom" :disabled="saving" /></n-form-item>
+              <n-form-item label="有效期结束"><n-input v-model:value="agreementForm.validTo" :disabled="saving" /></n-form-item>
+              <n-form-item label="状态"><n-select v-model:value="agreementForm.status" :disabled="saving" :options="[{ label: '有效', value: 'active' }, { label: '暂停', value: 'paused' }, { label: '到期', value: 'expired' }]" /></n-form-item>
               <n-form-item><n-button type="primary" :loading="saving" @click="createAgreement">新增执行协议</n-button></n-form-item>
             </n-form>
-          </n-card>
+          </section>
         </n-tab-pane>
 
         <n-tab-pane name="budgets" tab="子项目预算">
-          <n-card title="项目框架归属" v-if="canManageStructure">
-            <div class="toolbar">
-              <n-select v-model:value="bindingProjectId" :options="projectOptions" placeholder="选择项目" />
-              <n-select v-model:value="bindingFrameworkId" :options="frameworkOptions" placeholder="选择框架" />
+          <section class="workspace-panel">
+            <header class="workspace-panel-header">
+              <div><h3>子项目预算</h3><p>预算草稿允许不完整；确认时协议分配必须精确等于预算总额。</p></div>
+            </header>
+            <div v-if="canManageStructure" class="binding-toolbar">
+              <span>项目框架归属</span>
+              <n-select v-model:value="bindingProjectId" :disabled="saving" :options="projectOptions" placeholder="选择项目" />
+              <n-select v-model:value="bindingFrameworkId" :disabled="saving" :options="frameworkOptions" placeholder="选择框架" />
               <n-button :loading="saving" @click="bindProject">保存归属</n-button>
             </div>
-          </n-card>
-          <n-card title="预算草稿 / 确认" class="detail-card">
-            <n-alert type="info" :bordered="false">预算草稿可以不完整；确认预算时协议分配合计必须等于预算总额，且协议必须与项目同框架并在有效期内。</n-alert>
-            <n-form class="budget-form" label-placement="top">
-              <n-form-item label="子项目"><n-select data-test="budget-project" :value="selectedBudgetProjectId" :options="projectOptions" @update:value="loadBudgetProject" /></n-form-item>
-              <n-form-item label="预算总额（元）"><n-input v-model:value="budgetTotalYuan" data-test="budget-total" :disabled="!canFinanceWrite" /></n-form-item>
-              <n-form-item label="说明"><n-input v-model:value="budgetNote" :disabled="!canFinanceWrite" /></n-form-item>
-            </n-form>
-            <div v-for="(split, index) in budgetSplits" :key="index" class="split-row">
-              <n-select :data-test="`budget-agreement-${index}`" v-model:value="split.agreementId" :options="agreementOptions" :disabled="!canFinanceWrite" placeholder="执行协议" />
-              <n-input :data-test="`budget-allocation-${index}`" v-model:value="split.amountYuan" :disabled="!canFinanceWrite" placeholder="分配金额（元）" />
-              <n-button v-if="canFinanceWrite" @click="removeBudgetSplit(index)">删除</n-button>
+            <div class="workspace-panel-body budget-body">
+              <n-alert type="info" :bordered="false">确认预算时协议必须与项目属于同一框架并在有效期内；预算确认占用不会自动生成预算发生。</n-alert>
+              <n-form class="budget-form" label-placement="top">
+              <n-form-item label="子项目"><n-select data-test="budget-project" :disabled="saving" :value="selectedBudgetProjectId" :options="currentFrameworkProjectOptions" @update:value="selectBudgetProject" /></n-form-item>
+              <n-form-item label="预算总额（元）"><n-input v-model:value="budgetTotalYuan" data-test="budget-total" :disabled="!canFinanceWrite || saving" /></n-form-item>
+              <n-form-item label="说明"><n-input v-model:value="budgetNote" :disabled="!canFinanceWrite || saving" /></n-form-item>
+              </n-form>
+              <div v-for="(split, index) in budgetSplits" :key="index" class="split-row">
+                <n-select :data-test="`budget-agreement-${index}`" v-model:value="split.agreementId" :options="agreementOptions" :disabled="!canFinanceWrite || saving" placeholder="执行协议" />
+                <n-input :data-test="`budget-allocation-${index}`" v-model:value="split.amountYuan" :disabled="!canFinanceWrite || saving" placeholder="分配金额（元）" />
+                <n-button v-if="canFinanceWrite" :disabled="saving" @click="removeBudgetSplit(index)">删除</n-button>
+              </div>
+              <n-space v-if="canFinanceWrite" class="actions">
+                <n-button data-test="add-budget-split" :disabled="saving" @click="addBudgetSplit">增加协议分配</n-button>
+                <n-button data-test="save-budget" type="primary" :loading="saving" @click="saveBudget">保存预算草稿</n-button>
+                <n-button v-if="currentBudget" type="success" :loading="saving" @click="confirmBudget">确认预算版本</n-button>
+              </n-space>
+              <div v-if="currentBudget" class="status-line">当前：{{ currentBudget.status === 'confirmed' ? `已确认 v${currentBudget.budgetVersion}` : '草稿' }}；对象版本 {{ currentBudget.version }}</div>
             </div>
-            <n-space v-if="canFinanceWrite" class="actions">
-              <n-button data-test="add-budget-split" @click="addBudgetSplit">增加协议分配</n-button>
-              <n-button data-test="save-budget" type="primary" :loading="saving" @click="saveBudget">保存预算草稿</n-button>
-              <n-button v-if="currentBudget" type="success" :loading="saving" @click="confirmBudget">确认预算版本</n-button>
-            </n-space>
-            <div v-if="currentBudget" class="status-line">当前：{{ currentBudget.status === 'confirmed' ? `已确认 v${currentBudget.budgetVersion}` : '草稿' }}；对象版本 {{ currentBudget.version }}</div>
-          </n-card>
+          </section>
         </n-tab-pane>
 
         <n-tab-pane name="entries" tab="资金流水">
-          <n-card title="登记预算发生 / 实际发生">
+          <section class="workspace-panel">
+            <header class="workspace-panel-header">
+              <div><h3>当前框架流水</h3><p>预算发生和实际发生分账记录；列表按服务端游标完整翻页。</p></div>
+              <n-button v-if="canFinanceWrite" data-test="open-entry-form" :disabled="saving" type="primary" @click="showEntryForm = !showEntryForm">
+                {{ showEntryForm ? '收起登记' : '登记流水' }}
+              </n-button>
+            </header>
+            <div class="workspace-panel-body data-panel-body">
+              <n-data-table v-if="entries.length" class="desktop-finance-table" :columns="entryColumns" :data="entries" :pagination="false" :scroll-x="650" />
+              <div v-if="entries.length" class="mobile-finance-list">
+                <div v-for="item in entries" :key="item.id" class="mobile-finance-row">
+                  <div class="mobile-finance-heading">
+                    <div><strong>{{ item.projectName }}</strong><small>{{ item.businessDate }}</small></div>
+                    <strong class="mobile-finance-amount">{{ formatMoney(item.amountFen) }}</strong>
+                  </div>
+                  <div class="mobile-finance-meta mobile-finance-meta-line">
+                    <n-tag size="small" :bordered="false">{{ entryTypeLabel(item.type) }}</n-tag>
+                    <span v-if="item.note">{{ item.note }}</span>
+                  </div>
+                </div>
+              </div>
+              <n-empty v-else description="暂无资金流水。" />
+              <div v-if="entryCursor" class="load-more">
+                <n-button data-test="load-more-entries" @click="loadMoreEntries">加载更多流水</n-button>
+              </div>
+            </div>
+          </section>
+          <section v-if="showEntryForm && canFinanceWrite" class="workspace-panel detail-panel edit-panel">
+            <header class="workspace-panel-header"><div><h3>登记预算发生 / 实际发生</h3><p>该操作新增不可变资金事实；错误记录通过冲销留痕。</p></div></header>
+            <div class="workspace-panel-body">
             <n-alert type="warning" :bordered="false">登记流水必须关联同框架、业务日期有效的执行协议。预算发生和实际发生是不同账目，不能相互代替。</n-alert>
             <n-form class="entry-form" label-placement="top">
-              <n-form-item label="子项目"><n-select data-test="entry-project" v-model:value="entryProjectId" :options="projectOptions" /></n-form-item>
-              <n-form-item label="流水类型"><n-select data-test="entry-type" v-model:value="entryType" :options="[{ label: '预算发生', value: 'budget_occurrence' }, { label: '实际发生', value: 'actual_cost' }]" /></n-form-item>
-              <n-form-item label="金额（元）"><n-input data-test="entry-amount" v-model:value="entryAmountYuan" /></n-form-item>
-              <n-form-item label="业务日期"><n-input data-test="entry-date" v-model:value="entryBusinessDate" /></n-form-item>
-              <n-form-item label="说明"><n-input v-model:value="entryNote" /></n-form-item>
+              <n-form-item label="子项目"><n-select data-test="entry-project" :disabled="saving" v-model:value="entryProjectId" :options="currentFrameworkProjectOptions" /></n-form-item>
+              <n-form-item label="流水类型"><n-select data-test="entry-type" :disabled="saving" v-model:value="entryType" :options="[{ label: '预算发生', value: 'budget_occurrence' }, { label: '实际发生', value: 'actual_cost' }]" /></n-form-item>
+              <n-form-item label="金额（元）"><n-input data-test="entry-amount" :disabled="saving" v-model:value="entryAmountYuan" /></n-form-item>
+              <n-form-item label="业务日期"><n-input data-test="entry-date" :disabled="saving" v-model:value="entryBusinessDate" /></n-form-item>
+              <n-form-item label="说明"><n-input v-model:value="entryNote" :disabled="saving" /></n-form-item>
             </n-form>
             <div v-for="(split, index) in entrySplits" :key="index" class="split-row">
-              <n-select :data-test="`entry-agreement-${index}`" v-model:value="split.agreementId" :options="agreementOptions" placeholder="执行协议" />
-              <n-input :data-test="`entry-allocation-${index}`" v-model:value="split.amountYuan" placeholder="分配金额（元）" />
-              <n-button @click="removeEntrySplit(index)">删除</n-button>
+              <n-select :data-test="`entry-agreement-${index}`" v-model:value="split.agreementId" :disabled="saving" :options="agreementOptions" placeholder="执行协议" />
+              <n-input :data-test="`entry-allocation-${index}`" v-model:value="split.amountYuan" :disabled="saving" placeholder="分配金额（元）" />
+              <n-button :disabled="saving" @click="removeEntrySplit(index)">删除</n-button>
             </div>
             <n-space v-if="canFinanceWrite" class="actions">
-              <n-button @click="addEntrySplit">增加协议分配</n-button>
+              <n-button :disabled="saving" @click="addEntrySplit">增加协议分配</n-button>
               <n-button data-test="post-entry" type="primary" :loading="saving" @click="postEntry">登记流水</n-button>
             </n-space>
-          </n-card>
-          <n-card title="当前框架流水" class="detail-card">
-            <n-data-table v-if="entries.length" :columns="entryColumns" :data="entries" :pagination="false" :scroll-x="650" />
-            <n-empty v-else description="暂无资金流水。" />
-            <div v-if="entryCursor" class="load-more">
-              <n-button data-test="load-more-entries" @click="loadMoreEntries">加载更多流水</n-button>
             </div>
-          </n-card>
+          </section>
         </n-tab-pane>
       </n-tabs>
     </div>
@@ -428,21 +661,77 @@ onMounted(loadInitial);
 </template>
 
 <style scoped>
-.finance-view { gap: 16px; }
+.finance-view { gap: 18px; max-width: 1420px; }
+.finance-overview { overflow: hidden; border: 1px solid var(--ui-border); border-radius: var(--ui-radius-lg); background: var(--ui-surface); }
+.finance-context { display: grid; grid-template-columns: minmax(260px, 420px) 1fr; gap: 10px; align-items: center; min-height: 64px; padding: 12px 16px; border-bottom: 1px solid var(--ui-border); }
+.finance-context-note { justify-self: end; color: var(--ui-text-tertiary); font-size: 13px; }
+.workspace-tabs :deep(.n-tabs-tab) { padding-inline: 2px; margin-right: 24px; font-size: 14px; }
+.workspace-panel { overflow: hidden; border: 1px solid var(--ui-border); border-radius: var(--ui-radius-lg); background: var(--ui-surface); }
+.workspace-panel + .workspace-panel { margin-top: 16px; }
+.workspace-panel-header { display: flex; align-items: center; justify-content: space-between; gap: 20px; min-height: 60px; padding: 13px 16px; border-bottom: 1px solid var(--ui-border); }
+.workspace-panel-header h3 { margin: 0; font-size: 14px; font-weight: 680; }
+.workspace-panel-header p { margin: 3px 0 0; color: var(--ui-text-secondary); font-size: 13px; line-height: 1.5; }
+.workspace-panel-body { padding: 16px; }
+.data-panel-body { padding: 0; }
+.data-panel-body :deep(.n-data-table) { border: 0; border-radius: 0; }
+.data-panel-body > .n-empty { padding: 30px 16px; }
+.mobile-finance-list { display: none; }
+.mobile-finance-row { display: grid; gap: 9px; padding: 14px; border-bottom: 1px solid var(--ui-border); }
+.mobile-finance-row:last-child { border-bottom: 0; }
+.mobile-finance-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
+.mobile-finance-heading > div { display: grid; gap: 3px; min-width: 0; }
+.mobile-finance-heading strong { color: var(--ui-text); font-size: 13px; font-weight: 670; }
+.mobile-finance-heading small { color: var(--ui-text-tertiary); font-size: 13px; }
+.mobile-finance-amount { flex: 0 0 auto; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.mobile-finance-meta { display: flex; flex-wrap: wrap; gap: 5px 12px; color: var(--ui-text-secondary); font-size: 13px; line-height: 1.5; }
+.mobile-finance-meta-line { align-items: center; }
+.detail-panel { margin-top: 16px; }
+.edit-panel { border-color: var(--ui-border-strong); }
 .toolbar { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(180px, 320px) auto; gap: 10px; margin-top: 16px; align-items: center; }
-.metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-top: 18px; }
-.metrics > div { display: grid; gap: 4px; padding: 12px; border: 1px solid #e6eaf0; border-radius: 10px; background: #fafbfc; }
-.metrics span { color: #758094; font-size: 12px; }
-.metrics strong { font-size: 16px; }
-.agreement-metrics { display: grid; gap: 8px; margin-top: 14px; }
-.metric-row { display: grid; grid-template-columns: minmax(140px, 1fr) 110px 160px 130px auto; gap: 10px; align-items: center; border-top: 1px solid #edf0f4; padding-top: 9px; }
+.binding-toolbar { display: grid; grid-template-columns: auto minmax(220px, 1fr) minmax(180px, 320px) auto; gap: 10px; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--ui-border); background: var(--ui-surface-subtle); }
+.binding-toolbar > span { color: var(--ui-text-secondary); font-size: 13px; font-weight: 650; white-space: nowrap; }
+.metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.metrics > div { display: grid; align-content: center; gap: 6px; min-height: 92px; padding: 16px 18px; border-right: 1px solid var(--ui-border); border-bottom: 1px solid var(--ui-border); background: var(--ui-surface); }
+.metrics > div:nth-child(4n) { border-right: 0; }
+.metrics > div:nth-last-child(-n+4) { border-bottom: 0; }
+.metrics span { color: var(--ui-text-secondary); font-size: 13px; }
+.metrics strong { color: var(--ui-text); font-size: 18px; font-weight: 690; font-variant-numeric: tabular-nums; }
+.agreement-metrics { display: grid; padding: 0 16px 10px; border-top: 1px solid var(--ui-border); }
+.metric-row { display: grid; grid-template-columns: minmax(140px, 1fr) 110px 160px 130px auto; gap: 10px; align-items: center; min-height: 48px; border-bottom: 1px solid var(--ui-border); color: var(--ui-text-secondary); font-size: 13px; }
+.metric-row:last-child { border-bottom: 0; }
+.metric-row strong { color: var(--ui-text); font-size: 13px; font-weight: 650; }
 .form-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0 12px; margin-top: 16px; align-items: end; }
-.detail-card { margin-top: 16px; }
+.edit-surface { margin: 0; padding: 16px; border-top: 1px solid var(--ui-border); background: var(--ui-surface-subtle); }
+.budget-body { display: grid; gap: 12px; }
 .budget-form, .entry-form { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 12px; margin-top: 16px; }
 .entry-form { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 .split-row { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(150px, 240px) auto; gap: 10px; margin: 8px 0; }
 .actions { margin-top: 12px; }
-.status-line { margin-top: 12px; color: #667085; }
-@media (max-width: 1000px) { .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } .form-grid, .entry-form { grid-template-columns: repeat(2, minmax(0, 1fr)); } .metric-row { grid-template-columns: 1fr 1fr; } }
-@media (max-width: 700px) { .toolbar, .metrics, .form-grid, .budget-form, .entry-form, .split-row { grid-template-columns: 1fr; } }
+.status-line { margin-top: 12px; color: var(--ui-text-secondary); }
+.load-more { display: flex; justify-content: center; padding: 14px 0 0; }
+@media (max-width: 1000px) {
+  .finance-context { grid-template-columns: minmax(220px, 1fr) auto; }
+  .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .metrics > div:nth-child(4n) { border-right: 1px solid var(--ui-border); }
+  .metrics > div:nth-child(2n) { border-right: 0; }
+  .metrics > div:nth-last-child(-n+4) { border-bottom: 1px solid var(--ui-border); }
+  .metrics > div:nth-last-child(-n+2) { border-bottom: 0; }
+  .form-grid, .entry-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .binding-toolbar { grid-template-columns: 1fr 1fr auto; }
+  .binding-toolbar > span { grid-column: 1 / -1; }
+  .metric-row { grid-template-columns: 1fr 1fr; padding: 10px 0; }
+}
+@media (max-width: 700px) {
+  .desktop-finance-table { display: none; }
+  .mobile-finance-list { display: grid; }
+  .finance-context, .toolbar, .form-grid, .budget-form, .entry-form, .split-row, .binding-toolbar { grid-template-columns: 1fr; }
+  .finance-context { align-items: stretch; }
+  .workspace-panel-header { align-items: flex-start; }
+  .workspace-panel-header .n-button { flex: 0 0 auto; }
+  .binding-toolbar > span { grid-column: auto; }
+  .metrics { grid-template-columns: 1fr 1fr; }
+  .metrics > div { min-height: 82px; padding: 13px; }
+  .metrics strong { font-size: 16px; }
+  .metric-row { grid-template-columns: 1fr; gap: 4px; }
+}
 </style>

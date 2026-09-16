@@ -49,7 +49,7 @@ test('built SPA is served by the local Workers asset binding', async () => {
   const response = await runtime.request('/');
   assert.equal(response.status, 200);
   assert.match(response.headers.get('content-type') ?? '', /text\/html/);
-  assert.match(await response.text(), /输电项目全流程管理台/);
+  assert.match(await response.text(), /输电运检中心 · 全流程项目管理/);
 });
 
 test('API health reports service and schema readiness without implementation-stage labels', async () => {

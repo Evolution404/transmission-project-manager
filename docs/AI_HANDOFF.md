@@ -1,194 +1,129 @@
 # AI 交接说明
 
-## 当前施工状态
+日期：2026-09-16。此文档只记录当前施工状态；历史过程通过 Git 追溯，不再长期保留阶段性 WIP。
+
+## 当前任务
+
+正在执行全站 UI 重构，目标是现代、专业、简洁、优雅的企业级项目控制台。桌面端与手机端同等优先；桌面强调高效且有完成度的数据工作台，手机使用独立对象列表和单列触控流程，不做桌面页面缩小版。
+
+长期 UI 规范已经归并到 `DESIGN.md`。早期独立 UI 方案、概念截图和阶段性界面审计已清理，过程只通过 Git 历史追溯，不再维护重复施工真源。
+
+## Git 与本地环境
 
 - 仓库：`Evolution404/transmission-project-manager`
-- 默认分支：`main`
-- 当前分支：`refactor/production-release-governance-20260915`；基于已发布的 `main@146769cef34f9be4fab1f35654e67b7073a4ede7` 继续规范生产发布流程。本分支尚未合并 `main`、尚未再次发布生产。
-- 本分支最近完整代码门禁基线：Node **293/293 PASS**、Web/Vitest **114/114 PASS（19 个测试文件）**，Cloudflare/Node/Web/shared TypeScript、Web production build、Worker dry-run、Node + SQLite + Filesystem 第二运行时均 PASS。
-- 2026-09-15 用户明确授权保留 `zhangsan` 账号及原密码凭据、清空其余生产数据并发布。生产 D1 已重建为当前单一 `0001_initial_schema.sql` 基线，只保留 `zhangsan`，旧 D1 已删除。
-- 当前生产 D1：`transmission-project-manager-production-20260915`，UUID `913b6387-46b0-40c6-b0b1-11f070b99f08`；生产域名仍为 `project.980923.xyz`，对象存储仍为 Notion。
-- 当前施工分支 `refactor/production-release-governance-20260915` 正在把生产发布收口成单一 `Production promote`：普通发布直接 deploy；schema 不一致时优先迁移历史数据到当前 `0001` 新模型；无法确定性迁移则 `DECISION_REQUIRED`，在任何生产 D1 修改前停止并等待用户决定。
-- 禁止 `reset/clean`；后续任何新的生产数据清理、migration 或 release 仍需用户当次明确授权。
+- 当前施工分支：`refactor/ui-redesign-20260916`
+- 禁止 `git reset` / `git clean`，不得覆盖他人未提交修改。
+- 本地服务保持在 `http://127.0.0.1:5173/` 供实时验收。
+- 当前仅授权代码实现和本地验证；不得据此部署生产、修改生产 D1、清理生产数据或推进新的 migration 版本。
+- 开发阶段数据库继续只允许单一 `0001_initial_schema.sql` 基线；除非用户明确宣布进入运行阶段，否则不得新增 `0002+`。
 
-长期业务事实只看 `BUSINESS_BASELINE.md`、`DESIGN.md`、`DATA_MODEL.md`；测试门禁看 `TESTING.md`；生产步骤看 `PRODUCTION_RUNBOOK.md`。已完成阶段过程通过 Git 历史追溯，不再维护重复 WIP 文档。
+## 已完成的 UI 重构
 
-## 本轮生产发布治理重构
+- 新应用壳：分组桌面导航、手机底部导航、统一设计 token、浅/暗色基础能力。
+- 品牌资产已组件化：统一为“输电运检中心 / 全流程项目管理”，`BrandIcon.vue` 与 `BrandLockup.vue` 复用同一套输电塔 + 环形线路 SVG 设计，侧栏、登录、首次改密及 `favicon.svg` 已统一，不再保留旧临时 logo。
+- 项目中心：项目列表、手机项目对象列表、新建项目、统一项目详情。
+- 项目详情：来源需求、项目物资、储备确认、项目出库、执行任务、项目资金、附件与历史已经进入同一项目上下文；来源需求与项目物资保持独立，0 需求/0 物资合法。项目资金分段只展示真实框架归属、当前预算和明确标注的最近流水，不把当前页流水伪装成累计值；进入资金工作区会携带并恢复当前 `projectId`。
+- 执行任务：跨项目 `/tasks` 使用服务端分页队列；旧 `/delivery` 页面实现已删除，只保留 `/delivery → /tasks` 兼容重定向。
+- 旧储备页面已退役：`ReservesView.vue` 已删除，`/reserves` 仅兼容重定向到项目中心；其分类规则能力迁入设置，项目储备本身由项目中心和项目详情承载。
+- 任务闭环：项目出库 → 新建执行任务 → 供应 → 实施 / 结算并行。统一供应编辑器可登记已上报、已发货、已到货，并按 `到货 <= 发货 <= 上报 <= 任务物资需求量` 计算阶段最大增量；三条线独立版本/幂等，结算允许先于实施。
+- 手机任务详情、登记到货、任务创建等已按独立手机布局处理，不依赖桌面宽表。
+- 需求页已完成第一轮新结构：桌面高密度列表、手机需求对象列表、创建/导入主次动作重新整理。
+- 资金页已改为浏览优先、编辑按需；框架、协议、项目预算、资金流水仍保持原业务语义，不用分页数据伪造汇总。
+- 分析页只保留业务分析、月计划、月报、年度事项和预警；通知联系人、通知发送记录和逻辑备份已迁入设置。分析页桌面采用指标条与数据面板，手机缺口/事项/预警使用独立对象列表。
+- 设置页已重构成员管理、可读系统配置、储备分类规则、通知与逻辑备份；成员列表在手机端不依赖宽表，低频/危险操作不常驻主列表。
+- 基础台账外层已改为线路中心对象清单：桌面使用高密度线路清单和全宽杆塔数据面板，手机使用线路/杆塔对象列表；线路位置、物理杆塔、更名、rebind、排序和批量导入的业务边界未改变。
+- 登录和首次改密已统一到新的认证视觉；账号/密码 autocomplete、浏览器 Argon2id、服务端 HMAC verifier 和 HttpOnly 会话边界未改变。
+- 暗色主题已接入 Naive UI `darkTheme` 与设计 token；DataTable 等组件不再被浅色 theme override 强行覆盖。
+- 已建立 UI 硬门禁：业务源码禁止直接渲染原生 `<button>` / `<input>` / `<select>` / `<textarea>` 和动态 `h('button')`；原生 file input 只能隐藏在设计系统 primitive 内。门禁位于 `tests/repository-guards.test.mjs`。
+- 设计系统 primitive：`apps/web/src/app/AppPressable.vue`、`AppFilePicker.vue`。
 
-本轮已 push 三个小提交：
+最近一次完整 `npm run check`：Node **308/308 PASS**、Web **161/161 PASS（23 个测试文件）**；TypeScript、Web production build、Worker `wrangler deploy --dry-run`、Node + SQLite + Filesystem 第二运行时均 PASS。
 
-- `fa22294` `feat(ops): preserve data across schema rebuilds`：新增维护模式、生产数据转换核心、远端结果校验和数据保留测试；
-- `78b622b` `ops: unify production promotion workflow`：删除独立 `Production D1 migration`，把生产变更收口为单一 `Production promote`；
-- `de1a2d1` `docs: define development-stage data migration policy`：把“开发期单 `0001` + 发布期历史数据迁移”的边界写入长期规范。
+最近 UI 提交：
 
-随后又补强了尚未提交的最终收口：schema 指纹覆盖 CHECK/UNIQUE/显式索引；自动搬运只允许按目标主键 upsert，新增 UNIQUE 冲突必须 `DECISION_REQUIRED`；生成的数据导入按外键依赖顺序写入；远端验证器增加成功/行数不一致行为测试；repository guard 的文字已改为“只有用户明确宣布进入运行阶段/正式维护升级链才允许 `0002+`”。
+- `e45d108` `feat(ui): establish professional app shell and task queue`
+- `1dc2999` `feat(ui): prevent native control regressions`
+- `6757f37` `feat(ui): refine demand and finance workspaces`
+- `76a69f8` `feat(ui): retire legacy reserve and delivery workspaces`
+- `c411e85` `feat(ui): unify finance analysis and master data experience`
+- `a0fa16e` `refactor(ui): streamline finance and demand workspaces`
 
-标准流程为：
+## 最近收口：项目分页与 URL 状态
 
-```text
-main + 用户发布授权
-→ Production promote
-→ 完整 check / config / dry-run
-→ 只读导出生产 D1，在临时 SQLite 对当前 0001 做数据迁移演练
-→ 结构一致：直接 deploy
-→ 结构变化且可确定性迁移：进入维护模式，冻结 API/Cron 写入
-→ 再次导出权威快照
-→ 同一生产 D1 重建当前 0001 + 导入已验证历史数据
-→ 行数 / foreign_key_check / integrity_check
-→ 发布正常 Worker 并退出维护模式
-→ 任一步失败：恢复维护前完整导出 + 回滚维护前 Worker version
-```
+- 工作台“待出库”使用 `/projects?stage=reserve`，口径与分析统计一致：项目不存在 `project_releases`；**不额外要求储备已确认**。
+- `SqlReserveProjectQueryRepository.list(...)` 已改为 `stage + scope + created_at/id keyset cursor` 同一 SQL 查询；项目/框架权限范围在数据库 `LIMIT` 前过滤，不再先取固定前 50 条后在 HTTP 层筛权限。
+- `/api/reserve-projects` 已支持 `stage=all|reserve`、不透明 cursor 和 `limit+1` 下一页判定，修复大项目集固定前 50 条且 `nextCursor:null` 的静默遗漏。
+- `ProjectsView.vue` 已从 URL 恢复 `stage/query` 并同步筛选状态；列表使用服务端 cursor 分页，进入详情时携带完整项目列表 URL，`ProjectDetailView.vue` 返回时恢复原筛选上下文。
+- `TaskQueueView.vue` 已从 URL 恢复并同步 `status/query`，刷新 `/tasks?status=settlement_pending` 后仍保持待结算筛选并按该状态请求服务端。
+- `PlaceholderView.vue` 已删除并确认无引用；`DashboardView.test.ts` 已补 router mock，消除全量 Web 测试中的虚假 router injection warning。
+- 测试先行回归已收口：仓储分页/stage **2/2 PASS**，Projects/Tasks 定向 **6/6 PASS**，Web/API typecheck、`git diff --check` 均 PASS；当前分支最新完整 `npm run check` 为 Node **298/298 PASS**、Web **134/134 PASS（23 文件）**。
 
-若旧表/旧字段仍有数据、字段/主键语义变化、新必填字段无法推导、约束冲突或显式转换规则与旧 schema 指纹不匹配，必须在生产变更前输出 `DECISION_REQUIRED`。用户决定映射/舍弃方式后，才允许增加绑定该旧 schema 指纹的一次性 `scripts/production/data-transform.mjs`。该转换脚本是发布工具，不是旧数据模型兼容层。
+## 当前 UI 收尾施工包
 
-## 本轮已完成并提交的结构重构
+- 项目中心搜索已经从“只筛当前已加载项目”改为服务端搜索；项目名称、负责人、年度查询与 stage、scope、cursor 一起在 SQL `LIMIT` 前生效，大项目集不再因为首屏 50 条而漏掉匹配项目。
+- 资金页手机端不再复用桌面宽表：框架、执行协议、资金流水均有独立对象列表；协议状态使用中文业务文案，不泄露 `active/paused/expired` 内部枚举。顶部原有一个不控制任何数据的“口径”下拉框已删除，禁止保留假交互。
+- 任务队列手机对象行已补任务四状态与计划量；任务创建、任务详情、实施/结算抽屉、需求弹窗和项目详情的残留浅色 fallback/硬编码浮层阴影已改为统一设计 token。
+- 设置页成员编辑弹窗补齐手机端可滚动内容区、软键盘/安全区友好的 sticky 操作区；未知角色/运维状态不再回退显示英文内部枚举。
+- 已完成“旧入口 → 新位置”覆盖审计：当前 `views/` 只剩实际页面；`/reserves` 与 `/delivery` 仅保留兼容重定向。现有 settings/tasks/projects feature 组件均有真实引用，没有可安全删除的死 Vue 组件。
+- 当前施工包验证已通过：相关 Web 定向 **39/39 PASS（7 文件）**，项目查询仓储 **2/2 PASS**；当前分支最新完整 `npm run check` 为 Node **298/298 PASS**、Web **134/134 PASS（23 文件）**，Web/API/shared typecheck、Web production build、Worker dry-run、Node + SQLite + Filesystem 第二运行时和 `git diff --check` 均 PASS。
 
-在原 M6 基础台账收口之后，继续完成了一轮后端职责拆分。以下提交最终均已合入 `main`：
+其后状态一致性收尾已经完成并通过完整门禁：
 
-- `dc81789`：统一 HTTP 幂等 mutation helper；
-- `05f33a3`：从顶层 `app.ts` 拆出认证与管理路由，`app.ts` 收缩为装配根；
-- `3dee0c9`：统一 API error response helper；
-- `92e03c5`：把需求/项目执行聚合只读查询拆到 `project-execution-query.ts`，公共执行校验/权限辅助集中到 `project-execution-shared.ts`；
-- `c3247a2`：把任务物资供应、实施、结算、结算撤销拆到 `project-task-progress.ts`；
-- `106c1f7`：把项目级出库和执行任务定义/列表拆到 `project-delivery.ts`；
-- `43696aa`：逐项核对原算法后，把分析纯计算抽到 `analysis-calculations.ts`；
-- `a8e3514`：把通知联系人、告警评估、outbox 与通知投递拆到 `notification-operations.ts`；
-- `8c8f7ef`：把逻辑备份拆到 `backup-operations.ts`，把定时调度与系统任务 HTTP 拆到 `system-tasks.ts`。
+- `TaskCreateView` 已补真实回归：项目/执行上下文读取失败时不再只剩“返回项目”的空白页，而是显示错误和“重新加载”；测试按先红后绿完成。
+- 工作台、需求、资金、分析、设置统一补主数据读取失败后的“重新加载”动作；repository guard 锁定这 5 个主工作区的恢复入口。
+- 页面眉标、登录/改密装饰文字和项目对象眉标中的 `WORKSPACE/PROJECTS/EXECUTION/FINANCE/SETTINGS/ANALYSIS/DEMANDS/PROJECT/...` 已统一改为中文，并增加静态门禁，避免纯英文装饰文案回流。未知角色/预警状态也不再回退显示内部英文枚举。
+- 全局 DataTable hover/分隔线已改用 `--ui-*` token，不再维护浅色/暗色两套硬编码值；分析页刷新、月报生成、事项创建补 loading 反馈。
+- 该状态一致性包新增 repository guard 后 **40/40 PASS**，相关 Web 定向 **49/49 PASS**、TaskCreate **3/3 PASS**；最终完整 `npm run check` 为 Node **298/298 PASS**、Web **134/134 PASS（23 文件）**。
 
-拆分后 `project-execution.ts` 从约 850 行收缩到约 **334 行**，当前只承担“需求补充 + 储备项目生命周期”；出库/任务定义、任务进度和聚合查询分别独立，并已有 repository/static guard 防止职责重新混回。
+继续完成了一轮移动端与并发状态审计（当前待完整门禁后提交）：
 
-## 分析模块拆分已完成
+- 需求页“物资字典”已补手机独立对象列表，名称、编码、型号、单位、启停状态无需横向拖动桌面宽表；新增需求/需求详情弹窗在手机端限制可视高度，正文独立滚动，footer 考虑 safe-area。
+- 项目“来源需求”和“项目物资”编辑器新增完整 409 恢复链：冲突后草稿保留，抽屉内可直接“读取最新项目数据”，父项目刷新后继续使用原草稿重试；保存进行中遮罩和关闭按钮均不能误关抽屉。
+- 任务详情删除无任何行为的“更多”假按钮；供应抽屉保存中同样禁止误关。
+- 基础台账所有业务弹窗统一加入手机可视高度、内部滚动和安全区 footer；清理用户界面中的“稳定 ID / JSON / 成员 ID”等无业务价值实现术语，未知自定义字段类型不回退英文内部值。
+- 当前定向结果：MasterData / Demands / ProjectEditors / ProjectDetail / TaskDetail / Administration 相关 **49/49 PASS**，Web typecheck 与 `git diff --check` PASS；完整 `npm run check` 为 Node **298/298 PASS**、Web **136/136 PASS（23 文件）**，Web/API/shared TypeScript、Web production build、Worker dry-run 和 Node + SQLite + Filesystem 第二运行时均 PASS。
+- 分析页图表随后完成暗色模式收口：ECharts 轴线、标签、网格、tooltip 和柱色全部读取全局 `--ui-*` 设计 token；切换“进度与缺口 / 储备剩余”分段或系统明暗主题时会重新渲染并 resize，避免隐藏分段初始化导致尺寸异常。该改动测试先红后绿，Analysis 定向 **4/4 PASS**；完整 `npm run check` 为 Node **298/298 PASS**、Web **137/137 PASS（23 文件）**，TypeScript、Web production build、Worker dry-run 与第二运行时均 PASS。
 
-审计发现 `analysis-operations.ts` 同时混合三类职责：
+无头浏览器验收基础设施已经补齐并进入 CI：仓库已引入 Playwright，`npm run test:ui:headless` 每次使用临时目录创建隔离 D1 / R2 本地状态并启动独立 Wrangler Worker，不复用开发数据库、不读取真实浏览器 Cookie，也不接触真实账号。认证链路完全通过页面完成：先在初始化页输入测试管理员姓名、测试账号、测试密码和测试初始化令牌创建首管理员；随后开启新的无 Cookie 浏览器会话，再从登录页输入同一测试账号密码完成真实登录，覆盖浏览器 Argon2id 派生、服务端 HMAC verifier 与 HttpOnly session。后续视觉验收复用的是该真实登录产生的 HttpOnly 会话状态，而不是伪造 Cookie。当前 Headless Chromium **23/23 PASS**：除初始化、重新登录和深链刷新外，正式覆盖 1440 桌面明暗主题、1440×600 低高度、768 / 900 / 1100 紧凑桌面、768×600 低高度、390 手机明暗主题和 320px 最窄手机；所有 8 个主路由必须真实加载成功，出现可见加载错误态即失败。验收持续检查横向溢出、实际字号下限、手机按钮与输入/下拉/日期/页签触控目标、可见按钮的可理解名称、系统明暗 token、侧栏/账号/手机导航元素重叠，并校验“新增需求 / 新建项目 / 新增成员”在 1440、768、390、320 四档视口内完整可见。E2E 还会创建隔离项目与任务，通过真实业务页面打开项目物资、项目来源、供应、实施、结算 5 类 Drawer，分别在 390px 和 320px 触控视口中验证完整进入屏幕；同一夹具使用超长项目名、任务名、负责人和物资型号，在 768 / 390 / 320 三档验证项目详情、任务详情与任务队列不会被长业务文本撑破。GitHub Actions `CI` 保留独立 `headless-ui` job，失败时上传 screenshot/trace。
 
-1. 分析规则 / 计划 / 月报 / 里程碑及其计算；
-2. 通知联系人 / 告警 / outbox / 通知投递；
-3. 逻辑备份 / 校验 / 保留策略 / 系统定时任务。
+本轮浏览器级验收继续发现并修复了静态审计难以发现的真实问题：手机顶部重复退出入口只有 32px 命中高度；任务页 text-only“重新加载”实际仅 14px，高频错误恢复动作已统一改为真实按钮并加静态门禁；设置页“新增大类 / 设置映射”手机按钮从 32px 提升到可触控高度；768×700 紧凑桌面下“新增需求”曾高达 **1207.7px**，现将 Teleport 模态框最大高度/内部滚动提升为通用规则而非只在 ≤767px 生效；线路删除不再只依赖 hover 快捷操作，详情“更多操作”提供稳定入口。进一步审计还发现项目物资、项目来源、供应、实施、结算 Drawer 都把 class 直接挂在 `NDrawer` 根节点，却错误使用 `.xxx-drawer .n-drawer` 后代选择器，现已统一改为 `.xxx-drawer.n-drawer` 并新增 repository guard。E2E 新增“主路由不得处于加载错误态”后还暴露出任务队列真实后端缺陷：SQL 仍读取已不存在的 `projects.year`，已独立修复为当前 schema 的 `business_year`，repository fixture 同步纠正。最新一轮颜色审计又发现浅色主题 `--ui-text-tertiary=#98a2b3` 在白底仅约 **2.58:1**，但实际承载大量 12–13px 业务说明文字；当前浅色层级已调整为 secondary `#475467`、tertiary `#667085`，并新增 token 级对比度门禁，要求三级文字在常用浅色 surface / canvas / muted 背景上至少 4.5:1。最新完整 `npm run check` 为 Node **318/318 PASS**、Web **165/165 PASS（23 文件）**，TypeScript、Web production build、Worker dry-run 与 Node + SQLite + Filesystem 第二运行时全部通过；独立 Headless Chromium 为 **23/23 PASS**。当前分支最新 UI 收口仍需以本次提交后的 GitHub CI 结果作为最终远端证据。
 
-本轮先逐项对照拆分前 `analysis-operations.ts`，确认计算函数保持原实现语义，再做后续职责迁移。已确认并由回归覆盖：
+## 最近收口：导航逻辑与可读性审计
 
-- 比例计算使用原 BigInt 四舍五入口径；
-- `quarterStatus` 仍为 `upcoming / in_progress / ended`；
-- `businessYear`、`annualTargetFen`、默认/自定义月度计划、`planSource` 等字段来源完全保持原 Repository 逻辑；
-- ratio / gap 两种 lagging 边界比较符号保持原语义；
-- 里程碑 month/day/unknown 精度和提醒边界不变。
+- 侧栏不再通过 URL 前缀猜当前模块。所有主路由显式声明 `meta.navKey`：项目详情归“项目”，项目下的新建任务/任务详情归“执行任务”。桌面分组调整为“业务：工作台/需求/项目/执行任务；管理：资金/分析/基础台账；系统：设置”，基础台账不再与设置混在底部系统区。
+- 手机底部“更多”在需求、资金、分析、基础台账、设置页面持续保持当前态；“更多”抽屉内部当前项也有选中反馈，不再出现进入页面后底部四项全部未激活。
+- 全站显式 CSS 字号新增硬门禁：业务源码禁止 10px/11px，12px 仅作为最低 caption 基线；表头、列表关键元数据、状态、返回/操作文字普遍提升至 13px，主 Tab/分段导航提升至 14px。repository guard 已锁定该约束。
+- 返回上下文统一：任务队列进入任务详情后返回原 `status/query`；项目详情进入任务详情/新建任务后返回原项目详情；新建项目后继续保留原项目列表筛选 URL；项目详情进入资金工作区携带 `projectId + tab=budgets + from`，资金页只在合法项目来源下显示“返回项目”。
+- 需求、资金、分析主工作区用 URL `tab` 恢复/同步当前位置；任务详情用 `section` 恢复“供应/实施/结算/范围”。默认项不强制写参数，非法值回默认项，不再刷新后悄悄回首个 Tab 或产生空白状态。
+- 项目详情非法 `tab` 已使用白名单回退到概览，错误/旧链接不会再出现“项目头正常但正文空白”的半空白状态；默认概览不额外污染 URL。该修复已独立提交 `f6b302c`。
+- 中等桌面/平板宽度原 76px 纯图标侧栏已改为 96px 紧凑文字侧栏，图标与业务名称同时可见；新增 repository guard 禁止再次把 768–1100px 导航退化为只能靠图标识别。
+- 手机一级导航调整为“工作台 / 需求 / 项目 / 任务 / 更多”，核心“需求 → 项目 → 执行任务”流程不再把需求藏进更多；资金、分析、基础台账、设置留在更多，并有静态门禁锁定一级业务路径。
+- 显式 12px 样式从审计时的 67 处缩减到 19 处，保留项主要是版本、眉标、日期、序号等真正 caption；错误提示、状态、列表主次事实、设置记录、移动端对象事实等高频信息已提升到 13px。手机任务名、所属项目名、需求线路名和物资名允许自然换行，不再强制单行省略。
+- 新增显式 404 页面：未知/过期前端 URL 不再只显示应用壳和空白正文，而是提供“返回工作台 / 打开项目中心”。需求池显式搜索也已纳入 URL `query`，刷新、分享链接或返回页面后继续保留搜索条件。
+- 本轮测试继续按先红后绿推进；其后又完成工作区上下文恢复收口：基础台账线路列表的 `voltage/status/query` 可由 URL 恢复并同步；资金、分析当前框架使用 `framework` 恢复并保留当前 Tab；资金切框架会清理跨框架预算/流水项目选择并删除失效 `projectId`，预算/流水项目下拉只展示当前框架项目。基础台账暂未伪造 `lineId` 详情深链，因为服务端尚无稳定按线路 ID 直接读取接口，避免在首屏 100 条里查找造成大台账随机失效。该包定向 MasterData/Analysis/Finance **33/33 PASS**，Web typecheck、`git diff --check` PASS；最新完整 `npm run check` 为 Node **302/302 PASS**、Web **151/151 PASS（23 文件）**，TypeScript、Web production build、Worker dry-run 与 Node + SQLite + Filesystem 第二运行时全部 PASS。
+- 任务供应、实施、结算三类写入抽屉现已统一保存期关闭门禁：保存请求进行中，遮罩、右上角关闭、Esc / `update:show` 和底部取消都不得中断界面状态；新增 repository guard 防止回退。项目来源需求 409 文案同步为“草稿保留并可原地读取最新项目”，与实际交互一致。
+- 其后把同一关闭门禁扩展到主要写操作层：项目新建、需求新建、需求详情追加物资、项目储备确认/出库、成员管理/重置密码，以及基础台账删除、电压等级、班组、塔型、自定义字段、线路/杆塔编辑与更名、物理杆塔/rebind、自定义值、排序和批量导入。基础台账 14 个写弹窗共享 `writeModalGuardProps`，避免每个弹窗独立维护。该包相关 Web 定向 **45/45 PASS**，最新完整 `npm run check` 为 Node **303/303 PASS**、Web **151/151 PASS（23 文件）**。
+- 内联编辑页继续补齐“提交对象不可漂移”约束：Finance 保存框架/协议/归属/预算/流水时锁定框架、子项目和当前编辑字段，保存期间不能切换工作区 Tab 或折叠当前表单；Analysis 保存月计划/规则/月报/事项时锁定框架、统计日期和当前表单，年度事项“完成”也进入统一写锁，桌面/手机均阻止重复提交；Demands 保存映射模板或执行导入时锁定模板和字段映射，保存标准物资时锁定表单及收起入口。该包 Finance/Analysis/Demands 定向 **26/26 PASS**；完整 `npm run check` 为 Node **304/304 PASS**、Web **151/151 PASS（23 文件）**。
+- 操作可达性继续收口：业务 Vue 源码禁止 `size="tiny"`，基础台账线路操作和杆塔排序统一提升为 small；手机上的线路“编辑/删除”和杆塔“上移/下移”至少 36px 高。项目详情、任务详情/新建任务、基础台账的文本式返回操作桌面至少 36px、手机至少 44px 命中高度，外观仍保持轻量文本导航。两条 repository guard 已锁定；完整 `npm run check` 为 Node **306/306 PASS**、Web **151/151 PASS（23 文件）**。
+- 异步上下文竞态继续收口：Finance 的框架汇总/协议/流水、预算项目和流水分页使用 request sequence，旧框架/旧项目请求晚到后直接丢弃；Analysis 的框架进度/缺口/计划/月报同样使用框架请求序号，统计日期相关事项统一经 `loadMilestones()` 的单一请求序号处理，页面刷新、改日期、新增事项和状态更新不再维护多套竞态逻辑。新增 4 个行为测试主动让旧请求最后返回，Finance/Analysis 定向 **20/20 PASS**；最新完整 `npm run check` 为 Node **307/307 PASS**、Web **155/155 PASS（23 文件）**。
+- 当前上下文失败恢复也已收口：Finance 切框架/切预算项目、Analysis 切框架/切统计日期的当前请求失败会进入页面内错误提示和“重新加载”，不会再产生 Vue 未处理 Promise；重试保持当前框架/预算项目/统计日期并真实重新请求，旧上下文失败则由请求序号静默丢弃。Analysis 在新框架读取开始时同步清空旧进度图，失败后不会残留上一框架图表。新增 4 个失败/重试行为测试后 Finance/Analysis 定向 **24/24 PASS**；最新完整 `npm run check` 为 Node **307/307 PASS**、Web **159/159 PASS（23 文件）**。
+- Finance / Analysis 写后刷新语义进一步拆分：框架、协议、项目归属、预算草稿/确认、资金流水、月计划、分析规则、月报、年度事项创建/状态更新，mutation 成功后统一经 `refreshAfterCommittedWrite()` 刷新。刷新失败时页面明确显示“操作已成功，但最新数据刷新失败”，并发 warning 引导重新加载；不会再进入“预算保存失败 / 月计划保存失败”等 mutation error。两条真实“写成功、刷新失败”行为测试先红后绿，新增 repository guard 锁定规则；Finance/Analysis 定向 **26/26 PASS**，完整 `npm run check` 为 Node **308/308 PASS**、Web **161/161 PASS（23 文件）**。
+- Demands 已继续按同一语义收口：手工需求创建、需求物资追加、标准物资新增、批量导入发布在服务端写入成功后，后续列表/字典刷新失败不得再误报为“创建失败/保存失败/导入失败”；统一通过 `refreshAfterCommittedWrite()` 提示“操作已成功，但最新数据刷新失败，请重新加载”，并保留页面级恢复入口。代表性“标准物资 POST 已成功、字典刷新失败”测试已先红后绿，repository guard 锁定四条需求写路径。定向 Demands **11/11 PASS**；最新完整 `npm run check` 为 Node **309/309 PASS**、Web **162/162 PASS（23 文件）**，TypeScript、Web production build、Worker dry-run 与 Node + SQLite + Filesystem 第二运行时全部通过。
 
-当前职责边界为：
+## 下一步施工顺序
 
-1. `analysis-calculations.ts`：分析规则读取、框架进度、项目差距、里程碑到期、月份末日和 BigInt 安全转换等计算/查询编排；
-2. `analysis-operations.ts`：仅保留分析看板、储备分析、规则、计划、框架进度、项目差距、月报和里程碑 HTTP 层，约 **299 行**；
-3. `notification-operations.ts`：通知联系人、告警评估、outbox 租约/结果回写和通知投递；
-4. `backup-operations.ts`：逻辑备份创建、分块推进、完整性校验、保留策略以及下一待处理备份步进；
-5. `system-tasks.ts`：Asia/Shanghai 定时调度编排和 `/system/tasks/run`，只调用分析/通知/备份模块，不直接触达备份仓储。
+1. 当前 mutation / reload 语义审计和本轮全站 UI 自动化验收均已收口：`MasterDataView.vue` 与 `SystemOperationsPanel.vue` 的真实误报已修复；`ReserveClassificationPanel.vue` 已用行为测试确认无需生产改动；`ProjectDetailView` / `TaskDetailView` 等已正确处理路径未做机械重构。
+2. 后续 UI 改动继续同时维护相关 Vitest、`npm run check` 与独立 `npm run test:ui:headless`；无头 E2E 必须继续使用隔离测试数据和页面真实认证，不得注入真实 Cookie、真实密码或复用用户真实浏览器窗口。CI 的 `headless-ui` job 不得移除，已有 repository guard 锁定。
+3. 当前没有已知 UI blocker；本轮已将断点边界、低高度、最窄 320px、主路由真实加载、关键 Modal 和业务 Drawer 纳入自动化。除非后续自动化/人工验收出现可复现问题，否则停止继续泛化改样式；当前施工分支保持待审状态。未经用户明确授权仍不得合并 `main` 或部署生产。
 
-repository/static guard 已新增职责回混门禁；通知、备份、系统任务迁移前后接口 URL、权限、幂等键、版本/租约约束、审计写入和事务边界均保持不变。
+## 必须保持的业务/工程边界
 
-## M6 已完成业务改动
-
-### 1. 物理杆塔与线路杆塔节点分离
-
-当前模型已从“线路直接拥有一基杆塔”收口为：
-
-```text
-physical_towers
-    ↑ 1:N
-line_tower_positions
-    N:1 → transmission_lines
-```
-
-- `physical_towers` 表示真实物理杆塔资产；包含资产编号、杆塔类型、运维班组、启停、版本。
-- `line_tower_positions` 表示某条线路上的稳定节点/当前杆塔编号、排序、同塔位置标签；同一物理塔可以被多个线路节点引用，支持双回、三回、四回及更多同塔线路。
-- 需求位置已使用 `start_tower_position_id / end_tower_position_id`，不再把物理塔 ID 当线路位置 ID。
-- 已有线路节点可通过专用 `POST /api/master/towers/:id/rebind-physical` 重新关联到另一个物理塔；普通 PATCH 不允许偷偷改变同塔关系。
-- 新增线路节点默认创建独立物理塔；批量导入不按编号猜同塔关系。同塔必须由用户显式关联。
-
-### 2. 配置对象与通用自定义字段
-
-管理员配置已扩展为：电压等级、班组、杆塔类型、自定义字段定义。
-
-自定义字段实现使用：
-
-- `custom_field_definitions`：字段定义；
-- `custom_field_value_sets`：对象级自定义字段集合版本，独立于业务对象本体版本；
-- `custom_field_values`：业务真值；
-- `custom_field_index`：文本/整数/日期/布尔等标量索引；
-- `custom_field_multi_select_index`：多选项倒排索引。
-
-当前支持定义到 `physical_tower`、`transmission_line`、`line_tower_position`、`demand`、`project`、`project_task`。字段键、对象类型、数据类型创建后不可改变；语义变化时新建字段并停用旧字段。已被业务值引用的字段定义不能直接删除，避免级联丢历史数据。
-
-### 3. 管理界面
-
-- “台账设置”扩展为电压等级 / 班组 / 杆塔类型 / 自定义字段四类配置。
-- 线路杆塔节点操作明确拆分为：编辑线路节点属性、编辑物理杆塔、重新关联物理杆塔、自定义字段、杆塔更名、编号历史。
-- 物理塔属性与自定义字段值分别使用独立版本保存，避免一次请求混合两个并发域。
-- 保留上一轮已完成的线路中心 UI、手机杆塔卡片、触屏上移/下移、危险删除二次确认和业务时区历史展示。
-
-### 4. 技术债清理
-
-- 旧 `ops/production/master-data-schema-reconcile.sql` 已删除；它只能重建旧 `transmission_towers` 模型，继续保留存在误用风险。
-- 对应 `tests/schema-reconcile.test.mjs` 已删除。
-- `PRODUCTION_RUNBOOK.md` 已改为 fail-closed：当前开发基线一旦和既有生产 D1 不一致，必须先单独设计并审核显式生产迁移；不得把改写后的同名 `0001` 或已删除的一次性 reconcile 脚本直接用于生产。
-- 已完成阶段性的 `MASTER_DATA_REDESIGN_PLAN.md` 已删除，内容并入三份长期业务/数据模型文档和本轮审计文档。
-- 备份表集合已加入自定义字段定义、版本集合、业务值和两类索引；P6 恢复夹具已开始同步新模型。
-
-## 当前验证结果
-
-本轮已通过：
-
-- `apps/api` TypeScript：PASS；
-- `apps/web` TypeScript：PASS；
-- migration + master-data repository 定向：PASS；
-- 基础台账 API：**25/25 PASS**；
-- MasterData/Demands/tower-import Web 定向：**30/30 PASS**。
-
-M6 最终完整 `npm run check` 已 PASS：
-
-- Node：**270/270 PASS**；
-- Web/Vitest：**114/114 PASS（19 个测试文件）**；
-- Cloudflare API、Node runtime、Web、shared TypeScript：PASS；
-- Web production build：PASS；
-- Worker `wrangler deploy --dry-run`：PASS；
-- Node + SQLite + Filesystem 第二运行时：PASS；
-- 单一 `0001_initial_schema.sql` checksum / migration guard、repository/static guards：PASS。
-
-随后分析模块结构拆分最新完整门禁基线（`8c8f7ef` 对应代码状态）已提升为：
-
-- Node：**279/279 PASS**；
-- Web/Vitest：**114/114 PASS（19 个测试文件）**；
-- Cloudflare API、Node runtime、Web、shared TypeScript：PASS；
-- Web production build：PASS；
-- Worker `wrangler deploy --dry-run`：PASS；
-- Node + SQLite + Filesystem 第二运行时：PASS。
-
-分析拆分定向回归还单独通过 API 双运行时 typecheck，以及分析/P6、通知仓储、备份仓储、repository guards 共 **53/53 PASS**。
-
-## 当前生产状态
-
-2026-09-15 已完成一次经用户明确授权的生产重建与发布：
-
-1. `main@e288eda682c8982da814603135e203442b1b885f` 切换 production config 到新 D1；
-2. 临时受控 GitHub Actions run `34952233283` 创建新 D1、应用当前唯一 `0001_initial_schema.sql`，仅搬运 `members` 数据后删除除 `zhangsan` 外的所有账号，并确认需求/项目/线路业务数据为 0；
-3. `Production release` run `34952547151` 完整 PASS，正式 Worker publish、新 D1 binding、现有 Worker Secrets 和公网 health 校验均成功；
-4. 独立公网复核 `/api/health` 为 `schema.ready=true`、`currentMigration=requiredMigration=0001_initial_schema.sql`，`/api/auth/status` 为 `initialized=true`，匿名受保护 API 返回 401；
-5. 临时清理 run `34953255900` 在再次验证新 D1 后删除旧 D1 `32ab1d29-e720-41a1-a83f-11b579734a0e`；一次性 reset/delete workflow 随后从仓库删除。
-6. 生产 Notion 对象存储清理核对 run `34953724187` PASS：专用 data source 中 `State=active` 的对象索引页原本即为 **0**，复核后仍为 0；没有应用可见的旧附件/备份对象残留。Notion FileUpload 历史物理删除仍受平台公开 API 能力限制。
-
-本轮所有临时 destructive workflow 均在完成后从仓库删除，不作为日常运维入口保留。
-
-生产现在不再存在“旧同名 0001 与 M6 schema 不一致”的发布阻断。后续生产发布仍统一走 GitHub `production` Environment 与受控 Cloudflare workflow；长期 Secret 和具体资源以当前受审 production config / GitHub Environment / Cloudflare 实际状态为准。
-
-## 接下来执行顺序
-
-1. 接手先确认分支为 `main`、工作区 clean、HEAD 已包含本轮生产重建/发布收尾文档；禁止 `reset/clean` 覆盖他人修改。
-2. 下一轮从 `reserve-planning.ts`、`demand-import.ts`、`finance.ts`、`project-lifecycle.ts`、`MasterDataView.vue`、`packages/shared/src/index.ts` 中按真实职责耦合收益继续审查，只在收益明确时拆分，不为行数机械切文件。
-3. 继续测试先行；每个职责边界先加/调整 guard 或行为回归，再修改实现，小 commit、及时 push，最终完整 `npm run check`。
-4. 新一轮生产变更仍需用户当次明确授权；不要因为本轮已经重建过 D1 就把后续 destructive reset 当作常规发布步骤。
-
-## 必须继续保持的工程约束
-
-- 当前开发阶段数据库只允许 `0001_initial_schema.sql` 一个基线；历史数据保留也不允许新增 `0002+` 或保留旧数据模型。只有用户明确宣布进入运行阶段/正式维护升级链后才允许推进 migration 版本。
-- 业务认证保持系统自维护 username/password；浏览器 Web Worker Argon2id，服务端 HMAC verifier + HttpOnly 会话。
-- 业务核心保持 Database/ObjectStore 等 Port 边界，不重新绑定 D1/R2/Notion。
-- Cloudflare Free 为部署基线，同时保持 Node + SQLite + Filesystem 第二运行时。
-- Excel 解析继续在浏览器 Web Worker；同步 API 避免 N+1、超大参数和 Worker CPU 长任务。
-- Secret 只存在受控本地 `.env` / GitHub Environment / Worker Secret，不进入仓库、PR、日志或普通文档。
+- 需求可以没有物资；项目也可以 0 需求、0 物资建立。
+- 需求来源与项目物资是不同事实，不得相互推导数量上限。
+- 项目出库是一次项目级节点，不是仓库发货。
+- 任务供应、实施、结算三线并行；最终四状态来自业务事实汇总，不是人工标签。
+- 框架总额、协议额度、项目预算、预算确认占用、预算发生、实际费用、任务结算始终分开。
+- 金额/数量继续使用定点整数；写操作保持角色/范围校验、版本冲突、幂等键和审计。
+- 线路位置与物理杆塔保持独立稳定身份；更名和 rebind 不得破坏历史需求定位。
+- 禁止假数据、当前页统计冒充总量、前端 N+1 聚合、隐藏权限代替服务端鉴权。
+- 本轮不授权生产发布和生产数据修改。

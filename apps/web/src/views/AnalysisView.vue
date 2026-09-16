@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, h, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import {
   NAlert,
   NButton,
@@ -25,7 +26,6 @@ import { apiRequest, jsonRequestInit } from '../api/client';
 import type {
   AlertEventSummary,
   AnalysisRuleSummary,
-  BackupSummary,
   CurrentUser,
   FinanceProjectSummary,
   FrameworkProgressSummary,
@@ -33,20 +33,26 @@ import type {
   MilestoneDueSummary,
   MonthlyPlanSummary,
   MonthlyReportSummary,
-  NotificationContactSummary,
-  NotificationOutboxSummary,
   ProjectGapSummary,
   ReserveRemainingSummary,
 } from '@tpm/shared';
 
 const props = defineProps<{ currentUser: CurrentUser }>();
+const route = useRoute();
+const router = useRouter();
 const message = useMessage();
 const canPlan = computed(() => props.currentUser.role === 'admin' || props.currentUser.role === 'project_manager');
 const isAdmin = computed(() => props.currentUser.role === 'admin');
 
+type AnalysisTab = 'progress' | 'reserve' | 'milestones' | 'alerts';
+const analysisTabs = new Set<AnalysisTab>(['progress', 'reserve', 'milestones', 'alerts']);
+
 const loading = ref(true);
 const saving = ref(false);
 const error = ref('');
+const requestedTab = typeof route.query.tab === 'string' ? route.query.tab : '';
+const activeTab = ref<AnalysisTab>(analysisTabs.has(requestedTab as AnalysisTab) ? requestedTab as AnalysisTab : 'progress');
+const requestedFrameworkId = typeof route.query.framework === 'string' ? route.query.framework : '';
 const frameworks = ref<FrameworkSummary[]>([]);
 const projects = ref<FinanceProjectSummary[]>([]);
 const selectedFrameworkId = ref<string | null>(null);
@@ -58,9 +64,6 @@ const milestones = ref<MilestoneDueSummary[]>([]);
 const alerts = ref<AlertEventSummary[]>([]);
 const plans = ref<MonthlyPlanSummary[]>([]);
 const reports = ref<MonthlyReportSummary[]>([]);
-const backups = ref<BackupSummary[]>([]);
-const contacts = ref<NotificationContactSummary[]>([]);
-const outbox = ref<NotificationOutboxSummary[]>([]);
 
 const asOfDate = ref(businessToday());
 const planProjectId = ref<string | null>(null);
@@ -70,13 +73,15 @@ const ruleMode = ref<'ratio' | 'gap'>('ratio');
 const ruleThresholdPercent = ref('80');
 const reportMonth = ref(asOfDate.value.slice(0, 7));
 const milestoneForm = ref({ title: '', owner: '', datePrecision: 'unknown' as 'month' | 'day' | 'unknown', month: null as number | null, specificDate: '' });
-const contactForm = ref({ memberId: props.currentUser.id, address: '' });
 
 const progressChartEl = ref<HTMLDivElement | null>(null);
 const reserveChartEl = ref<HTMLDivElement | null>(null);
 let progressChart: EChartsType | null = null;
 let reserveChart: EChartsType | null = null;
 let disposed = false;
+let themeMedia: MediaQueryList | null = null;
+let frameworkContextSequence = 0;
+let milestoneRequestSequence = 0;
 
 function businessToday() {
   const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
@@ -98,6 +103,22 @@ function parsePercentBasisPoints(value: string): number | null {
 function formatMoney(fen: number | null | undefined) { return fen === null || fen === undefined ? '未配置' : `${(fen / 100).toFixed(2)} 元`; }
 function formatPercent(bp: number | null | undefined) { return bp === null || bp === undefined ? '未配置' : `${(bp / 100).toFixed(2)}%`; }
 function formatQuantity(value: number) { return (value / 10000).toFixed(4).replace(/\.?0+$/, ''); }
+function quarterStatusLabel(status: string) { return status === 'ended' ? '已结束' : status === 'in_progress' ? '进行中' : '未开始'; }
+function alertStateLabel(state: string) { return state === 'active' ? '处理中' : state === 'recovered' ? '已恢复' : '未知状态'; }
+function alertSeverityLabel(severity: string) { return severity === 'warning' ? '预警' : severity === 'critical' ? '严重' : severity === 'info' ? '提示' : '未知级别'; }
+function milestoneStateLabel(row: MilestoneDueSummary) { return row.status === 'completed' ? '已完成' : row.overdue ? '已逾期' : row.reminderDue ? '待处理' : '未到期'; }
+
+async function refreshAfterCommittedWrite(successMessage: string, refresh: () => Promise<unknown>) {
+  try {
+    await refresh();
+    error.value = '';
+    message.success(successMessage);
+  } catch (cause) {
+    const detail = cause instanceof Error ? cause.message : '读取最新数据失败';
+    error.value = `${successMessage}，但最新数据刷新失败：${detail}`;
+    message.warning(`${successMessage}，但最新数据刷新失败，请重新加载`);
+  }
+}
 
 const frameworkOptions = computed(() => frameworks.value.map((item) => ({ label: `${item.code} · ${item.name}`, value: item.id })));
 const planProjectOptions = computed(() => projects.value.filter((item) => item.frameworkId === selectedFrameworkId.value).map((item) => ({ label: item.name, value: item.id })));
@@ -116,51 +137,76 @@ const milestoneColumns = computed(() => [
   { title: '负责人', key: 'owner', render: (row: MilestoneDueSummary) => row.owner ?? '—' },
   { title: '日期', key: 'specificDate', render: (row: MilestoneDueSummary) => row.dueDate ?? row.dueMonth ?? '待补充' },
   { title: '提醒', key: 'reminderDue', render: (row: MilestoneDueSummary) => row.status === 'completed' ? '已完成' : row.overdue ? '已逾期' : row.reminderDue ? '待处理' : '未到期' },
-  ...(canPlan.value ? [{ title: '操作', key: 'action', render: (row: MilestoneDueSummary) => row.status === 'completed' ? null : h(NButton, { size: 'small', onClick: () => setMilestoneStatus(row, 'completed') }, { default: () => '完成' }) }] : []),
+  ...(canPlan.value ? [{ title: '操作', key: 'action', render: (row: MilestoneDueSummary) => row.status === 'completed' ? null : h(NButton, { size: 'small', loading: saving.value, disabled: saving.value, onClick: () => setMilestoneStatus(row, 'completed') }, { default: () => '完成' }) }] : []),
 ]);
 const alertColumns = [
   { title: '级别', key: 'severity' }, { title: '状态', key: 'state' }, { title: '内容', key: 'message' }, { title: '周期', key: 'periodKey' },
 ];
-const backupColumns = [
-  { title: '日期', key: 'backupDate' }, { title: '类型', key: 'kind' }, { title: '状态', key: 'status' }, { title: '分片', key: 'chunkCount' },
-  { title: '校验', key: 'verifiedAt', render: (row: BackupSummary) => row.verifiedAt ? '已校验' : '未校验' },
-  { title: '操作', key: 'action', render: (row: BackupSummary) => h(NSpace, {}, { default: () => [row.status !== 'completed' ? h(NButton, { size: 'small', onClick: () => stepBackup(row) }, { default: () => '推进' }) : null, row.status === 'completed' ? h(NButton, { size: 'small', onClick: () => verifyBackup(row) }, { default: () => '校验' }) : null] }) },
-];
+
+async function loadMilestones(requestedAsOf = asOfDate.value) {
+  const sequence = ++milestoneRequestSequence;
+  let data: { items: MilestoneDueSummary[] };
+  try {
+    data = await apiRequest<{ items: MilestoneDueSummary[] }>(`/api/milestones/due?asOf=${requestedAsOf}`);
+  } catch (cause) {
+    if (sequence !== milestoneRequestSequence || asOfDate.value !== requestedAsOf) return false;
+    throw cause;
+  }
+  if (sequence !== milestoneRequestSequence || asOfDate.value !== requestedAsOf) return;
+  milestones.value = data.items;
+  return true;
+}
 
 async function loadFrameworkContext() {
+  const sequence = ++frameworkContextSequence;
   const frameworkId = selectedFrameworkId.value;
+  const requestedAsOf = asOfDate.value;
+  const requestedReportMonth = reportMonth.value;
   progress.value = null; gaps.value = []; plans.value = []; reports.value = [];
+  progressChart?.clear();
   if (!frameworkId) { await renderCharts(); return; }
-  const year = Number(selectedFramework.value?.startDate.slice(0, 4) ?? asOfDate.value.slice(0, 4));
-  const [progressData, gapData, planData, reportData] = await Promise.all([
-    apiRequest<FrameworkProgressSummary>(`/api/analysis/frameworks/${encodeURIComponent(frameworkId)}/progress?asOf=${asOfDate.value}`),
-    apiRequest<{ items: ProjectGapSummary[] }>(`/api/analysis/projects/gaps?frameworkId=${encodeURIComponent(frameworkId)}&asOf=${asOfDate.value}`),
-    apiRequest<{ items: MonthlyPlanSummary[] }>(`/api/analysis/plans?frameworkId=${encodeURIComponent(frameworkId)}&year=${year}`),
-    apiRequest<{ items: MonthlyReportSummary[] }>(`/api/reports/monthly?frameworkId=${encodeURIComponent(frameworkId)}&businessMonth=${reportMonth.value}`),
-  ]);
+  const year = Number(selectedFramework.value?.startDate.slice(0, 4) ?? requestedAsOf.slice(0, 4));
+  let progressData: FrameworkProgressSummary;
+  let gapData: { items: ProjectGapSummary[] };
+  let planData: { items: MonthlyPlanSummary[] };
+  let reportData: { items: MonthlyReportSummary[] };
+  try {
+    [progressData, gapData, planData, reportData] = await Promise.all([
+      apiRequest<FrameworkProgressSummary>(`/api/analysis/frameworks/${encodeURIComponent(frameworkId)}/progress?asOf=${requestedAsOf}`),
+      apiRequest<{ items: ProjectGapSummary[] }>(`/api/analysis/projects/gaps?frameworkId=${encodeURIComponent(frameworkId)}&asOf=${requestedAsOf}`),
+      apiRequest<{ items: MonthlyPlanSummary[] }>(`/api/analysis/plans?frameworkId=${encodeURIComponent(frameworkId)}&year=${year}`),
+      apiRequest<{ items: MonthlyReportSummary[] }>(`/api/reports/monthly?frameworkId=${encodeURIComponent(frameworkId)}&businessMonth=${requestedReportMonth}`),
+    ]);
+  } catch (cause) {
+    if (sequence !== frameworkContextSequence || selectedFrameworkId.value !== frameworkId) return false;
+    throw cause;
+  }
+  if (sequence !== frameworkContextSequence || selectedFrameworkId.value !== frameworkId) return;
   progress.value = progressData;
   gaps.value = gapData.items;
   plans.value = planData.items;
   reports.value = reportData.items;
   await renderCharts();
+  return true;
 }
 
 async function loadCommon() {
   const basePromises: Promise<unknown>[] = [];
-  const fwPromise = apiRequest<{ items: FrameworkSummary[] }>('/api/frameworks').then((data) => { frameworks.value = data.items; if (!selectedFrameworkId.value && data.items[0]) selectedFrameworkId.value = data.items[0].id; });
+  const requestedAsOf = asOfDate.value;
+  const fwPromise = apiRequest<{ items: FrameworkSummary[] }>('/api/frameworks').then((data) => {
+    frameworks.value = data.items;
+    if (!selectedFrameworkId.value) {
+      selectedFrameworkId.value = data.items.some((item) => item.id === requestedFrameworkId)
+        ? requestedFrameworkId
+        : data.items[0]?.id ?? null;
+    }
+  });
   const projectPromise = apiRequest<{ items: FinanceProjectSummary[] }>('/api/finance/projects').then((data) => { projects.value = data.items; });
   const reservePromise = apiRequest<ReserveRemainingSummary>('/api/analysis/reserve-remaining').then((data) => { reserve.value = data; });
   const rulePromise = apiRequest<AnalysisRuleSummary>('/api/analysis/rules').then((data) => { rule.value = data; ruleMode.value = data.mode; ruleThresholdPercent.value = (data.thresholdBasisPoints / 100).toFixed(2).replace(/\.00$/, ''); });
-  const milestonePromise = apiRequest<{ items: MilestoneDueSummary[] }>(`/api/milestones/due?asOf=${asOfDate.value}`).then((data) => { milestones.value = data.items; });
+  const milestonePromise = loadMilestones(requestedAsOf);
   const alertPromise = apiRequest<{ items: AlertEventSummary[] }>('/api/alerts').then((data) => { alerts.value = data.items; });
   basePromises.push(fwPromise, projectPromise, reservePromise, rulePromise, milestonePromise, alertPromise);
-  if (isAdmin.value) {
-    basePromises.push(
-      apiRequest<{ items: BackupSummary[] }>('/api/backups').then((data) => { backups.value = data.items; }),
-      apiRequest<{ items: NotificationContactSummary[] }>('/api/notification-contacts').then((data) => { contacts.value = data.items; }),
-      apiRequest<{ items: NotificationOutboxSummary[] }>('/api/notification-outbox').then((data) => { outbox.value = data.items; }),
-    );
-  }
   await Promise.all(basePromises);
   await loadFrameworkContext();
   await renderCharts();
@@ -172,11 +218,32 @@ async function refresh() {
   catch (cause) { error.value = cause instanceof Error ? cause.message : '读取分析数据失败'; }
   finally { loading.value = false; }
 }
-async function selectFramework(value: string | null) { selectedFrameworkId.value = value; await loadFrameworkContext(); }
+async function selectFramework(value: string | null) {
+  error.value = '';
+  selectedFrameworkId.value = value;
+  if (planProjectId.value && !projects.value.some((item) => item.id === planProjectId.value && item.frameworkId === value)) {
+    planProjectId.value = null;
+    planAmountYuan.value = '';
+  }
+  const query = { ...route.query };
+  if (value) query.framework = value;
+  else delete query.framework;
+  void router.replace({ query });
+  try {
+    await loadFrameworkContext();
+  } catch (cause) {
+    if (selectedFrameworkId.value === value) error.value = cause instanceof Error ? cause.message : '读取分析数据失败';
+  }
+}
 async function changeAsOf() {
-  reportMonth.value = asOfDate.value.slice(0, 7);
-  const [milestoneData] = await Promise.all([apiRequest<{ items: MilestoneDueSummary[] }>(`/api/milestones/due?asOf=${asOfDate.value}`), loadFrameworkContext()]);
-  milestones.value = milestoneData.items;
+  const requestedAsOf = asOfDate.value;
+  error.value = '';
+  reportMonth.value = requestedAsOf.slice(0, 7);
+  try {
+    await Promise.all([loadMilestones(requestedAsOf), loadFrameworkContext()]);
+  } catch (cause) {
+    if (asOfDate.value === requestedAsOf) error.value = cause instanceof Error ? cause.message : '读取分析数据失败';
+  }
 }
 
 async function savePlan() {
@@ -185,9 +252,14 @@ async function savePlan() {
   const current = plans.value.find((item) => item.projectId === planProjectId.value && item.month === Number(planMonth.value));
   saving.value = true;
   try {
-    await apiRequest(`/api/analysis/plans/${encodeURIComponent(planProjectId.value)}/${analysisYear.value}/${Number(planMonth.value)}`, jsonRequestInit('PUT', { expectedVersion: current?.version ?? null, targetAmountFen }));
-    await loadFrameworkContext(); message.success('月计划已保存');
-  } catch (cause) { message.error(cause instanceof Error ? cause.message : '月计划保存失败'); }
+    try {
+      await apiRequest(`/api/analysis/plans/${encodeURIComponent(planProjectId.value)}/${analysisYear.value}/${Number(planMonth.value)}`, jsonRequestInit('PUT', { expectedVersion: current?.version ?? null, targetAmountFen }));
+    } catch (cause) {
+      message.error(cause instanceof Error ? cause.message : '月计划保存失败');
+      return;
+    }
+    await refreshAfterCommittedWrite('月计划已保存', loadFrameworkContext);
+  }
   finally { saving.value = false; }
 }
 async function saveRule() {
@@ -195,18 +267,28 @@ async function saveRule() {
   const thresholdBasisPoints = parsePercentBasisPoints(ruleThresholdPercent.value); if (thresholdBasisPoints === null) { message.warning('阈值请输入 0–100%'); return; }
   saving.value = true;
   try {
-    rule.value = await apiRequest<AnalysisRuleSummary>('/api/analysis/rules', jsonRequestInit('PUT', { expectedVersion: rule.value.version, mode: ruleMode.value, thresholdBasisPoints }));
-    await loadFrameworkContext(); message.success('分析规则已更新');
-  } catch (cause) { message.error(cause instanceof Error ? cause.message : '规则更新失败'); }
+    try {
+      rule.value = await apiRequest<AnalysisRuleSummary>('/api/analysis/rules', jsonRequestInit('PUT', { expectedVersion: rule.value.version, mode: ruleMode.value, thresholdBasisPoints }));
+    } catch (cause) {
+      message.error(cause instanceof Error ? cause.message : '规则更新失败');
+      return;
+    }
+    await refreshAfterCommittedWrite('分析规则已更新', loadFrameworkContext);
+  }
   finally { saving.value = false; }
 }
 async function generateReport() {
   if (!selectedFrameworkId.value) return;
   saving.value = true;
   try {
-    await apiRequest('/api/reports/monthly', jsonRequestInit('POST', { frameworkId: selectedFrameworkId.value, businessMonth: reportMonth.value, dataCutoffDate: asOfDate.value }));
-    await loadFrameworkContext(); message.success('月报修订已生成');
-  } catch (cause) { message.error(cause instanceof Error ? cause.message : '月报生成失败'); }
+    try {
+      await apiRequest('/api/reports/monthly', jsonRequestInit('POST', { frameworkId: selectedFrameworkId.value, businessMonth: reportMonth.value, dataCutoffDate: asOfDate.value }));
+    } catch (cause) {
+      message.error(cause instanceof Error ? cause.message : '月报生成失败');
+      return;
+    }
+    await refreshAfterCommittedWrite('月报修订已生成', loadFrameworkContext);
+  }
   finally { saving.value = false; }
 }
 async function createMilestone() {
@@ -216,40 +298,42 @@ async function createMilestone() {
   const specificDate = precision === 'day' ? milestoneForm.value.specificDate : null;
   saving.value = true;
   try {
-    await apiRequest('/api/milestones', jsonRequestInit('POST', { businessYear: analysisYear.value, title, owner: milestoneForm.value.owner.trim() || null, projectId: null, datePrecision: precision, month, specificDate: specificDate || null, leadDays: [7, 3, 0] }));
+    try {
+      await apiRequest('/api/milestones', jsonRequestInit('POST', { businessYear: analysisYear.value, title, owner: milestoneForm.value.owner.trim() || null, projectId: null, datePrecision: precision, month, specificDate: specificDate || null, leadDays: [7, 3, 0] }));
+    } catch (cause) {
+      message.error(cause instanceof Error ? cause.message : '事项创建失败');
+      return;
+    }
     milestoneForm.value = { title: '', owner: '', datePrecision: 'unknown', month: null, specificDate: '' };
-    milestones.value = (await apiRequest<{ items: MilestoneDueSummary[] }>(`/api/milestones/due?asOf=${asOfDate.value}`)).items; message.success('年度事项已创建');
-  } catch (cause) { message.error(cause instanceof Error ? cause.message : '事项创建失败'); }
+    await refreshAfterCommittedWrite('年度事项已创建', loadMilestones);
+  }
   finally { saving.value = false; }
 }
 async function setMilestoneStatus(item: MilestoneDueSummary, status: 'open' | 'completed') {
-  try {
-    await apiRequest(`/api/milestones/${item.id}/status`, jsonRequestInit('PUT', { expectedVersion: item.version, status }));
-    milestones.value = (await apiRequest<{ items: MilestoneDueSummary[] }>(`/api/milestones/due?asOf=${asOfDate.value}`)).items;
-  } catch (cause) { message.error(cause instanceof Error ? cause.message : '事项状态更新失败'); }
-}
-async function createContact() {
-  const address = contactForm.value.address.trim(); if (!address) return;
-  try {
-    await apiRequest('/api/notification-contacts', jsonRequestInit('POST', { memberId: contactForm.value.memberId, address, verified: true, enabled: true }));
-    contacts.value = (await apiRequest<{ items: NotificationContactSummary[] }>('/api/notification-contacts')).items; contactForm.value.address = ''; message.success('通知地址已保存');
-  } catch (cause) { message.error(cause instanceof Error ? cause.message : '通知地址保存失败'); }
-}
-async function createBackup() {
+  if (saving.value) return;
   saving.value = true;
   try {
-    await apiRequest('/api/backups', jsonRequestInit('POST', { backupDate: businessToday(), kind: 'daily' }));
-    backups.value = (await apiRequest<{ items: BackupSummary[] }>('/api/backups')).items; message.success('备份任务已创建');
-  } catch (cause) { message.error(cause instanceof Error ? cause.message : '备份创建失败'); }
+    try {
+      await apiRequest(`/api/milestones/${item.id}/status`, jsonRequestInit('PUT', { expectedVersion: item.version, status }));
+    } catch (cause) {
+      message.error(cause instanceof Error ? cause.message : '事项状态更新失败');
+      return;
+    }
+    await refreshAfterCommittedWrite('事项状态已更新', loadMilestones);
+  }
   finally { saving.value = false; }
 }
-async function stepBackup(item: BackupSummary) {
-  try { await apiRequest(`/api/backups/${item.id}/step`, jsonRequestInit('POST', {})); backups.value = (await apiRequest<{ items: BackupSummary[] }>('/api/backups')).items; }
-  catch (cause) { message.error(cause instanceof Error ? cause.message : '备份推进失败'); }
-}
-async function verifyBackup(item: BackupSummary) {
-  try { await apiRequest(`/api/backups/${item.id}/verify`, jsonRequestInit('POST', {})); backups.value = (await apiRequest<{ items: BackupSummary[] }>('/api/backups')).items; }
-  catch (cause) { message.error(cause instanceof Error ? cause.message : '备份校验失败'); }
+
+function chartTheme() {
+  const styles = getComputedStyle(document.documentElement);
+  const token = (name: string, fallback: string) => styles.getPropertyValue(name).trim() || fallback;
+  return {
+    text: token('--ui-text', '#172033'),
+    textSecondary: token('--ui-text-secondary', '#667085'),
+    border: token('--ui-border', '#e4e7ec'),
+    surfaceRaised: token('--ui-surface-raised', '#ffffff'),
+    accent: token('--ui-accent', '#2563eb'),
+  };
 }
 
 async function renderCharts() {
@@ -258,122 +342,206 @@ async function renderCharts() {
   if (!chartElementsExist) return;
   const { init } = await import('../charts/echarts');
   if (disposed) return;
+  const theme = chartTheme();
+  const tooltip = { trigger: 'axis' as const, backgroundColor: theme.surfaceRaised, borderColor: theme.border, borderWidth: 1, textStyle: { color: theme.text } };
+  const axisStyle = {
+    axisLabel: { color: theme.textSecondary },
+    axisLine: { lineStyle: { color: theme.border } },
+    axisTick: { lineStyle: { color: theme.border } },
+    splitLine: { lineStyle: { color: theme.border } },
+  };
   if (progressChartEl.value) {
     progressChart ??= init(progressChartEl.value);
     progressChart.setOption({
-      tooltip: { trigger: 'axis' }, grid: { left: 56, right: 24, top: 30, bottom: 36 },
-      xAxis: { type: 'category', data: ['同期计划', '预算发生'] }, yAxis: { type: 'value' },
-      series: [{ type: 'bar', data: [progress.value?.plannedToDateFen ?? 0, progress.value?.actualToDateFen ?? 0] }],
+      tooltip, grid: { left: 16, right: 16, top: 30, bottom: 24, containLabel: true },
+      xAxis: { type: 'category', data: ['同期计划', '预算发生'], ...axisStyle, splitLine: { show: false, lineStyle: { color: theme.border } } },
+      yAxis: { type: 'value', ...axisStyle },
+      series: [{ type: 'bar', itemStyle: { color: theme.accent }, data: [progress.value?.plannedToDateFen ?? 0, progress.value?.actualToDateFen ?? 0] }],
     }, true);
   }
   if (reserveChartEl.value) {
     reserveChart ??= init(reserveChartEl.value);
     reserveChart.setOption({
-      tooltip: { trigger: 'axis' }, grid: { left: 90, right: 24, top: 20, bottom: 36 },
-      xAxis: { type: 'value' }, yAxis: { type: 'category', data: (reserve.value?.categories ?? []).map((item) => item.label) },
-      series: [{ type: 'bar', data: (reserve.value?.categories ?? []).map((item) => item.knownCurrentAmountFen) }],
+      tooltip, grid: { left: 16, right: 16, top: 20, bottom: 24, containLabel: true },
+      xAxis: { type: 'value', ...axisStyle },
+      yAxis: { type: 'category', data: (reserve.value?.categories ?? []).map((item) => item.label), ...axisStyle, splitLine: { show: false, lineStyle: { color: theme.border } } },
+      series: [{ type: 'bar', itemStyle: { color: theme.accent }, data: (reserve.value?.categories ?? []).map((item) => item.knownCurrentAmountFen) }],
     }, true);
   }
 }
 function resizeCharts() { progressChart?.resize(); reserveChart?.resize(); }
+async function handleTabChange(value: string | number) {
+  if (saving.value) return;
+  const nextTab = String(value) as AnalysisTab;
+  if (!analysisTabs.has(nextTab)) return;
+  activeTab.value = nextTab;
+  const query = { ...route.query };
+  if (nextTab === 'progress') delete query.tab;
+  else query.tab = nextTab;
+  void router.replace({ query });
+  await nextTick();
+  await renderCharts();
+  resizeCharts();
+}
+function handleThemeChange() { void renderCharts().then(resizeCharts); }
 
-onMounted(() => { disposed = false; window.addEventListener('resize', resizeCharts); void refresh(); });
-onBeforeUnmount(() => { disposed = true; window.removeEventListener('resize', resizeCharts); progressChart?.dispose(); reserveChart?.dispose(); });
+onMounted(() => {
+  disposed = false;
+  window.addEventListener('resize', resizeCharts);
+  if (typeof window.matchMedia === 'function') {
+    themeMedia = window.matchMedia('(prefers-color-scheme: dark)');
+    themeMedia.addEventListener('change', handleThemeChange);
+  }
+  void refresh();
+});
+onBeforeUnmount(() => {
+  disposed = true;
+  window.removeEventListener('resize', resizeCharts);
+  themeMedia?.removeEventListener('change', handleThemeChange);
+  themeMedia = null;
+  progressChart?.dispose();
+  reserveChart?.dispose();
+});
 </script>
 
 <template>
   <div class="view-stack analysis-view">
-    <n-alert v-if="error" type="error">{{ error }}</n-alert>
-    <n-card title="分析口径">
-      <n-space align="end" wrap>
-        <n-form-item label="统计日期"><n-input v-model:value="asOfDate" data-test="analysis-as-of" @change="changeAsOf" /></n-form-item>
-        <n-form-item label="框架"><n-select :value="selectedFrameworkId" :options="frameworkOptions" data-test="analysis-framework" @update:value="selectFramework" /></n-form-item>
-        <n-button @click="refresh">刷新</n-button>
-      </n-space>
-    </n-card>
+    <n-alert v-if="error" type="error">
+      <div class="load-error-content"><span>{{ error }}</span><n-button data-test="retry-analysis" size="small" secondary @click="refresh">重新加载</n-button></div>
+    </n-alert>
+    <header class="page-header">
+      <div class="page-header-copy">
+        <span class="page-eyebrow">业务分析</span>
+        <h2 class="page-title">分析</h2>
+        <p class="page-description">查看框架进度、项目缺口、储备剩余和年度事项；通知与备份已归入设置。</p>
+      </div>
+    </header>
+
+    <section class="analysis-toolbar">
+      <n-form-item label="统计日期"><n-input v-model:value="asOfDate" data-test="analysis-as-of" :disabled="saving" @change="changeAsOf" /></n-form-item>
+      <n-form-item label="框架"><n-select :value="selectedFrameworkId" :options="frameworkOptions" data-test="analysis-framework" :disabled="saving" @update:value="selectFramework" /></n-form-item>
+      <n-button :loading="loading" :disabled="saving" @click="refresh">刷新数据</n-button>
+    </section>
 
     <n-spin :show="loading">
-      <n-grid :cols="4" :x-gap="16" :y-gap="16" responsive="screen">
-        <n-grid-item><n-card><n-statistic label="同期计划" :value="formatMoney(progress?.plannedToDateFen)" /></n-card></n-grid-item>
-        <n-grid-item><n-card><n-statistic label="预算发生" :value="formatMoney(progress?.actualToDateFen)" /></n-card></n-grid-item>
-        <n-grid-item><n-card><n-statistic label="同期达成率" :value="formatPercent(progress?.attainmentBasisPoints)" /></n-card></n-grid-item>
-        <n-grid-item><n-card><n-statistic label="活动预警" :value="alerts.filter((item) => item.state === 'active').length" /></n-card></n-grid-item>
-      </n-grid>
+      <section class="analysis-metrics">
+        <div><span>同期计划</span><strong>{{ formatMoney(progress?.plannedToDateFen) }}</strong></div>
+        <div><span>预算发生</span><strong>{{ formatMoney(progress?.actualToDateFen) }}</strong></div>
+        <div><span>同期达成率</span><strong>{{ formatPercent(progress?.attainmentBasisPoints) }}</strong></div>
+        <div><span>活动预警</span><strong>{{ alerts.filter((item) => item.state === 'active').length }}</strong></div>
+      </section>
 
-      <n-alert v-if="progress?.lagging" type="warning" :bordered="false">{{ progress.frameworkName }} 当前低于规则要求；规则为 {{ progress.rule.mode === 'ratio' ? '同期计划达成率' : '年度目标落后百分点' }} {{ formatPercent(progress.rule.thresholdBasisPoints) }}。</n-alert>
+      <n-alert v-if="progress?.lagging" type="warning" :bordered="false" class="analysis-warning">{{ progress.frameworkName }} 当前低于规则要求；规则为 {{ progress.rule.mode === 'ratio' ? '同期计划达成率' : '年度目标落后百分点' }} {{ formatPercent(progress.rule.thresholdBasisPoints) }}。</n-alert>
 
-      <n-tabs type="line" animated>
+      <n-tabs :value="activeTab" type="line" animated @update:value="handleTabChange">
         <n-tab-pane name="progress" tab="进度与缺口">
-          <n-grid :cols="2" :x-gap="16" responsive="screen">
-            <n-grid-item><n-card title="计划与实际"><div ref="progressChartEl" class="chart"></div></n-card></n-grid-item>
-            <n-grid-item><n-card title="季度节点"><n-space vertical><div v-for="quarter in progress?.quarters ?? []" :key="quarter.quarter">Q{{ quarter.quarter }} · 累计目标 {{ formatPercent(quarter.cumulativeTargetBasisPoints) }} · {{ quarter.status }}</div></n-space></n-card></n-grid-item>
-          </n-grid>
-          <n-card title="子项目同期缺口" class="section-card"><n-data-table v-if="gaps.length" :columns="gapColumns" :data="gaps" :pagination="false" /><n-empty v-else description="暂无项目缺口数据" /></n-card>
+          <div class="analysis-two-column">
+            <section class="analysis-panel chart-panel">
+              <div class="analysis-panel-heading"><div><h3>计划与实际</h3><p>{{ analysisYear }} 年累计进度</p></div></div>
+              <div ref="progressChartEl" class="chart"></div>
+            </section>
+            <section class="analysis-panel quarter-panel">
+              <div class="analysis-panel-heading"><div><h3>季度节点</h3><p>只按实际年份和季度边界判断状态</p></div></div>
+              <div class="quarter-list">
+                <div v-for="quarter in progress?.quarters ?? []" :key="quarter.quarter" class="quarter-row">
+                  <span class="quarter-index">Q{{ quarter.quarter }}</span>
+                  <div><strong>{{ formatPercent(quarter.cumulativeTargetBasisPoints) }}</strong><small>累计目标</small></div>
+                  <n-tag size="small" :bordered="false" :type="quarter.status === 'ended' ? 'default' : quarter.status === 'in_progress' ? 'info' : 'warning'">{{ quarterStatusLabel(quarter.status) }}</n-tag>
+                </div>
+              </div>
+            </section>
+          </div>
 
-          <n-card v-if="canPlan" title="月计划维护" class="section-card">
-            <n-space align="end" wrap>
-              <n-form-item label="子项目"><n-select v-model:value="planProjectId" data-test="plan-project" :options="planProjectOptions" /></n-form-item>
-              <n-form-item label="月份"><n-select v-model:value="planMonth" data-test="plan-month" :options="monthOptions" /></n-form-item>
-              <n-form-item label="目标金额（元）"><n-input v-model:value="planAmountYuan" data-test="plan-amount" /></n-form-item>
-              <n-button type="primary" data-test="save-plan" :loading="saving" @click="savePlan">保存月计划</n-button>
-            </n-space>
-          </n-card>
-          <n-card v-if="isAdmin && rule" title="滞后规则" class="section-card">
-            <n-space align="end" wrap>
-              <n-form-item label="模式"><n-select v-model:value="ruleMode" :options="[{ label: '同期计划达成率', value: 'ratio' }, { label: '年度目标落后百分点', value: 'gap' }]" /></n-form-item>
-              <n-form-item label="阈值（%）"><n-input v-model:value="ruleThresholdPercent" data-test="rule-threshold" /></n-form-item>
-              <n-button data-test="save-rule" :loading="saving" @click="saveRule">更新规则</n-button>
-            </n-space>
-          </n-card>
-          <n-card v-if="canPlan" title="月报快照" class="section-card">
-            <n-space align="end" wrap><n-form-item label="业务月份"><n-input v-model:value="reportMonth" /></n-form-item><n-button @click="generateReport">生成新修订</n-button></n-space>
-            <div v-if="reports.length" class="report-history"><span v-for="item in reports" :key="item.id">{{ item.businessMonth }} · 修订 {{ item.revision }} · 规则 v{{ item.ruleVersion }}</span></div>
-            <n-empty v-else description="当前月份尚无报告快照" />
-          </n-card>
+          <section class="analysis-panel gap-panel">
+            <div class="analysis-panel-heading"><div><h3>子项目同期缺口</h3><p>同期计划与预算发生的真实差额</p></div></div>
+            <n-data-table v-if="gaps.length" class="analysis-desktop-table" :columns="gapColumns" :data="gaps" :pagination="false" />
+            <div v-if="gaps.length" class="analysis-mobile-list">
+              <div v-for="item in gaps" :key="item.projectId" class="analysis-mobile-row">
+                <strong>{{ item.projectName }}</strong>
+                <div class="mobile-facts"><span>计划 {{ formatMoney(item.plannedToDateFen) }}</span><span>发生 {{ formatMoney(item.actualToDateFen) }}</span><span>缺口 {{ formatMoney(item.gapFen) }}</span></div>
+              </div>
+            </div>
+            <n-empty v-else description="暂无项目缺口数据" />
+          </section>
+
+          <section v-if="canPlan || isAdmin" class="analysis-panel configuration-panel">
+            <div class="analysis-panel-heading"><div><h3>分析配置</h3><p>月计划、滞后规则和月报快照集中维护</p></div></div>
+            <div class="configuration-grid">
+              <div v-if="canPlan" class="configuration-group">
+                <strong>月计划</strong>
+                <n-form-item label="子项目"><n-select v-model:value="planProjectId" data-test="plan-project" :disabled="saving" :options="planProjectOptions" /></n-form-item>
+                <div class="configuration-fields"><n-form-item label="月份"><n-select v-model:value="planMonth" data-test="plan-month" :disabled="saving" :options="monthOptions" /></n-form-item><n-form-item label="目标金额（元）"><n-input v-model:value="planAmountYuan" data-test="plan-amount" :disabled="saving" /></n-form-item></div>
+                <n-button type="primary" data-test="save-plan" :loading="saving" @click="savePlan">保存月计划</n-button>
+              </div>
+              <div v-if="isAdmin && rule" class="configuration-group">
+                <strong>滞后规则</strong>
+                <n-form-item label="模式"><n-select v-model:value="ruleMode" :disabled="saving" :options="[{ label: '同期计划达成率', value: 'ratio' }, { label: '年度目标落后百分点', value: 'gap' }]" /></n-form-item>
+                <n-form-item label="阈值（%）"><n-input v-model:value="ruleThresholdPercent" data-test="rule-threshold" :disabled="saving" /></n-form-item>
+                <n-button data-test="save-rule" :loading="saving" @click="saveRule">更新规则</n-button>
+              </div>
+              <div v-if="canPlan" class="configuration-group">
+                <strong>月报快照</strong>
+                <n-form-item label="业务月份"><n-input v-model:value="reportMonth" :disabled="saving" /></n-form-item>
+                <n-button :loading="saving" @click="generateReport">生成新修订</n-button>
+                <div v-if="reports.length" class="report-history"><span v-for="item in reports" :key="item.id">{{ item.businessMonth }} · 修订 {{ item.revision }} · 规则 v{{ item.ruleVersion }}</span></div>
+                <span v-else class="configuration-empty">当前月份尚无报告快照</span>
+              </div>
+            </div>
+          </section>
         </n-tab-pane>
 
         <n-tab-pane name="reserve" tab="储备剩余">
-          <n-grid :cols="3" :x-gap="16" responsive="screen">
-            <n-grid-item><n-card><n-statistic label="当前储备物资数量" :value="formatQuantity(reserve?.currentMaterialQuantityScaled ?? 0)" /></n-card></n-grid-item>
-            <n-grid-item><n-card><n-statistic label="已项目级出库项目" :value="reserve?.releasedProjectCount ?? 0" /></n-card></n-grid-item>
-            <n-grid-item><n-card><n-statistic label="当前已知物资金额" :value="formatMoney(reserve?.knownCurrentMaterialAmountFen)" /></n-card></n-grid-item>
-          </n-grid>
-          <n-alert v-if="reserve && (reserve.missingPriceCount || reserve.unclassifiedCurrentMaterialFen)" type="warning" :bordered="false">缺价 {{ reserve.missingPriceCount }} 项；未分类当前物资 {{ formatMoney(reserve.unclassifiedCurrentMaterialFen) }}。储备类别分析只统计当前未出库项目的项目物资，施工/其他费用不纳入。</n-alert>
-          <n-card title="按储备大类的当前项目物资金额" class="section-card"><div ref="reserveChartEl" class="chart"></div><div class="category-list"><n-tag v-for="item in reserve?.categories ?? []" :key="item.reserveCategoryId" :bordered="false">{{ item.label }} {{ formatMoney(item.knownCurrentAmountFen) }}</n-tag></div></n-card>
+          <section class="reserve-metrics">
+            <div><span>当前储备物资数量</span><strong>{{ formatQuantity(reserve?.currentMaterialQuantityScaled ?? 0) }}</strong></div>
+            <div><span>已项目级出库项目</span><strong>{{ reserve?.releasedProjectCount ?? 0 }}</strong></div>
+            <div><span>当前已知物资金额</span><strong>{{ formatMoney(reserve?.knownCurrentMaterialAmountFen) }}</strong></div>
+          </section>
+          <n-alert v-if="reserve && (reserve.missingPriceCount || reserve.unclassifiedCurrentMaterialFen)" type="warning" :bordered="false" class="analysis-warning">缺价 {{ reserve.missingPriceCount }} 项；未分类当前物资 {{ formatMoney(reserve.unclassifiedCurrentMaterialFen) }}。储备类别分析只统计当前未出库项目的项目物资，施工/其他费用不纳入。</n-alert>
+          <section class="analysis-panel">
+            <div class="analysis-panel-heading"><div><h3>储备大类金额</h3><p>仅统计当前仍未项目级出库的项目物资</p></div></div>
+            <div ref="reserveChartEl" class="chart"></div>
+            <div class="category-list"><n-tag v-for="item in reserve?.categories ?? []" :key="item.reserveCategoryId" :bordered="false">{{ item.label }} {{ formatMoney(item.knownCurrentAmountFen) }}</n-tag></div>
+          </section>
         </n-tab-pane>
 
         <n-tab-pane name="milestones" tab="年度事项">
-          <n-card v-if="canPlan" title="新增事项">
-            <n-space align="end" wrap>
-              <n-form-item label="事项"><n-input v-model:value="milestoneForm.title" /></n-form-item>
-              <n-form-item label="负责人"><n-input v-model:value="milestoneForm.owner" /></n-form-item>
-              <n-form-item label="日期精度"><n-select v-model:value="milestoneForm.datePrecision" :options="[{ label: '具体日期', value: 'day' }, { label: '仅月份', value: 'month' }, { label: '待补充', value: 'unknown' }]" /></n-form-item>
-              <n-form-item v-if="milestoneForm.datePrecision !== 'unknown'" label="月份"><n-select v-model:value="milestoneForm.month" :options="monthOptions" /></n-form-item>
-              <n-form-item v-if="milestoneForm.datePrecision === 'day'" label="日期"><n-input v-model:value="milestoneForm.specificDate" /></n-form-item>
-              <n-button @click="createMilestone">新增事项</n-button>
-            </n-space>
-          </n-card>
-          <n-card title="事项清单" class="section-card"><n-data-table v-if="milestones.length" :columns="milestoneColumns" :data="milestones" :pagination="false" /><n-empty v-else description="暂无年度事项" /></n-card>
+          <section v-if="canPlan" class="analysis-panel milestone-editor">
+            <div class="analysis-panel-heading"><div><h3>新增年度事项</h3><p>日期只有月份时保持月份精度，不补造具体日期</p></div></div>
+            <div class="milestone-form-grid">
+              <n-form-item label="事项"><n-input v-model:value="milestoneForm.title" :disabled="saving" /></n-form-item>
+              <n-form-item label="负责人"><n-input v-model:value="milestoneForm.owner" :disabled="saving" /></n-form-item>
+              <n-form-item label="日期精度"><n-select v-model:value="milestoneForm.datePrecision" :disabled="saving" :options="[{ label: '具体日期', value: 'day' }, { label: '仅月份', value: 'month' }, { label: '待补充', value: 'unknown' }]" /></n-form-item>
+              <n-form-item v-if="milestoneForm.datePrecision !== 'unknown'" label="月份"><n-select v-model:value="milestoneForm.month" :disabled="saving" :options="monthOptions" /></n-form-item>
+              <n-form-item v-if="milestoneForm.datePrecision === 'day'" label="日期"><n-input v-model:value="milestoneForm.specificDate" :disabled="saving" /></n-form-item>
+              <n-button :loading="saving" @click="createMilestone">新增事项</n-button>
+            </div>
+          </section>
+          <section class="analysis-panel">
+            <div class="analysis-panel-heading"><div><h3>事项清单</h3><p>{{ analysisYear }} 年需要持续跟踪的事项</p></div></div>
+            <n-data-table v-if="milestones.length" class="analysis-desktop-table" :columns="milestoneColumns" :data="milestones" :pagination="false" />
+            <div v-if="milestones.length" class="analysis-mobile-list">
+              <div v-for="item in milestones" :key="item.id" class="analysis-mobile-row milestone-mobile-row">
+                <div class="mobile-row-head"><strong>{{ item.title }}</strong><n-tag size="small" :bordered="false" :type="item.status === 'completed' ? 'success' : item.overdue ? 'error' : item.reminderDue ? 'warning' : 'default'">{{ milestoneStateLabel(item) }}</n-tag></div>
+                <div class="mobile-facts"><span>{{ item.owner || '未指定负责人' }}</span><span>{{ item.dueDate ?? item.dueMonth ?? '日期待补充' }}</span></div>
+                <n-button v-if="canPlan && item.status !== 'completed'" size="small" secondary :loading="saving" :disabled="saving" @click="setMilestoneStatus(item, 'completed')">标记完成</n-button>
+              </div>
+            </div>
+            <n-empty v-else description="暂无年度事项" />
+          </section>
         </n-tab-pane>
 
-        <n-tab-pane name="alerts" tab="预警与通知">
-          <n-card title="预警事件"><n-data-table v-if="alerts.length" :columns="alertColumns" :data="alerts" :pagination="false" /><n-empty v-else description="暂无预警" /></n-card>
-          <template v-if="isAdmin">
-            <n-card title="通知地址" class="section-card">
-              <n-space align="end" wrap><n-form-item label="成员 ID"><n-input v-model:value="contactForm.memberId" /></n-form-item><n-form-item label="邮件地址"><n-input v-model:value="contactForm.address" /></n-form-item><n-button @click="createContact">保存已验证地址</n-button></n-space>
-              <div v-if="contacts.length" class="compact-list"><span v-for="item in contacts" :key="item.id">{{ item.address }} · {{ item.verifiedAt ? '已验证' : '未验证' }}</span></div>
-            </n-card>
-            <n-card title="通知 Outbox" class="section-card"><div class="compact-list"><span v-for="item in outbox" :key="item.id">{{ item.recipient }} · {{ item.status }} · 尝试 {{ item.attemptCount }}</span><n-empty v-if="!outbox.length" description="暂无待发通知" /></div></n-card>
-          </template>
-        </n-tab-pane>
-
-        <n-tab-pane v-if="isAdmin" name="ops" tab="备份运维">
-          <n-card title="D1 → R2 逻辑备份">
-            <template #header-extra><n-button data-test="create-backup" :loading="saving" @click="createBackup">创建今日备份</n-button></template>
-            <n-alert type="info" :bordered="false">备份按表分片、可续跑并保存 SHA-256；附件以 R2 key 清单进入 manifest。正式 D1 恢复演练仍需独立恢复环境，不能在当前在线库上直接覆盖。</n-alert>
-            <n-data-table v-if="backups.length" :columns="backupColumns" :data="backups" :pagination="false" />
-            <n-empty v-else description="暂无备份记录" />
-          </n-card>
+        <n-tab-pane name="alerts" tab="预警">
+          <section class="analysis-panel">
+            <div class="analysis-panel-heading"><div><h3>预警事件</h3><p>这里只保留业务预警；通知发送与备份在设置中管理</p></div></div>
+            <n-data-table v-if="alerts.length" class="analysis-desktop-table" :columns="alertColumns" :data="alerts" :pagination="false" />
+            <div v-if="alerts.length" class="analysis-mobile-list">
+              <div v-for="item in alerts" :key="item.id" class="analysis-mobile-row">
+                <div class="mobile-row-head"><strong>{{ item.message }}</strong><n-tag size="small" :bordered="false" :type="item.state === 'active' ? 'warning' : 'success'">{{ alertStateLabel(item.state) }}</n-tag></div>
+                <div class="mobile-facts"><span>{{ alertSeverityLabel(item.severity) }}</span><span>{{ item.periodKey }}</span></div>
+              </div>
+            </div>
+            <n-empty v-else description="暂无预警" />
+          </section>
         </n-tab-pane>
       </n-tabs>
     </n-spin>
@@ -381,10 +549,65 @@ onBeforeUnmount(() => { disposed = true; window.removeEventListener('resize', re
 </template>
 
 <style scoped>
-.analysis-view { min-width: 0; }
-.section-card { margin-top: 16px; }
+.analysis-view { min-width: 0; max-width: 1480px; }
+.analysis-toolbar { display: grid; grid-template-columns: 180px minmax(280px, 1fr) auto; gap: 10px; align-items: end; padding: 14px 16px 4px; border: 1px solid var(--ui-border); border-radius: var(--ui-radius-lg); background: var(--ui-surface); }
+.analysis-metrics, .reserve-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); overflow: hidden; border: 1px solid var(--ui-border); border-radius: var(--ui-radius-lg); background: var(--ui-surface); }
+.analysis-metrics > div, .reserve-metrics > div { display: grid; gap: 7px; min-height: 92px; align-content: center; padding: 14px 17px; }
+.analysis-metrics > div + div, .reserve-metrics > div + div { border-left: 1px solid var(--ui-border); }
+.analysis-metrics span, .reserve-metrics span { color: var(--ui-text-tertiary); font-size: 13px; }
+.analysis-metrics strong, .reserve-metrics strong { font-size: 20px; font-weight: 690; font-variant-numeric: tabular-nums; letter-spacing: -.015em; }
+.reserve-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); margin-bottom: 16px; }
+.analysis-warning { margin-top: 14px; }
+.analysis-two-column { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(320px, .8fr); gap: 14px; }
+.analysis-panel { overflow: hidden; margin-top: 14px; border: 1px solid var(--ui-border); border-radius: var(--ui-radius-lg); background: var(--ui-surface); }
+.analysis-two-column .analysis-panel { margin-top: 0; }
+.analysis-panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 58px; padding: 12px 16px; border-bottom: 1px solid var(--ui-border); }
+.analysis-panel-heading > div { display: grid; gap: 3px; }
+.analysis-panel-heading h3 { margin: 0; font-size: 14px; font-weight: 680; }
+.analysis-panel-heading p { margin: 0; color: var(--ui-text-tertiary); font-size: 13px; }
 .chart { width: 100%; height: 280px; }
-.category-list, .compact-list, .report-history { display: flex; flex-wrap: wrap; gap: 8px 14px; margin-top: 12px; }
-.compact-list { flex-direction: column; }
-@media (max-width: 700px) { .chart { height: 230px; } }
+.quarter-list { display: grid; padding: 4px 16px 12px; }
+.quarter-row { display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; gap: 12px; align-items: center; min-height: 58px; border-bottom: 1px solid var(--ui-border); }
+.quarter-row:last-child { border-bottom: 0; }
+.quarter-index { color: var(--ui-text-secondary); font-size: 13px; font-weight: 700; }
+.quarter-row > div { display: grid; gap: 2px; }
+.quarter-row strong { font-size: 13px; font-weight: 650; }
+.quarter-row small { color: var(--ui-text-tertiary); font-size: 13px; }
+.configuration-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.configuration-group { min-width: 0; padding: 16px; }
+.configuration-group + .configuration-group { border-left: 1px solid var(--ui-border); }
+.configuration-group > strong { display: block; margin-bottom: 12px; font-size: 13px; font-weight: 680; }
+.configuration-fields { display: grid; grid-template-columns: .75fr 1.25fr; gap: 10px; }
+.configuration-empty { color: var(--ui-text-tertiary); font-size: 13px; }
+.report-history { display: grid; gap: 4px; margin-top: 10px; color: var(--ui-text-secondary); font-size: 13px; }
+.category-list { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 16px 16px; }
+.milestone-form-grid { display: grid; grid-template-columns: 1.35fr 1fr .9fr .7fr 1fr auto; gap: 10px; align-items: end; padding: 16px; }
+.analysis-mobile-list { display: none; }
+.mobile-row-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.mobile-facts { display: flex; flex-wrap: wrap; gap: 5px 12px; color: var(--ui-text-tertiary); font-size: 13px; }
+@media (max-width: 1050px) {
+  .analysis-two-column { grid-template-columns: 1fr; }
+  .configuration-grid { grid-template-columns: 1fr; }
+  .configuration-group + .configuration-group { border-top: 1px solid var(--ui-border); border-left: 0; }
+  .milestone-form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 767px) {
+  .analysis-toolbar { grid-template-columns: 1fr; padding: 12px 12px 2px; }
+  .analysis-toolbar > .n-button { width: 100%; margin-bottom: 10px; }
+  .analysis-metrics, .reserve-metrics { grid-template-columns: 1fr 1fr; }
+  .analysis-metrics > div, .reserve-metrics > div { min-height: 72px; padding: 12px; }
+  .analysis-metrics > div + div, .reserve-metrics > div + div { border-left: 0; }
+  .analysis-metrics > div:nth-child(even), .reserve-metrics > div:nth-child(even) { border-left: 1px solid var(--ui-border); }
+  .analysis-metrics > div:nth-child(n+3), .reserve-metrics > div:nth-child(n+3) { border-top: 1px solid var(--ui-border); }
+  .analysis-metrics strong, .reserve-metrics strong { font-size: 16px; }
+  .analysis-panel { border-radius: 14px; }
+  .chart { height: 230px; }
+  .configuration-fields, .milestone-form-grid { grid-template-columns: 1fr; }
+  .analysis-desktop-table { display: none; }
+  .analysis-mobile-list { display: grid; }
+  .analysis-mobile-row { display: grid; gap: 7px; padding: 13px 14px; border-bottom: 1px solid var(--ui-border); }
+  .analysis-mobile-row:last-child { border-bottom: 0; }
+  .analysis-mobile-row > strong, .mobile-row-head strong { font-size: 14px; font-weight: 650; }
+  .milestone-mobile-row > .n-button { justify-self: start; }
+}
 </style>

@@ -15,6 +15,9 @@
     "APP_ENV": "development",
     "OBJECT_STORAGE_PROVIDER": "r2"
   },
+  "secrets": {
+    "required": ["AUTH_CREDENTIAL_PEPPER", "BOOTSTRAP_TOKEN"]
+  },
   "triggers": {
     "crons": ["*/5 * * * *"]
   },

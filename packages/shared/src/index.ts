@@ -682,6 +682,41 @@ export interface ProjectExecutionSummary {
   projectState: LifecycleState;
 }
 
+export type TaskQueueStatus = 'all' | 'implementation_pending' | 'settlement_pending';
+
+export interface TaskQueueItemSummary {
+  id: string;
+  projectId: string;
+  projectName: string;
+  projectYear: number | null;
+  projectOwner: string | null;
+  name: string;
+  scopeText: string | null;
+  owner: string | null;
+  plannedDate: string | null;
+  plannedQuantityScaled: number;
+  unit: string;
+  supplyTotals: TaskMaterialSupplyTotals[];
+  implementedQuantityScaled: number;
+  settledQuantityScaled: number;
+  implementationComplete: boolean;
+  settlementComplete: boolean;
+  state: LifecycleState;
+  settlementReminder: {
+    needed: boolean;
+    firstImplementationDate: string | null;
+    dueDate: string | null;
+    finalSettlementId: string | null;
+  };
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TaskQueuePage {
+  items: TaskQueueItemSummary[];
+  nextCursor: string | null;
+}
+
 export type ProjectStatus = 'draft' | 'confirmed';
 export type ProjectCostKind = 'material' | 'construction' | 'other';
 

@@ -7,23 +7,21 @@ import {
   NConfigProvider,
   NDrawer,
   NDrawerContent,
-  NLayout,
-  NLayoutContent,
-  NLayoutHeader,
-  NLayoutSider,
-  NMenu,
   NMessageProvider,
   NSpin,
-  NTag,
+  darkTheme,
   dateZhCN,
   zhCN,
   type GlobalThemeOverrides,
-  type MenuOption,
 } from 'naive-ui';
 import type { ApiResponse, CurrentUser } from '@tpm/shared';
 import { parseApiResponse } from './api/response';
 import LoginView from './views/LoginView.vue';
 import ChangePasswordView from './views/ChangePasswordView.vue';
+import AppIcon from './app/AppIcon.vue';
+import AppPressable from './app/AppPressable.vue';
+import BrandLockup from './brand/BrandLockup.vue';
+import { BRAND_SUBTITLE } from './brand/brand';
 
 const route = useRoute();
 const router = useRouter();
@@ -32,17 +30,26 @@ const loading = ref(true);
 const connectionError = ref('');
 const loggingOut = ref(false);
 const mobileMenuOpen = ref(false);
+const prefersDark = ref(false);
 
-const themeOverrides: GlobalThemeOverrides = {
+const themeOverrides = computed<GlobalThemeOverrides>(() => ({
   common: {
-    primaryColor: '#2457d6',
-    primaryColorHover: '#1f4fc5',
-    primaryColorPressed: '#193fa0',
-    borderRadius: '10px',
-    borderRadiusSmall: '8px',
+    primaryColor: prefersDark.value ? '#7aa7ff' : '#2563eb',
+    primaryColorHover: prefersDark.value ? '#96b9ff' : '#1d4ed8',
+    primaryColorPressed: prefersDark.value ? '#638fe8' : '#1e40af',
+    primaryColorSuppl: prefersDark.value ? '#84adff' : '#3b82f6',
+    borderRadius: '12px',
+    borderRadiusSmall: '9px',
     fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif',
   },
-};
+  Button: { heightMedium: '38px', heightSmall: '32px', borderRadiusMedium: '10px', borderRadiusSmall: '9px' },
+  Input: { heightMedium: '40px', borderRadius: '10px' },
+  Select: { peers: { InternalSelection: { heightMedium: '40px', borderRadius: '10px' } } },
+  Card: { borderRadius: '14px' },
+  DataTable: prefersDark.value
+    ? { thColor: '#1b212a', thColorHover: '#1f2732', tdColorHover: '#1b222c' }
+    : { thColor: '#f8fafc', thColorHover: '#f8fafc', tdColorHover: '#f8fafc' },
+}));
 
 const roleLabels: Record<CurrentUser['role'], string> = {
   admin: '系统管理员',
@@ -52,19 +59,28 @@ const roleLabels: Record<CurrentUser['role'], string> = {
   readonly: '只读用户',
 };
 
-const menuOptions: MenuOption[] = [
-  { label: '总览', key: '/' },
-  { label: '项目需求', key: '/demands' },
-  { label: '项目储备', key: '/reserves' },
-  { label: '实施结算', key: '/delivery' },
-  { label: '框架费用', key: '/finance' },
-  { label: '储备分析', key: '/analysis' },
-  { label: '基础台账', key: '/master-data' },
-  { label: '规则与成员', key: '/administration' },
+type NavIcon = 'workspace' | 'demands' | 'projects' | 'tasks' | 'finance' | 'analysis' | 'master' | 'settings';
+type NavItem = { label: string; key: string; icon: NavIcon };
+const workNav: NavItem[] = [
+  { label: '工作台', key: '/', icon: 'workspace' },
+  { label: '需求', key: '/demands', icon: 'demands' },
+  { label: '项目', key: '/projects', icon: 'projects' },
+  { label: '执行任务', key: '/tasks', icon: 'tasks' },
+];
+const managementNav: NavItem[] = [
+  { label: '资金', key: '/finance', icon: 'finance' },
+  { label: '分析', key: '/analysis', icon: 'analysis' },
+  { label: '基础台账', key: '/master-data', icon: 'master' },
+];
+const systemNav: NavItem[] = [
+  { label: '设置', key: '/administration', icon: 'settings' },
 ];
 
-const activeKey = computed(() => route.path);
-const pageTitle = computed(() => String(route.meta.title ?? '输电项目全流程管理台'));
+const activeKey = computed(() => String(route.meta.navKey ?? route.path));
+const moreNavKeys = new Set(['/finance', '/analysis', '/master-data', '/administration']);
+const mobileMoreActive = computed(() => mobileMenuOpen.value || moreNavKeys.has(activeKey.value));
+const pageTitle = computed(() => String(route.meta.title ?? BRAND_SUBTITLE));
+const naiveTheme = computed(() => prefersDark.value ? darkTheme : null);
 
 async function loadIdentity() {
   loading.value = true;
@@ -118,11 +134,24 @@ function navigate(key: string) {
   void router.push(key);
 }
 
-onMounted(loadIdentity);
+function navigateMobile(key: string) {
+  if (key === 'more') {
+    mobileMenuOpen.value = true;
+    return;
+  }
+  navigate(key);
+}
+
+onMounted(() => {
+  void loadIdentity();
+  const media = window.matchMedia('(prefers-color-scheme: dark)');
+  prefersDark.value = media.matches;
+  media.addEventListener?.('change', (event) => { prefersDark.value = event.matches; });
+});
 </script>
 
 <template>
-  <n-config-provider :locale="zhCN" :date-locale="dateZhCN" :theme-overrides="themeOverrides">
+  <n-config-provider :locale="zhCN" :date-locale="dateZhCN" :theme="naiveTheme" :theme-overrides="themeOverrides">
     <n-message-provider>
       <div v-if="loading" class="auth-loading">
         <n-spin size="large" />
@@ -146,76 +175,113 @@ onMounted(loadIdentity);
         @changed="passwordChanged"
       />
 
-      <n-layout v-else has-sider class="app-shell">
-        <n-layout-sider
-          bordered
-          collapse-mode="width"
-          :collapsed-width="64"
-          :width="224"
-          class="app-sider"
-        >
-          <div class="brand-block">
-            <div class="brand-mark">输</div>
-            <div>
-              <div class="brand-title">项目管理</div>
-              <div class="brand-subtitle">全流程管理台</div>
-            </div>
-          </div>
-          <n-menu
-            :value="activeKey"
-            :options="menuOptions"
-            @update:value="navigate"
-          />
-          <div class="sidebar-status">
-            <span class="status-dot" />
-            <div>
-              <strong>全流程业务台</strong>
-              <small>需求 · 储备 · 执行 · 结算</small>
-            </div>
-          </div>
-        </n-layout-sider>
+      <div v-else class="app-shell">
+        <aside class="app-sider" aria-label="主导航">
+          <app-pressable class="brand-block" aria-label="返回工作台" @click="navigate('/')">
+            <BrandLockup :icon-size="52" />
+          </app-pressable>
 
-        <n-layout>
-          <n-layout-header bordered class="topbar">
-            <div class="topbar-title-wrap">
-              <n-button class="mobile-menu-button" quaternary circle aria-label="打开导航" @click="mobileMenuOpen = true">☰</n-button>
-              <div>
-                <div class="page-kicker">输电运检 · 项目全流程</div>
-                <h1>{{ pageTitle }}</h1>
-              </div>
+          <div class="nav-scroll">
+            <section class="nav-section">
+              <span class="nav-section-label">业务</span>
+              <app-pressable
+                v-for="item in workNav"
+                :key="item.key"
+                class="nav-item"
+                :class="{ active: activeKey === item.key }"
+                :title="item.label"
+                :aria-current="activeKey === item.key ? 'page' : undefined"
+                @click="navigate(item.key)"
+              >
+                <app-icon :name="item.icon" />
+                <span>{{ item.label }}</span>
+              </app-pressable>
+            </section>
+            <section class="nav-section">
+              <span class="nav-section-label">管理</span>
+              <app-pressable
+                v-for="item in managementNav"
+                :key="item.key"
+                class="nav-item"
+                :class="{ active: activeKey === item.key }"
+                :title="item.label"
+                :aria-current="activeKey === item.key ? 'page' : undefined"
+                @click="navigate(item.key)"
+              >
+                <app-icon :name="item.icon" />
+                <span>{{ item.label }}</span>
+              </app-pressable>
+            </section>
+          </div>
+
+          <div class="nav-bottom">
+            <span class="nav-section-label nav-bottom-label">系统</span>
+            <app-pressable
+              v-for="item in systemNav"
+              :key="item.key"
+              class="nav-item"
+              :class="{ active: activeKey === item.key }"
+              :title="item.label"
+              :aria-current="activeKey === item.key ? 'page' : undefined"
+              @click="navigate(item.key)"
+            >
+              <app-icon :name="item.icon" />
+              <span>{{ item.label }}</span>
+            </app-pressable>
+            <div class="sidebar-account">
+              <div class="account-avatar">{{ currentUser.username.slice(0, 1).toUpperCase() }}</div>
+              <div class="account-copy"><strong>{{ currentUser.username }}</strong><small>{{ roleLabels[currentUser.role] }}</small></div>
+            </div>
+          </div>
+        </aside>
+
+        <div class="app-stage">
+          <header class="topbar">
+            <div class="topbar-context">
+              <span class="topbar-product">项目管理台</span>
+              <span class="topbar-divider" aria-hidden="true"></span>
+              <strong>{{ pageTitle }}</strong>
             </div>
             <div class="identity-card">
-              <div>
-                <strong>{{ currentUser.displayName }}</strong>
-                <small>@{{ currentUser.username }}</small>
+              <div class="identity-copy">
+                <strong>{{ currentUser.username }}</strong>
               </div>
-              <n-tag size="small" :bordered="false">{{ roleLabels[currentUser.role] }}</n-tag>
-              <n-button size="small" quaternary :loading="loggingOut" @click="logout">退出</n-button>
+              <n-button circle quaternary size="small" :loading="loggingOut" aria-label="退出登录" title="退出登录" @click="logout">
+                <template #icon><app-icon name="logout" :size="18" /></template>
+              </n-button>
             </div>
-          </n-layout-header>
+          </header>
 
-          <n-layout-content class="content-wrap">
+          <main class="content-wrap">
             <router-view :current-user="currentUser" />
-          </n-layout-content>
+          </main>
 
-          <n-drawer v-model:show="mobileMenuOpen" placement="left" :width="280">
-            <n-drawer-content title="项目全流程" closable>
-              <div class="mobile-drawer-brand">
-                <div class="brand-mark">输</div>
-                <div>
-                  <strong>输电项目管理</strong>
-                  <small>需求 · 储备 · 执行 · 结算</small>
-                </div>
+          <nav class="mobile-bottom-nav" aria-label="手机主导航">
+            <app-pressable :class="{ active: activeKey === '/' }" :aria-current="activeKey === '/' ? 'page' : undefined" @click="navigateMobile('/')"><app-icon name="workspace" /><small>工作台</small></app-pressable>
+            <app-pressable :class="{ active: activeKey === '/demands' }" :aria-current="activeKey === '/demands' ? 'page' : undefined" @click="navigateMobile('/demands')"><app-icon name="demands" /><small>需求</small></app-pressable>
+            <app-pressable :class="{ active: activeKey === '/projects' }" :aria-current="activeKey === '/projects' ? 'page' : undefined" @click="navigateMobile('/projects')"><app-icon name="projects" /><small>项目</small></app-pressable>
+            <app-pressable :class="{ active: activeKey === '/tasks' }" :aria-current="activeKey === '/tasks' ? 'page' : undefined" @click="navigateMobile('/tasks')"><app-icon name="tasks" /><small>任务</small></app-pressable>
+            <app-pressable :class="{ active: mobileMoreActive }" :aria-current="moreNavKeys.has(activeKey) ? 'page' : undefined" @click="navigateMobile('more')"><app-icon name="more" /><small>更多</small></app-pressable>
+          </nav>
+
+          <n-drawer v-model:show="mobileMenuOpen" placement="bottom" height="auto" class="mobile-more-drawer">
+            <n-drawer-content title="更多" closable>
+              <div class="mobile-more-grid">
+                <app-pressable v-for="item in [...managementNav, ...systemNav]" :key="item.key" :class="{ active: activeKey === item.key }" :aria-current="activeKey === item.key ? 'page' : undefined" @click="navigate(item.key)">
+                  <span class="mobile-more-icon"><app-icon :name="item.icon" /></span>
+                  <span>{{ item.label }}</span>
+                  <app-icon name="chevron" :size="16" class="mobile-more-chevron" />
+                </app-pressable>
               </div>
-              <n-menu
-                :value="activeKey"
-                :options="menuOptions"
-                @update:value="navigate"
-              />
+              <div class="mobile-account-row">
+                <div class="account-avatar">{{ currentUser.username.slice(0, 1).toUpperCase() }}</div>
+                <div><strong>{{ currentUser.username }}</strong><small>{{ roleLabels[currentUser.role] }}</small></div>
+                <n-button quaternary size="small" :loading="loggingOut" @click="logout">退出</n-button>
+              </div>
             </n-drawer-content>
           </n-drawer>
-        </n-layout>
-      </n-layout>
+        </div>
+      </div>
     </n-message-provider>
   </n-config-provider>
 </template>
