@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, h, onMounted, ref } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import {
   NAlert, NButton, NDataTable, NDropdown, NEmpty, NForm, NFormItem, NInput, NModal, NSelect,
   NSpace, NSwitch, NTabPane, NTabs, NTag, useMessage,
@@ -38,6 +39,8 @@ import {
 } from '../imports/towerImport';
 
 const props = defineProps<{ currentUser: CurrentUser }>();
+const route = useRoute();
+const router = useRouter();
 const message = useMessage();
 const isAdmin = computed(() => props.currentUser.role === 'admin');
 
@@ -51,9 +54,12 @@ const towerTypes = ref<TowerTypeSummary[]>([]);
 const customFields = ref<CustomFieldDefinitionSummary[]>([]);
 const lineCursor = ref<string | null>(null);
 const towerCursor = ref<string | null>(null);
-const lineVoltageFilter = ref('all');
-const lineStatusFilter = ref<'all' | 'enabled' | 'disabled'>('all');
-const lineSearch = ref('');
+const requestedLineStatus = typeof route.query.status === 'string' ? route.query.status : '';
+const lineVoltageFilter = ref(typeof route.query.voltage === 'string' && route.query.voltage ? route.query.voltage : 'all');
+const lineStatusFilter = ref<'all' | 'enabled' | 'disabled'>(['enabled', 'disabled'].includes(requestedLineStatus)
+  ? requestedLineStatus as 'enabled' | 'disabled'
+  : 'all');
+const lineSearch = ref(typeof route.query.query === 'string' ? route.query.query : '');
 const towerSearch = ref('');
 const loading = ref(false);
 const towerLoading = ref(false);
@@ -147,6 +153,21 @@ async function openLineDetail(item: TransmissionLineSummary) {
   await loadTowers();
 }
 
+function syncLineFilters() {
+  const query: Record<string, string> = {};
+  if (lineVoltageFilter.value !== 'all') query.voltage = lineVoltageFilter.value;
+  if (lineStatusFilter.value !== 'all') query.status = lineStatusFilter.value;
+  const term = lineSearch.value.trim();
+  if (term) query.query = term;
+  void router.replace({ query });
+}
+
+async function applyLineSearch() {
+  lineCursor.value = null;
+  syncLineFilters();
+  await loadLines();
+}
+
 function backToLines() {
   activeLine.value = null;
   towers.value = [];
@@ -157,12 +178,14 @@ function backToLines() {
 async function setVoltageFilter(value: string) {
   lineVoltageFilter.value = value;
   lineCursor.value = null;
+  syncLineFilters();
   await loadLines();
 }
 
 async function setStatusFilter(value: 'all' | 'enabled' | 'disabled') {
   lineStatusFilter.value = value;
   lineCursor.value = null;
+  syncLineFilters();
   await loadLines();
 }
 
@@ -957,9 +980,9 @@ onMounted(loadAll);
       <section class="line-list-surface">
         <div class="line-toolbar">
           <n-select data-test="voltage-filter" :value="lineVoltageFilter" :options="lineVoltageOptions" @update:value="setVoltageFilter" />
-          <n-input v-model:value="lineSearch" data-test="line-search" placeholder="搜索当前线路名或曾用名" @keyup.enter="loadLines()" />
+          <n-input v-model:value="lineSearch" data-test="line-search" placeholder="搜索当前线路名或曾用名" @keyup.enter="applyLineSearch" />
           <n-select data-test="line-status-filter" :value="lineStatusFilter" :options="lineStatusOptions" @update:value="setStatusFilter" />
-          <n-button :loading="loading" @click="loadLines()">查询</n-button>
+          <n-button data-test="line-search-submit" :loading="loading" @click="applyLineSearch">查询</n-button>
         </div>
         <div v-if="lines.length" class="line-table-head" aria-hidden="true"><span>线路</span><span>杆塔</span><span>状态</span><span>线路编码</span><span></span></div>
         <div class="line-list">

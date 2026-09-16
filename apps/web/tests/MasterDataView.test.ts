@@ -2,6 +2,10 @@ import { flushPromises, mount } from '@vue/test-utils';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { CurrentUser } from '@tpm/shared';
 
+const routeQuery = vi.hoisted(() => ({} as Record<string, string>));
+const replace = vi.fn();
+vi.mock('vue-router', () => ({ useRoute: () => ({ query: routeQuery }), useRouter: () => ({ replace }) }));
+
 vi.mock('naive-ui', async () => {
   const { defineComponent, h } = await import('vue');
   const wrap = (name: string) => defineComponent({ name, setup(_, { slots }) { return () => h('div', [slots['header-extra']?.(), slots.default?.(), slots.footer?.()]); } });
@@ -30,6 +34,8 @@ const data = (value: unknown) => new Response(JSON.stringify({ ok: true, data: v
 let importOrderVersion = 1;
 beforeEach(() => {
   importOrderVersion = 1;
+  replace.mockReset();
+  for (const key of Object.keys(routeQuery)) delete routeQuery[key];
   vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
   if (init?.method && url.endsWith('/towers/import-chunk')) {
     const body = JSON.parse(String(init.body)) as { items: Array<{ action: string }> };
@@ -64,6 +70,31 @@ beforeEach(() => {
   }));
 });
 afterEach(() => vi.unstubAllGlobals());
+
+it('restores line list filters from the URL and keeps explicit filter/search changes refresh-safe', async () => {
+  routeQuery.voltage = 'v1';
+  routeQuery.status = 'disabled';
+  routeQuery.query = '甲线';
+  const w = mount(MasterDataView, { props: { currentUser: admin } });
+  await flushPromises();
+
+  expect(w.get('[data-test="voltage-filter"]').attributes('value')).toBe('v1');
+  expect(w.get('[data-test="line-status-filter"]').attributes('value')).toBe('disabled');
+  expect((w.get('[data-test="line-search"]').element as HTMLTextAreaElement).value).toBe('甲线');
+  expect(vi.mocked(fetch).mock.calls.some(([u]) => {
+    const url = String(u);
+    return url.includes('/api/master/lines?') && url.includes('voltageLevelId=v1') && url.includes('enabled=false') && url.includes('query=%E7%94%B2%E7%BA%BF');
+  })).toBe(true);
+
+  await w.get('[data-test="line-status-filter"]').setValue('enabled');
+  await flushPromises();
+  expect(replace).toHaveBeenCalledWith({ query: { voltage: 'v1', status: 'enabled', query: '甲线' } });
+
+  await w.get('[data-test="line-search"]').setValue('乙线');
+  await w.get('[data-test="line-search-submit"]').trigger('click');
+  await flushPromises();
+  expect(replace).toHaveBeenLastCalledWith({ query: { voltage: 'v1', status: 'enabled', query: '乙线' } });
+});
 
 it('starts with a line-centric list and opens a full-width line detail without a three-column hierarchy', async () => {
   const w = mount(MasterDataView, { props: { currentUser: admin } }); await flushPromises();

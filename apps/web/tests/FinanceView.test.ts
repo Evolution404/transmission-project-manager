@@ -71,16 +71,19 @@ const framework = {
   id: 'fw1', code: 'FW-001', name: '年度框架', totalAmountFen: 1_000_000, annualTargetFen: 1_000_000,
   startDate: '2026-01-01', endDate: '2026-12-31', version: 1, createdAt: '2026-09-12T00:00:00.000Z', updatedAt: '2026-09-12T00:00:00.000Z',
 };
+const framework2 = { ...framework, id: 'fw2', code: 'FW-002', name: '专项框架' };
 const project = { id: 'p1', name: '子项目A', year: 2026, status: 'confirmed', frameworkId: 'fw1', version: 2 };
+const project2 = { ...project, id: 'p2', name: '子项目B', frameworkId: 'fw2' };
 const agreementA = { id: 'ag1', frameworkId: 'fw1', code: 'AG-1', name: '协议一', amountFen: 600_000, validFrom: '2026-01-01', validTo: '2026-12-31', status: 'active', version: 1, createdAt: '', updatedAt: '' };
 const agreementB = { ...agreementA, id: 'ag2', code: 'AG-2', name: '协议二', amountFen: 500_000 };
 
 function installFetch({ withEntryCursor = false } = {}) {
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
-    if (url === '/api/frameworks') return ok({ items: [framework] });
-    if (url === '/api/finance/projects') return ok({ items: [project] });
+    if (url === '/api/frameworks') return ok({ items: [framework, framework2] });
+    if (url === '/api/finance/projects') return ok({ items: [project, project2] });
     if (url === '/api/agreements?frameworkId=fw1') return ok({ items: [agreementA, agreementB] });
+    if (url === '/api/agreements?frameworkId=fw2') return ok({ items: [] });
     if (url === '/api/budgets?projectId=p1') return ok({ items: [] });
     if (url.startsWith('/api/finance/summary?frameworkId=fw1')) return ok({
       framework, asOf: '2026-09-12', confirmedBudgetFen: 800_000, budgetOccurrenceFen: 800_000, actualCostFen: 700_000,
@@ -92,9 +95,16 @@ function installFetch({ withEntryCursor = false } = {}) {
         { id: 'ag2', code: 'AG-2', name: '协议二', amountFen: 500_000, budgetCommittedFen: 400_000, budgetOccurrenceFen: 260_000, actualCostFen: 400_000, usageBasisPoints: 5200, usageConfigured: true, usageWarning: false },
       ],
     });
+    if (url.startsWith('/api/finance/summary?frameworkId=fw2')) return ok({
+      framework: framework2, asOf: '2026-09-12', confirmedBudgetFen: 0, budgetOccurrenceFen: 0, actualCostFen: 0,
+      agreementReservedFen: 0, frameworkUsageBasisPoints: 0, frameworkUsageConfigured: true,
+      frameworkUsageWarning: false, annualProgressBasisPoints: 0, annualProgressConfigured: true,
+      budgetOverFrameworkWarning: false, agreements: [],
+    });
     if (url === '/api/financial-entries?frameworkId=fw1&limit=50') return ok(withEntryCursor
       ? { items: [{ id: 'e-first', frameworkId: 'fw1', projectId: 'p1', projectName: '子项目A', type: 'actual_cost', businessDate: '2026-09-12', amountFen: 100, note: null, reversesEntryId: null, allocations: [], createdAt: '2026-09-12T08:00:00.000Z' }], nextCursor: 'cursor-2' }
       : { items: [], nextCursor: null });
+    if (url === '/api/financial-entries?frameworkId=fw2&limit=50') return ok({ items: [], nextCursor: null });
     if (url === '/api/financial-entries?frameworkId=fw1&limit=50&cursor=cursor-2') return ok({ items: [{ id: 'e-second', frameworkId: 'fw1', projectId: 'p1', projectName: '子项目A', type: 'actual_cost', businessDate: '2026-09-11', amountFen: 200, note: null, reversesEntryId: null, allocations: [], createdAt: '2026-09-11T08:00:00.000Z' }], nextCursor: null });
     if (url === '/api/frameworks' && init?.method === 'POST') return ok({ ...framework, id: 'fw-new', code: 'FW-NEW', name: '新框架', totalAmountFen: 1_234_567 }, 201);
     if (url === '/api/projects/p1/framework' && init?.method === 'PUT') return ok({ projectId: 'p1', frameworkId: 'fw1', version: 3 });
@@ -217,6 +227,34 @@ describe('FinanceView P4 behavior', () => {
     wrapper.findComponent({ name: 'NTabs' }).vm.$emit('update:value', 'entries');
     await flushPromises();
     expect(replace).toHaveBeenCalledWith({ query: { projectId: 'p1', tab: 'entries' } });
+  });
+
+  it('restores the selected framework from the URL and preserves the active tab when switching frameworks', async () => {
+    routeQuery.framework = 'fw2';
+    routeQuery.tab = 'entries';
+    const wrapper = mount(FinanceView, { props: { currentUser: admin } });
+    await flushPromises();
+
+    expect(wrapper.get('[data-test="finance-framework"]').attributes('value')).toBe('fw2');
+    expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).startsWith('/api/finance/summary?frameworkId=fw2'))).toBe(true);
+
+    await wrapper.get('[data-test="finance-framework"]').setValue('fw1');
+    await flushPromises();
+    expect(replace).toHaveBeenCalledWith({ query: { framework: 'fw1', tab: 'entries' } });
+  });
+
+  it('clears a budget project from another framework when the user switches framework context', async () => {
+    routeQuery.projectId = 'p1';
+    routeQuery.tab = 'budgets';
+    const wrapper = mount(FinanceView, { props: { currentUser: admin } });
+    await flushPromises();
+    expect(wrapper.get('[data-test="budget-project"]').attributes('value')).toBe('p1');
+
+    await wrapper.get('[data-test="finance-framework"]').setValue('fw2');
+    await flushPromises();
+
+    expect(wrapper.get('[data-test="budget-project"]').attributes('value')).toBe('');
+    expect(replace).toHaveBeenCalledWith({ query: { tab: 'budgets', framework: 'fw2' } });
   });
 
   it('offers a safe return to the originating project when opened from project detail', async () => {

@@ -35,7 +35,9 @@ import AnalysisView from '../src/views/AnalysisView.vue';
 const admin: CurrentUser = { id: 'a', username: 'admin', displayName: '管理员', role: 'admin', enabled: true, version: 1, scopes: [{ type: 'all', id: null }], invitedAt: null, firstLoginAt: null, lastLoginAt: null, lifecycleStatus: 'active', mustChangePassword: false, authSource: 'session' };
 const readonly: CurrentUser = { ...admin, id: 'r', username: 'reader', role: 'readonly' };
 const framework = { id: 'fw1', code: 'FW-1', name: '框架一', totalAmountFen: 1_000_000, annualTargetFen: 800_000, startDate: '2026-01-01', endDate: '2026-12-31', version: 1, createdAt: '', updatedAt: '' };
+const framework2 = { ...framework, id: 'fw2', code: 'FW-2', name: '框架二' };
 const project = { id: 'p1', name: '项目一', year: 2026, status: 'confirmed', frameworkId: 'fw1', version: 3 };
+const project2 = { ...project, id: 'p2', name: '项目二', frameworkId: 'fw2' };
 const rule = { id: 'rule1', version: 2, mode: 'ratio', thresholdBasisPoints: 8000, effectiveFrom: '', createdAt: '' };
 const plan = { id: 'plan1', projectId: 'p1', businessYear: 2026, month: 9, targetAmountFen: 100_000, version: 4, createdAt: '', updatedAt: '' };
 
@@ -43,8 +45,8 @@ function ok(data: unknown, status = 200) { return new Response(JSON.stringify({ 
 function installFetch() {
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
-    if (url === '/api/frameworks') return ok({ items: [framework] });
-    if (url === '/api/finance/projects') return ok({ items: [project] });
+    if (url === '/api/frameworks') return ok({ items: [framework, framework2] });
+    if (url === '/api/finance/projects') return ok({ items: [project, project2] });
     if (url.startsWith('/api/analysis/dashboard?')) return ok({ asOf: '2026-09-12', projectCount: 1, demandCount: 2, unreleasedProjectCount: 1, pendingSettlementCount: 1, activeAlertCount: 1 });
     if (url === '/api/analysis/reserve-remaining') return ok({ allocatedQuantityScaled: 1000000, releasedQuantityScaled: 400000, knownRemainingFen: 60000, missingPriceCount: 0, unclassifiedRemainingFen: 0, unscopedCommonCostFen: 0, categories: [{ reserveCategoryId: 'c1', categoryKey: 'cat', label: '防断线', knownRemainingFen: 60000 }] });
     if (url === '/api/analysis/rules') return ok(rule);
@@ -53,9 +55,13 @@ function installFetch() {
     if (url === '/api/backups') return ok({ items: [] });
     if (url === '/api/notification-contacts') return ok({ items: [] });
     if (url === '/api/notification-outbox') return ok({ items: [] });
-    if (url.startsWith('/api/analysis/frameworks/fw1/progress?')) return ok({ frameworkId: 'fw1', frameworkCode: 'FW-1', frameworkName: '框架一', businessYear: 2026, asOf: '2026-09-12', annualTargetFen: 800000, annualTargetConfigured: true, plannedToDateFen: 600000, actualToDateFen: 400000, plannedProgressBasisPoints: 7500, actualProgressBasisPoints: 5000, attainmentBasisPoints: 6667, lagging: true, planSource: 'custom', rule, quarters: [{ quarter: 1, cumulativeTargetBasisPoints: 2500, status: 'ended' }, { quarter: 2, cumulativeTargetBasisPoints: 5000, status: 'ended' }, { quarter: 3, cumulativeTargetBasisPoints: 7500, status: 'in_progress' }, { quarter: 4, cumulativeTargetBasisPoints: 10000, status: 'upcoming' }] });
+    if (url.startsWith('/api/analysis/frameworks/fw1/progress?') || url.startsWith('/api/analysis/frameworks/fw2/progress?')) {
+      const second = url.includes('/fw2/');
+      return ok({ frameworkId: second ? 'fw2' : 'fw1', frameworkCode: second ? 'FW-2' : 'FW-1', frameworkName: second ? '框架二' : '框架一', businessYear: 2026, asOf: '2026-09-12', annualTargetFen: 800000, annualTargetConfigured: true, plannedToDateFen: 600000, actualToDateFen: 400000, plannedProgressBasisPoints: 7500, actualProgressBasisPoints: 5000, attainmentBasisPoints: 6667, lagging: true, planSource: 'custom', rule, quarters: [{ quarter: 1, cumulativeTargetBasisPoints: 2500, status: 'ended' }, { quarter: 2, cumulativeTargetBasisPoints: 5000, status: 'ended' }, { quarter: 3, cumulativeTargetBasisPoints: 7500, status: 'in_progress' }, { quarter: 4, cumulativeTargetBasisPoints: 10000, status: 'upcoming' }] });
+    }
     if (url.startsWith('/api/analysis/projects/gaps?')) return ok({ items: [{ projectId: 'p1', projectName: '项目一', plannedToDateFen: 600000, actualToDateFen: 400000, gapFen: 200000 }] });
     if (url === '/api/analysis/plans?frameworkId=fw1&year=2026') return ok({ items: [plan] });
+    if (url === '/api/analysis/plans?frameworkId=fw2&year=2026') return ok({ items: [] });
     if (url.startsWith('/api/reports/monthly?')) return ok({ items: [] });
     if (url === '/api/analysis/plans/p1/2026/9' && init?.method === 'PUT') return ok({ ...plan, targetAmountFen: 123456, version: 5 });
     if (url === '/api/analysis/rules' && init?.method === 'PUT') return ok({ ...rule, version: 3, thresholdBasisPoints: 8500 });
@@ -91,6 +97,20 @@ describe('AnalysisView P6 behavior', () => {
     tabs.vm.$emit('update:value', 'reserve');
     await flushPromises();
     expect(replace).toHaveBeenCalledWith({ query: { tab: 'reserve' } });
+  });
+
+  it('restores the selected framework from the URL and preserves the active tab when switching frameworks', async () => {
+    routeQuery.framework = 'fw2';
+    routeQuery.tab = 'alerts';
+    const wrapper = mount(AnalysisView, { props: { currentUser: readonly } });
+    await flushPromises();
+
+    expect(wrapper.get('[data-test="analysis-framework"]').attributes('value')).toBe('fw2');
+    expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).startsWith('/api/analysis/frameworks/fw2/progress?'))).toBe(true);
+
+    await wrapper.get('[data-test="analysis-framework"]').setValue('fw1');
+    await flushPromises();
+    expect(replace).toHaveBeenCalledWith({ query: { framework: 'fw1', tab: 'alerts' } });
   });
 
   it('shows real progress, reserve categories and active alerts', async () => {

@@ -69,6 +69,7 @@ const showFrameworkForm = ref(false);
 const showAgreementForm = ref(false);
 const showEntryForm = ref(false);
 const requestedTab = typeof route.query.tab === 'string' ? route.query.tab : '';
+const requestedFrameworkId = typeof route.query.framework === 'string' ? route.query.framework : '';
 const activeTab = ref<FinanceWorkspaceTab>(
   financeWorkspaceTabs.has(requestedTab as FinanceWorkspaceTab)
     ? requestedTab as FinanceWorkspaceTab
@@ -128,6 +129,9 @@ function entryTypeLabel(type: FinancialEntryType) {
 
 const frameworkOptions = computed(() => frameworks.value.map((item) => ({ label: `${item.code} · ${item.name}`, value: item.id })));
 const projectOptions = computed(() => projects.value.map((item) => ({ label: `${item.name}${item.frameworkId ? '' : '（未绑定框架）'}`, value: item.id })));
+const currentFrameworkProjectOptions = computed(() => projects.value
+  .filter((item) => item.frameworkId === selectedFrameworkId.value)
+  .map((item) => ({ label: item.name, value: item.id })));
 const agreementOptions = computed(() => agreements.value.filter((item) => item.status === 'active').map((item) => ({ label: `${item.code} · ${item.name}`, value: item.id })));
 const currentBudget = computed(() => budgets.value[0] ?? null);
 const selectedFramework = computed(() => frameworks.value.find((item) => item.id === selectedFrameworkId.value) ?? null);
@@ -139,7 +143,11 @@ async function loadBase() {
   ]);
   frameworks.value = fw.items;
   projects.value = projectData.items;
-  if (!selectedFrameworkId.value && fw.items[0]) selectedFrameworkId.value = fw.items[0].id;
+  if (!selectedFrameworkId.value) {
+    selectedFrameworkId.value = fw.items.some((item) => item.id === requestedFrameworkId)
+      ? requestedFrameworkId
+      : fw.items[0]?.id ?? null;
+  }
 }
 
 async function loadFrameworkContext() {
@@ -176,13 +184,18 @@ async function loadMoreEntries() {
   }
 }
 
-async function loadBudgetProject(projectId: string | null) {
-  selectedBudgetProjectId.value = projectId;
+function clearBudgetProjectContext() {
+  selectedBudgetProjectId.value = null;
   budgets.value = [];
   budgetTotalYuan.value = '';
   budgetNote.value = '';
   budgetSplits.value = [{ agreementId: null, amountYuan: '' }];
+}
+
+async function loadBudgetProject(projectId: string | null) {
+  clearBudgetProjectContext();
   if (!projectId) return;
+  selectedBudgetProjectId.value = projectId;
   const project = projects.value.find((item) => item.id === projectId);
   if (project?.frameworkId && project.frameworkId !== selectedFrameworkId.value) {
     selectedFrameworkId.value = project.frameworkId;
@@ -211,9 +224,11 @@ async function loadInitial() {
     agreementForm.value.validTo = `${year}-12-31`;
     entryBusinessDate.value = businessToday();
     await loadBase();
-    await loadFrameworkContext();
     const routeProjectId = typeof route.query.projectId === 'string' ? route.query.projectId : null;
-    if (routeProjectId && projects.value.some((item) => item.id === routeProjectId)) await loadBudgetProject(routeProjectId);
+    const routeProject = routeProjectId ? projects.value.find((item) => item.id === routeProjectId) ?? null : null;
+    if (routeProject?.frameworkId) selectedFrameworkId.value = routeProject.frameworkId;
+    await loadFrameworkContext();
+    if (routeProject) await loadBudgetProject(routeProject.id);
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : '读取资金数据失败';
   } finally {
@@ -224,6 +239,19 @@ async function loadInitial() {
 async function selectFramework(value: string | null) {
   selectedFrameworkId.value = value;
   bindingFrameworkId.value = value;
+  const selectedBudgetProject = projects.value.find((item) => item.id === selectedBudgetProjectId.value);
+  const clearBudgetProject = Boolean(selectedBudgetProject && selectedBudgetProject.frameworkId !== value);
+  if (clearBudgetProject) clearBudgetProjectContext();
+  const selectedEntryProject = projects.value.find((item) => item.id === entryProjectId.value);
+  if (selectedEntryProject && selectedEntryProject.frameworkId !== value) {
+    entryProjectId.value = null;
+    entrySplits.value = [{ agreementId: null, amountYuan: '' }];
+  }
+  const query = { ...route.query };
+  if (value) query.framework = value;
+  else delete query.framework;
+  if (clearBudgetProject) delete query.projectId;
+  void router.replace({ query });
   await loadFrameworkContext();
 }
 
@@ -367,7 +395,7 @@ onMounted(loadInitial);
 
       <section class="finance-overview">
         <div class="finance-context">
-          <n-select :value="selectedFrameworkId" :options="frameworkOptions" placeholder="选择框架" @update:value="selectFramework" />
+          <n-select data-test="finance-framework" :value="selectedFrameworkId" :options="frameworkOptions" placeholder="选择框架" @update:value="selectFramework" />
           <span class="finance-context-note">预算与发生分账，不自动互转</span>
         </div>
         <div v-if="summary" class="metrics">
@@ -473,7 +501,7 @@ onMounted(loadInitial);
             <div class="workspace-panel-body budget-body">
               <n-alert type="info" :bordered="false">确认预算时协议必须与项目属于同一框架并在有效期内；预算确认占用不会自动生成预算发生。</n-alert>
               <n-form class="budget-form" label-placement="top">
-              <n-form-item label="子项目"><n-select data-test="budget-project" :value="selectedBudgetProjectId" :options="projectOptions" @update:value="loadBudgetProject" /></n-form-item>
+              <n-form-item label="子项目"><n-select data-test="budget-project" :value="selectedBudgetProjectId" :options="currentFrameworkProjectOptions" @update:value="loadBudgetProject" /></n-form-item>
               <n-form-item label="预算总额（元）"><n-input v-model:value="budgetTotalYuan" data-test="budget-total" :disabled="!canFinanceWrite" /></n-form-item>
               <n-form-item label="说明"><n-input v-model:value="budgetNote" :disabled="!canFinanceWrite" /></n-form-item>
               </n-form>
@@ -525,7 +553,7 @@ onMounted(loadInitial);
             <div class="workspace-panel-body">
             <n-alert type="warning" :bordered="false">登记流水必须关联同框架、业务日期有效的执行协议。预算发生和实际发生是不同账目，不能相互代替。</n-alert>
             <n-form class="entry-form" label-placement="top">
-              <n-form-item label="子项目"><n-select data-test="entry-project" v-model:value="entryProjectId" :options="projectOptions" /></n-form-item>
+              <n-form-item label="子项目"><n-select data-test="entry-project" v-model:value="entryProjectId" :options="currentFrameworkProjectOptions" /></n-form-item>
               <n-form-item label="流水类型"><n-select data-test="entry-type" v-model:value="entryType" :options="[{ label: '预算发生', value: 'budget_occurrence' }, { label: '实际发生', value: 'actual_cost' }]" /></n-form-item>
               <n-form-item label="金额（元）"><n-input data-test="entry-amount" v-model:value="entryAmountYuan" /></n-form-item>
               <n-form-item label="业务日期"><n-input data-test="entry-date" v-model:value="entryBusinessDate" /></n-form-item>

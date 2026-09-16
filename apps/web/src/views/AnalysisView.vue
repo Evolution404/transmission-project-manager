@@ -52,6 +52,7 @@ const saving = ref(false);
 const error = ref('');
 const requestedTab = typeof route.query.tab === 'string' ? route.query.tab : '';
 const activeTab = ref<AnalysisTab>(analysisTabs.has(requestedTab as AnalysisTab) ? requestedTab as AnalysisTab : 'progress');
+const requestedFrameworkId = typeof route.query.framework === 'string' ? route.query.framework : '';
 const frameworks = ref<FrameworkSummary[]>([]);
 const projects = ref<FinanceProjectSummary[]>([]);
 const selectedFrameworkId = ref<string | null>(null);
@@ -148,7 +149,14 @@ async function loadFrameworkContext() {
 
 async function loadCommon() {
   const basePromises: Promise<unknown>[] = [];
-  const fwPromise = apiRequest<{ items: FrameworkSummary[] }>('/api/frameworks').then((data) => { frameworks.value = data.items; if (!selectedFrameworkId.value && data.items[0]) selectedFrameworkId.value = data.items[0].id; });
+  const fwPromise = apiRequest<{ items: FrameworkSummary[] }>('/api/frameworks').then((data) => {
+    frameworks.value = data.items;
+    if (!selectedFrameworkId.value) {
+      selectedFrameworkId.value = data.items.some((item) => item.id === requestedFrameworkId)
+        ? requestedFrameworkId
+        : data.items[0]?.id ?? null;
+    }
+  });
   const projectPromise = apiRequest<{ items: FinanceProjectSummary[] }>('/api/finance/projects').then((data) => { projects.value = data.items; });
   const reservePromise = apiRequest<ReserveRemainingSummary>('/api/analysis/reserve-remaining').then((data) => { reserve.value = data; });
   const rulePromise = apiRequest<AnalysisRuleSummary>('/api/analysis/rules').then((data) => { rule.value = data; ruleMode.value = data.mode; ruleThresholdPercent.value = (data.thresholdBasisPoints / 100).toFixed(2).replace(/\.00$/, ''); });
@@ -166,7 +174,18 @@ async function refresh() {
   catch (cause) { error.value = cause instanceof Error ? cause.message : '读取分析数据失败'; }
   finally { loading.value = false; }
 }
-async function selectFramework(value: string | null) { selectedFrameworkId.value = value; await loadFrameworkContext(); }
+async function selectFramework(value: string | null) {
+  selectedFrameworkId.value = value;
+  if (planProjectId.value && !projects.value.some((item) => item.id === planProjectId.value && item.frameworkId === value)) {
+    planProjectId.value = null;
+    planAmountYuan.value = '';
+  }
+  const query = { ...route.query };
+  if (value) query.framework = value;
+  else delete query.framework;
+  void router.replace({ query });
+  await loadFrameworkContext();
+}
 async function changeAsOf() {
   reportMonth.value = asOfDate.value.slice(0, 7);
   const [milestoneData] = await Promise.all([apiRequest<{ items: MilestoneDueSummary[] }>(`/api/milestones/due?asOf=${asOfDate.value}`), loadFrameworkContext()]);
