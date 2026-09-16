@@ -822,6 +822,18 @@ test('API object pagination cursors share one Base64URL JSON codec', () => {
   }
 });
 
+test('reserve category configuration stays isolated from project reserve planning routes', () => {
+  const planning = readFileSync(resolve(root, 'apps/api/src/reserve-planning.ts'), 'utf8');
+  const categoryConfig = readFileSync(resolve(root, 'apps/api/src/reserve-category-config.ts'), 'utf8');
+  const app = readFileSync(resolve(root, 'apps/api/src/app.ts'), 'utf8');
+
+  assert.doesNotMatch(planning, /['"]\/reserve-categories['"]/);
+  assert.doesNotMatch(planning, /['"]\/category-mappings/);
+  assert.match(categoryConfig, /['"]\/reserve-categories['"]/);
+  assert.match(categoryConfig, /['"]\/category-mappings/);
+  assert.match(app, /app\.route\('\/api', reserveCategoryConfigApp\)/);
+});
+
 test('Node runtime gate exercises the real app, SQLite, Filesystem, and the single schema baseline', () => {
   const nodeConfig = readFileSync(resolve(root, 'apps/api/tsconfig.node-runtime.json'), 'utf8');
   assert.match(nodeConfig, /"src\/app\.ts"/, 'Node typecheck must include the real HTTP app');
