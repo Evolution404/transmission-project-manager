@@ -44,6 +44,7 @@ import {
   type ImportWorkflowProgress,
 } from '../imports/workflow';
 import AppFilePicker from '../app/AppFilePicker.vue';
+import AppPressable from '../app/AppPressable.vue';
 
 const props = defineProps<{ currentUser: CurrentUser }>();
 const message = useMessage();
@@ -54,6 +55,7 @@ const error = ref('');
 const demands = ref<DemandSummary[]>([]);
 const demandCursor = ref<string | null>(null);
 const demandQuery = ref('');
+const activeTab = ref<'pool' | 'import' | 'materials'>('pool');
 const selectedDemand = ref<DemandDetail | null>(null);
 const materials = ref<MaterialSummary[]>([]);
 const mappingTemplates = ref<ImportMappingTemplate[]>([]);
@@ -477,39 +479,58 @@ onMounted(loadInitial);
 
 <template>
   <n-spin :show="loading">
-    <div class="view-stack">
+    <div class="view-stack demands-view">
       <n-alert v-if="error" type="error" title="读取失败">{{ error }}</n-alert>
 
-      <n-tabs type="line" animated>
-        <n-tab-pane name="pool" tab="需求池">
-          <div class="pool-toolbar">
-            <div class="pool-heading">
-              <span class="eyebrow">项目需求</span>
-              <h2>需求池</h2>
-              <p>维护抽象需求及其物资子明细；需求进入项目后，再独立形成项目物资计划。</p>
-            </div>
-            <div class="pool-actions">
-              <n-button v-if="canWrite" data-test="open-manual-demand" type="primary" @click="manualDemandModalOpen = true">新增需求</n-button>
-            </div>
-          </div>
+      <header class="page-header">
+        <div class="page-header-copy">
+          <span class="page-eyebrow">DEMANDS</span>
+          <h2 class="page-title">项目需求</h2>
+          <p class="page-description">维护抽象需求及来源事实；需求物资只属于需求阶段，不自动变成项目物资。</p>
+        </div>
+        <div class="page-actions">
+          <n-button v-if="canWrite" data-test="open-manual-demand" type="primary" @click="manualDemandModalOpen = true">新增需求</n-button>
+        </div>
+      </header>
 
+      <n-tabs v-model:value="activeTab" type="line" animated class="workspace-tabs">
+        <n-tab-pane name="pool" tab="需求池">
           <n-alert v-if="!canWrite" type="info" title="只读模式" class="section-note">
             仅管理员或项目管理角色可以手工新增或批量导入需求。
           </n-alert>
 
-          <n-card title="需求清单" class="primary-surface">
-            <template #header-extra>
-              <n-space>
-                <n-input v-model:value="demandQuery" class="search-input" placeholder="输入线路、杆段或序号" clearable @keyup.enter="loadDemands()" />
-                <n-button @click="loadDemands()">查询</n-button>
-              </n-space>
-            </template>
-            <n-data-table v-if="demands.length" :columns="demandColumns" :data="demands" :pagination="false" :scroll-x="900" />
+          <section class="demand-list-surface">
+            <div class="demand-list-toolbar">
+              <n-input v-model:value="demandQuery" class="search-input" placeholder="搜索线路、杆段或序号" clearable @keyup.enter="loadDemands()" />
+              <n-button secondary @click="loadDemands()">查询</n-button>
+              <span class="list-count">已加载 {{ demands.length }} 条</span>
+            </div>
+            <n-data-table v-if="demands.length" class="desktop-demand-table" :columns="demandColumns" :data="demands" :pagination="false" :scroll-x="900" />
+            <div v-if="demands.length" class="mobile-demand-list">
+              <app-pressable
+                v-for="item in demands"
+                :key="item.id"
+                class="mobile-demand-item"
+                :data-test="`mobile-demand-${item.id}`"
+                @click="openDemand(item)"
+              >
+                <div class="mobile-demand-heading">
+                  <div><strong>{{ item.sequenceNo }}</strong><span>{{ item.voltageRaw }}</span></div>
+                  <span class="mobile-demand-chevron">›</span>
+                </div>
+                <strong class="mobile-demand-line">{{ item.lineName }}</strong>
+                <div class="mobile-demand-meta">
+                  <span>{{ item.section }}</span>
+                  <span>{{ item.year ?? '未设年度' }}</span>
+                  <span>{{ item.category ?? '未分类' }}</span>
+                </div>
+              </app-pressable>
+            </div>
             <n-empty v-else description="暂无正式需求；可新增需求或通过模板导入。" />
             <div v-if="demandCursor" class="load-more">
               <n-button secondary @click="loadDemands(false)">加载更多</n-button>
             </div>
-          </n-card>
+          </section>
         </n-tab-pane>
 
         <n-tab-pane name="import" tab="导入需求">
@@ -751,56 +772,48 @@ onMounted(loadInitial);
 </template>
 
 <style scoped>
+.demands-view { max-width: 1420px; }
 .section-note { margin-bottom: 16px; }
-.pool-toolbar {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: end;
-  gap: 22px;
-  margin: 2px 0 16px;
-  padding: 6px 2px 2px;
-}
-.pool-heading { min-width: 0; }
-.pool-toolbar h2 { margin: 3px 0 5px; font-size: 22px; letter-spacing: -.015em; color: #182033; }
-.pool-toolbar p { margin: 0; max-width: 720px; color: #7b8596; font-size: 13px; line-height: 1.6; }
-.pool-actions { display: flex; align-items: center; justify-content: flex-end; padding-bottom: 2px; }
-.pool-actions .n-button { min-width: 104px; }
-.eyebrow { color: #2457d6; font-size: 11px; font-weight: 700; letter-spacing: .08em; }
-.primary-surface { overflow: hidden; }
-.search-input { width: min(310px, 40vw); }
+.workspace-tabs :deep(.n-tabs-nav) { margin-bottom: 2px; }
+.workspace-tabs :deep(.n-tabs-tab) { padding-inline: 2px; margin-right: 24px; font-size: 12px; }
+.demand-list-surface { overflow: hidden; border: 1px solid var(--ui-border); border-radius: var(--ui-radius-lg); background: var(--ui-surface); }
+.demand-list-toolbar { display: flex; align-items: center; gap: 10px; min-height: 64px; padding: 12px 16px; border-bottom: 1px solid var(--ui-border); }
+.search-input { width: min(360px, 42vw); }
+.list-count { margin-left: auto; color: var(--ui-text-tertiary); font-size: 11px; white-space: nowrap; }
+.mobile-demand-list { display: none; }
 .status-line { margin-top: 14px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .template-row { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr) auto; gap: 10px; margin-bottom: 18px; }
 .mapping-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 18px; }
 .progress-block { display: grid; gap: 8px; margin-top: 18px; }
 .review-list { display: grid; gap: 10px; margin-top: 14px; }
-.review-row { display: grid; gap: 5px; padding: 12px; border: 1px solid #e5e9f0; border-radius: 9px; background: #fafbfc; }
+.review-row { display: grid; gap: 5px; padding: 12px; border: 1px solid var(--ui-border); border-radius: 10px; background: var(--ui-surface-subtle); }
 .review-issue { font-size: 13px; }
-.review-issue.error { color: #b42318; }
-.review-issue.warning { color: #a15c00; }
-.load-more { display: flex; justify-content: center; margin-top: 16px; }
+.review-issue.error { color: var(--ui-danger); }
+.review-issue.warning { color: var(--ui-warning); }
+.load-more { display: flex; justify-content: center; padding: 14px 16px; border-top: 1px solid var(--ui-border); }
 .detail-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
-.detail-grid div { display: grid; gap: 4px; padding: 12px 13px; border: 1px solid #edf0f4; border-radius: 10px; background: #f9fafc; }
-.detail-grid span { color: #7c8798; font-size: 11px; }
-.detail-grid strong { color: #25314a; font-size: 13px; }
+.detail-grid div { display: grid; gap: 4px; padding: 12px 13px; border: 1px solid var(--ui-border); border-radius: 10px; background: var(--ui-surface-subtle); }
+.detail-grid span { color: var(--ui-text-tertiary); font-size: 11px; }
+.detail-grid strong { color: var(--ui-text); font-size: 13px; }
 .detail-grid-polished { margin-bottom: 6px; }
 .material-lines { display: grid; gap: 8px; margin-top: 20px; }
-.material-lines > strong { color: #35405a; font-size: 13px; }
-.material-line { display: grid; grid-template-columns: 1fr 150px minmax(160px, auto); align-items: center; gap: 12px; padding: 10px 2px; border-top: 1px solid #edf0f4; }
+.material-lines > strong { color: var(--ui-text); font-size: 13px; }
+.material-line { display: grid; grid-template-columns: 1fr 150px minmax(160px, auto); align-items: center; gap: 12px; padding: 10px 2px; border-top: 1px solid var(--ui-border); }
 .material-form { display: grid; grid-template-columns: 1fr 1fr 1fr 120px auto; gap: 12px; align-items: end; margin-bottom: 18px; }
-.material-form-inline { margin: 14px 0 0; padding-top: 14px; border-top: 1px solid #edf0f4; }
+.material-form-inline { margin: 14px 0 0; padding-top: 14px; border-top: 1px solid var(--ui-border); }
 .manual-demand-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 16px; }
 .form-section-title {
   grid-column: 1 / -1;
   margin: 2px 0 10px;
-  color: #2c3851;
+  color: var(--ui-text);
   font-size: 12px;
   font-weight: 700;
 }
-.form-section-wide { margin-top: 8px; padding-top: 14px; border-top: 1px solid #edf0f4; }
+.form-section-wide { margin-top: 8px; padding-top: 14px; border-top: 1px solid var(--ui-border); }
 .material-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .material-section-heading > div { display: grid; gap: 3px; }
-.material-section-heading strong { color: #2c3851; font-size: 12px; }
-.material-section-heading span { color: #8a94a4; font-size: 11px; font-weight: 400; }
+.material-section-heading strong { color: var(--ui-text); font-size: 12px; }
+.material-section-heading span { color: var(--ui-text-tertiary); font-size: 11px; font-weight: 400; }
 .manual-material-list { display: grid; gap: 10px; }
 .manual-material-row {
   display: grid;
@@ -808,9 +821,9 @@ onMounted(loadInitial);
   gap: 10px;
   align-items: end;
   padding: 12px;
-  border: 1px solid #e6eaf0;
+  border: 1px solid var(--ui-border);
   border-radius: 11px;
-  background: #fafbfc;
+  background: var(--ui-surface-subtle);
 }
 .manual-material-row .n-form-item { margin-bottom: 0; }
 .manual-material-index {
@@ -820,18 +833,18 @@ onMounted(loadInitial);
   height: 26px;
   margin-bottom: 7px;
   border-radius: 8px;
-  background: #edf3ff;
-  color: #2457d6;
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent);
   font-size: 11px;
   font-weight: 750;
 }
 .manual-material-remove { margin-bottom: 2px; }
 .manual-material-empty {
   padding: 14px 16px;
-  border: 1px dashed #d9e0ea;
+  border: 1px dashed var(--ui-border-strong);
   border-radius: 10px;
-  background: #fbfcfe;
-  color: #8a94a4;
+  background: var(--ui-surface-subtle);
+  color: var(--ui-text-tertiary);
   font-size: 12px;
   line-height: 1.6;
 }
@@ -840,19 +853,15 @@ onMounted(loadInitial);
   gap: 4px;
   margin: -2px 0 16px;
   padding: 12px 14px;
-  border: 1px solid #dce6fb;
+  border: 1px solid var(--ui-border);
   border-radius: 10px;
-  background: #f5f8ff;
+  background: var(--ui-accent-soft);
 }
-.modal-intro strong { color: #29457f; font-size: 13px; }
-.modal-intro span { color: #74819a; font-size: 12px; line-height: 1.5; }
+.modal-intro strong { color: var(--ui-text); font-size: 13px; }
+.modal-intro span { color: var(--ui-text-secondary); font-size: 12px; line-height: 1.5; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; }
 :deep(.demand-modal), :deep(.demand-detail-modal) { border-radius: 15px; overflow: hidden; box-shadow: 0 22px 58px rgba(18, 32, 61, .18); }
 @media (max-width: 850px) {
-  .pool-toolbar { grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 2px 0 4px; }
-  .pool-toolbar h2 { font-size: 20px; }
-  .pool-toolbar p { font-size: 12px; line-height: 1.55; }
-  .pool-actions .n-button { min-width: 96px; }
   .template-row, .mapping-grid, .detail-grid, .material-form, .manual-demand-form { grid-template-columns: 1fr; }
   .manual-material-row { grid-template-columns: 28px minmax(0, 1fr); align-items: center; }
   .manual-material-row .n-form-item { grid-column: 2; }
@@ -862,9 +871,23 @@ onMounted(loadInitial);
   .material-line { grid-template-columns: 1fr; }
   .search-input { width: 100%; }
 }
+@media (max-width: 767px) {
+  .demand-list-toolbar { align-items: stretch; flex-wrap: wrap; min-height: 0; padding: 12px 13px; }
+  .demand-list-toolbar .search-input { flex: 1 1 calc(100% - 84px); }
+  .list-count { width: 100%; margin-left: 0; }
+  .desktop-demand-table { display: none; }
+  .mobile-demand-list { display: grid; }
+  .mobile-demand-item { display: grid; gap: 8px; width: 100%; padding: 15px 14px; border-bottom: 1px solid var(--ui-border); text-align: left; }
+  .mobile-demand-item:last-child { border-bottom: 0; }
+  .mobile-demand-heading { display: grid; grid-template-columns: minmax(0,1fr) 18px; align-items: center; gap: 12px; }
+  .mobile-demand-heading > div { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+  .mobile-demand-heading strong { font-size: 13px; font-weight: 700; }
+  .mobile-demand-heading span { color: var(--ui-text-tertiary); font-size: 10px; }
+  .mobile-demand-chevron { justify-self: end; color: var(--ui-text-tertiary) !important; font-size: 20px !important; }
+  .mobile-demand-line { overflow: hidden; font-size: 14px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+  .mobile-demand-meta { display: flex; flex-wrap: wrap; gap: 5px 12px; color: var(--ui-text-secondary); font-size: 11px; }
+}
 @media (max-width: 560px) {
-  .pool-toolbar p { display: none; }
-  .pool-toolbar { margin-bottom: 12px; }
   .material-section-heading { align-items: flex-start; }
   .material-section-heading span { max-width: 210px; }
 }

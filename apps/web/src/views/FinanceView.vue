@@ -62,6 +62,9 @@ const bindingProjectId = ref<string | null>(null);
 const bindingFrameworkId = ref<string | null>(null);
 const metric = ref<'budget' | 'occurrence' | 'actual'>('occurrence');
 const saving = ref(false);
+const showFrameworkForm = ref(false);
+const showAgreementForm = ref(false);
+const showEntryForm = ref(false);
 
 function businessToday() {
   const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
@@ -195,6 +198,7 @@ async function createFramework() {
       startDate: frameworkForm.value.startDate, endDate: frameworkForm.value.endDate,
     }));
     frameworkForm.value.code = ''; frameworkForm.value.name = ''; frameworkForm.value.totalYuan = ''; frameworkForm.value.annualTargetYuan = '';
+    showFrameworkForm.value = false;
     await loadBase(); await loadFrameworkContext(); message.success('框架已创建');
   } catch (cause) { message.error(cause instanceof Error ? cause.message : '框架创建失败'); }
   finally { saving.value = false; }
@@ -210,6 +214,7 @@ async function createAgreement() {
       validFrom: agreementForm.value.validFrom, validTo: agreementForm.value.validTo, status: agreementForm.value.status,
     }));
     agreementForm.value.code = ''; agreementForm.value.name = ''; agreementForm.value.amountYuan = '';
+    showAgreementForm.value = false;
     await loadFrameworkContext(); message.success('执行协议已创建');
   } catch (cause) { message.error(cause instanceof Error ? cause.message : '协议创建失败'); }
   finally { saving.value = false; }
@@ -273,6 +278,7 @@ async function postEntry() {
       allocations: allocations.map((item) => ({ agreementId: item.agreementId, amountFen: item.amountFen! })),
     }));
     entryAmountYuan.value = ''; entryNote.value = ''; entrySplits.value = [{ agreementId: null, amountYuan: '' }];
+    showEntryForm.value = false;
     if (project.frameworkId && project.frameworkId !== selectedFrameworkId.value) selectedFrameworkId.value = project.frameworkId;
     await loadFrameworkContext(); message.success('资金流水已登记');
   } catch (cause) { message.error(cause instanceof Error ? cause.message : '流水登记失败'); }
@@ -304,17 +310,23 @@ onMounted(loadInitial);
     <div class="view-stack finance-view">
       <n-alert v-if="error" type="error" title="读取失败">{{ error }}</n-alert>
 
-      <n-card title="资金口径">
-        <n-alert type="info" :bordered="false">
-          预算确认占用、预算发生、实际发生分别保存、分别统计。确认预算不会自动生成预算发生流水；80%/90%和预算超框架仅预警，不自动阻断合法记录。
-        </n-alert>
-        <div class="toolbar">
+      <header class="page-header">
+        <div class="page-header-copy">
+          <span class="page-eyebrow">FINANCE</span>
+          <h2 class="page-title">资金管理</h2>
+          <p class="page-description">框架额度、预算确认、预算发生和实际发生保持独立账目，先看状态，再按需登记。</p>
+        </div>
+      </header>
+
+      <section class="finance-overview">
+        <div class="finance-context">
           <n-select :value="selectedFrameworkId" :options="frameworkOptions" placeholder="选择框架" @update:value="selectFramework" />
           <n-select v-model:value="metric" :options="[
             { label: '预算确认占用', value: 'budget' },
             { label: '预算发生', value: 'occurrence' },
             { label: '实际发生', value: 'actual' },
           ]" />
+          <span class="finance-context-note">预算与发生分账，不自动互转</span>
         </div>
         <div v-if="summary" class="metrics">
           <div><span>框架总额</span><strong>{{ formatMoney(summary.framework.totalAmountFen) }}</strong></div>
@@ -332,14 +344,19 @@ onMounted(loadInitial);
             <span>使用率 {{ formatPercent(item.usageBasisPoints) }}</span><n-tag v-if="item.usageWarning" type="warning" :bordered="false">≥90%</n-tag>
           </div>
         </div>
-      </n-card>
+      </section>
 
-      <n-tabs type="line" animated>
+      <n-tabs type="line" animated class="workspace-tabs">
         <n-tab-pane name="frameworks" tab="框架与协议">
           <n-card title="框架">
+            <template #header-extra>
+              <n-button v-if="canManageStructure" data-test="open-framework-form" secondary @click="showFrameworkForm = !showFrameworkForm">
+                {{ showFrameworkForm ? '收起' : '新建框架' }}
+              </n-button>
+            </template>
             <n-data-table v-if="frameworks.length" :columns="frameworkColumns" :data="frameworks" :pagination="false" :scroll-x="650" />
             <n-empty v-else description="暂无框架。" />
-            <n-form v-if="canManageStructure" class="form-grid" label-placement="top">
+            <n-form v-if="canManageStructure && showFrameworkForm" class="form-grid edit-surface" label-placement="top">
               <n-form-item label="框架编号"><n-input v-model:value="frameworkForm.code" data-test="framework-code" /></n-form-item>
               <n-form-item label="框架名称"><n-input v-model:value="frameworkForm.name" data-test="framework-name" /></n-form-item>
               <n-form-item label="框架总额（元）"><n-input v-model:value="frameworkForm.totalYuan" data-test="framework-total" /></n-form-item>
@@ -351,9 +368,14 @@ onMounted(loadInitial);
           </n-card>
 
           <n-card v-if="selectedFramework" title="执行协议" class="detail-card">
+            <template #header-extra>
+              <n-button v-if="canManageStructure" secondary @click="showAgreementForm = !showAgreementForm">
+                {{ showAgreementForm ? '收起' : '新增协议' }}
+              </n-button>
+            </template>
             <n-data-table v-if="agreements.length" :columns="agreementColumns" :data="agreements" :pagination="false" :scroll-x="650" />
             <n-empty v-else description="当前框架暂无执行协议。" />
-            <n-form v-if="canManageStructure" class="form-grid" label-placement="top">
+            <n-form v-if="canManageStructure && showAgreementForm" class="form-grid edit-surface" label-placement="top">
               <n-form-item label="协议编号"><n-input v-model:value="agreementForm.code" /></n-form-item>
               <n-form-item label="协议名称"><n-input v-model:value="agreementForm.name" /></n-form-item>
               <n-form-item label="协议额度（元）"><n-input v-model:value="agreementForm.amountYuan" /></n-form-item>
@@ -395,7 +417,19 @@ onMounted(loadInitial);
         </n-tab-pane>
 
         <n-tab-pane name="entries" tab="资金流水">
-          <n-card title="登记预算发生 / 实际发生">
+          <n-card title="当前框架流水">
+            <template #header-extra>
+              <n-button v-if="canFinanceWrite" data-test="open-entry-form" type="primary" @click="showEntryForm = !showEntryForm">
+                {{ showEntryForm ? '收起登记' : '登记流水' }}
+              </n-button>
+            </template>
+            <n-data-table v-if="entries.length" :columns="entryColumns" :data="entries" :pagination="false" :scroll-x="650" />
+            <n-empty v-else description="暂无资金流水。" />
+            <div v-if="entryCursor" class="load-more">
+              <n-button data-test="load-more-entries" @click="loadMoreEntries">加载更多流水</n-button>
+            </div>
+          </n-card>
+          <n-card v-if="showEntryForm && canFinanceWrite" title="登记预算发生 / 实际发生" class="detail-card edit-card">
             <n-alert type="warning" :bordered="false">登记流水必须关联同框架、业务日期有效的执行协议。预算发生和实际发生是不同账目，不能相互代替。</n-alert>
             <n-form class="entry-form" label-placement="top">
               <n-form-item label="子项目"><n-select data-test="entry-project" v-model:value="entryProjectId" :options="projectOptions" /></n-form-item>
@@ -414,13 +448,6 @@ onMounted(loadInitial);
               <n-button data-test="post-entry" type="primary" :loading="saving" @click="postEntry">登记流水</n-button>
             </n-space>
           </n-card>
-          <n-card title="当前框架流水" class="detail-card">
-            <n-data-table v-if="entries.length" :columns="entryColumns" :data="entries" :pagination="false" :scroll-x="650" />
-            <n-empty v-else description="暂无资金流水。" />
-            <div v-if="entryCursor" class="load-more">
-              <n-button data-test="load-more-entries" @click="loadMoreEntries">加载更多流水</n-button>
-            </div>
-          </n-card>
         </n-tab-pane>
       </n-tabs>
     </div>
@@ -428,21 +455,49 @@ onMounted(loadInitial);
 </template>
 
 <style scoped>
-.finance-view { gap: 16px; }
+.finance-view { gap: 18px; max-width: 1420px; }
+.finance-overview { overflow: hidden; border: 1px solid var(--ui-border); border-radius: var(--ui-radius-lg); background: var(--ui-surface); }
+.finance-context { display: grid; grid-template-columns: minmax(260px, 420px) minmax(180px, 260px) 1fr; gap: 10px; align-items: center; min-height: 64px; padding: 12px 16px; border-bottom: 1px solid var(--ui-border); }
+.finance-context-note { justify-self: end; color: var(--ui-text-tertiary); font-size: 11px; }
+.workspace-tabs :deep(.n-tabs-tab) { padding-inline: 2px; margin-right: 24px; font-size: 12px; }
 .toolbar { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(180px, 320px) auto; gap: 10px; margin-top: 16px; align-items: center; }
-.metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-top: 18px; }
-.metrics > div { display: grid; gap: 4px; padding: 12px; border: 1px solid #e6eaf0; border-radius: 10px; background: #fafbfc; }
-.metrics span { color: #758094; font-size: 12px; }
-.metrics strong { font-size: 16px; }
-.agreement-metrics { display: grid; gap: 8px; margin-top: 14px; }
-.metric-row { display: grid; grid-template-columns: minmax(140px, 1fr) 110px 160px 130px auto; gap: 10px; align-items: center; border-top: 1px solid #edf0f4; padding-top: 9px; }
+.metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.metrics > div { display: grid; align-content: center; gap: 6px; min-height: 92px; padding: 16px 18px; border-right: 1px solid var(--ui-border); border-bottom: 1px solid var(--ui-border); background: var(--ui-surface); }
+.metrics > div:nth-child(4n) { border-right: 0; }
+.metrics > div:nth-last-child(-n+4) { border-bottom: 0; }
+.metrics span { color: var(--ui-text-secondary); font-size: 11px; }
+.metrics strong { color: var(--ui-text); font-size: 18px; font-weight: 690; font-variant-numeric: tabular-nums; }
+.agreement-metrics { display: grid; padding: 0 16px 10px; border-top: 1px solid var(--ui-border); }
+.metric-row { display: grid; grid-template-columns: minmax(140px, 1fr) 110px 160px 130px auto; gap: 10px; align-items: center; min-height: 48px; border-bottom: 1px solid var(--ui-border); color: var(--ui-text-secondary); font-size: 12px; }
+.metric-row:last-child { border-bottom: 0; }
+.metric-row strong { color: var(--ui-text); font-size: 12px; font-weight: 650; }
 .form-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0 12px; margin-top: 16px; align-items: end; }
+.edit-surface { padding: 16px; border: 1px solid var(--ui-border); border-radius: 12px; background: var(--ui-surface-subtle); }
 .detail-card { margin-top: 16px; }
+.edit-card { border-color: var(--ui-border-strong) !important; }
 .budget-form, .entry-form { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 12px; margin-top: 16px; }
 .entry-form { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 .split-row { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(150px, 240px) auto; gap: 10px; margin: 8px 0; }
 .actions { margin-top: 12px; }
-.status-line { margin-top: 12px; color: #667085; }
-@media (max-width: 1000px) { .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } .form-grid, .entry-form { grid-template-columns: repeat(2, minmax(0, 1fr)); } .metric-row { grid-template-columns: 1fr 1fr; } }
-@media (max-width: 700px) { .toolbar, .metrics, .form-grid, .budget-form, .entry-form, .split-row { grid-template-columns: 1fr; } }
+.status-line { margin-top: 12px; color: var(--ui-text-secondary); }
+.load-more { display: flex; justify-content: center; padding: 14px 0 0; }
+@media (max-width: 1000px) {
+  .finance-context { grid-template-columns: minmax(220px, 1fr) minmax(180px, 240px); }
+  .finance-context-note { display: none; }
+  .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .metrics > div:nth-child(4n) { border-right: 1px solid var(--ui-border); }
+  .metrics > div:nth-child(2n) { border-right: 0; }
+  .metrics > div:nth-last-child(-n+4) { border-bottom: 1px solid var(--ui-border); }
+  .metrics > div:nth-last-child(-n+2) { border-bottom: 0; }
+  .form-grid, .entry-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .metric-row { grid-template-columns: 1fr 1fr; padding: 10px 0; }
+}
+@media (max-width: 700px) {
+  .finance-context, .toolbar, .form-grid, .budget-form, .entry-form, .split-row { grid-template-columns: 1fr; }
+  .finance-context { align-items: stretch; }
+  .metrics { grid-template-columns: 1fr 1fr; }
+  .metrics > div { min-height: 82px; padding: 13px; }
+  .metrics strong { font-size: 16px; }
+  .metric-row { grid-template-columns: 1fr; gap: 4px; }
+}
 </style>

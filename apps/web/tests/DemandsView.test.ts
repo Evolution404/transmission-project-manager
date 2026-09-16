@@ -158,6 +158,7 @@ describe('DemandsView P2 behavior', () => {
     const wrapper = mount(DemandsView, { props: { currentUser: readonly } });
     await flushPromises();
     expect(wrapper.text()).toContain('龙城线');
+    expect(wrapper.find('[data-test="mobile-demand-d1"]').exists()).toBe(true);
     expect(wrapper.text()).toContain('仅管理员或项目管理角色可以导入需求');
     expect(wrapper.find('[data-test="file-input"]').exists()).toBe(false);
     expect(wrapper.find('[data-test="add-material"]').exists()).toBe(false);

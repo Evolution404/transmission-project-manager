@@ -112,6 +112,8 @@ describe('FinanceView P4 behavior', () => {
   it('creates a framework using integer fen instead of floating point yuan', async () => {
     const wrapper = mount(FinanceView, { props: { currentUser: admin } });
     await flushPromises();
+    expect(wrapper.find('[data-test="framework-code"]').exists()).toBe(false);
+    await wrapper.get('[data-test="open-framework-form"]').trigger('click');
     await wrapper.get('[data-test="framework-code"]').setValue('FW-NEW');
     await wrapper.get('[data-test="framework-name"]').setValue('新框架');
     await wrapper.get('[data-test="framework-total"]').setValue('12345.67');
@@ -159,6 +161,9 @@ describe('FinanceView P4 behavior', () => {
     const wrapper = mount(FinanceView, { props: { currentUser: finance } });
     await flushPromises();
     expect(wrapper.find('[data-test="create-framework"]').exists()).toBe(false);
+    expect(wrapper.find('[data-test="open-framework-form"]').exists()).toBe(false);
+    expect(wrapper.find('[data-test="entry-project"]').exists()).toBe(false);
+    await wrapper.get('[data-test="open-entry-form"]').trigger('click');
     await wrapper.get('[data-test="entry-project"]').setValue('p1');
     await wrapper.get('[data-test="entry-type"]').setValue('actual_cost');
     await wrapper.get('[data-test="entry-amount"]').setValue('1000');
