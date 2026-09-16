@@ -44,6 +44,10 @@ function openCreateProject() {
   createOpen.value = true;
 }
 
+function setCreateOpen(value: boolean) {
+  if (!creating.value || value) createOpen.value = value;
+}
+
 async function saveProject() {
   const name = createName.value.trim();
   if (!name) { createError.value = '请输入项目名称'; return; }
@@ -184,8 +188,16 @@ onMounted(() => loadPage());
       <div v-if="nextCursor" class="load-more"><n-button :loading="loadingMore" @click="loadPage(nextCursor)">加载更多</n-button></div>
     </section>
 
-    <n-drawer v-model:show="createOpen" placement="right" :width="520" class="project-create-drawer">
-      <n-drawer-content title="新建项目" closable>
+    <n-drawer
+      :show="createOpen"
+      placement="right"
+      :width="520"
+      :mask-closable="!creating"
+      :close-on-esc="!creating"
+      class="project-create-drawer"
+      @update:show="setCreateOpen"
+    >
+      <n-drawer-content title="新建项目" :closable="!creating">
         <div class="create-intro">
           <strong>先建立项目，再逐步补充业务事实</strong>
           <span>来源需求和项目物资都可以为空，创建后在项目详情继续维护。</span>
@@ -197,7 +209,7 @@ onMounted(() => loadPage());
           <n-form-item label="负责人"><n-input v-model:value="createOwner" data-test="project-owner" /></n-form-item>
         </n-form>
         <div class="drawer-actions">
-          <n-button @click="createOpen = false">取消</n-button>
+          <n-button :disabled="creating" @click="setCreateOpen(false)">取消</n-button>
           <n-button data-test="save-project" type="primary" :loading="creating" @click="saveProject">创建项目</n-button>
         </div>
       </n-drawer-content>

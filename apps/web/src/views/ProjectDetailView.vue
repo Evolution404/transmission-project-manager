@@ -378,6 +378,8 @@ onMounted(load);
       preset="card"
       title="确认储备版本"
       :mask-closable="!reserveConfirming"
+      :close-on-esc="!reserveConfirming"
+      :closable="!reserveConfirming"
       class="reserve-confirm-modal"
       :style="{ width: 'min(520px, calc(100vw - 24px))' }"
     >
@@ -408,6 +410,8 @@ onMounted(load);
       preset="card"
       title="确认项目出库"
       :mask-closable="!releasing"
+      :close-on-esc="!releasing"
+      :closable="!releasing"
       class="release-modal"
       :style="{ width: 'min(520px, calc(100vw - 24px))' }"
     >

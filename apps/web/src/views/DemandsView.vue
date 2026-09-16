@@ -354,6 +354,15 @@ async function openDemand(row: DemandSummary) {
   }
 }
 
+function setManualDemandOpen(value: boolean) {
+  if (!savingManualDemand.value || value) manualDemandModalOpen.value = value;
+}
+
+function setDemandDetailOpen(value: boolean) {
+  if (!value && savingDemandMaterial.value) return;
+  if (!value) selectedDemand.value = null;
+}
+
 function addManualDemandMaterial() {
   manualDemandMaterials.value.push({ id: crypto.randomUUID(), model: '', quantity: '', unit: '' });
 }
@@ -700,12 +709,15 @@ onMounted(loadInitial);
       </n-tabs>
 
       <n-modal
-        v-model:show="manualDemandModalOpen"
+        :show="manualDemandModalOpen"
         preset="card"
         title="新增需求"
         class="demand-modal"
         style="width: min(760px, calc(100vw - 32px))"
         :mask-closable="!savingManualDemand"
+        :close-on-esc="!savingManualDemand"
+        :closable="!savingManualDemand"
+        @update:show="setManualDemandOpen"
       >
         <div class="modal-intro">
           <strong>先建立需求事项，再按需要附加物资。</strong>
@@ -776,7 +788,7 @@ onMounted(loadInitial);
         </n-form>
         <template #footer>
           <div class="modal-actions">
-            <n-button :disabled="savingManualDemand" @click="manualDemandModalOpen = false">取消</n-button>
+            <n-button :disabled="savingManualDemand" @click="setManualDemandOpen(false)">取消</n-button>
             <n-button data-test="save-manual-demand" type="primary" :loading="savingManualDemand" @click="createManualDemand">创建需求</n-button>
           </div>
         </template>
@@ -788,7 +800,10 @@ onMounted(loadInitial);
         title="需求详情与来源"
         class="demand-detail-modal"
         style="width: min(900px, calc(100vw - 32px))"
-        @update:show="(show: boolean) => { if (!show) selectedDemand = null; }"
+        :mask-closable="!savingDemandMaterial"
+        :close-on-esc="!savingDemandMaterial"
+        :closable="!savingDemandMaterial"
+        @update:show="setDemandDetailOpen"
       >
         <template v-if="selectedDemand">
           <div class="detail-grid detail-grid-polished">

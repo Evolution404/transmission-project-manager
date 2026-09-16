@@ -37,7 +37,7 @@
 - 已建立 UI 硬门禁：业务源码禁止直接渲染原生 `<button>` / `<input>` / `<select>` / `<textarea>` 和动态 `h('button')`；原生 file input 只能隐藏在设计系统 primitive 内。门禁位于 `tests/repository-guards.test.mjs`。
 - 设计系统 primitive：`apps/web/src/app/AppPressable.vue`、`AppFilePicker.vue`。
 
-最近一次完整 `npm run check`：Node **302/302 PASS**、Web **151/151 PASS（23 个测试文件）**；TypeScript、Web production build、Worker `wrangler deploy --dry-run`、Node + SQLite + Filesystem 第二运行时均 PASS。
+最近一次完整 `npm run check`：Node **303/303 PASS**、Web **151/151 PASS（23 个测试文件）**；TypeScript、Web production build、Worker `wrangler deploy --dry-run`、Node + SQLite + Filesystem 第二运行时均 PASS。
 
 最近 UI 提交：
 
@@ -100,6 +100,7 @@
 - 新增显式 404 页面：未知/过期前端 URL 不再只显示应用壳和空白正文，而是提供“返回工作台 / 打开项目中心”。需求池显式搜索也已纳入 URL `query`，刷新、分享链接或返回页面后继续保留搜索条件。
 - 本轮测试继续按先红后绿推进；其后又完成工作区上下文恢复收口：基础台账线路列表的 `voltage/status/query` 可由 URL 恢复并同步；资金、分析当前框架使用 `framework` 恢复并保留当前 Tab；资金切框架会清理跨框架预算/流水项目选择并删除失效 `projectId`，预算/流水项目下拉只展示当前框架项目。基础台账暂未伪造 `lineId` 详情深链，因为服务端尚无稳定按线路 ID 直接读取接口，避免在首屏 100 条里查找造成大台账随机失效。该包定向 MasterData/Analysis/Finance **33/33 PASS**，Web typecheck、`git diff --check` PASS；最新完整 `npm run check` 为 Node **302/302 PASS**、Web **151/151 PASS（23 文件）**，TypeScript、Web production build、Worker dry-run 与 Node + SQLite + Filesystem 第二运行时全部 PASS。
 - 任务供应、实施、结算三类写入抽屉现已统一保存期关闭门禁：保存请求进行中，遮罩、右上角关闭、Esc / `update:show` 和底部取消都不得中断界面状态；新增 repository guard 防止回退。项目来源需求 409 文案同步为“草稿保留并可原地读取最新项目”，与实际交互一致。
+- 其后把同一关闭门禁扩展到主要写操作层：项目新建、需求新建、需求详情追加物资、项目储备确认/出库、成员管理/重置密码，以及基础台账删除、电压等级、班组、塔型、自定义字段、线路/杆塔编辑与更名、物理杆塔/rebind、自定义值、排序和批量导入。基础台账 14 个写弹窗共享 `writeModalGuardProps`，避免每个弹窗独立维护。该包相关 Web 定向 **45/45 PASS**，最新完整 `npm run check` 为 Node **303/303 PASS**、Web **151/151 PASS（23 文件）**。
 
 ## 下一步施工顺序
 

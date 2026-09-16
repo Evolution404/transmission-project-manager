@@ -398,7 +398,7 @@ onMounted(load);
     </div>
   </n-spin>
 
-  <n-modal v-model:show="modalOpen" preset="card" :title="editing ? '编辑成员' : '新增成员'" class="member-modal" :mask-closable="!saving">
+  <n-modal v-model:show="modalOpen" preset="card" :title="editing ? '编辑成员' : '新增成员'" class="member-modal" :mask-closable="!saving" :close-on-esc="!saving" :closable="!saving">
     <n-form label-placement="top">
       <n-alert v-if="formError" type="error" class="form-alert">{{ formError }}</n-alert>
 
@@ -452,7 +452,7 @@ onMounted(load);
     </n-form>
   </n-modal>
 
-  <n-modal v-model:show="resetModalOpen" preset="card" title="重置密码" class="member-modal" :mask-closable="!saving">
+  <n-modal v-model:show="resetModalOpen" preset="card" title="重置密码" class="member-modal" :mask-closable="!saving" :close-on-esc="!saving" :closable="!saving">
     <n-form label-placement="top">
       <n-alert v-if="resetError" type="error" class="form-alert">{{ resetError }}</n-alert>
       <n-alert type="warning" :bordered="false" class="form-alert">

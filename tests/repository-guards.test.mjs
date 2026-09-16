@@ -391,6 +391,37 @@ test('task progress drawers cannot close while a save request is in flight', () 
   assert.match(taskDetail, /@update:show="setSupplyShow"/, '供应抽屉不得把 update:show 直接写入状态');
 });
 
+test('primary write overlays cannot be dismissed while a mutation is in flight', () => {
+  const projects = readFileSync(resolve(root, 'apps/web/src/views/ProjectsView.vue'), 'utf8');
+  assert.match(projects, /function setCreateOpen\(value: boolean\)/, '项目新建抽屉必须守卫 show 变化');
+  assert.match(projects, /:mask-closable="!creating"/);
+  assert.match(projects, /:close-on-esc="!creating"/);
+  assert.match(projects, /:closable="!creating"/);
+
+  const demands = readFileSync(resolve(root, 'apps/web/src/views/DemandsView.vue'), 'utf8');
+  assert.match(demands, /function setManualDemandOpen\(value: boolean\)/, '需求新建弹窗必须守卫 show 变化');
+  assert.match(demands, /function setDemandDetailOpen\(value: boolean\)/, '需求详情写入期间必须守卫 show 变化');
+  assert.match(demands, /:close-on-esc="!savingManualDemand"/);
+  assert.match(demands, /:closable="!savingManualDemand"/);
+  assert.match(demands, /:mask-closable="!savingDemandMaterial"/);
+  assert.match(demands, /:close-on-esc="!savingDemandMaterial"/);
+  assert.match(demands, /:closable="!savingDemandMaterial"/);
+
+  const projectDetail = readFileSync(resolve(root, 'apps/web/src/views/ProjectDetailView.vue'), 'utf8');
+  assert.match(projectDetail, /:close-on-esc="!reserveConfirming"/);
+  assert.match(projectDetail, /:closable="!reserveConfirming"/);
+  assert.match(projectDetail, /:close-on-esc="!releasing"/);
+  assert.match(projectDetail, /:closable="!releasing"/);
+
+  const administration = readFileSync(resolve(root, 'apps/web/src/views/AdministrationView.vue'), 'utf8');
+  assert.ok((administration.match(/:close-on-esc="!saving"/g) ?? []).length >= 2, '成员编辑和重置密码都必须禁止保存中 Esc 关闭');
+  assert.ok((administration.match(/:closable="!saving"/g) ?? []).length >= 2, '成员编辑和重置密码都必须禁止保存中右上角关闭');
+
+  const masterData = readFileSync(resolve(root, 'apps/web/src/views/MasterDataView.vue'), 'utf8');
+  assert.match(masterData, /const writeModalGuardProps = computed\(/, '基础台账写弹窗应共享同一保存期关闭门禁');
+  assert.ok((masterData.match(/v-bind="writeModalGuardProps"/g) ?? []).length >= 14, '基础台账主要写弹窗必须统一应用关闭门禁');
+});
+
 test('mobile UI keeps usable navigation and dashboard density', () => {
   const appSource = readFileSync(resolve(root, 'apps/web/src/App.vue'), 'utf8');
   const dashboardSource = readFileSync(resolve(root, 'apps/web/src/views/DashboardView.vue'), 'utf8');

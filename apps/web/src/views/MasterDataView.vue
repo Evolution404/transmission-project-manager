@@ -264,6 +264,11 @@ const editingPhysicalTower = ref<PhysicalTowerSummary | null>(null);
 const rebindTower = ref<LineTowerPositionSummary | null>(null);
 const customValuesTower = ref<PhysicalTowerSummary | null>(null);
 const saving = ref(false);
+const writeModalGuardProps = computed(() => ({
+  maskClosable: !saving.value,
+  closeOnEsc: !saving.value,
+  closable: !saving.value,
+}));
 const voltageForm = ref({ displayName: '', code: '', systemType: 'AC' as VoltageSystemType, nominalKv: '', sortOrder: '', enabled: true });
 const teamForm = ref({ code: '', name: '', enabled: true });
 const towerTypeForm = ref({ code: '', label: '', sortOrder: '', enabled: true });
@@ -1084,28 +1089,28 @@ onMounted(loadAll);
       </n-tabs>
     </n-modal>
 
-    <n-modal v-model:show="deleteConfirmModal" preset="card" title="确认删除" class="master-data-modal" style="width:min(480px,calc(100vw - 32px))">
+    <n-modal v-model:show="deleteConfirmModal" v-bind="writeModalGuardProps" preset="card" title="确认删除" class="master-data-modal" style="width:min(480px,calc(100vw - 32px))">
       <n-alert type="warning" :bordered="false">删除只允许用于尚未被业务引用的台账对象，删除后不可通过界面恢复。</n-alert>
       <p>确定删除{{ deleteTarget?.label }}吗？</p>
-      <template #footer><div class="actions"><n-button @click="deleteConfirmModal=false;deleteTarget=null">取消</n-button><n-button data-test="confirm-master-delete" type="error" :loading="saving" @click="confirmDelete">确认删除</n-button></div></template>
+      <template #footer><div class="actions"><n-button :disabled="saving" @click="deleteConfirmModal=false;deleteTarget=null">取消</n-button><n-button data-test="confirm-master-delete" type="error" :loading="saving" @click="confirmDelete">确认删除</n-button></div></template>
     </n-modal>
 
-    <n-modal v-model:show="voltageModal" preset="card" title="电压等级" class="master-data-modal" style="width:min(560px,calc(100vw - 32px))">
+    <n-modal v-model:show="voltageModal" v-bind="writeModalGuardProps" preset="card" title="电压等级" class="master-data-modal" style="width:min(560px,calc(100vw - 32px))">
       <n-form label-placement="top"><n-form-item label="显示名称"><n-input v-model:value="voltageForm.displayName" /></n-form-item><n-form-item label="内部编码"><n-input v-model:value="voltageForm.code" /></n-form-item><n-form-item label="制式"><n-select v-model:value="voltageForm.systemType" :options="systemOptions" /></n-form-item><n-form-item label="标称电压 kV"><n-input v-model:value="voltageForm.nominalKv" /></n-form-item><n-form-item label="排序"><n-input v-model:value="voltageForm.sortOrder" /></n-form-item><n-form-item label="启用"><n-switch v-model:value="voltageForm.enabled" /></n-form-item></n-form>
-      <template #footer><div class="actions"><n-button @click="voltageModal=false">取消</n-button><n-button type="primary" :loading="saving" @click="saveVoltage">保存</n-button></div></template>
+      <template #footer><div class="actions"><n-button :disabled="saving" @click="voltageModal=false">取消</n-button><n-button type="primary" :loading="saving" @click="saveVoltage">保存</n-button></div></template>
     </n-modal>
 
-    <n-modal v-model:show="teamModal" preset="card" :title="editingTeam ? '编辑班组' : '新增班组'" class="master-data-modal" style="width:min(520px,calc(100vw - 32px))">
+    <n-modal v-model:show="teamModal" v-bind="writeModalGuardProps" preset="card" :title="editingTeam ? '编辑班组' : '新增班组'" class="master-data-modal" style="width:min(520px,calc(100vw - 32px))">
       <n-form label-placement="top"><n-form-item label="班组名称"><n-input data-test="team-name-input" v-model:value="teamForm.name" /></n-form-item><n-form-item label="班组编码（可选）"><n-input v-model:value="teamForm.code" /></n-form-item><n-form-item label="启用"><n-switch v-model:value="teamForm.enabled" /></n-form-item></n-form>
-      <template #footer><div class="actions"><n-button @click="teamModal=false">取消</n-button><n-button data-test="save-team" type="primary" :loading="saving" @click="saveTeam">保存</n-button></div></template>
+      <template #footer><div class="actions"><n-button :disabled="saving" @click="teamModal=false">取消</n-button><n-button data-test="save-team" type="primary" :loading="saving" @click="saveTeam">保存</n-button></div></template>
     </n-modal>
 
-    <n-modal v-model:show="towerTypeModal" preset="card" :title="editingTowerType ? '编辑杆塔类型' : '新增杆塔类型'" class="master-data-modal" style="width:min(520px,calc(100vw - 32px))">
+    <n-modal v-model:show="towerTypeModal" v-bind="writeModalGuardProps" preset="card" :title="editingTowerType ? '编辑杆塔类型' : '新增杆塔类型'" class="master-data-modal" style="width:min(520px,calc(100vw - 32px))">
       <n-form label-placement="top"><n-form-item label="类型名称"><n-input data-test="tower-type-label-input" v-model:value="towerTypeForm.label" /></n-form-item><n-form-item label="类型编码（可选）"><n-input v-model:value="towerTypeForm.code" /></n-form-item><n-form-item label="排序"><n-input v-model:value="towerTypeForm.sortOrder" /></n-form-item><n-form-item label="启用"><n-switch v-model:value="towerTypeForm.enabled" /></n-form-item></n-form>
-      <template #footer><div class="actions"><n-button @click="towerTypeModal=false">取消</n-button><n-button data-test="save-tower-type" type="primary" :loading="saving" @click="saveTowerType">保存</n-button></div></template>
+      <template #footer><div class="actions"><n-button :disabled="saving" @click="towerTypeModal=false">取消</n-button><n-button data-test="save-tower-type" type="primary" :loading="saving" @click="saveTowerType">保存</n-button></div></template>
     </n-modal>
 
-    <n-modal v-model:show="customFieldModal" preset="card" :title="editingCustomField ? '编辑自定义字段' : '新增自定义字段'" class="master-data-modal" style="width:min(640px,calc(100vw - 32px))">
+    <n-modal v-model:show="customFieldModal" v-bind="writeModalGuardProps" preset="card" :title="editingCustomField ? '编辑自定义字段' : '新增自定义字段'" class="master-data-modal" style="width:min(640px,calc(100vw - 32px))">
       <n-alert v-if="editingCustomField" type="info" :bordered="false">对象类型、字段键和数据类型决定已保存值的语义，因此创建后锁定。需要变更时请新建字段并停用旧字段。</n-alert>
       <n-form label-placement="top">
         <n-form-item label="所属对象"><n-select data-test="custom-field-entity" v-model:value="customFieldForm.entityType" :options="customFieldEntityOptions" :disabled="Boolean(editingCustomField)" /></n-form-item>
@@ -1123,21 +1128,21 @@ onMounted(loadAll);
         <n-form-item label="可筛选"><n-switch v-model:value="customFieldForm.filterable" /></n-form-item>
         <n-form-item label="启用"><n-switch v-model:value="customFieldForm.enabled" /></n-form-item>
       </n-form>
-      <template #footer><div class="actions"><n-button @click="customFieldModal=false">取消</n-button><n-button data-test="save-custom-field" type="primary" :loading="saving" @click="saveCustomField">保存</n-button></div></template>
+      <template #footer><div class="actions"><n-button :disabled="saving" @click="customFieldModal=false">取消</n-button><n-button data-test="save-custom-field" type="primary" :loading="saving" @click="saveCustomField">保存</n-button></div></template>
     </n-modal>
 
-    <n-modal v-model:show="lineModal" preset="card" :title="editingLine ? '编辑线路属性' : '新增线路'" class="master-data-modal" style="width:min(560px,calc(100vw - 32px))">
+    <n-modal v-model:show="lineModal" v-bind="writeModalGuardProps" preset="card" :title="editingLine ? '编辑线路属性' : '新增线路'" class="master-data-modal" style="width:min(560px,calc(100vw - 32px))">
       <n-form label-placement="top"><n-form-item label="电压等级"><n-select v-model:value="lineForm.voltageLevelId" :options="voltageOptions" /></n-form-item><n-form-item label="线路名称"><span v-if="editingLine">{{ editingLine.lineName }}（更名请使用“线路更名”）</span><n-input v-else v-model:value="lineForm.lineName" placeholder="请输入线路名称" /></n-form-item><n-form-item label="线路编码（可选）"><n-input v-model:value="lineForm.lineCode" /></n-form-item><n-form-item label="启用"><n-switch v-model:value="lineForm.enabled" /></n-form-item></n-form>
-      <template #footer><div class="actions"><n-button @click="lineModal=false">取消</n-button><n-button type="primary" :loading="saving" @click="saveLine">保存</n-button></div></template>
+      <template #footer><div class="actions"><n-button :disabled="saving" @click="lineModal=false">取消</n-button><n-button type="primary" :loading="saving" @click="saveLine">保存</n-button></div></template>
     </n-modal>
 
-    <n-modal v-model:show="lineRenameModal" preset="card" title="线路更名" class="master-data-modal" style="width:min(520px,calc(100vw - 32px))">
+    <n-modal v-model:show="lineRenameModal" v-bind="writeModalGuardProps" preset="card" title="线路更名" class="master-data-modal" style="width:min(520px,calc(100vw - 32px))">
       <n-alert type="info" :bordered="false">更名不会创建新线路；对象身份不变，旧名称永久进入历史并可继续搜索。</n-alert>
       <n-form label-placement="top"><n-form-item label="新线路名称"><n-input data-test="line-rename-input" v-model:value="lineRenameForm.lineName" /></n-form-item><n-form-item label="更名原因（可选）"><n-input v-model:value="lineRenameForm.reason" /></n-form-item></n-form>
-      <template #footer><div class="actions"><n-button @click="lineRenameModal=false">取消</n-button><n-button data-test="save-line-rename" type="primary" :loading="saving" @click="saveLineRename">确认更名</n-button></div></template>
+      <template #footer><div class="actions"><n-button :disabled="saving" @click="lineRenameModal=false">取消</n-button><n-button data-test="save-line-rename" type="primary" :loading="saving" @click="saveLineRename">确认更名</n-button></div></template>
     </n-modal>
 
-    <n-modal v-model:show="towerModal" preset="card" :title="editingTower ? '编辑线路杆塔节点' : '新增线路杆塔节点'" class="master-data-modal" style="width:min(620px,calc(100vw - 32px))">
+    <n-modal v-model:show="towerModal" v-bind="writeModalGuardProps" preset="card" :title="editingTower ? '编辑线路杆塔节点' : '新增线路杆塔节点'" class="master-data-modal" style="width:min(620px,calc(100vw - 32px))">
       <n-form label-placement="top">
         <n-form-item label="所属线路"><span>{{ selectedLine?.lineName }}</span></n-form-item>
         <n-form-item label="杆塔编号"><span v-if="editingTower">{{ editingTower.towerNo }}（更名请使用“杆塔更名”）</span><n-input v-else v-model:value="towerForm.towerNo" data-test="tower-number-input" placeholder="例如：10-1" /></n-form-item>
@@ -1159,10 +1164,10 @@ onMounted(loadAll);
         <n-form-item label="同塔位置标识（可选）"><n-input v-model:value="towerForm.positionLabel" placeholder="例如：左回、右回、上层" /></n-form-item>
         <n-form-item label="启用"><n-switch v-model:value="towerForm.enabled" /></n-form-item>
       </n-form>
-      <template #footer><div class="actions"><n-button @click="towerModal=false">取消</n-button><n-button data-test="save-tower" type="primary" :loading="saving" @click="saveTower">保存</n-button></div></template>
+      <template #footer><div class="actions"><n-button :disabled="saving" @click="towerModal=false">取消</n-button><n-button data-test="save-tower" type="primary" :loading="saving" @click="saveTower">保存</n-button></div></template>
     </n-modal>
 
-    <n-modal v-model:show="physicalTowerModal" preset="card" title="编辑物理杆塔" class="master-data-modal" style="width:min(560px,calc(100vw - 32px))">
+    <n-modal v-model:show="physicalTowerModal" v-bind="writeModalGuardProps" preset="card" title="编辑物理杆塔" class="master-data-modal" style="width:min(560px,calc(100vw - 32px))">
       <n-alert type="info" :bordered="false">这里修改的是一基真实物理杆塔的公共属性。若该物理塔承载多回线路，所有关联线路节点都会看到相同的塔型和班组。</n-alert>
       <n-form label-placement="top">
         <n-form-item label="物理资产编号"><n-input data-test="physical-asset-code" v-model:value="physicalTowerForm.assetCode" /></n-form-item>
@@ -1170,19 +1175,19 @@ onMounted(loadAll);
         <n-form-item label="运维班组"><n-select v-model:value="physicalTowerForm.maintenanceTeamId" :options="teamOptions" clearable placeholder="请选择班组" /></n-form-item>
         <n-form-item label="启用"><n-switch v-model:value="physicalTowerForm.enabled" /></n-form-item>
       </n-form>
-      <template #footer><div class="actions"><n-button @click="physicalTowerModal=false">取消</n-button><n-button data-test="save-physical-tower" type="primary" :loading="saving" @click="savePhysicalTower">保存物理属性</n-button></div></template>
+      <template #footer><div class="actions"><n-button :disabled="saving" @click="physicalTowerModal=false">取消</n-button><n-button data-test="save-physical-tower" type="primary" :loading="saving" @click="savePhysicalTower">保存物理属性</n-button></div></template>
     </n-modal>
 
-    <n-modal v-model:show="rebindPhysicalModal" preset="card" title="重新关联物理杆塔" class="master-data-modal" style="width:min(600px,calc(100vw - 32px))">
+    <n-modal v-model:show="rebindPhysicalModal" v-bind="writeModalGuardProps" preset="card" title="重新关联物理杆塔" class="master-data-modal" style="width:min(600px,calc(100vw - 32px))">
       <n-alert type="warning" :bordered="false">该操作只改变“这个线路编号属于哪一基物理杆塔”，不会改变线路、杆塔编号、更名历史或既有需求定位。用于把原先分别录入的多回线路节点合并到同一基物理塔。</n-alert>
       <n-form label-placement="top">
         <n-form-item label="当前线路杆塔"><span>{{ rebindTower?.lineName }} {{ rebindTower?.towerNo }}</span></n-form-item>
         <n-form-item label="目标物理杆塔"><n-select data-test="rebind-physical-select" v-model:value="rebindPhysicalTowerId" :options="physicalTowerOptions" filterable /></n-form-item>
       </n-form>
-      <template #footer><div class="actions"><n-button @click="rebindPhysicalModal=false">取消</n-button><n-button data-test="save-rebind-physical" type="primary" :loading="saving" @click="saveRebindPhysical">确认关联</n-button></div></template>
+      <template #footer><div class="actions"><n-button :disabled="saving" @click="rebindPhysicalModal=false">取消</n-button><n-button data-test="save-rebind-physical" type="primary" :loading="saving" @click="saveRebindPhysical">确认关联</n-button></div></template>
     </n-modal>
 
-    <n-modal v-model:show="customValuesModal" preset="card" title="物理杆塔自定义字段" class="master-data-modal" style="width:min(620px,calc(100vw - 32px))">
+    <n-modal v-model:show="customValuesModal" v-bind="writeModalGuardProps" preset="card" title="物理杆塔自定义字段" class="master-data-modal" style="width:min(620px,calc(100vw - 32px))">
       <n-alert type="info" :bordered="false">字段由“台账与字段配置”统一定义。这里保存的是当前物理杆塔的字段值，使用独立版本控制，不会修改线路节点版本。</n-alert>
       <n-form v-if="physicalCustomFields.length" label-placement="top">
         <n-form-item v-for="field in physicalCustomFields" :key="field.id" :label="`${field.label}${field.required ? ' *' : ''}`">
@@ -1193,13 +1198,13 @@ onMounted(loadAll);
         </n-form-item>
       </n-form>
       <n-empty v-else description="尚未配置物理杆塔自定义字段" />
-      <template #footer><div class="actions"><n-button @click="customValuesModal=false">取消</n-button><n-button data-test="save-custom-values" type="primary" :disabled="!physicalCustomFields.length" :loading="saving" @click="saveCustomValues">保存字段值</n-button></div></template>
+      <template #footer><div class="actions"><n-button :disabled="saving" @click="customValuesModal=false">取消</n-button><n-button data-test="save-custom-values" type="primary" :disabled="!physicalCustomFields.length" :loading="saving" @click="saveCustomValues">保存字段值</n-button></div></template>
     </n-modal>
 
-    <n-modal v-model:show="towerRenameModal" preset="card" title="杆塔更名" class="master-data-modal" style="width:min(520px,calc(100vw - 32px))">
+    <n-modal v-model:show="towerRenameModal" v-bind="writeModalGuardProps" preset="card" title="杆塔更名" class="master-data-modal" style="width:min(520px,calc(100vw - 32px))">
       <n-alert type="info" :bordered="false">更名只改变当前编号；杆塔对象身份、业务引用和历史链保持不变。</n-alert>
       <n-form label-placement="top"><n-form-item label="新杆塔编号"><n-input data-test="tower-rename-input" v-model:value="towerRenameForm.towerNo" placeholder="例如：21-1" /></n-form-item><n-form-item label="更名原因（可选）"><n-input v-model:value="towerRenameForm.reason" /></n-form-item></n-form>
-      <template #footer><div class="actions"><n-button @click="towerRenameModal=false">取消</n-button><n-button data-test="save-tower-rename" type="primary" :loading="saving" @click="saveTowerRename">确认更名</n-button></div></template>
+      <template #footer><div class="actions"><n-button :disabled="saving" @click="towerRenameModal=false">取消</n-button><n-button data-test="save-tower-rename" type="primary" :loading="saving" @click="saveTowerRename">确认更名</n-button></div></template>
     </n-modal>
 
     <n-modal v-model:show="historyModal" preset="card" :title="historyTitle" class="master-data-modal" style="width:min(640px,calc(100vw - 32px))">
@@ -1208,21 +1213,21 @@ onMounted(loadAll);
       <n-empty v-else description="暂无更名历史" />
     </n-modal>
 
-    <n-modal v-model:show="orderModal" preset="card" title="调整杆塔顺序" class="master-data-modal" style="width:min(720px,calc(100vw - 32px))">
+    <n-modal v-model:show="orderModal" v-bind="writeModalGuardProps" preset="card" title="调整杆塔顺序" class="master-data-modal" style="width:min(720px,calc(100vw - 32px))">
       <p>桌面可拖动；手机可直接上移/下移。跨很长距离时，使用“移动杆塔 → 目标杆塔 → 目标前/后”。保存时一次性提交完整对象顺序。</p>
       <div class="order-controls"><n-select data-test="order-moving" v-model:value="orderMoving" :options="orderOptions" /><n-select data-test="order-target" v-model:value="orderTarget" :options="orderOptions" /><n-select v-model:value="orderPlacement" :options="placementOptions" /><n-button data-test="apply-order-move" @click="applyOrderMove">应用移动</n-button></div>
       <div class="order-list"><div v-for="(item,index) in orderDraft" :key="item.id" class="order-row" draggable="true" @dragstart="draggingTowerId=item.id" @dragover.prevent @drop="dropOrder(item.id)"><span class="drag-handle">≡</span><b>{{ index+1 }}</b><strong>{{ item.towerNo }}</strong><span>{{ item.towerTypeLabel ?? item.positionLabel ?? '—' }}</span><div class="order-row-actions"><n-button size="tiny" :data-test="`order-up-${item.id}`" :disabled="index===0" @click="moveDraftStep(item.id,-1)">上移</n-button><n-button size="tiny" :data-test="`order-down-${item.id}`" :disabled="index===orderDraft.length-1" @click="moveDraftStep(item.id,1)">下移</n-button></div></div></div>
-      <template #footer><div class="actions"><n-button @click="orderModal=false">取消</n-button><n-button data-test="save-order" type="primary" :loading="saving" @click="saveOrder">保存顺序</n-button></div></template>
+      <template #footer><div class="actions"><n-button :disabled="saving" @click="orderModal=false">取消</n-button><n-button data-test="save-order" type="primary" :loading="saving" @click="saveOrder">保存顺序</n-button></div></template>
     </n-modal>
 
-    <n-modal v-model:show="bulkModal" preset="card" title="导入杆塔" class="master-data-modal" style="width:min(780px,calc(100vw - 32px))">
+    <n-modal v-model:show="bulkModal" v-bind="writeModalGuardProps" preset="card" title="导入杆塔" class="master-data-modal" style="width:min(780px,calc(100vw - 32px))">
       <p>当前线路：{{ selectedLine?.lineName }}。可选择 .xlsx / .csv，或直接从表格粘贴“杆塔编号、同塔位置标识、状态”。系统会先规范编号并与完整线路台账对比，再一次确认导入。批量新增默认每个线路节点创建独立物理杆塔；同塔关联请使用单个新增。</p>
       <n-form-item label="导入模式"><n-select data-test="tower-import-mode" :value="bulkMode" :options="bulkModeOptions" @update:value="setBulkMode" /></n-form-item>
       <n-alert v-if="bulkMode==='full-order'" type="warning" :bordered="false">完整清单模式要求当前线路每个杆塔对象都在文件中唯一出现；不会把缺失行当作删除。导入完成后，文件行顺序将成为线路顺序。</n-alert>
       <div class="tower-import-source"><app-file-picker test-id="tower-import-file" accept=".xlsx,.csv" label="选择台账文件" :selected-name="bulkSourceLabel || null" :disabled="bulkPreparing || saving" @change="onBulkFile" /><span>或</span><n-button size="small" :loading="bulkPreparing" data-test="preview-bulk-towers" @click="previewBulkPaste">预览粘贴数据</n-button></div>
       <n-input v-model:value="bulkText" data-test="bulk-tower-text" type="textarea" :rows="8" placeholder="杆塔编号[TAB]同塔位置标识[TAB]状态，例如：10-1    左回    启用。第一行也可以带表头。" />
       <div v-if="bulkPreview" class="tower-import-preview" data-test="tower-import-preview"><p><strong>{{ bulkSourceLabel }}</strong>：共 {{ bulkPreview.counts.total }} 行；新增 {{ bulkPreview.counts.create }}，更新 {{ bulkPreview.counts.update }}，无变化 {{ bulkPreview.counts.unchanged }}，错误 {{ bulkPreview.counts.error }}。</p><p v-if="!bulkPreview.counts.error && !bulkGlobalErrors.length">{{ bulkMode==='full-order' ? '完整清单校验通过；属性变化会先自动分批写入，随后按文件顺序原子重排。' : '系统将自动分批写入；新增杆塔按规范编号自动插入合适位置，不改变已有杆塔的人工顺序。' }}</p><div v-if="bulkPreview.counts.error" class="tower-import-errors"><p v-for="row in bulkPreview.rows.filter(item => item.action === 'error').slice(0,20)" :key="`${row.source}-${row.rowNumber}`">{{ row.source }}第 {{ row.rowNumber }} 行：{{ row.message }}</p><p v-if="bulkPreview.counts.error > 20">另有 {{ bulkPreview.counts.error - 20 }} 条错误，请修正后重新预览。</p></div><div v-if="bulkGlobalErrors.length" class="tower-import-errors"><p v-for="issue in bulkGlobalErrors" :key="issue">{{ issue }}</p></div><p v-if="bulkChunks.length">进度：{{ bulkProcessed }} / {{ bulkChunks.reduce((total, chunk) => total + chunk.length, 0) }} 条需要写入的数据。</p></div>
-      <template #footer><div class="actions"><n-button @click="bulkModal=false">取消</n-button><n-button data-test="save-bulk-towers" type="primary" :loading="saving" :disabled="!bulkPreview || bulkPreview.counts.error>0 || bulkGlobalErrors.length>0" @click="saveBulk">{{ bulkNextChunk > 0 ? '继续导入' : '开始导入' }}</n-button></div></template>
+      <template #footer><div class="actions"><n-button :disabled="saving" @click="bulkModal=false">取消</n-button><n-button data-test="save-bulk-towers" type="primary" :loading="saving" :disabled="!bulkPreview || bulkPreview.counts.error>0 || bulkGlobalErrors.length>0" @click="saveBulk">{{ bulkNextChunk > 0 ? '继续导入' : '开始导入' }}</n-button></div></template>
     </n-modal>
   </div>
 </template>
