@@ -251,7 +251,7 @@ onMounted(() => loadPage());
   .mobile-project-title-row strong { font-size: 14px; line-height: 1.45; }
   .mobile-project-meta, .mobile-project-facts { color: var(--ui-text-secondary); font-size: 13px; }
   .mobile-project-facts { display: flex; flex-wrap: wrap; gap: 6px 12px; }
-  :global(.project-create-drawer .n-drawer) { width: 100vw !important; max-width: 100vw !important; }
+  :global(.project-create-drawer.n-drawer) { width: 100vw !important; max-width: 100vw !important; }
   .drawer-actions { padding-bottom: max(14px, env(safe-area-inset-bottom)); }
   .drawer-actions .n-button:last-child { flex: 1; }
 }

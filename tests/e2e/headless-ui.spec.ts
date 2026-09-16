@@ -1,4 +1,4 @@
-import { expect, test, type Browser, type Page } from '@playwright/test';
+import { expect, test, type Browser, type BrowserContext, type Locator, type Page } from '@playwright/test';
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { createServer } from 'node:net';
@@ -17,6 +17,7 @@ const credentialPepper = 'headless-e2e-credential-pepper';
 let stateRoot = '';
 let baseUrl = '';
 let server: ChildProcess | null = null;
+let authenticatedState: Awaited<ReturnType<BrowserContext['storageState']>> | undefined;
 
 function freePort(): Promise<number> {
   return new Promise((resolvePort, reject) => {
@@ -78,16 +79,90 @@ async function assertNoHorizontalOverflow(page: Page) {
   expect(overflow).toBe(false);
 }
 
+async function assertVisibleTextFloor(page: Page) {
+  const offenders = await page.locator('main').evaluate((root) => {
+    const results: string[] = [];
+    for (const element of Array.from(root.querySelectorAll<HTMLElement>('*'))) {
+      const rect = element.getBoundingClientRect();
+      if (rect.width < 1 || rect.height < 1) continue;
+      const ownText = Array.from(element.childNodes)
+        .filter((node) => node.nodeType === Node.TEXT_NODE)
+        .map((node) => node.textContent?.trim() ?? '')
+        .filter(Boolean)
+        .join(' ');
+      if (!ownText) continue;
+      const fontSize = Number.parseFloat(getComputedStyle(element).fontSize);
+      if (fontSize < 12) results.push(`${fontSize}px <${element.tagName.toLowerCase()}.${element.className}>: ${ownText.slice(0, 60)}`);
+      if (results.length >= 12) break;
+    }
+    return results;
+  });
+  expect(offenders, `${page.url()} 发现低于 12px 的可见业务文字：${offenders.join(' | ')}`).toEqual([]);
+}
+
+async function assertOverlayWithinViewport(page: Page, overlay: Locator) {
+  await expect(overlay).toBeVisible();
+  await expect.poll(async () => {
+    const box = await overlay.boundingBox();
+    const viewport = page.viewportSize();
+    if (!box || !viewport) return false;
+    return box.x >= -1
+      && box.y >= -1
+      && box.x + box.width <= viewport.width + 1
+      && box.y + box.height <= viewport.height + 1;
+  }).toBe(true);
+}
+
+async function assertMobileNavigationTargets(page: Page) {
+  const heights = await page.locator('.mobile-bottom-nav > button').evaluateAll((buttons) => (
+    buttons.map((button) => button.getBoundingClientRect().height)
+  ));
+  expect(heights).toHaveLength(5);
+  expect(Math.min(...heights)).toBeGreaterThanOrEqual(44);
+}
+
 async function assertRouteLayout(page: Page, path: string, mobile: boolean) {
   await page.goto(`${baseUrl}${path}`);
   await expect(page.locator('.app-shell')).toBeVisible();
+  await expect(page.locator('.content-wrap')).not.toBeEmpty();
   await assertNoHorizontalOverflow(page);
+  await assertVisibleTextFloor(page);
   if (mobile) {
     await expect(page.locator('.app-sider')).toBeHidden();
     await expect(page.locator('.mobile-bottom-nav')).toBeVisible();
+    await assertMobileNavigationTargets(page);
   } else {
     await expect(page.locator('.app-sider')).toBeVisible();
     await expect(page.locator('.mobile-bottom-nav')).toBeHidden();
+  }
+}
+
+async function validateKeyOverlays(browser: Browser, mobile: boolean) {
+  const context = await browser.newContext({
+    viewport: mobile ? { width: 390, height: 844 } : { width: 1440, height: 900 },
+    colorScheme: 'light',
+    isMobile: mobile,
+    hasTouch: mobile,
+    storageState: authenticatedState,
+  });
+  try {
+    const page = await context.newPage();
+    await page.goto(baseUrl);
+    await expect(page.locator('.app-shell')).toBeVisible();
+
+    await page.goto(`${baseUrl}/demands`);
+    await page.locator('[data-test="open-manual-demand"]').click();
+    await assertOverlayWithinViewport(page, page.getByRole('dialog').filter({ hasText: '新增需求' }));
+
+    await page.goto(`${baseUrl}/projects`);
+    await page.locator('[data-test="open-create-project"]').click();
+    await assertOverlayWithinViewport(page, page.getByRole('dialog').filter({ hasText: '新建项目' }));
+
+    await page.goto(`${baseUrl}/administration`);
+    await page.getByRole('button', { name: '新增成员' }).click();
+    await assertOverlayWithinViewport(page, page.getByRole('dialog').filter({ hasText: '新增成员' }));
+  } finally {
+    await context.close();
   }
 }
 
@@ -103,10 +178,12 @@ async function validateAuthenticatedUi(browser: Browser, options: {
     colorScheme: options.colorScheme,
     isMobile: options.mobile,
     hasTouch: options.mobile,
+    storageState: authenticatedState,
   });
   try {
     const page = await context.newPage();
-    await loginThroughUi(page);
+    await page.goto(baseUrl);
+    await expect(page.locator('.app-shell')).toBeVisible();
     const canvas = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--ui-canvas').trim());
     expect(canvas).toBe(options.colorScheme === 'dark' ? '#0f131a' : '#f6f7f9');
 
@@ -159,6 +236,8 @@ test.describe.serial('无头浏览器真实认证与响应式 UI', () => {
         BOOTSTRAP_TOKEN: bootstrapToken,
       },
     });
+    server.stdout?.resume();
+    server.stderr?.resume();
     await waitForReady(baseUrl);
   });
 
@@ -180,6 +259,7 @@ test.describe.serial('无头浏览器真实认证与响应式 UI', () => {
   test('新浏览器会话通过账号密码重新登录', async ({ page }) => {
     await loginThroughUi(page);
     await expect(page.locator('.identity-card')).toContainText(`@${username}`);
+    authenticatedState = await page.context().storageState();
   });
 
   for (const options of [
@@ -192,4 +272,12 @@ test.describe.serial('无头浏览器真实认证与响应式 UI', () => {
       await validateAuthenticatedUi(browser, options);
     });
   }
+
+  test('桌面关键写入弹层不超出视口', async ({ browser }) => {
+    await validateKeyOverlays(browser, false);
+  });
+
+  test('手机关键写入弹层不超出视口', async ({ browser }) => {
+    await validateKeyOverlays(browser, true);
+  });
 });

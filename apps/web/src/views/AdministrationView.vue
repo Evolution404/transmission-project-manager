@@ -491,9 +491,9 @@ onMounted(load);
 .setting-copy strong, .setting-value strong { color: var(--ui-text); font-size: 13px; font-weight: 650; }
 .setting-copy small, .setting-value small { color: var(--ui-text-tertiary); font-size: 13px; line-height: 1.5; }
 .setting-value { text-align: right; }
-.member-cell { display: grid; gap: 3px; }
-.member-cell strong { font-size: 13px; font-weight: 650; }
-.member-cell small { color: var(--ui-text-tertiary); font-size: 13px; }
+:global(.settings-view .member-cell) { display: grid; gap: 3px; }
+:global(.settings-view .member-cell strong) { font-size: 13px; font-weight: 650; }
+:global(.settings-view .member-cell small) { color: var(--ui-text-tertiary); font-size: 13px; }
 .member-modal { width: min(640px, calc(100vw - 32px)); max-height: min(88vh, 780px); }
 :deep(.member-modal .n-card__content) { overflow-y: auto; overscroll-behavior: contain; }
 .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 14px; }
