@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 .DEFAULT_GOAL := help
 
-.PHONY: help install doctor dev dev-api dev-web typecheck build build-web build-worker test test-unit test-ui check ci production-preflight production production-inventory status
+.PHONY: help install doctor dev dev-api dev-web typecheck build build-web build-worker test test-unit test-ui check audit engineering-audit security-audit ci production-preflight production production-inventory status
 
 help:
 	@printf '%s\n' \
@@ -16,6 +16,9 @@ help:
 	  '  make test-unit            Node + Web 行为测试' \
 	  '  make test-ui              Headless Chromium 真实 UI 验收' \
 	  '  make check                完整代码门禁（类型/构建/Node/Web）' \
+	  '  make audit                工程卫生 + 生产依赖安全审计' \
+	  '  make engineering-audit    仅扫描 Git 真源的工程卫生/维护热点' \
+	  '  make security-audit       使用 npm 官方 advisory API 审计生产依赖' \
 	  '  make build                Web + Worker production build/dry-run' \
 	  '  make ci                   触发并等待当前分支 GitHub CI' \
 	  '  make production-preflight 触发并等待 main 的生产无变更预检' \
@@ -64,6 +67,14 @@ test-ui:
 
 check:
 	npm run check
+
+audit: engineering-audit security-audit
+
+engineering-audit:
+	npm run engineering:audit
+
+security-audit:
+	npm run security:audit
 
 ci:
 	node scripts/engineering/github-workflow.mjs ci.yml --ref current

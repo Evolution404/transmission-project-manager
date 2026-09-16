@@ -739,6 +739,25 @@ test('Makefile is the single ergonomic entry point without bypassing production 
   assert.doesNotMatch(source, /git\s+(?:reset|clean)\b/, 'Makefile 不得提供破坏工作区的 reset/clean 快捷入口');
 });
 
+test('engineering audit uses tracked source and the official npm advisory service', () => {
+  const makefile = readFileSync(resolve(root, 'Makefile'), 'utf8');
+  const packageJson = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8'));
+  assert.match(makefile, /^audit:/m, 'Makefile 必须提供统一工程审计入口');
+  assert.match(makefile, /^security-audit:/m, 'Makefile 必须提供独立依赖安全审计入口');
+  assert.match(makefile, /npm run engineering:audit\b/, '工程审计应复用受版本控制的审计脚本');
+  assert.match(makefile, /npm run security:audit\b/, '安全审计应复用固定 npm script');
+  assert.equal(
+    packageJson.scripts?.['security:audit'],
+    'npm audit --omit=dev --audit-level=high --registry=https://registry.npmjs.org',
+    '安全审计必须显式使用 npm 官方 advisory API，不能受本机安装镜像能力影响',
+  );
+  assert.equal(
+    packageJson.scripts?.['engineering:audit'],
+    'node scripts/engineering/repository-audit.mjs',
+    '工程审计必须使用仓库内可复现脚本',
+  );
+});
+
 test('Node runtime gate exercises the real app, SQLite, Filesystem, and the single schema baseline', () => {
   const nodeConfig = readFileSync(resolve(root, 'apps/api/tsconfig.node-runtime.json'), 'utf8');
   assert.match(nodeConfig, /"src\/app\.ts"/, 'Node typecheck must include the real HTTP app');
