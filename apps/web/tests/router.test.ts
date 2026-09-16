@@ -5,6 +5,9 @@ import ReservesView from '../src/views/ReservesView.vue';
 import FinanceView from '../src/views/FinanceView.vue';
 import AnalysisView from '../src/views/AnalysisView.vue';
 import DeliveryView from '../src/views/DeliveryView.vue';
+import ProjectsView from '../src/views/ProjectsView.vue';
+import ProjectDetailView from '../src/views/ProjectDetailView.vue';
+import TaskDetailView from '../src/views/TaskDetailView.vue';
 
 describe('business routes', () => {
   it('lazy-loads the real demand pool at /demands instead of the P2 placeholder', async () => {
@@ -50,5 +53,22 @@ describe('business routes', () => {
     expect(typeof loader).toBe('function');
     const resolved = await (loader as () => Promise<{ default: unknown }>)();
     expect(resolved.default).toBe(DeliveryView);
+  });
+
+  it('provides stable project and task deep links for refresh-safe navigation', async () => {
+    const cases = [
+      ['/projects', ProjectsView],
+      ['/projects/:projectId', ProjectDetailView],
+      ['/projects/:projectId/tasks/:taskId', TaskDetailView],
+    ] as const;
+
+    for (const [path, component] of cases) {
+      const route = router.getRoutes().find((item) => item.path === path);
+      expect(route, path).toBeTruthy();
+      const loader = route?.components?.default;
+      expect(typeof loader, path).toBe('function');
+      const resolved = await (loader as () => Promise<{ default: unknown }>)();
+      expect(resolved.default, path).toBe(component);
+    }
   });
 });

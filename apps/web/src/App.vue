@@ -15,6 +15,7 @@ import {
   NMessageProvider,
   NSpin,
   NTag,
+  darkTheme,
   dateZhCN,
   zhCN,
   type GlobalThemeOverrides,
@@ -32,6 +33,7 @@ const loading = ref(true);
 const connectionError = ref('');
 const loggingOut = ref(false);
 const mobileMenuOpen = ref(false);
+const prefersDark = ref(false);
 
 const themeOverrides: GlobalThemeOverrides = {
   common: {
@@ -53,18 +55,30 @@ const roleLabels: Record<CurrentUser['role'], string> = {
 };
 
 const menuOptions: MenuOption[] = [
-  { label: '总览', key: '/' },
-  { label: '项目需求', key: '/demands' },
-  { label: '项目储备', key: '/reserves' },
-  { label: '实施结算', key: '/delivery' },
-  { label: '框架费用', key: '/finance' },
-  { label: '储备分析', key: '/analysis' },
+  {
+    type: 'group', label: '工作', key: 'work', children: [
+      { label: '工作台', key: '/' },
+      { label: '需求', key: '/demands' },
+      { label: '项目', key: '/projects' },
+      { label: '执行任务', key: '/delivery' },
+    ],
+  },
+  {
+    type: 'group', label: '管理', key: 'management', children: [
+      { label: '资金', key: '/finance' },
+      { label: '分析', key: '/analysis' },
+    ],
+  },
   { label: '基础台账', key: '/master-data' },
-  { label: '规则与成员', key: '/administration' },
+  { label: '设置', key: '/administration' },
 ];
 
-const activeKey = computed(() => route.path);
+const activeKey = computed(() => {
+  if (route.path.startsWith('/projects/')) return '/projects';
+  return route.path;
+});
 const pageTitle = computed(() => String(route.meta.title ?? '输电项目全流程管理台'));
+const naiveTheme = computed(() => prefersDark.value ? darkTheme : null);
 
 async function loadIdentity() {
   loading.value = true;
@@ -118,11 +132,24 @@ function navigate(key: string) {
   void router.push(key);
 }
 
-onMounted(loadIdentity);
+function navigateMobile(key: string) {
+  if (key === 'more') {
+    mobileMenuOpen.value = true;
+    return;
+  }
+  navigate(key);
+}
+
+onMounted(() => {
+  void loadIdentity();
+  const media = window.matchMedia('(prefers-color-scheme: dark)');
+  prefersDark.value = media.matches;
+  media.addEventListener?.('change', (event) => { prefersDark.value = event.matches; });
+});
 </script>
 
 <template>
-  <n-config-provider :locale="zhCN" :date-locale="dateZhCN" :theme-overrides="themeOverrides">
+  <n-config-provider :locale="zhCN" :date-locale="dateZhCN" :theme="naiveTheme" :theme-overrides="themeOverrides">
     <n-message-provider>
       <div v-if="loading" class="auth-loading">
         <n-spin size="large" />
@@ -155,10 +182,10 @@ onMounted(loadIdentity);
           class="app-sider"
         >
           <div class="brand-block">
-            <div class="brand-mark">输</div>
+            <div class="brand-mark">TP</div>
             <div>
-              <div class="brand-title">项目管理</div>
-              <div class="brand-subtitle">全流程管理台</div>
+              <div class="brand-title">输电项目</div>
+              <div class="brand-subtitle">全流程工作台</div>
             </div>
           </div>
           <n-menu
@@ -166,21 +193,17 @@ onMounted(loadIdentity);
             :options="menuOptions"
             @update:value="navigate"
           />
-          <div class="sidebar-status">
-            <span class="status-dot" />
-            <div>
-              <strong>全流程业务台</strong>
-              <small>需求 · 储备 · 执行 · 结算</small>
-            </div>
+          <div class="sidebar-account">
+            <div class="account-avatar">{{ currentUser.displayName.slice(0, 1) }}</div>
+            <div><strong>{{ currentUser.displayName }}</strong><small>{{ roleLabels[currentUser.role] }}</small></div>
           </div>
         </n-layout-sider>
 
         <n-layout>
-          <n-layout-header bordered class="topbar">
+          <n-layout-header class="topbar">
             <div class="topbar-title-wrap">
-              <n-button class="mobile-menu-button" quaternary circle aria-label="打开导航" @click="mobileMenuOpen = true">☰</n-button>
               <div>
-                <div class="page-kicker">输电运检 · 项目全流程</div>
+                <div class="page-kicker">输电项目全流程</div>
                 <h1>{{ pageTitle }}</h1>
               </div>
             </div>
@@ -189,7 +212,6 @@ onMounted(loadIdentity);
                 <strong>{{ currentUser.displayName }}</strong>
                 <small>@{{ currentUser.username }}</small>
               </div>
-              <n-tag size="small" :bordered="false">{{ roleLabels[currentUser.role] }}</n-tag>
               <n-button size="small" quaternary :loading="loggingOut" @click="logout">退出</n-button>
             </div>
           </n-layout-header>
@@ -198,10 +220,17 @@ onMounted(loadIdentity);
             <router-view :current-user="currentUser" />
           </n-layout-content>
 
+          <nav class="mobile-bottom-nav" aria-label="手机主导航">
+            <button :class="{ active: activeKey === '/' }" @click="navigateMobile('/')"><small>工作台</small></button>
+            <button :class="{ active: activeKey === '/projects' }" @click="navigateMobile('/projects')"><small>项目</small></button>
+            <button :class="{ active: activeKey === '/delivery' }" @click="navigateMobile('/delivery')"><small>任务</small></button>
+            <button @click="navigateMobile('more')"><small>更多</small></button>
+          </nav>
+
           <n-drawer v-model:show="mobileMenuOpen" placement="left" :width="280">
             <n-drawer-content title="项目全流程" closable>
               <div class="mobile-drawer-brand">
-                <div class="brand-mark">输</div>
+                <div class="brand-mark">TP</div>
                 <div>
                   <strong>输电项目管理</strong>
                   <small>需求 · 储备 · 执行 · 结算</small>

@@ -1,0 +1,170 @@
+import { flushPromises, mount } from '@vue/test-utils';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { CurrentUser } from '@tpm/shared';
+
+const push = vi.fn();
+vi.mock('vue-router', () => ({
+  useRoute: () => ({ params: { projectId: 'p1', taskId: 't1' }, query: {}, fullPath: '/projects/p1/tasks/t1' }),
+  useRouter: () => ({ push, back: vi.fn() }),
+}));
+
+vi.mock('naive-ui', async () => {
+  const vue = await import('vue');
+  const wrap = (name: string) => vue.defineComponent({
+    name,
+    inheritAttrs: false,
+    setup(_, { slots, attrs }) { return () => vue.h('div', { ...attrs, 'data-stub': name }, [slots['header-extra']?.(), slots.default?.()]); },
+  });
+  const NButton = vue.defineComponent({
+    name: 'NButton', props: { disabled: Boolean, loading: Boolean }, emits: ['click'], inheritAttrs: false,
+    setup(props, { emit, slots, attrs }) { return () => vue.h('button', { ...attrs, disabled: props.disabled || props.loading, onClick: () => emit('click') }, slots.default?.()); },
+  });
+  const NInput = vue.defineComponent({
+    name: 'NInput', props: { value: { type: [String, Number], default: '' }, disabled: Boolean }, emits: ['update:value'], inheritAttrs: false,
+    setup(props, { emit, attrs }) { return () => vue.h('input', { ...attrs, value: props.value, disabled: props.disabled, onInput: (event: Event) => emit('update:value', (event.target as HTMLInputElement).value) }); },
+  });
+  const NDrawer = vue.defineComponent({
+    name: 'NDrawer', props: { show: Boolean }, emits: ['update:show'], inheritAttrs: false,
+    setup(props, { slots, attrs }) { return () => props.show ? vue.h('aside', { ...attrs, 'data-stub': 'NDrawer' }, slots.default?.()) : null; },
+  });
+  const NProgress = vue.defineComponent({
+    name: 'NProgress', props: { percentage: Number }, setup(props) { return () => vue.h('span', `${props.percentage ?? 0}%`); },
+  });
+  return {
+    NAlert: wrap('NAlert'), NButton, NCard: wrap('NCard'), NDatePicker: NInput, NDrawer,
+    NDrawerContent: wrap('NDrawerContent'), NEmpty: wrap('NEmpty'), NForm: wrap('NForm'), NFormItem: wrap('NFormItem'),
+    NInput, NProgress, NSpin: wrap('NSpin'), NTag: wrap('NTag'),
+    useMessage: () => ({ success: vi.fn(), error: vi.fn(), warning: vi.fn() }),
+  };
+});
+
+import TaskDetailView from '../src/views/TaskDetailView.vue';
+
+const admin: CurrentUser = {
+  id: 'admin', username: 'admin', displayName: '管理员', role: 'admin', enabled: true, version: 1,
+  scopes: [{ type: 'all', id: null }], invitedAt: null, firstLoginAt: null, lastLoginAt: null,
+  lifecycleStatus: 'active', mustChangePassword: false, authSource: 'session',
+};
+const readonly: CurrentUser = { ...admin, id: 'readonly', username: 'readonly', role: 'readonly' };
+
+const project = {
+  id: 'p1', name: '220kV 龙城线防断线治理', year: 2026, owner: '张三', status: 'confirmed' as const,
+  reserveVersion: 2, frameworkId: null, version: 5, demandLinks: [], materialRequirements: [],
+  knownMaterialAmountFen: 0, missingPriceCount: 0, materialPriceCompletenessBasisPoints: 10000,
+  createdAt: '', updatedAt: '',
+};
+
+const task = {
+  id: 't1', projectId: 'p1', projectReleaseId: 'pr1', name: '龙城线 #001-#010 更换任务', description: null,
+  scopeText: '#001-#010', owner: '李四', plannedDate: '2026-09-20', plannedQuantityScaled: 1000000, unit: '项',
+  version: 1, implementationVersion: 4, settlementVersion: 7,
+  demandScopes: [{ id: 'scope1', taskId: 't1', demandId: 'd1', plannedQuantityScaled: 1000000, demand: { sequenceNo: 'D-001', lineName: '龙城线', section: '#001-#010' } }],
+  materials: [{ id: 'tm1', taskId: 't1', projectMaterialRequirementId: 'pm1', materialId: null, model: 'FXBW-110', unit: '套', requiredQuantityScaled: 600000, supplyVersion: 3, createdAt: '', updatedAt: '' }],
+  supplyTotals: [{ taskMaterialRequirementId: 'tm1', model: 'FXBW-110', unit: '套', totals: { reportedQuantityScaled: 600000, shippedQuantityScaled: 400000, arrivedQuantityScaled: 200000 } }],
+  implementedQuantityScaled: 300000, settledQuantityScaled: 100000, implementationComplete: false, settlementComplete: false,
+  state: 'unimplemented_unsettled' as const,
+  settlementReminder: { needed: true, firstImplementationDate: '2026-09-15', dueDate: '2026-10-15', finalSettlementId: null },
+  createdAt: '', updatedAt: '',
+};
+
+function execution(taskOverride = task) {
+  return {
+    projectId: 'p1', projectVersion: 5, released: true, tasks: [taskOverride], demands: [],
+    implementationComplete: false, settlementComplete: false, projectState: 'unimplemented_unsettled' as const,
+  };
+}
+
+function ok(data: unknown, status = 200) {
+  return new Response(JSON.stringify({ ok: true, data }), { status, headers: { 'Content-Type': 'application/json' } });
+}
+
+function conflict() {
+  return new Response(JSON.stringify({ ok: false, error: { code: 'VERSION_CONFLICT', message: '供应记录已被其他人更新，请读取最新数据' } }), {
+    status: 409, headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+function installFetch(options: { conflictOnSave?: boolean; taskOverride?: typeof task } = {}) {
+  vi.stubGlobal('crypto', { randomUUID: vi.fn(() => 'idem-arrival-1') });
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url === '/api/reserve-projects/p1') return ok(project);
+    if (url === '/api/projects/p1/execution') return ok(execution(options.taskOverride ?? task));
+    if (url === '/api/task-material-supply-events' && init?.method === 'POST') {
+      return options.conflictOnSave ? conflict() : ok({ id: 'event1', supplyVersion: 4 }, 201);
+    }
+    throw new Error(`unexpected request ${init?.method ?? 'GET'} ${url}`);
+  }));
+}
+
+describe('TaskDetailView redesign sample', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    push.mockReset();
+  });
+
+  it('keeps supply, implementation and settlement summaries visible together', async () => {
+    installFetch();
+    const wrapper = mount(TaskDetailView, { props: { currentUser: admin } });
+    await flushPromises();
+
+    expect(wrapper.text()).toContain('供应');
+    expect(wrapper.text()).toContain('实施');
+    expect(wrapper.text()).toContain('结算');
+    expect(wrapper.text()).toContain('上报 60');
+    expect(wrapper.text()).toContain('发货 40');
+    expect(wrapper.text()).toContain('到货 20');
+    expect(wrapper.text()).toContain('30 / 100');
+    expect(wrapper.text()).toContain('10 / 100');
+  });
+
+  it('registers arrival as an increment, shows the remaining maximum and reuses one idempotency key until content changes', async () => {
+    installFetch();
+    const wrapper = mount(TaskDetailView, { props: { currentUser: admin } });
+    await flushPromises();
+
+    await wrapper.get('[data-test="open-arrival-tm1"]').trigger('click');
+    expect(wrapper.text()).toContain('本次最多');
+    expect(wrapper.text()).toContain('20 套');
+
+    await wrapper.get('[data-test="arrival-quantity"]').setValue('21');
+    await wrapper.get('[data-test="save-arrival"]').trigger('click');
+    await flushPromises();
+    expect(wrapper.text()).toContain('本次最多可登记 20 套');
+    expect(vi.mocked(fetch).mock.calls.filter(([url, init]) => String(url) === '/api/task-material-supply-events' && init?.method === 'POST')).toHaveLength(0);
+
+    await wrapper.get('[data-test="arrival-quantity"]').setValue('10');
+    expect(wrapper.text()).toContain('累计到货将为 30 套');
+    await wrapper.get('[data-test="save-arrival"]').trigger('click');
+    await flushPromises();
+
+    const call = vi.mocked(fetch).mock.calls.find(([url, init]) => String(url) === '/api/task-material-supply-events' && init?.method === 'POST');
+    expect(call).toBeTruthy();
+    expect(new Headers(call![1]!.headers).get('Idempotency-Key')).toBe('idem-arrival-1');
+    expect(JSON.parse(String(call![1]!.body))).toMatchObject({
+      taskMaterialRequirementId: 'tm1', expectedSupplyVersion: 3, stage: 'arrived', quantityScaled: 100000,
+    });
+  });
+
+  it('keeps the arrival draft visible on a 409 conflict and offers an explicit refresh path', async () => {
+    installFetch({ conflictOnSave: true });
+    const wrapper = mount(TaskDetailView, { props: { currentUser: admin } });
+    await flushPromises();
+    await wrapper.get('[data-test="open-arrival-tm1"]').trigger('click');
+    await wrapper.get('[data-test="arrival-quantity"]').setValue('10');
+    await wrapper.get('[data-test="save-arrival"]').trigger('click');
+    await flushPromises();
+
+    expect(wrapper.get('[data-test="arrival-quantity"]').attributes('value')).toBe('10');
+    expect(wrapper.text()).toContain('记录已被更新');
+    expect(wrapper.find('[data-test="reload-after-conflict"]').exists()).toBe(true);
+  });
+
+  it('does not expose arrival mutations to readonly users', async () => {
+    installFetch();
+    const wrapper = mount(TaskDetailView, { props: { currentUser: readonly } });
+    await flushPromises();
+    expect(wrapper.find('[data-test="open-arrival-tm1"]').exists()).toBe(false);
+    expect(wrapper.text()).toContain('只读');
+  });
+});
