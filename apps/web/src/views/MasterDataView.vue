@@ -1002,7 +1002,7 @@ onMounted(loadAll);
               <span class="line-code">{{ item.lineCode || '—' }}</span>
               <span class="line-chevron">›</span>
             </app-pressable>
-            <div v-if="isAdmin" class="line-card-actions"><n-button text size="tiny" @click="openLine(item)">编辑属性</n-button><n-button text size="tiny" :disabled="saving" @click="requestDelete('lines',item,`线路“${item.lineName}”`)">删除</n-button></div>
+            <div v-if="isAdmin" class="line-card-actions"><n-button text size="small" @click="openLine(item)">编辑属性</n-button><n-button text size="small" :disabled="saving" @click="requestDelete('lines',item,`线路“${item.lineName}”`)">删除</n-button></div>
           </article>
         </div>
         <n-empty v-if="!lines.length && !loading" description="没有符合条件的线路" />
@@ -1216,7 +1216,7 @@ onMounted(loadAll);
     <n-modal v-model:show="orderModal" v-bind="writeModalGuardProps" preset="card" title="调整杆塔顺序" class="master-data-modal" style="width:min(720px,calc(100vw - 32px))">
       <p>桌面可拖动；手机可直接上移/下移。跨很长距离时，使用“移动杆塔 → 目标杆塔 → 目标前/后”。保存时一次性提交完整对象顺序。</p>
       <div class="order-controls"><n-select data-test="order-moving" v-model:value="orderMoving" :options="orderOptions" /><n-select data-test="order-target" v-model:value="orderTarget" :options="orderOptions" /><n-select v-model:value="orderPlacement" :options="placementOptions" /><n-button data-test="apply-order-move" @click="applyOrderMove">应用移动</n-button></div>
-      <div class="order-list"><div v-for="(item,index) in orderDraft" :key="item.id" class="order-row" draggable="true" @dragstart="draggingTowerId=item.id" @dragover.prevent @drop="dropOrder(item.id)"><span class="drag-handle">≡</span><b>{{ index+1 }}</b><strong>{{ item.towerNo }}</strong><span>{{ item.towerTypeLabel ?? item.positionLabel ?? '—' }}</span><div class="order-row-actions"><n-button size="tiny" :data-test="`order-up-${item.id}`" :disabled="index===0" @click="moveDraftStep(item.id,-1)">上移</n-button><n-button size="tiny" :data-test="`order-down-${item.id}`" :disabled="index===orderDraft.length-1" @click="moveDraftStep(item.id,1)">下移</n-button></div></div></div>
+      <div class="order-list"><div v-for="(item,index) in orderDraft" :key="item.id" class="order-row" draggable="true" @dragstart="draggingTowerId=item.id" @dragover.prevent @drop="dropOrder(item.id)"><span class="drag-handle">≡</span><b>{{ index+1 }}</b><strong>{{ item.towerNo }}</strong><span>{{ item.towerTypeLabel ?? item.positionLabel ?? '—' }}</span><div class="order-row-actions"><n-button size="small" :data-test="`order-up-${item.id}`" :disabled="index===0" @click="moveDraftStep(item.id,-1)">上移</n-button><n-button size="small" :data-test="`order-down-${item.id}`" :disabled="index===orderDraft.length-1" @click="moveDraftStep(item.id,1)">下移</n-button></div></div></div>
       <template #footer><div class="actions"><n-button :disabled="saving" @click="orderModal=false">取消</n-button><n-button data-test="save-order" type="primary" :loading="saving" @click="saveOrder">保存顺序</n-button></div></template>
     </n-modal>
 
@@ -1327,6 +1327,7 @@ onMounted(loadAll);
   .line-code { display: none; }
   .line-chevron { grid-column: 2; grid-row: 2; }
   .line-card-actions { position: static; display: flex; justify-content: flex-end; padding: 0 14px 12px; transform: none; }
+  .line-card-actions :deep(.n-button), .order-row-actions :deep(.n-button) { min-height: 36px; }
   .line-card:hover .line-code, .line-card:hover .line-chevron { opacity: 1; }
   .tower-desktop-table { display: none; }
   .tower-mobile-list { display: grid; }

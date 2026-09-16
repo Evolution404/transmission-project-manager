@@ -499,6 +499,24 @@ test('web business typography never drops below the 12px readability floor', () 
   }
 });
 
+test('business UI does not use tiny action buttons', () => {
+  const webRoot = resolve(root, 'apps/web/src');
+  const tinyButtons = collectSourceFiles(webRoot)
+    .filter((path) => path.endsWith('.vue'))
+    .filter((path) => {
+      const source = readFileSync(path, 'utf8');
+      return source.includes('size="tiny"') || source.includes("size='tiny'");
+    });
+  assert.deepEqual(tinyButtons, [], `业务操作禁止使用 tiny 按钮：${tinyButtons.join(', ')}`);
+});
+
+test('text-style return navigation keeps a usable touch target', () => {
+  const styleSource = readFileSync(resolve(root, 'apps/web/src/styles.css'), 'utf8');
+  assert.match(styleSource, /\.breadcrumb-back,\s*\.back-button\s*\{[^}]*min-height:\s*36px/);
+  const mobile = styleSource.match(/@media \(max-width:\s*767px\)[\s\S]*$/)?.[0] ?? '';
+  assert.match(mobile, /\.breadcrumb-back,\s*\.back-button\s*\{[^}]*min-height:\s*44px/, '手机返回导航命中高度不得低于 44px');
+});
+
 test('local API development rebuilds the local D1 when the single development baseline changes', () => {
   const apiPackage = JSON.parse(readFileSync(resolve(root, 'apps/api/package.json'), 'utf8'));
   assert.equal(apiPackage.scripts.dev, 'node ../../scripts/dev/api-dev.mjs');

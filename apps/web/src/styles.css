@@ -216,6 +216,7 @@ a { color: inherit; }
 .page-description { max-width: 760px; margin: 7px 0 0; color: var(--ui-text-secondary); font-size: 13px; line-height: 1.6; }
 .load-error-content { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .load-error-content > span { min-width: 0; }
+.breadcrumb-back, .back-button { display: inline-flex; align-items: center; min-height: 36px; }
 .page-actions { display: flex; align-items: center; gap: 9px; flex: 0 0 auto; }
 .section-panel {
   border: 1px solid var(--ui-border);
@@ -321,6 +322,7 @@ code { font-family: "SFMono-Regular", Consolas, monospace; font-size: 12px; }
   .page-title { font-size: 24px; }
   .page-description { margin-top: 5px; font-size: 13px; }
   .load-error-content { align-items: flex-start; flex-direction: column; }
+  .breadcrumb-back, .back-button { min-height: 44px; }
   .page-actions { width: 100%; }
   .page-actions > .n-button:last-child { flex: 1; }
   .content-wrap .n-card { border-radius: 14px !important; }
