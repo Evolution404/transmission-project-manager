@@ -30,8 +30,12 @@ vi.mock('naive-ui', async () => {
   const NProgress = vue.defineComponent({
     name: 'NProgress', props: { percentage: Number }, setup(props) { return () => vue.h('span', `${props.percentage ?? 0}%`); },
   });
+  const NCheckbox = vue.defineComponent({
+    name: 'NCheckbox', props: { checked: Boolean }, emits: ['update:checked'], inheritAttrs: false,
+    setup(props, { emit, slots, attrs }) { return () => vue.h('label', [vue.h('input', { ...attrs, type: 'checkbox', checked: props.checked, onChange: (event: Event) => emit('update:checked', (event.target as HTMLInputElement).checked) }), slots.default?.()]); },
+  });
   return {
-    NAlert: wrap('NAlert'), NButton, NCard: wrap('NCard'), NDatePicker: NInput, NDrawer,
+    NAlert: wrap('NAlert'), NButton, NCard: wrap('NCard'), NCheckbox, NDatePicker: NInput, NDrawer,
     NDrawerContent: wrap('NDrawerContent'), NEmpty: wrap('NEmpty'), NForm: wrap('NForm'), NFormItem: wrap('NFormItem'),
     NInput, NProgress, NSpin: wrap('NSpin'), NTag: wrap('NTag'),
     useMessage: () => ({ success: vi.fn(), error: vi.fn(), warning: vi.fn() }),
@@ -93,6 +97,8 @@ function installFetch(options: { conflictOnSave?: boolean; taskOverride?: typeof
     if (url === '/api/task-material-supply-events' && init?.method === 'POST') {
       return options.conflictOnSave ? conflict() : ok({ id: 'event1', supplyVersion: 4 }, 201);
     }
+    if (url === '/api/task-implementations' && init?.method === 'POST') return ok({ id: 'implementation1', implementationVersion: 5 }, 201);
+    if (url === '/api/task-settlements' && init?.method === 'POST') return ok({ id: 'settlement1', settlementVersion: 8 }, 201);
     throw new Error(`unexpected request ${init?.method ?? 'GET'} ${url}`);
   }));
 }
@@ -166,5 +172,44 @@ describe('TaskDetailView redesign sample', () => {
     await flushPromises();
     expect(wrapper.find('[data-test="open-arrival-tm1"]').exists()).toBe(false);
     expect(wrapper.text()).toContain('只读');
+  });
+
+  it('records implementation independently even when delivered material is behind the implementation quantity', async () => {
+    installFetch();
+    const wrapper = mount(TaskDetailView, { props: { currentUser: admin } });
+    await flushPromises();
+    await wrapper.get('[data-test="task-section-implementation"]').trigger('click');
+    await wrapper.get('[data-test="open-implementation"]').trigger('click');
+    await wrapper.get('[data-test="implementation-quantity"]').setValue('40');
+    await wrapper.get('[data-test="implementation-scope-scope1"]').setValue('40');
+    await wrapper.get('[data-test="save-implementation"]').trigger('click');
+    await flushPromises();
+
+    const call = vi.mocked(fetch).mock.calls.find(([url, init]) => String(url) === '/api/task-implementations' && init?.method === 'POST');
+    expect(call).toBeTruthy();
+    expect(JSON.parse(String(call![1]!.body))).toMatchObject({
+      taskId: 't1', expectedImplementationVersion: 4, completedQuantityScaled: 400000,
+      scopeLines: [{ taskDemandScopeId: 'scope1', completedQuantityScaled: 400000 }], materialUsages: [],
+    });
+  });
+
+  it('allows settlement before any implementation and keeps settlement on its own version', async () => {
+    installFetch({ taskOverride: { ...task, implementedQuantityScaled: 0, settledQuantityScaled: 0 } });
+    const wrapper = mount(TaskDetailView, { props: { currentUser: admin } });
+    await flushPromises();
+    await wrapper.get('[data-test="task-section-settlement"]').trigger('click');
+    await wrapper.get('[data-test="open-settlement"]').trigger('click');
+    await wrapper.get('[data-test="settlement-amount"]').setValue('100');
+    await wrapper.get('[data-test="settlement-quantity"]').setValue('20');
+    await wrapper.get('[data-test="settlement-scope-scope1"]').setValue('20');
+    await wrapper.get('[data-test="save-settlement"]').trigger('click');
+    await flushPromises();
+
+    const call = vi.mocked(fetch).mock.calls.find(([url, init]) => String(url) === '/api/task-settlements' && init?.method === 'POST');
+    expect(call).toBeTruthy();
+    expect(JSON.parse(String(call![1]!.body))).toMatchObject({
+      taskId: 't1', expectedSettlementVersion: 7, coverageQuantityScaled: 200000, amountFen: 10000, final: false,
+      coverage: [{ taskDemandScopeId: 'scope1', quantityScaled: 200000 }], agreementAllocations: [],
+    });
   });
 });

@@ -4,6 +4,8 @@ import { useRoute, useRouter } from 'vue-router';
 import { NAlert, NButton, NDatePicker, NDrawer, NDrawerContent, NEmpty, NForm, NFormItem, NInput, NProgress, NSpin, NTag, useMessage } from 'naive-ui';
 import type { CurrentUser, ProjectExecutionSummary, ProjectTaskExecutionSummary, ReserveProjectSummary, TaskMaterialRequirementSummary } from '@tpm/shared';
 import { ApiRequestError, apiRequest, jsonRequestInit } from '../api/client';
+import TaskImplementationDrawer from '../features/tasks/TaskImplementationDrawer.vue';
+import TaskSettlementDrawer from '../features/tasks/TaskSettlementDrawer.vue';
 
 const props = defineProps<{ currentUser: CurrentUser }>();
 const route = useRoute();
@@ -26,8 +28,11 @@ const arrivalError = ref('');
 const arrivalConflict = ref(false);
 const savingArrival = ref(false);
 const arrivalIdempotencyKey = ref('');
+const implementationOpen = ref(false);
+const settlementOpen = ref(false);
 
 const canSupply = computed(() => ['admin', 'project_manager', 'implementation'].includes(props.currentUser.role));
+const canSettle = computed(() => ['admin', 'project_manager', 'finance'].includes(props.currentUser.role));
 const selectedMaterial = computed(() => task.value?.materials.find((item) => item.id === arrivalMaterialId.value) ?? null);
 const selectedSupply = computed(() => task.value?.supplyTotals.find((item) => item.taskMaterialRequirementId === arrivalMaterialId.value) ?? null);
 
@@ -159,7 +164,6 @@ async function reloadAfterConflict() {
 }
 
 function backToProject() { void router.push(`/projects/${encodeURIComponent(projectId.value)}?tab=tasks`); }
-function openLegacyExecution() { void router.push('/delivery'); }
 
 onMounted(load);
 </script>
@@ -212,7 +216,7 @@ onMounted(load);
         </section>
 
         <nav class="segment-nav" aria-label="任务详情分段">
-          <button v-for="item in [['supply','供应'],['implementation','实施'],['settlement','结算'],['scope','范围']]" :key="item[0]" :class="{ active: activeSection === item[0] }" @click="activeSection = item[0]">{{ item[1] }}</button>
+          <button v-for="item in [['supply','供应'],['implementation','实施'],['settlement','结算'],['scope','范围']]" :key="item[0]" :data-test="`task-section-${item[0]}`" :class="{ active: activeSection === item[0] }" @click="activeSection = item[0]">{{ item[1] }}</button>
         </nav>
 
         <section v-if="activeSection === 'supply'" class="detail-section">
@@ -232,12 +236,12 @@ onMounted(load);
         </section>
 
         <section v-else-if="activeSection === 'implementation'" class="detail-section placeholder-section">
-          <div><h3>现场实施</h3><p>当前已实施 {{ formatScaled(task.implementedQuantityScaled) }} / {{ formatScaled(task.plannedQuantityScaled) }} {{ task.unit }}。</p></div>
-          <n-button v-if="canSupply" type="primary" @click="openLegacyExecution">前往记录实施</n-button>
+          <div><h3>现场实施</h3><p>当前已实施 {{ formatScaled(task.implementedQuantityScaled) }} / {{ formatScaled(task.plannedQuantityScaled) }} {{ task.unit }}。实施不等待物资到货或结算。</p></div>
+          <n-button v-if="canSupply && !task.implementationComplete" data-test="open-implementation" type="primary" @click="implementationOpen = true">记录实施</n-button>
         </section>
         <section v-else-if="activeSection === 'settlement'" class="detail-section placeholder-section">
           <div><h3>任务结算</h3><p>当前已覆盖 {{ formatScaled(task.settledQuantityScaled) }} / {{ formatScaled(task.plannedQuantityScaled) }} {{ task.unit }}；结算与实施独立。</p></div>
-          <n-button v-if="['admin','project_manager','finance'].includes(props.currentUser.role)" type="primary" @click="openLegacyExecution">前往登记结算</n-button>
+          <n-button v-if="canSettle && !task.settlementComplete" data-test="open-settlement" type="primary" @click="settlementOpen = true">登记结算</n-button>
         </section>
         <section v-else class="detail-section">
           <div class="section-heading"><div><h3>任务范围</h3><p>范围事实决定实施与结算如何回投到原始需求。</p></div></div>
@@ -274,6 +278,21 @@ onMounted(load);
         </template>
       </n-drawer-content>
     </n-drawer>
+
+    <task-implementation-drawer
+      v-if="task"
+      v-model:show="implementationOpen"
+      :task="task"
+      @saved="load"
+      @request-refresh="load"
+    />
+    <task-settlement-drawer
+      v-if="task"
+      v-model:show="settlementOpen"
+      :task="task"
+      @saved="load"
+      @request-refresh="load"
+    />
   </div>
 </template>
 
