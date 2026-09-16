@@ -1,17 +1,25 @@
 <script setup lang="ts">
 import { computed, h, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
-import { NButton, NDataTable, NEmpty, NInput, NSpin, NTag } from 'naive-ui';
+import { NButton, NDataTable, NDrawer, NDrawerContent, NEmpty, NForm, NFormItem, NInput, NSpin, NTag, useMessage } from 'naive-ui';
 import type { CurrentUser, ReserveProjectSummary } from '@tpm/shared';
-import { apiRequest } from '../api/client';
+import { apiRequest, jsonRequestInit } from '../api/client';
 
-defineProps<{ currentUser: CurrentUser }>();
+const props = defineProps<{ currentUser: CurrentUser }>();
 const router = useRouter();
+const message = useMessage();
 const loading = ref(true);
 const error = ref('');
 const projects = ref<ReserveProjectSummary[]>([]);
 const search = ref('');
 const nextCursor = ref<string | null>(null);
+const createOpen = ref(false);
+const creating = ref(false);
+const createName = ref('');
+const createYear = ref('');
+const createOwner = ref('');
+const createError = ref('');
+const canCreate = computed(() => props.currentUser.role === 'admin' || props.currentUser.role === 'project_manager');
 
 const filtered = computed(() => {
   const query = search.value.trim().toLowerCase();
@@ -23,7 +31,40 @@ const filtered = computed(() => {
 function openProject(projectId: string) {
   void router.push({ name: 'project-detail', params: { projectId }, query: { from: '/projects' } });
 }
-function createProject() { void router.push('/reserves'); }
+function openCreateProject() {
+  createName.value = '';
+  createYear.value = String(new Date().getFullYear());
+  createOwner.value = '';
+  createError.value = '';
+  createOpen.value = true;
+}
+
+async function saveProject() {
+  const name = createName.value.trim();
+  if (!name) { createError.value = '请输入项目名称'; return; }
+  const year = createYear.value.trim() ? Number(createYear.value) : null;
+  if (year !== null && (!Number.isInteger(year) || year < 1900 || year > 2200)) {
+    createError.value = '年度需为 1900–2200 的整数';
+    return;
+  }
+  creating.value = true;
+  createError.value = '';
+  try {
+    const created = await apiRequest<ReserveProjectSummary>('/api/reserve-projects', jsonRequestInit('POST', {
+      name,
+      year,
+      owner: createOwner.value.trim() || null,
+      demandIds: [],
+    }));
+    createOpen.value = false;
+    message.success('项目已创建，可继续补充来源需求和项目物资');
+    void router.push({ name: 'project-detail', params: { projectId: created.id } });
+  } catch (cause) {
+    createError.value = cause instanceof Error ? cause.message : '项目创建失败';
+  } finally {
+    creating.value = false;
+  }
+}
 
 async function loadPage(cursor?: string) {
   loading.value = true;
@@ -67,7 +108,7 @@ onMounted(() => loadPage());
         <h2>项目</h2>
         <p>从储备到执行，使用同一个项目身份持续管理。</p>
       </div>
-      <n-button type="primary" @click="createProject">新建项目</n-button>
+      <n-button v-if="canCreate" data-test="open-create-project" type="primary" @click="openCreateProject">新建项目</n-button>
     </section>
 
     <section class="list-surface">
@@ -97,6 +138,25 @@ onMounted(() => loadPage());
       </n-spin>
       <div v-if="nextCursor" class="load-more"><n-button :loading="loading" @click="loadPage(nextCursor)">加载更多</n-button></div>
     </section>
+
+    <n-drawer v-model:show="createOpen" placement="right" :width="520" class="project-create-drawer">
+      <n-drawer-content title="新建项目" closable>
+        <div class="create-intro">
+          <strong>先建立项目，再逐步补充业务事实</strong>
+          <span>来源需求和项目物资都可以为空，创建后在项目详情继续维护。</span>
+        </div>
+        <div v-if="createError" class="create-error">{{ createError }}</div>
+        <n-form label-placement="top" class="create-form">
+          <n-form-item label="项目名称"><n-input v-model:value="createName" data-test="project-name" /></n-form-item>
+          <n-form-item label="年度"><n-input v-model:value="createYear" data-test="project-year" inputmode="numeric" /></n-form-item>
+          <n-form-item label="负责人"><n-input v-model:value="createOwner" data-test="project-owner" /></n-form-item>
+        </n-form>
+        <div class="drawer-actions">
+          <n-button @click="createOpen = false">取消</n-button>
+          <n-button data-test="save-project" type="primary" :loading="creating" @click="saveProject">创建项目</n-button>
+        </div>
+      </n-drawer-content>
+    </n-drawer>
   </div>
 </template>
 
@@ -115,11 +175,16 @@ onMounted(() => loadPage());
 .inline-error { margin: 16px 20px 0; padding: 12px 14px; border-radius: 12px; background: #fff4f3; color: #b42318; }
 .load-more { display: flex; justify-content: center; padding: 16px; border-top: 1px solid var(--ui-border, #dce2ea); }
 .mobile-project-list { display: none; }
+.create-intro { display: grid; gap: 6px; margin-bottom: 20px; padding: 14px 15px; border-radius: 14px; background: var(--ui-surface-muted, #eef1f5); }
+.create-intro strong { font-size: 14px; }
+.create-intro span { color: var(--ui-text-secondary, #566174); font-size: 13px; line-height: 1.55; }
+.create-error { margin-bottom: 14px; padding: 11px 13px; border-radius: 12px; background: #fff4f3; color: #b42318; font-size: 13px; }
+.drawer-actions { position: sticky; bottom: 0; display: flex; justify-content: flex-end; gap: 10px; padding-top: 16px; background: var(--ui-surface, #fff); }
 @media (max-width: 767px) {
   .page-heading { align-items: flex-start; padding: 4px 2px; }
   .page-heading h2 { font-size: 24px; }
   .page-heading p { max-width: 280px; }
-  .page-heading > .n-button { display: none; }
+  .page-heading > .n-button { flex: 0 0 auto; }
   .list-toolbar { align-items: stretch; flex-direction: column; padding: 14px 16px; }
   .list-toolbar :deep(.n-input) { max-width: none; }
   .desktop-project-table { display: none; }
@@ -130,5 +195,8 @@ onMounted(() => loadPage());
   .mobile-project-title-row strong { font-size: 15px; line-height: 1.45; }
   .mobile-project-meta, .mobile-project-facts { color: var(--ui-text-secondary, #566174); font-size: 13px; }
   .mobile-project-facts { display: flex; flex-wrap: wrap; gap: 12px; }
+  :global(.project-create-drawer .n-drawer) { width: 100vw !important; max-width: 100vw !important; }
+  .drawer-actions { padding-bottom: max(14px, env(safe-area-inset-bottom)); }
+  .drawer-actions .n-button:last-child { flex: 1; }
 }
 </style>
