@@ -262,6 +262,26 @@ test.describe.serial('无头浏览器真实认证与响应式 UI', () => {
     authenticatedState = await page.context().storageState();
   });
 
+  test('真实登录会话在业务深链整页刷新后保持当前路由', async ({ browser }) => {
+    const context = await browser.newContext({
+      viewport: { width: 1440, height: 900 },
+      colorScheme: 'light',
+      storageState: authenticatedState,
+    });
+    try {
+      const page = await context.newPage();
+      await page.goto(`${baseUrl}/master-data`);
+      await expect(page.locator('.app-shell')).toBeVisible();
+      await expect(page).toHaveURL(/\/master-data$/);
+      await page.reload();
+      await expect(page.locator('.app-shell')).toBeVisible();
+      await expect(page).toHaveURL(/\/master-data$/);
+      await expect(page.locator('.topbar-context')).toContainText('基础台账');
+    } finally {
+      await context.close();
+    }
+  });
+
   for (const options of [
     { name: 'desktop-light', width: 1440, height: 900, colorScheme: 'light' as const, mobile: false },
     { name: 'desktop-dark', width: 1440, height: 900, colorScheme: 'dark' as const, mobile: false },
