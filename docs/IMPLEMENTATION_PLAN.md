@@ -87,7 +87,18 @@
 
 M6 基础台账定向结果：基础台账 API **25/25 PASS**；相关 Web **30/30 PASS**。M6 收口时完整 `npm run check` 为 Node **270/270**、Web **114/114（19 文件）**。
 
-全站 UI 重构当前施工分支 `refactor/ui-redesign-20260916` 最近一次完整 `npm run check` 已 PASS：Node **295/295**、Web **131/131（23 文件）**，Cloudflare/Node/Web/shared TypeScript、Web production build、Worker dry-run、Node+SQLite+Filesystem 第二运行时和全部静态门禁均 PASS。Web 测试文件数量下降是因为旧 `ReservesView` / `DeliveryView` 在能力迁移后连同重复 UI 测试一起删除，不是关闭或跳过测试。
+全站 UI 重构当前施工分支 `refactor/ui-redesign-20260916` 最近一次完整 `npm run check` 已 PASS：Node **296/296**、Web **133/133（23 文件）**，Cloudflare/Node/Web/shared TypeScript、Web production build、Worker dry-run、Node+SQLite+Filesystem 第二运行时和全部静态门禁均 PASS。Web 测试文件数量下降是因为旧 `ReservesView` / `DeliveryView` 在能力迁移后连同重复 UI 测试一起删除，不是关闭或跳过测试。
+
+项目分页/路由状态工作包已经收口并验证：修复项目列表固定前 50 条且 `nextCursor:null` 的分页缺口，并让工作台 `/projects?stage=reserve`、项目列表 `stage/query`、任务队列 `/tasks?status=...&query=...` 在刷新后恢复筛选。定向仓储测试 **2/2 PASS**，Projects/Tasks 定向 **6/6 PASS**，Web/API typecheck 和 `git diff --check` 均 PASS。
+
+该工作包保持以下验收条件：
+
+- `/api/reserve-projects` 的 `stage=reserve` 必须在 SQL 层按“不存在 `project_releases`”过滤，与工作台/分析统计口径一致；
+- 项目 scope/framework scope 必须在 `LIMIT` 前下推 SQL，禁止 HTTP 层过滤分页结果；
+- 项目列表使用稳定 `created_at DESC, id DESC` keyset cursor，跨页不得重复或遗漏；
+- Projects 页从 URL 恢复并同步 `stage/query`，项目详情返回时恢复原列表 URL；
+- Tasks 页从 URL 恢复并同步 `status/query`；
+- 定向测试、`git diff --check`、相关 typecheck 通过后，再跑完整 `npm run check` 并独立提交。
 
 真实浏览器最终验收仍是未完成项。当前项目未引入 Playwright/Puppeteer；本机 Chrome headless 在该环境会被 Updater/Crashpad 拖住，不能稳定批量生成桌面/手机/明暗截图。不得通过伪造认证会话规避登录；最终应使用正常认证会话完成关键页面真实浏览器验收后再宣布 UI 重构完成。
 
@@ -127,3 +138,4 @@ M6 基础台账定向结果：基础台账 API **25/25 PASS**；相关 Web **30/
 6. PR 远端 CI 全绿；
 7. 工作区 clean；
 8. 不把“代码收口”误写为“生产已升级”；生产迁移和发布另行授权。
+9. 项目/任务列表的筛选必须可从 URL 恢复；服务端分页必须在权限过滤与业务 stage 过滤之后执行，不能靠前端 N+1 或当前页筛选伪造完整列表。

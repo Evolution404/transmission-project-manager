@@ -17,6 +17,7 @@ import { SqlDemandRepository } from './repositories/sql-demand-repository.ts';
 import { SqlDemandQueryRepository } from './repositories/sql-demand-query-repository.ts';
 import { SqlDemandMaterialWriteRepository } from './repositories/sql-demand-material-write-repository.ts';
 import { SqlReserveProjectQueryRepository } from './repositories/sql-reserve-project-query-repository.ts';
+import type { ReserveProjectListCursor, ReserveProjectListStage } from './ports/reserve-project-query-repository.ts';
 import { SqlReserveProjectWriteRepository } from './repositories/sql-reserve-project-write-repository.ts';
 import { resolvePersistence as createCloudflarePersistence } from './runtime/persistence.ts';
 
@@ -82,6 +83,20 @@ function parseDemandIds(value: unknown) {
     ids.push(id);
   }
   return ids;
+}
+
+function encodeReserveProjectCursor(cursor: ReserveProjectListCursor) {
+  return btoa(JSON.stringify(cursor)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function parseReserveProjectCursor(value: string | undefined): ReserveProjectListCursor | null {
+  if (!value) return null;
+  try {
+    const decoded = JSON.parse(atob(value.replace(/-/g, '+').replace(/_/g, '/'))) as Record<string, unknown>;
+    return typeof decoded.createdAt === 'string' && typeof decoded.id === 'string'
+      ? { createdAt: decoded.createdAt, id: decoded.id }
+      : null;
+  } catch { return null; }
 }
 
 export const projectExecutionApp = new Hono<AppEnv>();
@@ -186,10 +201,24 @@ projectExecutionApp.post('/reserve-projects', requireRoles('admin', 'project_man
 });
 projectExecutionApp.get('/reserve-projects', async (c) => {
   const limit = Math.min(100, Math.max(1, Number(c.req.query('limit') ?? '50')));
+  const rawStage = c.req.query('stage') ?? 'all';
+  if (!['all', 'reserve'].includes(rawStage)) return c.json(apiError('INVALID_PROJECT_STAGE', 'stage 必须为 all 或 reserve'), 400);
+  const stage = rawStage as ReserveProjectListStage;
+  const rawCursor = c.req.query('cursor');
+  const cursor = parseReserveProjectCursor(rawCursor);
+  if (rawCursor && !cursor) return c.json(apiError('INVALID_CURSOR', '项目分页游标无效'), 400);
+  const user = c.get('currentUser');
+  const hasAllAccess = user.role === 'admin' || user.scopes.some((scope) => scope.type === 'all');
+  const access = hasAllAccess ? null : {
+    projectIds: user.scopes.filter((scope) => scope.type === 'project' && scope.id).map((scope) => scope.id!),
+    frameworkIds: user.scopes.filter((scope) => scope.type === 'framework' && scope.id).map((scope) => scope.id!),
+  };
   const { database } = createCloudflarePersistence(c.env);
-  const items = (await new SqlReserveProjectQueryRepository(database).list(limit))
-    .filter((project) => hasProjectAccess(c, project.id, project.frameworkId));
-  return c.json({ ok: true as const, data: { items, nextCursor: null } });
+  const rows = await new SqlReserveProjectQueryRepository(database).list({ limit: limit + 1, stage, cursor, access });
+  const items = rows.slice(0, limit);
+  const last = items.at(-1);
+  const nextCursor = rows.length > limit && last ? encodeReserveProjectCursor({ createdAt: last.createdAt, id: last.id }) : null;
+  return c.json({ ok: true as const, data: { items, nextCursor } });
 });
 
 projectExecutionApp.get('/reserve-projects/:id', async (c) => {

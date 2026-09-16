@@ -1,18 +1,20 @@
 <script setup lang="ts">
-import { computed, h, onMounted, ref } from 'vue';
-import { useRouter } from 'vue-router';
-import { NButton, NDataTable, NDrawer, NDrawerContent, NEmpty, NForm, NFormItem, NInput, NSpin, NTag, useMessage } from 'naive-ui';
+import { computed, h, onMounted, ref, watch } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
+import { NButton, NDataTable, NDrawer, NDrawerContent, NEmpty, NForm, NFormItem, NInput, NSelect, NSpin, NTag, useMessage } from 'naive-ui';
 import type { CurrentUser, ReserveProjectSummary } from '@tpm/shared';
 import { apiRequest, jsonRequestInit } from '../api/client';
 import AppPressable from '../app/AppPressable.vue';
 
 const props = defineProps<{ currentUser: CurrentUser }>();
+const route = useRoute();
 const router = useRouter();
 const message = useMessage();
 const loading = ref(true);
 const error = ref('');
 const projects = ref<ReserveProjectSummary[]>([]);
-const search = ref('');
+const search = ref(typeof route.query.query === 'string' ? route.query.query : '');
+const stage = ref<'all' | 'reserve'>(route.query.stage === 'reserve' ? 'reserve' : 'all');
 const nextCursor = ref<string | null>(null);
 const createOpen = ref(false);
 const creating = ref(false);
@@ -21,6 +23,10 @@ const createYear = ref('');
 const createOwner = ref('');
 const createError = ref('');
 const canCreate = computed(() => props.currentUser.role === 'admin' || props.currentUser.role === 'project_manager');
+const stageOptions = [
+  { label: '全部项目', value: 'all' },
+  { label: '待出库', value: 'reserve' },
+];
 
 const filtered = computed(() => {
   const query = search.value.trim().toLowerCase();
@@ -30,7 +36,8 @@ const filtered = computed(() => {
 });
 
 function openProject(projectId: string) {
-  void router.push({ name: 'project-detail', params: { projectId }, query: { from: '/projects' } });
+  const from = route.fullPath?.startsWith('/projects') ? route.fullPath : '/projects';
+  void router.push({ name: 'project-detail', params: { projectId }, query: { from } });
 }
 function openCreateProject() {
   createName.value = '';
@@ -72,6 +79,7 @@ async function loadPage(cursor?: string) {
   error.value = '';
   try {
     const query = new URLSearchParams({ limit: '50' });
+    if (stage.value === 'reserve') query.set('stage', 'reserve');
     if (cursor) query.set('cursor', cursor);
     const page = await apiRequest<{ items: ReserveProjectSummary[]; nextCursor: string | null }>(`/api/reserve-projects?${query.toString()}`);
     projects.value = cursor ? [...projects.value, ...page.items] : page.items;
@@ -82,6 +90,27 @@ async function loadPage(cursor?: string) {
     loading.value = false;
   }
 }
+
+function syncRouteFilters() {
+  const next: Record<string, string> = {};
+  const term = search.value.trim();
+  if (stage.value === 'reserve') next.stage = 'reserve';
+  if (term) next.query = term;
+  void router.replace({ query: next });
+}
+
+watch(stage, () => {
+  projects.value = [];
+  nextCursor.value = null;
+  syncRouteFilters();
+  void loadPage();
+});
+
+let searchTimer: ReturnType<typeof setTimeout> | undefined;
+watch(search, () => {
+  if (searchTimer) clearTimeout(searchTimer);
+  searchTimer = setTimeout(syncRouteFilters, 180);
+});
 
 const columns = [
   {
@@ -114,7 +143,8 @@ onMounted(() => loadPage());
 
     <section class="list-surface">
       <div class="list-toolbar">
-        <n-input v-model:value="search" clearable placeholder="搜索项目名称、负责人或年度" />
+        <n-input v-model:value="search" data-test="project-search" clearable placeholder="搜索已加载项目的名称、负责人或年度" />
+        <n-select v-model:value="stage" data-test="project-stage-filter" :options="stageOptions" class="stage-filter" />
         <div class="toolbar-spacer"></div>
         <span class="result-count">已加载 {{ filtered.length }} 个项目</span>
       </div>
@@ -167,6 +197,7 @@ onMounted(() => loadPage());
 .list-surface { overflow: hidden; border: 1px solid var(--ui-border); border-radius: var(--ui-radius-lg); background: var(--ui-surface); }
 .list-toolbar { display: flex; align-items: center; gap: 12px; min-height: 64px; padding: 12px 16px; border-bottom: 1px solid var(--ui-border); }
 .list-toolbar :deep(.n-input) { max-width: 420px; }
+.stage-filter { width: 150px; }
 .result-count { color: var(--ui-text-tertiary); font-size: 11px; white-space: nowrap; }
 .project-link { padding: 0; border: 0; background: none; color: var(--ui-text); font: inherit; font-weight: 660; cursor: pointer; text-align: left; }
 .project-link:hover { color: var(--ui-accent); }
@@ -184,6 +215,7 @@ onMounted(() => loadPage());
 @media (max-width: 767px) {
   .list-toolbar { align-items: stretch; flex-wrap: wrap; padding: 12px 13px; }
   .list-toolbar :deep(.n-input) { max-width: none; }
+  .stage-filter { flex: 0 0 130px; width: 130px; }
   .list-toolbar .toolbar-spacer { display: none; }
   .result-count { width: 100%; }
   .desktop-project-table { display: none; }

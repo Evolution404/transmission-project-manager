@@ -129,6 +129,9 @@ npm run check
 - 已分配到任务的项目物资形成保护下限，不能静默缩减/删除。
 - 储备确认形成不可变版本，后续修订产生新版本。
 - 候选池和列表分页无遗漏，聚合不只统计当前页。
+- 项目中心列表必须覆盖服务端 keyset 分页：`created_at + id` 稳定排序、跨页无重复/遗漏；`stage=reserve` 在 SQL 层按“不存在项目级出库记录”过滤。
+- 项目/框架 scope 必须在列表 SQL 的 `LIMIT` 前生效，测试不得只验证 HTTP 层过滤后的少量样本。
+- Projects 页面从 URL 恢复 `stage/query`，筛选变化同步回 URL；从项目详情返回时恢复原项目列表 URL。
 
 旧 `demand_allocations` 回归只用于历史兼容，不得据旧数量守恒测试恢复旧主模型。
 
@@ -162,6 +165,7 @@ npm run check
 - 最终结算必须覆盖完整任务范围。
 - 四状态由所有任务事实回投原始需求，而不是人工标签。
 - 私有 R2 附件按项目范围重新鉴权。
+- 任务队列从 URL 恢复 `status/query` 并把后续筛选变化同步回 URL；刷新 `/tasks?status=settlement_pending` 后仍必须保持待结算过滤并把状态发送到服务端。
 
 `project-lifecycle.test.mjs` 中旧 release-batch/legacy implementation 测试只保证历史兼容，不定义新业务主路径。
 

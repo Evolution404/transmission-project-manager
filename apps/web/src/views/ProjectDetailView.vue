@@ -83,7 +83,10 @@ async function load() {
   } finally { loading.value = false; }
 }
 
-function backToProjects() { void router.push('/projects'); }
+function backToProjects() {
+  const from = typeof route.query.from === 'string' && route.query.from.startsWith('/projects') ? route.query.from : '/projects';
+  void router.push(from);
+}
 function openTask(taskId: string) { void router.push(`/projects/${encodeURIComponent(projectId.value)}/tasks/${encodeURIComponent(taskId)}`); }
 function createTask() { void router.push(`/projects/${encodeURIComponent(projectId.value)}/tasks/new`); }
 function openFinanceWorkspace() { void router.push({ path: '/finance', query: { projectId: projectId.value } }); }

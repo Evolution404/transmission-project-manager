@@ -3,7 +3,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { CurrentUser, TaskQueuePage } from '@tpm/shared';
 
 const push = vi.fn();
-vi.mock('vue-router', () => ({ useRouter: () => ({ push }) }));
+const replace = vi.fn();
+const routeQuery = vi.hoisted(() => ({} as Record<string, string>));
+vi.mock('vue-router', () => ({ useRoute: () => ({ query: routeQuery }), useRouter: () => ({ push, replace }) }));
 
 vi.mock('naive-ui', async () => {
   const vue = await import('vue');
@@ -42,7 +44,10 @@ const page: TaskQueuePage = {
 function ok(data: unknown) { return new Response(JSON.stringify({ ok: true, data }), { status: 200, headers: { 'Content-Type': 'application/json' } }); }
 
 describe('TaskQueueView', () => {
-  afterEach(() => { vi.unstubAllGlobals(); push.mockReset(); });
+  afterEach(() => {
+    vi.unstubAllGlobals(); push.mockReset(); replace.mockReset();
+    for (const key of Object.keys(routeQuery)) delete routeQuery[key];
+  });
 
   it('renders one cross-project task row with independent supply, implementation and settlement facts', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ok(page)));
@@ -67,5 +72,21 @@ describe('TaskQueueView', () => {
     await wrapper.get('[data-test="task-status-filter"]').setValue('implementation_pending');
     await flushPromises();
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('status=implementation_pending'))).toBe(true);
+  });
+
+  it('restores status and search from the URL and keeps later filter changes in the URL', async () => {
+    routeQuery.status = 'settlement_pending';
+    routeQuery.query = '龙城';
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL) => ok({ items: [], nextCursor: null } satisfies TaskQueuePage));
+    vi.stubGlobal('fetch', fetchMock);
+    const wrapper = mount(TaskQueueView, { props: { currentUser: user } });
+    await flushPromises();
+
+    expect(wrapper.get('[data-test="task-status-filter"]').attributes('value')).toBe('settlement_pending');
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('status=settlement_pending') && String(url).includes('query=%E9%BE%99%E5%9F%8E'))).toBe(true);
+
+    await wrapper.get('[data-test="task-status-filter"]').setValue('all');
+    await flushPromises();
+    expect(replace).toHaveBeenCalledWith({ query: { query: '龙城' } });
   });
 });

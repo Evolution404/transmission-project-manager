@@ -15,6 +15,7 @@ function fixture() {
     CREATE TABLE project_material_requirements (id TEXT PRIMARY KEY,project_id TEXT,material_id TEXT,model TEXT,unit TEXT,required_quantity_scaled INTEGER,unit_price_scaled INTEGER,amount_fen INTEGER,reserve_category_id TEXT,active INTEGER,version INTEGER,created_at TEXT,updated_at TEXT);
     CREATE TABLE project_material_revisions (id TEXT PRIMARY KEY,project_id TEXT,project_version INTEGER,reason TEXT,before_json TEXT,after_json TEXT,created_at TEXT);
     CREATE TABLE project_tasks (id TEXT PRIMARY KEY,project_id TEXT);
+    CREATE TABLE project_releases (id TEXT PRIMARY KEY,project_id TEXT,created_at TEXT);
     CREATE TABLE task_demand_scopes (id TEXT PRIMARY KEY,task_id TEXT,demand_id TEXT);
     CREATE TABLE task_material_requirements (id TEXT PRIMARY KEY,task_id TEXT,project_material_requirement_id TEXT,required_quantity_scaled INTEGER);
     INSERT INTO projects VALUES ('p1','Project',2026,'A','draft',0,'fw1',2,'c','u');
@@ -38,7 +39,7 @@ test('reserve project query repository hydrates projects and protection facts po
     assert.equal(project?.demandLinks[0].demandId, 'd1');
     assert.equal(project?.materialRequirements[0].reserveCategory?.label, '防鸟');
     assert.equal(project?.knownMaterialAmountFen, 20000);
-    assert.equal((await repository.list(10)).length, 1);
+    assert.equal((await repository.list({ limit: 10, stage: 'all', cursor: null, access: null })).length, 1);
     assert.deepEqual(await repository.findState('p1'), { id: 'p1', frameworkId: 'fw1', status: 'draft', reserveVersion: 0, version: 2 });
     assert.equal(await repository.validateDemandIds(['d1']), true);
     assert.equal(await repository.validateDemandIds(['missing']), false);
@@ -48,5 +49,47 @@ test('reserve project query repository hydrates projects and protection facts po
     const resolved = await repository.resolveMaterials([{ id: 'pm1', materialId: 'm1', model: '', unit: '', requiredQuantityScaled: 10000, unitPriceScaled: 2000000, reserveCategoryId: 'rc1' }]);
     assert.equal(resolved?.[0].model, 'M1');
     assert.equal(resolved?.[0].amountFen, 20000);
+  } finally { sqlite.close(); }
+});
+
+test('reserve project list filters unreleased projects in SQL and keyset-pages without gaps', async () => {
+  const { sqlite, repository } = fixture();
+  try {
+    sqlite.exec(`
+      UPDATE projects SET created_at='2026-09-03T00:00:00.000Z' WHERE id='p1';
+      INSERT INTO projects VALUES ('p2','Second',2026,'B','confirmed',1,'fw1',1,'2026-09-02T00:00:00.000Z','2026-09-02T00:00:00.000Z');
+      INSERT INTO projects VALUES ('p4','Same timestamp',2026,'D','draft',0,'fw1',1,'2026-09-02T00:00:00.000Z','2026-09-02T00:00:00.000Z');
+      INSERT INTO projects VALUES ('p3','Released',2026,'C','confirmed',1,'fw1',1,'2026-09-01T00:00:00.000Z','2026-09-01T00:00:00.000Z');
+      INSERT INTO project_releases VALUES ('r3','p3','2026-09-04T00:00:00.000Z');
+    `);
+
+    const reserve = await repository.list({ limit: 10, stage: 'reserve', cursor: null, access: null });
+    assert.deepEqual(reserve.map((item) => item.id), ['p1', 'p4', 'p2']);
+
+    const first = await repository.list({ limit: 1, stage: 'all', cursor: null, access: null });
+    assert.deepEqual(first.map((item) => item.id), ['p1']);
+    const second = await repository.list({
+      limit: 1,
+      stage: 'all',
+      cursor: { createdAt: first[0].createdAt, id: first[0].id },
+      access: null,
+    });
+    const third = await repository.list({
+      limit: 1,
+      stage: 'all',
+      cursor: { createdAt: second[0].createdAt, id: second[0].id },
+      access: null,
+    });
+    const fourth = await repository.list({
+      limit: 1,
+      stage: 'all',
+      cursor: { createdAt: third[0].createdAt, id: third[0].id },
+      access: null,
+    });
+    assert.deepEqual([...first, ...second, ...third, ...fourth].map((item) => item.id), ['p1', 'p4', 'p2', 'p3']);
+
+    // p2 is behind newer out-of-scope rows. A post-LIMIT permission filter would return an empty page here.
+    const scoped = await repository.list({ limit: 1, stage: 'all', cursor: null, access: { projectIds: ['p2'], frameworkIds: [] } });
+    assert.deepEqual(scoped.map((item) => item.id), ['p2']);
   } finally { sqlite.close(); }
 });

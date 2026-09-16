@@ -1,8 +1,9 @@
 import type { ProjectDemandLinkSummary, ProjectMaterialRequirementSummary, ReserveProjectSummary } from '@tpm/shared';
-import type { DatabasePort } from '../ports/database.ts';
+import type { DatabasePort, DatabaseValue } from '../ports/database.ts';
 import type {
   ProjectMaterialInputCandidate,
   ProjectMaterialRevisionSummary,
+  ReserveProjectListInput,
   ReserveProjectQueryRepository,
   ReserveProjectState,
   ResolvedProjectMaterialInput,
@@ -94,11 +95,32 @@ export class SqlReserveProjectQueryRepository implements ReserveProjectQueryRepo
     this.database = database;
   }
 
-  async list(limit: number): Promise<readonly ReserveProjectSummary[]> {
+  async list(input: ReserveProjectListInput): Promise<readonly ReserveProjectSummary[]> {
+    const filters: string[] = [];
+    const params: DatabaseValue[] = [];
+    if (input.access) {
+      const accessParts: string[] = [];
+      if (input.access.projectIds.length) {
+        accessParts.push(`p.id IN (${input.access.projectIds.map(() => '?').join(',')})`);
+        params.push(...input.access.projectIds);
+      }
+      if (input.access.frameworkIds.length) {
+        accessParts.push(`p.framework_id IN (${input.access.frameworkIds.map(() => '?').join(',')})`);
+        params.push(...input.access.frameworkIds);
+      }
+      filters.push(accessParts.length ? `(${accessParts.join(' OR ')})` : '0=1');
+    }
+    if (input.stage === 'reserve') filters.push('NOT EXISTS (SELECT 1 FROM project_releases pr WHERE pr.project_id=p.id)');
+    if (input.cursor) {
+      filters.push('(p.created_at < ? OR (p.created_at = ? AND p.id < ?))');
+      params.push(input.cursor.createdAt, input.cursor.createdAt, input.cursor.id);
+    }
+    const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
+    params.push(input.limit);
     const projects = await this.database.all<ProjectRow>({
-      sql: `SELECT id,name,business_year,owner,status,reserve_version,framework_id,version,created_at,updated_at
-            FROM projects ORDER BY created_at DESC,id DESC LIMIT ?`,
-      params: [limit],
+      sql: `SELECT p.id,p.name,p.business_year,p.owner,p.status,p.reserve_version,p.framework_id,p.version,p.created_at,p.updated_at
+            FROM projects p ${where} ORDER BY p.created_at DESC,p.id DESC LIMIT ?`,
+      params,
     });
     if (!projects.length) return [];
     const ids = projects.map((project) => project.id);

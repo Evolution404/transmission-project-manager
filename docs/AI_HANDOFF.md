@@ -36,7 +36,7 @@
 - 已建立 UI 硬门禁：业务源码禁止直接渲染原生 `<button>` / `<input>` / `<select>` / `<textarea>` 和动态 `h('button')`；原生 file input 只能隐藏在设计系统 primitive 内。门禁位于 `tests/repository-guards.test.mjs`。
 - 设计系统 primitive：`apps/web/src/app/AppPressable.vue`、`AppFilePicker.vue`。
 
-最近一次完整 `npm run check`：Node **295/295 PASS**、Web **131/131 PASS（23 个测试文件）**；TypeScript、Web production build、Worker `wrangler deploy --dry-run`、Node + SQLite + Filesystem 第二运行时均 PASS。Web 测试文件数下降来自旧 `ReservesView` / `DeliveryView` 页面及其重复测试在能力迁移完成后正式删除，不是跳过门禁。
+最近一次完整 `npm run check`：Node **296/296 PASS**、Web **133/133 PASS（23 个测试文件）**；TypeScript、Web production build、Worker `wrangler deploy --dry-run`、Node + SQLite + Filesystem 第二运行时均 PASS。Web 测试文件数下降来自旧 `ReservesView` / `DeliveryView` 页面及其重复测试在能力迁移完成后正式删除，不是跳过门禁。
 
 最近 UI 提交：
 
@@ -44,16 +44,24 @@
 - `1dc2999` `feat(ui): prevent native control regressions`
 - `6757f37` `feat(ui): refine demand and finance workspaces`
 - `76a69f8` `feat(ui): retire legacy reserve and delivery workspaces`
+- `c411e85` `feat(ui): unify finance analysis and master data experience`
+- `a0fa16e` `refactor(ui): streamline finance and demand workspaces`
 
-## 当前施工包
+## 最近收口：项目分页与 URL 状态
 
-- 项目资金分段、资金页项目上下文恢复、分析页新结构、认证页视觉、基础台账外层、暗色组件覆盖修复与路由标题已在本施工包收口；本包完整 `npm run check` 已全绿，并与本交接文档一起提交。
-- 本地服务仍在 `http://127.0.0.1:5173/`，最近确认返回 HTTP 200。
-- 真实浏览器最终验收尚未完成：项目未引入 Playwright/Puppeteer；本机 Chrome headless 能生成首张未登录截图，但进程会被 Google Updater/Crashpad 拖住，批量桌面/手机/明暗截图流程不可靠。未登录状态不会伪造认证 session；最终验收需要使用正常登录会话补齐真实浏览器截图与交互检查。
+- 工作台“待出库”使用 `/projects?stage=reserve`，口径与分析统计一致：项目不存在 `project_releases`；**不额外要求储备已确认**。
+- `SqlReserveProjectQueryRepository.list(...)` 已改为 `stage + scope + created_at/id keyset cursor` 同一 SQL 查询；项目/框架权限范围在数据库 `LIMIT` 前过滤，不再先取固定前 50 条后在 HTTP 层筛权限。
+- `/api/reserve-projects` 已支持 `stage=all|reserve`、不透明 cursor 和 `limit+1` 下一页判定，修复大项目集固定前 50 条且 `nextCursor:null` 的静默遗漏。
+- `ProjectsView.vue` 已从 URL 恢复 `stage/query` 并同步筛选状态；列表使用服务端 cursor 分页，进入详情时携带完整项目列表 URL，`ProjectDetailView.vue` 返回时恢复原筛选上下文。
+- `TaskQueueView.vue` 已从 URL 恢复并同步 `status/query`，刷新 `/tasks?status=settlement_pending` 后仍保持待结算筛选并按该状态请求服务端。
+- `PlaceholderView.vue` 已删除并确认无引用；`DashboardView.test.ts` 已补 router mock，消除全量 Web 测试中的虚假 router injection warning。
+- 测试先行回归已收口：仓储分页/stage **2/2 PASS**，Projects/Tasks 定向 **6/6 PASS**，Web/API typecheck、`git diff --check` 均 PASS；完整 `npm run check` 为 Node **296/296 PASS**、Web **133/133 PASS（23 文件）**。
+
+真实浏览器最终验收仍未完成：项目未引入 Playwright/Puppeteer；本机 Chrome headless 能生成首张未登录截图，但进程会被 Google Updater/Crashpad 拖住，批量桌面/手机/明暗截图流程不可靠。未登录状态不会伪造认证 session；最终验收需要使用正常登录会话补齐真实浏览器截图与交互检查。
 
 ## 下一步施工顺序
 
-1. 继续全站视觉/交互审计：重点复核工作台、项目列表、任务队列、任务新建、需求、资金、设置的桌面高密度与手机触控体验，清除剩余旧式卡片堆叠和硬编码浅色。
+1. 继续全站视觉/交互审计：重点复核项目列表、任务队列、任务新建、需求、资金、设置的桌面高密度与手机触控体验，清除剩余旧式布局和硬编码浅色。
 2. 做“旧入口 → 新位置”最终覆盖审计，删除无调用的旧组件、重复 scoped 样式和死入口；任何删除都必须先证明对应业务能力已在新位置存在。
 3. 对新位置补齐空状态、加载失败、只读、409、重复提交、分页完整性和移动端软键盘/底部操作区域检查；已有自动测试继续保留。
 4. 使用正常认证流程补齐真实浏览器桌面/手机、浅色/暗色截图和关键交互验收；不得通过伪造会话绕过认证。自动测试不能替代最终真实浏览器验收。

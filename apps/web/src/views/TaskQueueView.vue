@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
-import { useRouter } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import { NButton, NEmpty, NInput, NProgress, NSelect, NSpin, NTag } from 'naive-ui';
 import type { CurrentUser, TaskQueueItemSummary, TaskQueuePage, TaskQueueStatus } from '@tpm/shared';
 import { apiRequest } from '../api/client';
@@ -9,13 +9,16 @@ import AppPressable from '../app/AppPressable.vue';
 defineProps<{ currentUser: CurrentUser }>();
 
 const router = useRouter();
+const route = useRoute();
 const loading = ref(true);
 const loadingMore = ref(false);
 const error = ref('');
 const items = ref<TaskQueueItemSummary[]>([]);
 const nextCursor = ref<string | null>(null);
-const query = ref('');
-const status = ref<TaskQueueStatus>('all');
+const query = ref(typeof route.query.query === 'string' ? route.query.query : '');
+const status = ref<TaskQueueStatus>(['all', 'implementation_pending', 'settlement_pending'].includes(String(route.query.status))
+  ? String(route.query.status) as TaskQueueStatus
+  : 'all');
 let searchTimer: ReturnType<typeof setTimeout> | undefined;
 let requestSequence = 0;
 
@@ -83,8 +86,17 @@ function openTask(item: TaskQueueItemSummary) {
   void router.push(`/projects/${encodeURIComponent(item.projectId)}/tasks/${encodeURIComponent(item.id)}`);
 }
 
+function syncRouteFilters() {
+  const next: Record<string, string> = {};
+  const term = query.value.trim();
+  if (status.value !== 'all') next.status = status.value;
+  if (term) next.query = term;
+  void router.replace({ query: next });
+}
+
 watch(status, () => {
   nextCursor.value = null;
+  syncRouteFilters();
   void load();
 });
 
@@ -92,6 +104,7 @@ watch(query, () => {
   if (searchTimer) clearTimeout(searchTimer);
   searchTimer = setTimeout(() => {
     nextCursor.value = null;
+    syncRouteFilters();
     void load();
   }, 220);
 });

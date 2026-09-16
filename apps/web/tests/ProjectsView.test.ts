@@ -3,7 +3,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { CurrentUser } from '@tpm/shared';
 
 const push = vi.fn();
-vi.mock('vue-router', () => ({ useRouter: () => ({ push }) }));
+const replace = vi.fn();
+const routeQuery = vi.hoisted(() => ({} as Record<string, string>));
+vi.mock('vue-router', () => ({ useRoute: () => ({ query: routeQuery }), useRouter: () => ({ push, replace }) }));
 
 vi.mock('naive-ui', async () => {
   const vue = await import('vue');
@@ -16,13 +18,17 @@ vi.mock('naive-ui', async () => {
     name: 'NInput', props: { value: { type: String, default: '' } }, emits: ['update:value'], inheritAttrs: false,
     setup(props, { emit, attrs }) { return () => vue.h('input', { ...attrs, value: props.value, onInput: (event: Event) => emit('update:value', (event.target as HTMLInputElement).value) }); },
   });
+  const NSelect = vue.defineComponent({
+    name: 'NSelect', props: { value: String, options: { type: Array, default: () => [] } }, emits: ['update:value'], inheritAttrs: false,
+    setup(props, { emit, attrs }) { return () => vue.h('select', { ...attrs, value: props.value ?? '', onChange: (event: Event) => emit('update:value', (event.target as HTMLSelectElement).value) }, (props.options as Array<{ label: string; value: string }>).map((item) => vue.h('option', { value: item.value }, item.label))); },
+  });
   const NDrawer = vue.defineComponent({
     name: 'NDrawer', props: { show: Boolean }, inheritAttrs: false,
     setup(props, { slots, attrs }) { return () => props.show ? vue.h('aside', { ...attrs }, slots.default?.()) : null; },
   });
   return {
     NButton, NDataTable: wrap('NDataTable'), NDrawer, NDrawerContent: wrap('NDrawerContent'), NEmpty: wrap('NEmpty'),
-    NForm: wrap('NForm'), NFormItem: wrap('NFormItem'), NInput, NSpin: wrap('NSpin'), NTag: wrap('NTag'),
+    NForm: wrap('NForm'), NFormItem: wrap('NFormItem'), NInput, NSelect, NSpin: wrap('NSpin'), NTag: wrap('NTag'),
     useMessage: () => ({ success: vi.fn(), error: vi.fn(), warning: vi.fn() }),
   };
 });
@@ -41,7 +47,10 @@ function ok(data: unknown, status = 200) {
 }
 
 describe('ProjectsView', () => {
-  afterEach(() => { vi.unstubAllGlobals(); push.mockReset(); });
+  afterEach(() => {
+    vi.unstubAllGlobals(); push.mockReset(); replace.mockReset();
+    for (const key of Object.keys(routeQuery)) delete routeQuery[key];
+  });
 
   it('creates a valid project without requiring demand or material rows', async () => {
     vi.stubGlobal('crypto', { randomUUID: vi.fn(() => 'project-idem-1') });
@@ -72,5 +81,27 @@ describe('ProjectsView', () => {
     const wrapper = mount(ProjectsView, { props: { currentUser: readonly } });
     await flushPromises();
     expect(wrapper.find('[data-test="open-create-project"]').exists()).toBe(false);
+  });
+
+  it('restores the reserve stage from the URL, sends it to the server, and persists filter changes', async () => {
+    routeQuery.stage = 'reserve';
+    routeQuery.query = '龙城';
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === '/api/reserve-projects?limit=50&stage=reserve') return ok({ items: [], nextCursor: null });
+      if (url === '/api/reserve-projects?limit=50') return ok({ items: [], nextCursor: null });
+      throw new Error(`unexpected GET ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const wrapper = mount(ProjectsView, { props: { currentUser: admin } });
+    await flushPromises();
+
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('stage=reserve'))).toBe(true);
+    expect(wrapper.get('[data-test="project-search"]').attributes('value')).toBe('龙城');
+    expect(wrapper.get('[data-test="project-stage-filter"]').attributes('value')).toBe('reserve');
+
+    await wrapper.get('[data-test="project-stage-filter"]').setValue('all');
+    await flushPromises();
+    expect(replace).toHaveBeenCalledWith({ query: { query: '龙城' } });
   });
 });
