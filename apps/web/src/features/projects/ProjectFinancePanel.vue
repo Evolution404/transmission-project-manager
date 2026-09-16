@@ -104,17 +104,17 @@ onMounted(load);
 .finance-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); overflow: hidden; border: 1px solid var(--ui-border); border-radius: var(--ui-radius-md); }
 .finance-facts > div { display: grid; gap: 5px; min-height: 100px; align-content: center; padding: 15px 17px; }
 .finance-facts > div + div { border-left: 1px solid var(--ui-border); }
-.finance-facts span, .finance-facts small, .recent-heading small { color: var(--ui-text-tertiary); font-size: 11px; line-height: 1.45; }
+.finance-facts span, .finance-facts small, .recent-heading small { color: var(--ui-text-tertiary); font-size: 13px; line-height: 1.45; }
 .finance-facts strong { font-size: 14px; font-weight: 670; font-variant-numeric: tabular-nums; }
 .recent-finance { display: grid; gap: 10px; }
 .recent-heading > div { display: grid; gap: 3px; }
 .recent-heading strong { font-size: 13px; font-weight: 680; }
 .recent-list { display: grid; border-top: 1px solid var(--ui-border); }
 .finance-entry-row { display: grid; grid-template-columns: 100px 92px 130px minmax(0, 1fr); gap: 12px; align-items: center; min-height: 52px; border-bottom: 1px solid var(--ui-border); }
-.entry-date { color: var(--ui-text-secondary); font-size: 11px; font-variant-numeric: tabular-nums; }
-.finance-entry-row > strong { font-size: 12px; font-weight: 650; font-variant-numeric: tabular-nums; }
-.entry-note { overflow: hidden; color: var(--ui-text-secondary); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
-.more-note { margin: 10px 0 0; color: var(--ui-text-tertiary); font-size: 11px; }
+.entry-date { color: var(--ui-text-secondary); font-size: 13px; font-variant-numeric: tabular-nums; }
+.finance-entry-row > strong { font-size: 13px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.entry-note { overflow: hidden; color: var(--ui-text-secondary); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.more-note { margin: 10px 0 0; color: var(--ui-text-tertiary); font-size: 12px; }
 @media (max-width: 767px) {
   .finance-heading { align-items: flex-start; gap: 12px; }
   .finance-heading > .n-button { flex: 0 0 auto; }

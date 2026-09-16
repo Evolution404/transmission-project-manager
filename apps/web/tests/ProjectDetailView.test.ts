@@ -226,6 +226,6 @@ describe('ProjectDetailView project release', () => {
     const financeButton = wrapper.findAll('button').find((candidate) => candidate.text().includes('打开资金工作区'));
     expect(financeButton).toBeTruthy();
     await financeButton!.trigger('click');
-    expect(push).toHaveBeenCalledWith({ path: '/finance', query: { projectId: 'p1' } });
+    expect(push).toHaveBeenCalledWith({ path: '/finance', query: { projectId: 'p1', tab: 'budgets', from: '/projects/p1' } });
   });
 });

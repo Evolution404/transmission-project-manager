@@ -87,7 +87,7 @@
 
 M6 基础台账定向结果：基础台账 API **25/25 PASS**；相关 Web **30/30 PASS**。M6 收口时完整 `npm run check` 为 Node **270/270**、Web **114/114（19 文件）**。
 
-全站 UI 重构当前施工分支 `refactor/ui-redesign-20260916` 最近一次完整 `npm run check` 已 PASS：Node **298/298**、Web **134/134（23 文件）**，Cloudflare/Node/Web/shared TypeScript、Web production build、Worker dry-run、Node+SQLite+Filesystem 第二运行时和全部静态门禁均 PASS。Web 测试文件数量下降是因为旧 `ReservesView` / `DeliveryView` 在能力迁移后连同重复 UI 测试一起删除，不是关闭或跳过测试。
+全站 UI 重构当前施工分支 `refactor/ui-redesign-20260916` 最近一次完整 `npm run check` 已 PASS：Node **299/299**、Web **144/144（23 文件）**，Cloudflare/Node/Web/shared TypeScript、Web production build、Worker dry-run、Node+SQLite+Filesystem 第二运行时和全部静态门禁均 PASS。
 
 项目分页/路由状态工作包已经收口并验证：修复项目列表固定前 50 条且 `nextCursor:null` 的分页缺口，并让工作台 `/projects?stage=reserve`、项目列表 `stage/query`、任务队列 `/tasks?status=...&query=...` 在刷新后恢复筛选。定向仓储测试 **2/2 PASS**，Projects/Tasks 定向 **6/6 PASS**，Web/API typecheck 和 `git diff --check` 均 PASS。
 
@@ -98,6 +98,8 @@ M6 基础台账定向结果：基础台账 API **25/25 PASS**；相关 Web **30/
 随后继续收口移动端与并发编辑体验：需求物资字典增加手机对象列表；需求长弹窗、基础台账业务弹窗统一处理可视高度/正文滚动/safe-area footer；项目来源需求和项目物资的 409 从“仅提示用户关闭刷新”改为草稿原地保留并可直接刷新父项目；保存中的项目编辑器和任务供应抽屉禁止误关；删除任务详情无行为“更多”按钮，并清理业务界面的内部实现术语。该包定向 Web **49/49 PASS（6 文件）**、Web typecheck 与 `git diff --check` PASS；完整 `npm run check` 为 Node **298/298 PASS**、Web **136/136 PASS（23 文件）**，Web/API/shared TypeScript、Web production build、Worker dry-run 与第二运行时均 PASS。
 
 分析页图表继续完成暗色/响应式收口：ECharts 配色不再依赖默认主题，而是读取全局设计 token；切换分析分段或系统明暗主题后重新 setOption/resize，并使用 `containLabel` 避免手机端长分类文字被固定边距裁切。Analysis 定向 **4/4 PASS**；完整 `npm run check` 为 Node **298/298 PASS**、Web **137/137 PASS（23 文件）**，TypeScript、Web production build、Worker dry-run 与第二运行时均 PASS。
+
+随后完成导航逻辑与可读性专项审计：主路由用 `meta.navKey` 明确侧栏归属，嵌套任务路由不再错误点亮“项目”；基础台账移入“管理”，设置独立为“系统”；手机“更多”在其子页面持续保持当前态。业务 UI 增加 12px 最低字号门禁，并将高频业务元数据/表头/状态提升到 13px、主 Tab/分段导航提升到 14px。项目列表/项目详情/任务队列/任务详情/新建任务/资金工作区的 `from` 上下文已贯通；需求、资金、分析使用 URL `tab`，任务详情使用 `section`，刷新与分享链接可恢复当前位置。该轮完整 `npm run check` 为 Node **299/299 PASS**、Web **144/144 PASS（23 文件）**。
 
 该工作包保持以下验收条件：
 
@@ -124,7 +126,7 @@ M6 基础台账定向结果：基础台账 API **25/25 PASS**；相关 Web **30/
 - `project-execution.ts` 已由约 850 行降至约 334 行；其职责回混已有 repository/static guard。
 - `analysis-operations.ts` 的混合职责已经完成拆分：`analysis-calculations.ts` 承载纯分析计算/查询编排，`analysis-operations.ts` 仅保留分析/计划/月报/里程碑 HTTP，`notification-operations.ts` 承载通知/告警/outbox，`backup-operations.ts` 承载逻辑备份，`system-tasks.ts` 承载定时任务编排。最新已验证代码提交为 `8c8f7ef`。
 - 分析计算抽取前已逐项对照旧实现并由测试锁定 BigInt 四舍五入、季度状态、默认/自定义计划、ratio/gap lagging 边界和里程碑提醒语义；分析/P6、通知仓储、备份仓储和 repository guards 定向合计 **53/53 PASS**。
-- 上述分析模块职责拆分完成时的历史门禁基线为 Node **293/293 PASS**、Web **114/114 PASS**；当前施工分支的最新完整门禁以第 4 节所列 Node **298/298**、Web **134/134（23 文件）**为准。
+- 上述分析模块职责拆分完成时的历史门禁基线为 Node **293/293 PASS**、Web **114/114 PASS**；当前施工分支的最新完整门禁以第 4 节所列 Node **299/299**、Web **144/144（23 文件）**为准。
 - 后续候选热点仍包括 `reserve-planning.ts`、`demand-import.ts`、`finance.ts`、`project-lifecycle.ts`、`MasterDataView.vue`、`packages/shared/src/index.ts`；按职责耦合收益排序拆分，禁止仅按文件行数机械拆分。
 
 ## 6. 当前生产状态

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, h, onMounted, ref } from 'vue';
-import { useRoute } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import {
   NAlert,
   NButton,
@@ -32,9 +32,12 @@ import type {
 
 const props = defineProps<{ currentUser: CurrentUser }>();
 const route = useRoute();
+const router = useRouter();
 const message = useMessage();
 const canManageStructure = computed(() => props.currentUser.role === 'admin' || props.currentUser.role === 'project_manager');
 const canFinanceWrite = computed(() => ['admin', 'project_manager', 'finance'].includes(props.currentUser.role));
+type FinanceWorkspaceTab = 'frameworks' | 'budgets' | 'entries';
+const financeWorkspaceTabs = new Set<FinanceWorkspaceTab>(['frameworks', 'budgets', 'entries']);
 
 const loading = ref(true);
 const error = ref('');
@@ -65,6 +68,30 @@ const saving = ref(false);
 const showFrameworkForm = ref(false);
 const showAgreementForm = ref(false);
 const showEntryForm = ref(false);
+const requestedTab = typeof route.query.tab === 'string' ? route.query.tab : '';
+const activeTab = ref<FinanceWorkspaceTab>(
+  financeWorkspaceTabs.has(requestedTab as FinanceWorkspaceTab)
+    ? requestedTab as FinanceWorkspaceTab
+    : typeof route.query.projectId === 'string' ? 'budgets' : 'frameworks',
+);
+const projectReturnTarget = computed(() => {
+  const from = typeof route.query.from === 'string' ? route.query.from : '';
+  return from.startsWith('/projects/') ? from : null;
+});
+
+function returnToProject() {
+  if (projectReturnTarget.value) void router.push(projectReturnTarget.value);
+}
+
+function setActiveTab(value: string | number) {
+  const nextTab = String(value) as FinanceWorkspaceTab;
+  if (!financeWorkspaceTabs.has(nextTab)) return;
+  activeTab.value = nextTab;
+  const query = { ...route.query };
+  if (nextTab === 'frameworks') delete query.tab;
+  else query.tab = nextTab;
+  void router.replace({ query });
+}
 
 function businessToday() {
   const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
@@ -333,6 +360,9 @@ onMounted(loadInitial);
           <h2 class="page-title">资金管理</h2>
           <p class="page-description">框架额度、预算确认、预算发生和实际发生保持独立账目，先看状态，再按需登记。</p>
         </div>
+        <div v-if="projectReturnTarget" class="page-actions">
+          <n-button data-test="back-to-project" secondary @click="returnToProject">返回项目</n-button>
+        </div>
       </header>
 
       <section class="finance-overview">
@@ -358,7 +388,7 @@ onMounted(loadInitial);
         </div>
       </section>
 
-      <n-tabs type="line" animated class="workspace-tabs">
+      <n-tabs :value="activeTab" type="line" animated class="workspace-tabs" @update:value="setActiveTab">
         <n-tab-pane name="frameworks" tab="框架与协议">
           <section class="workspace-panel">
             <header class="workspace-panel-header">
@@ -522,13 +552,13 @@ onMounted(loadInitial);
 .finance-view { gap: 18px; max-width: 1420px; }
 .finance-overview { overflow: hidden; border: 1px solid var(--ui-border); border-radius: var(--ui-radius-lg); background: var(--ui-surface); }
 .finance-context { display: grid; grid-template-columns: minmax(260px, 420px) 1fr; gap: 10px; align-items: center; min-height: 64px; padding: 12px 16px; border-bottom: 1px solid var(--ui-border); }
-.finance-context-note { justify-self: end; color: var(--ui-text-tertiary); font-size: 11px; }
-.workspace-tabs :deep(.n-tabs-tab) { padding-inline: 2px; margin-right: 24px; font-size: 12px; }
+.finance-context-note { justify-self: end; color: var(--ui-text-tertiary); font-size: 12px; }
+.workspace-tabs :deep(.n-tabs-tab) { padding-inline: 2px; margin-right: 24px; font-size: 14px; }
 .workspace-panel { overflow: hidden; border: 1px solid var(--ui-border); border-radius: var(--ui-radius-lg); background: var(--ui-surface); }
 .workspace-panel + .workspace-panel { margin-top: 16px; }
 .workspace-panel-header { display: flex; align-items: center; justify-content: space-between; gap: 20px; min-height: 60px; padding: 13px 16px; border-bottom: 1px solid var(--ui-border); }
 .workspace-panel-header h3 { margin: 0; font-size: 14px; font-weight: 680; }
-.workspace-panel-header p { margin: 3px 0 0; color: var(--ui-text-secondary); font-size: 11px; line-height: 1.5; }
+.workspace-panel-header p { margin: 3px 0 0; color: var(--ui-text-secondary); font-size: 13px; line-height: 1.5; }
 .workspace-panel-body { padding: 16px; }
 .data-panel-body { padding: 0; }
 .data-panel-body :deep(.n-data-table) { border: 0; border-radius: 0; }
@@ -539,25 +569,25 @@ onMounted(loadInitial);
 .mobile-finance-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
 .mobile-finance-heading > div { display: grid; gap: 3px; min-width: 0; }
 .mobile-finance-heading strong { color: var(--ui-text); font-size: 13px; font-weight: 670; }
-.mobile-finance-heading small { color: var(--ui-text-tertiary); font-size: 10px; }
+.mobile-finance-heading small { color: var(--ui-text-tertiary); font-size: 12px; }
 .mobile-finance-amount { flex: 0 0 auto; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.mobile-finance-meta { display: flex; flex-wrap: wrap; gap: 5px 12px; color: var(--ui-text-secondary); font-size: 11px; line-height: 1.5; }
+.mobile-finance-meta { display: flex; flex-wrap: wrap; gap: 5px 12px; color: var(--ui-text-secondary); font-size: 13px; line-height: 1.5; }
 .mobile-finance-meta-line { align-items: center; }
 .detail-panel { margin-top: 16px; }
 .edit-panel { border-color: var(--ui-border-strong); }
 .toolbar { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(180px, 320px) auto; gap: 10px; margin-top: 16px; align-items: center; }
 .binding-toolbar { display: grid; grid-template-columns: auto minmax(220px, 1fr) minmax(180px, 320px) auto; gap: 10px; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--ui-border); background: var(--ui-surface-subtle); }
-.binding-toolbar > span { color: var(--ui-text-secondary); font-size: 11px; font-weight: 650; white-space: nowrap; }
+.binding-toolbar > span { color: var(--ui-text-secondary); font-size: 13px; font-weight: 650; white-space: nowrap; }
 .metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .metrics > div { display: grid; align-content: center; gap: 6px; min-height: 92px; padding: 16px 18px; border-right: 1px solid var(--ui-border); border-bottom: 1px solid var(--ui-border); background: var(--ui-surface); }
 .metrics > div:nth-child(4n) { border-right: 0; }
 .metrics > div:nth-last-child(-n+4) { border-bottom: 0; }
-.metrics span { color: var(--ui-text-secondary); font-size: 11px; }
+.metrics span { color: var(--ui-text-secondary); font-size: 13px; }
 .metrics strong { color: var(--ui-text); font-size: 18px; font-weight: 690; font-variant-numeric: tabular-nums; }
 .agreement-metrics { display: grid; padding: 0 16px 10px; border-top: 1px solid var(--ui-border); }
-.metric-row { display: grid; grid-template-columns: minmax(140px, 1fr) 110px 160px 130px auto; gap: 10px; align-items: center; min-height: 48px; border-bottom: 1px solid var(--ui-border); color: var(--ui-text-secondary); font-size: 12px; }
+.metric-row { display: grid; grid-template-columns: minmax(140px, 1fr) 110px 160px 130px auto; gap: 10px; align-items: center; min-height: 48px; border-bottom: 1px solid var(--ui-border); color: var(--ui-text-secondary); font-size: 13px; }
 .metric-row:last-child { border-bottom: 0; }
-.metric-row strong { color: var(--ui-text); font-size: 12px; font-weight: 650; }
+.metric-row strong { color: var(--ui-text); font-size: 13px; font-weight: 650; }
 .form-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0 12px; margin-top: 16px; align-items: end; }
 .edit-surface { margin: 0; padding: 16px; border-top: 1px solid var(--ui-border); background: var(--ui-surface-subtle); }
 .budget-body { display: grid; gap: 12px; }

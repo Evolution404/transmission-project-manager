@@ -387,6 +387,18 @@ test('mobile UI keeps usable navigation and dashboard density', () => {
   assert.doesNotMatch(dashboardSource, /:cols="5"/);
 });
 
+test('web business typography never drops below the 12px readability floor', () => {
+  for (const file of collectSourceFiles(resolve(root, 'apps/web/src'))) {
+    if (!file.endsWith('.vue') && !file.endsWith('.css')) continue;
+    const source = readFileSync(file, 'utf8');
+    assert.doesNotMatch(
+      source,
+      /font-size:\s*(?:10|11)px\b/,
+      `${file} 仍包含低于 12px 的业务界面文字；辅助信息也必须保持可读`,
+    );
+  }
+});
+
 test('local API development rebuilds the local D1 when the single development baseline changes', () => {
   const apiPackage = JSON.parse(readFileSync(resolve(root, 'apps/api/package.json'), 'utf8'));
   assert.equal(apiPackage.scripts.dev, 'node ../../scripts/dev/api-dev.mjs');

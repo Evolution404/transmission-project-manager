@@ -3,9 +3,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { CurrentUser } from '@tpm/shared';
 
 const push = vi.fn();
+const replace = vi.fn();
+const routeQuery = vi.hoisted(() => ({} as Record<string, string>));
 vi.mock('vue-router', () => ({
-  useRoute: () => ({ params: { projectId: 'p1', taskId: 't1' }, query: {}, fullPath: '/projects/p1/tasks/t1' }),
-  useRouter: () => ({ push, back: vi.fn() }),
+  useRoute: () => ({ params: { projectId: 'p1', taskId: 't1' }, query: routeQuery, fullPath: '/projects/p1/tasks/t1' }),
+  useRouter: () => ({ push, replace, back: vi.fn() }),
 }));
 
 vi.mock('naive-ui', async () => {
@@ -117,6 +119,30 @@ describe('TaskDetailView redesign sample', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     push.mockReset();
+    replace.mockReset();
+    for (const key of Object.keys(routeQuery)) delete routeQuery[key];
+  });
+
+  it('restores task detail section from the URL and persists section navigation', async () => {
+    routeQuery.section = 'settlement';
+    installFetch();
+    const wrapper = mount(TaskDetailView, { props: { currentUser: admin } });
+    await flushPromises();
+
+    expect(wrapper.get('[data-test="task-section-settlement"]').classes()).toContain('active');
+    await wrapper.get('[data-test="task-section-scope"]').trigger('click');
+    expect(replace).toHaveBeenCalledWith({ query: { section: 'scope' } });
+  });
+
+  it('returns to the originating task queue URL instead of forcing project navigation', async () => {
+    routeQuery.from = '/tasks?status=settlement_pending&query=%E9%BE%99%E5%9F%8E';
+    installFetch();
+    const wrapper = mount(TaskDetailView, { props: { currentUser: admin } });
+    await flushPromises();
+
+    expect(wrapper.get('.breadcrumb-back').text()).toContain('返回任务队列');
+    await wrapper.get('.breadcrumb-back').trigger('click');
+    expect(push).toHaveBeenCalledWith('/tasks?status=settlement_pending&query=%E9%BE%99%E5%9F%8E');
   });
 
   it('keeps supply, implementation and settlement summaries visible together', async () => {

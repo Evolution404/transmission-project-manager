@@ -3,6 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { defineComponent, h } from 'vue';
 import type { CurrentUser, ImportFieldMapping } from '@tpm/shared';
 
+const routeQuery = vi.hoisted(() => ({} as Record<string, string>));
+const replace = vi.fn();
+vi.mock('vue-router', () => ({ useRoute: () => ({ query: routeQuery }), useRouter: () => ({ replace }) }));
+
 const { parseFileInWorker, sha256File, executeImportWorkflow, ImportReviewRequiredError, downloadDemandImportTemplate } = vi.hoisted(() => {
   class ReviewError extends Error {
     batchId: string;
@@ -85,10 +89,14 @@ vi.mock('naive-ui', async () => {
     name: 'NTabPane', props: { name: String, tab: String },
     setup(props, { slots }) { return () => vue.h('section', { 'data-tab': props.name }, [vue.h('h3', props.tab), slots.default?.()]); },
   });
+  const NTabs = vue.defineComponent({
+    name: 'NTabs', props: { value: String }, emits: ['update:value'],
+    setup(props, { slots, attrs }) { return () => vue.h('div', { ...attrs, 'data-stub': 'NTabs', 'data-value': props.value }, slots.default?.()); },
+  });
   return {
     NAlert: wrap('NAlert'), NButton, NCard: wrap('NCard'), NDataTable, NEmpty: wrap('NEmpty'),
     NForm: wrap('NForm'), NFormItem: wrap('NFormItem'), NInput, NModal, NProgress: wrap('NProgress'), NSelect,
-    NSpace: wrap('NSpace'), NSpin: wrap('NSpin'), NTabPane, NTabs: wrap('NTabs'), NTag: wrap('NTag'),
+    NSpace: wrap('NSpace'), NSpin: wrap('NSpin'), NTabPane, NTabs, NTag: wrap('NTag'),
     useMessage: () => ({ success: vi.fn(), error: vi.fn(), warning: vi.fn() }),
   };
 });
@@ -113,6 +121,8 @@ const expectedMapping: ImportFieldMapping = {
 
 describe('DemandsView P2 behavior', () => {
   beforeEach(() => {
+    for (const key of Object.keys(routeQuery)) delete routeQuery[key];
+    replace.mockReset();
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url === '/api/imports/batch-review') return ok({
@@ -153,6 +163,17 @@ describe('DemandsView P2 behavior', () => {
   });
 
   afterEach(() => vi.unstubAllGlobals());
+
+  it('restores the workspace tab from the URL and persists later tab changes', async () => {
+    routeQuery.tab = 'materials';
+    const wrapper = mount(DemandsView, { props: { currentUser: admin } });
+    await flushPromises();
+    const tabs = wrapper.findComponent({ name: 'NTabs' });
+    expect(tabs.props('value')).toBe('materials');
+    tabs.vm.$emit('update:value', 'import');
+    await flushPromises();
+    expect(replace).toHaveBeenCalledWith({ query: { tab: 'import' } });
+  });
 
   it('loads the demand pool for readonly users but does not expose import/write controls', async () => {
     const wrapper = mount(DemandsView, { props: { currentUser: readonly } });

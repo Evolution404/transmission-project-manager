@@ -83,7 +83,10 @@ async function load(options: { append?: boolean } = {}) {
 }
 
 function openTask(item: TaskQueueItemSummary) {
-  void router.push(`/projects/${encodeURIComponent(item.projectId)}/tasks/${encodeURIComponent(item.id)}`);
+  void router.push({
+    path: `/projects/${encodeURIComponent(item.projectId)}/tasks/${encodeURIComponent(item.id)}`,
+    query: { from: route.fullPath },
+  });
 }
 
 function syncRouteFilters() {
@@ -218,19 +221,19 @@ onMounted(() => load());
 .task-toolbar { display: flex; align-items: center; gap: 10px; min-height: 64px; padding: 12px 16px; border-bottom: 1px solid var(--ui-border); }
 .task-search { width: min(420px, 42vw); }
 .task-status-filter { width: 150px; }
-.result-count { margin-left: auto; color: var(--ui-text-tertiary); font-size: 11px; white-space: nowrap; }
+.result-count { margin-left: auto; color: var(--ui-text-tertiary); font-size: 12px; white-space: nowrap; }
 .inline-error { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 14px 16px 0; padding: 11px 13px; border-radius: 10px; background: var(--ui-danger-soft); color: var(--ui-danger); font-size: 12px; }
 .task-table-head, .task-table-row { display: grid; grid-template-columns: minmax(260px, 1.55fr) 135px minmax(190px, 1.1fr) minmax(150px, .8fr) minmax(150px, .8fr) minmax(142px, auto); gap: 18px; align-items: center; }
-.task-table-head { min-height: 42px; padding: 0 18px; border-bottom: 1px solid var(--ui-border); background: var(--ui-surface-subtle); color: var(--ui-text-tertiary); font-size: 10px; font-weight: 700; letter-spacing: .04em; }
+.task-table-head { min-height: 42px; padding: 0 18px; border-bottom: 1px solid var(--ui-border); background: var(--ui-surface-subtle); color: var(--ui-text-tertiary); font-size: 13px; font-weight: 700; letter-spacing: .02em; }
 .task-table-row { width: 100%; min-height: 88px; padding: 13px 18px; border: 0; border-bottom: 1px solid var(--ui-border); background: transparent; color: inherit; text-align: left; cursor: pointer; transition: background-color 120ms ease; }
 .task-table-row:last-child { border-bottom: 0; }
 .task-table-row:hover { background: var(--ui-surface-subtle); }
 .task-identity, .task-plan, .supply-summary-list, .progress-cell, .progress-cell > span { display: grid; min-width: 0; gap: 4px; }
 .task-identity strong { overflow: hidden; font-size: 13px; font-weight: 670; text-overflow: ellipsis; white-space: nowrap; }
-.task-identity small, .task-plan small, .supply-summary-list small, .progress-cell small { overflow: hidden; color: var(--ui-text-secondary); font-size: 11px; line-height: 1.45; text-overflow: ellipsis; white-space: nowrap; }
-.task-plan strong { font-size: 12px; font-weight: 620; font-variant-numeric: tabular-nums; }
+.task-identity small, .task-plan small, .supply-summary-list small, .progress-cell small { overflow: hidden; color: var(--ui-text-secondary); font-size: 13px; line-height: 1.45; text-overflow: ellipsis; white-space: nowrap; }
+.task-plan strong { font-size: 13px; font-weight: 620; font-variant-numeric: tabular-nums; }
 .supply-summary-list { max-height: 54px; overflow: hidden; }
-.progress-cell strong { font-size: 11px; font-weight: 650; }
+.progress-cell strong { font-size: 13px; font-weight: 650; }
 .task-row-end { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
 .row-chevron { color: var(--ui-text-tertiary); font-size: 20px; line-height: 1; }
 .mobile-task-list { display: none; }
@@ -252,14 +255,14 @@ onMounted(() => load());
   .mobile-task-heading { display: grid; grid-template-columns: minmax(0,1fr) 18px; gap: 10px; align-items: center; }
   .mobile-task-heading > div { display: grid; gap: 3px; min-width: 0; }
   .mobile-task-heading strong { overflow: hidden; font-size: 14px; font-weight: 670; text-overflow: ellipsis; white-space: nowrap; }
-  .mobile-task-heading small { overflow: hidden; color: var(--ui-text-secondary); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
-  .mobile-task-meta { display: flex; flex-wrap: wrap; gap: 5px 12px; color: var(--ui-text-tertiary); font-size: 11px; }
-  .mobile-task-status-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--ui-text-secondary); font-size: 11px; }
+  .mobile-task-heading small { overflow: hidden; color: var(--ui-text-secondary); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+  .mobile-task-meta { display: flex; flex-wrap: wrap; gap: 5px 12px; color: var(--ui-text-tertiary); font-size: 13px; }
+  .mobile-task-status-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--ui-text-secondary); font-size: 13px; }
   .mobile-task-status-row > span { font-variant-numeric: tabular-nums; }
-  .mobile-supply-lines { display: grid; gap: 3px; padding: 9px 10px; border-radius: 9px; background: var(--ui-surface-muted); color: var(--ui-text-secondary); font-size: 11px; }
+  .mobile-supply-lines { display: grid; gap: 3px; padding: 9px 10px; border-radius: 9px; background: var(--ui-surface-muted); color: var(--ui-text-secondary); font-size: 13px; }
   .mobile-progress-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; overflow: hidden; border: 1px solid var(--ui-border); border-radius: 9px; background: var(--ui-border); }
   .mobile-progress-grid > div { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px; background: var(--ui-surface); }
-  .mobile-progress-grid span { color: var(--ui-text-secondary); font-size: 10px; }
-  .mobile-progress-grid strong { font-size: 12px; font-variant-numeric: tabular-nums; }
+  .mobile-progress-grid span { color: var(--ui-text-secondary); font-size: 13px; }
+  .mobile-progress-grid strong { font-size: 13px; font-variant-numeric: tabular-nums; }
 }
 </style>

@@ -205,17 +205,17 @@ onMounted(load);
 .operation-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
 .operation-heading > div { display: grid; gap: 3px; }
 .operation-heading strong { color: var(--ui-text); font-size: 13px; font-weight: 680; }
-.operation-heading small { color: var(--ui-text-tertiary); font-size: 11px; line-height: 1.45; }
+.operation-heading small { color: var(--ui-text-tertiary); font-size: 12px; line-height: 1.45; }
 .contact-form { display: grid; grid-template-columns: minmax(180px, .9fr) minmax(220px, 1.1fr) auto; gap: 8px; margin-bottom: 14px; }
 .compact-records, .backup-list { display: grid; border-top: 1px solid var(--ui-border); }
-.record-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center; min-height: 44px; border-bottom: 1px solid var(--ui-border); color: var(--ui-text-secondary); font-size: 12px; }
+.record-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center; min-height: 44px; border-bottom: 1px solid var(--ui-border); color: var(--ui-text-secondary); font-size: 13px; }
 .record-row:last-child, .backup-row:last-child { border-bottom: 0; }
 .record-row-wide { grid-template-columns: minmax(0, 1fr) auto auto; }
-.record-meta { color: var(--ui-text-tertiary); font-size: 11px; }
+.record-meta { color: var(--ui-text-tertiary); font-size: 12px; }
 .backup-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 14px; align-items: center; min-height: 62px; padding: 8px 0; border-bottom: 1px solid var(--ui-border); }
 .backup-main { display: grid; gap: 3px; }
-.backup-main strong { font-size: 12px; font-weight: 650; }
-.backup-main small { color: var(--ui-text-tertiary); font-size: 11px; }
+.backup-main strong { font-size: 13px; font-weight: 650; }
+.backup-main small { color: var(--ui-text-tertiary); font-size: 12px; }
 .backup-actions { display: flex; justify-content: flex-end; gap: 8px; }
 @media (max-width: 900px) {
   .operations-grid { grid-template-columns: 1fr; }

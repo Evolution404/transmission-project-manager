@@ -37,7 +37,7 @@
 - 已建立 UI 硬门禁：业务源码禁止直接渲染原生 `<button>` / `<input>` / `<select>` / `<textarea>` 和动态 `h('button')`；原生 file input 只能隐藏在设计系统 primitive 内。门禁位于 `tests/repository-guards.test.mjs`。
 - 设计系统 primitive：`apps/web/src/app/AppPressable.vue`、`AppFilePicker.vue`。
 
-最近一次完整 `npm run check`：Node **298/298 PASS**、Web **134/134 PASS（23 个测试文件）**；TypeScript、Web production build、Worker `wrangler deploy --dry-run`、Node + SQLite + Filesystem 第二运行时均 PASS。Web 测试文件数下降来自旧 `ReservesView` / `DeliveryView` 页面及其重复测试在能力迁移完成后正式删除，不是跳过门禁。
+最近一次完整 `npm run check`：Node **299/299 PASS**、Web **144/144 PASS（23 个测试文件）**；TypeScript、Web production build、Worker `wrangler deploy --dry-run`、Node + SQLite + Filesystem 第二运行时均 PASS。
 
 最近 UI 提交：
 
@@ -85,6 +85,15 @@
 - 分析页图表随后完成暗色模式收口：ECharts 轴线、标签、网格、tooltip 和柱色全部读取全局 `--ui-*` 设计 token；切换“进度与缺口 / 储备剩余”分段或系统明暗主题时会重新渲染并 resize，避免隐藏分段初始化导致尺寸异常。该改动测试先红后绿，Analysis 定向 **4/4 PASS**；完整 `npm run check` 为 Node **298/298 PASS**、Web **137/137 PASS（23 文件）**，TypeScript、Web production build、Worker dry-run 与第二运行时均 PASS。
 
 真实浏览器最终验收仍未完成：项目未引入 Playwright/Puppeteer；本机 Chrome headless 能生成首张未登录截图，但进程会被 Google Updater/Crashpad 拖住，批量桌面/手机/明暗截图流程不可靠。未登录状态不会伪造认证 session；最终验收需要使用正常登录会话补齐真实浏览器截图与交互检查。
+
+## 最近收口：导航逻辑与可读性审计
+
+- 侧栏不再通过 URL 前缀猜当前模块。所有主路由显式声明 `meta.navKey`：项目详情归“项目”，项目下的新建任务/任务详情归“执行任务”。桌面分组调整为“业务：工作台/需求/项目/执行任务；管理：资金/分析/基础台账；系统：设置”，基础台账不再与设置混在底部系统区。
+- 手机底部“更多”在需求、资金、分析、基础台账、设置页面持续保持当前态；“更多”抽屉内部当前项也有选中反馈，不再出现进入页面后底部四项全部未激活。
+- 全站显式 CSS 字号新增硬门禁：业务源码禁止 10px/11px，12px 仅作为最低 caption 基线；表头、列表关键元数据、状态、返回/操作文字普遍提升至 13px，主 Tab/分段导航提升至 14px。repository guard 已锁定该约束。
+- 返回上下文统一：任务队列进入任务详情后返回原 `status/query`；项目详情进入任务详情/新建任务后返回原项目详情；新建项目后继续保留原项目列表筛选 URL；项目详情进入资金工作区携带 `projectId + tab=budgets + from`，资金页只在合法项目来源下显示“返回项目”。
+- 需求、资金、分析主工作区用 URL `tab` 恢复/同步当前位置；任务详情用 `section` 恢复“供应/实施/结算/范围”。默认项不强制写参数，非法值回默认项，不再刷新后悄悄回首个 Tab 或产生空白状态。
+- 本轮测试先红后绿：新增路由归属、返回上下文、工作区 Tab/Section 和字号门禁回归；最终完整 `npm run check` 为 Node **299/299 PASS**、Web **144/144 PASS（23 文件）**，TypeScript、Web production build、Worker dry-run 与 Node + SQLite + Filesystem 第二运行时全部 PASS。
 
 ## 下一步施工顺序
 

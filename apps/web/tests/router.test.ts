@@ -70,4 +70,25 @@ describe('business routes', () => {
       expect(resolved.default, path).toBe(component);
     }
   });
+
+  it('declares sidebar ownership explicitly for nested project and task routes', () => {
+    const navCases = [
+      ['/', '/'],
+      ['/demands', '/demands'],
+      ['/projects', '/projects'],
+      ['/projects/:projectId', '/projects'],
+      ['/projects/:projectId/tasks/new', '/tasks'],
+      ['/projects/:projectId/tasks/:taskId', '/tasks'],
+      ['/tasks', '/tasks'],
+      ['/finance', '/finance'],
+      ['/analysis', '/analysis'],
+      ['/master-data', '/master-data'],
+      ['/administration', '/administration'],
+    ] as const;
+
+    for (const [path, navKey] of navCases) {
+      const route = router.getRoutes().find((item) => item.path === path);
+      expect(route?.meta.navKey, path).toBe(navKey);
+    }
+  });
 });

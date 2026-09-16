@@ -4,8 +4,8 @@ import type { CurrentUser } from '@tpm/shared';
 
 const push = vi.fn();
 const replace = vi.fn();
-const routeQuery = vi.hoisted(() => ({} as Record<string, string>));
-vi.mock('vue-router', () => ({ useRoute: () => ({ query: routeQuery }), useRouter: () => ({ push, replace }) }));
+const routeState = vi.hoisted(() => ({ query: {} as Record<string, string>, fullPath: '/projects' }));
+vi.mock('vue-router', () => ({ useRoute: () => routeState, useRouter: () => ({ push, replace }) }));
 
 vi.mock('naive-ui', async () => {
   const vue = await import('vue');
@@ -49,10 +49,12 @@ function ok(data: unknown, status = 200) {
 describe('ProjectsView', () => {
   afterEach(() => {
     vi.unstubAllGlobals(); push.mockReset(); replace.mockReset();
-    for (const key of Object.keys(routeQuery)) delete routeQuery[key];
+    for (const key of Object.keys(routeState.query)) delete routeState.query[key];
+    routeState.fullPath = '/projects';
   });
 
   it('creates a valid project without requiring demand or material rows', async () => {
+    routeState.fullPath = '/projects?stage=reserve&query=%E9%BE%99%E5%9F%8E';
     vi.stubGlobal('crypto', { randomUUID: vi.fn(() => 'project-idem-1') });
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -73,7 +75,11 @@ describe('ProjectsView', () => {
     const call = vi.mocked(fetch).mock.calls.find(([url, init]) => String(url) === '/api/reserve-projects' && init?.method === 'POST');
     expect(call).toBeTruthy();
     expect(JSON.parse(String(call![1]!.body))).toEqual({ name: '新项目', year: 2026, owner: '张三', demandIds: [] });
-    expect(push).toHaveBeenCalledWith({ name: 'project-detail', params: { projectId: 'p-new' } });
+    expect(push).toHaveBeenCalledWith({
+      name: 'project-detail',
+      params: { projectId: 'p-new' },
+      query: { from: '/projects?stage=reserve&query=%E9%BE%99%E5%9F%8E' },
+    });
   });
 
   it('does not expose project creation to readonly users', async () => {
@@ -84,8 +90,8 @@ describe('ProjectsView', () => {
   });
 
   it('restores the reserve stage from the URL, sends it to the server, and persists filter changes', async () => {
-    routeQuery.stage = 'reserve';
-    routeQuery.query = '龙城';
+    routeState.query.stage = 'reserve';
+    routeState.query.query = '龙城';
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url === '/api/reserve-projects?limit=50&stage=reserve&query=%E9%BE%99%E5%9F%8E') return ok({ items: [], nextCursor: null });

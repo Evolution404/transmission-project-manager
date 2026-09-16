@@ -3,6 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CurrentUser } from '@tpm/shared';
 
 const { chartSetOption, chartResize } = vi.hoisted(() => ({ chartSetOption: vi.fn(), chartResize: vi.fn() }));
+const routeQuery = vi.hoisted(() => ({} as Record<string, string>));
+const replace = vi.fn();
+vi.mock('vue-router', () => ({ useRoute: () => ({ query: routeQuery }), useRouter: () => ({ replace }) }));
 vi.mock('../src/charts/echarts', () => ({ init: () => ({ setOption: chartSetOption, resize: chartResize, dispose: vi.fn() }) }));
 vi.mock('naive-ui', async () => {
   const vue = await import('vue');
@@ -22,8 +25,9 @@ vi.mock('naive-ui', async () => {
     },
   });
   const NTabPane = vue.defineComponent({ name: 'NTabPane', props: { name: String, tab: String }, setup(props, { slots }) { return () => vue.h('section', { 'data-tab': props.name }, [vue.h('h3', props.tab), slots.default?.()]); } });
+  const NTabs = vue.defineComponent({ name: 'NTabs', props: { value: String }, emits: ['update:value'], setup(props, { slots, attrs }) { return () => vue.h('div', { ...attrs, 'data-stub': 'NTabs', 'data-value': props.value }, slots.default?.()); } });
   const NStatistic = vue.defineComponent({ name: 'NStatistic', props: { label: String, value: [String, Number] }, setup(props) { return () => vue.h('div', `${props.label ?? ''}${props.value ?? ''}`); } });
-  return { NAlert: wrap('NAlert'), NButton, NCard: wrap('NCard'), NDataTable, NEmpty: wrap('NEmpty'), NForm: wrap('NForm'), NFormItem: wrap('NFormItem'), NGrid: wrap('NGrid'), NGridItem: wrap('NGridItem'), NInput, NSelect, NSpace: wrap('NSpace'), NSpin: wrap('NSpin'), NStatistic, NTabPane, NTabs: wrap('NTabs'), NTag: wrap('NTag'), useMessage: () => ({ success: vi.fn(), error: vi.fn(), warning: vi.fn() }) };
+  return { NAlert: wrap('NAlert'), NButton, NCard: wrap('NCard'), NDataTable, NEmpty: wrap('NEmpty'), NForm: wrap('NForm'), NFormItem: wrap('NFormItem'), NGrid: wrap('NGrid'), NGridItem: wrap('NGridItem'), NInput, NSelect, NSpace: wrap('NSpace'), NSpin: wrap('NSpin'), NStatistic, NTabPane, NTabs, NTag: wrap('NTag'), useMessage: () => ({ success: vi.fn(), error: vi.fn(), warning: vi.fn() }) };
 });
 
 import AnalysisView from '../src/views/AnalysisView.vue';
@@ -62,6 +66,8 @@ function installFetch() {
 
 describe('AnalysisView P6 behavior', () => {
   beforeEach(() => {
+    for (const key of Object.keys(routeQuery)) delete routeQuery[key];
+    replace.mockReset();
     chartSetOption.mockReset();
     chartResize.mockReset();
     document.documentElement.style.setProperty('--ui-text', '#f8fafc');
@@ -74,6 +80,17 @@ describe('AnalysisView P6 behavior', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     document.documentElement.removeAttribute('style');
+  });
+
+  it('restores the analysis tab from the URL and persists tab navigation', async () => {
+    routeQuery.tab = 'alerts';
+    const wrapper = mount(AnalysisView, { props: { currentUser: readonly } });
+    await flushPromises();
+    const tabs = wrapper.findComponent({ name: 'NTabs' });
+    expect(tabs.props('value')).toBe('alerts');
+    tabs.vm.$emit('update:value', 'reserve');
+    await flushPromises();
+    expect(replace).toHaveBeenCalledWith({ query: { tab: 'reserve' } });
   });
 
   it('shows real progress, reserve categories and active alerts', async () => {

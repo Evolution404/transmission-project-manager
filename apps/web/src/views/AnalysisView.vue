@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, h, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import {
   NAlert,
   NButton,
@@ -37,14 +38,20 @@ import type {
 } from '@tpm/shared';
 
 const props = defineProps<{ currentUser: CurrentUser }>();
+const route = useRoute();
+const router = useRouter();
 const message = useMessage();
 const canPlan = computed(() => props.currentUser.role === 'admin' || props.currentUser.role === 'project_manager');
 const isAdmin = computed(() => props.currentUser.role === 'admin');
 
+type AnalysisTab = 'progress' | 'reserve' | 'milestones' | 'alerts';
+const analysisTabs = new Set<AnalysisTab>(['progress', 'reserve', 'milestones', 'alerts']);
+
 const loading = ref(true);
 const saving = ref(false);
 const error = ref('');
-const activeTab = ref('progress');
+const requestedTab = typeof route.query.tab === 'string' ? route.query.tab : '';
+const activeTab = ref<AnalysisTab>(analysisTabs.has(requestedTab as AnalysisTab) ? requestedTab as AnalysisTab : 'progress');
 const frameworks = ref<FrameworkSummary[]>([]);
 const projects = ref<FinanceProjectSummary[]>([]);
 const selectedFrameworkId = ref<string | null>(null);
@@ -262,7 +269,18 @@ async function renderCharts() {
   }
 }
 function resizeCharts() { progressChart?.resize(); reserveChart?.resize(); }
-async function handleTabChange() { await nextTick(); await renderCharts(); resizeCharts(); }
+async function handleTabChange(value: string | number) {
+  const nextTab = String(value) as AnalysisTab;
+  if (!analysisTabs.has(nextTab)) return;
+  activeTab.value = nextTab;
+  const query = { ...route.query };
+  if (nextTab === 'progress') delete query.tab;
+  else query.tab = nextTab;
+  void router.replace({ query });
+  await nextTick();
+  await renderCharts();
+  resizeCharts();
+}
 function handleThemeChange() { void renderCharts().then(resizeCharts); }
 
 onMounted(() => {
@@ -313,7 +331,7 @@ onBeforeUnmount(() => {
 
       <n-alert v-if="progress?.lagging" type="warning" :bordered="false" class="analysis-warning">{{ progress.frameworkName }} 当前低于规则要求；规则为 {{ progress.rule.mode === 'ratio' ? '同期计划达成率' : '年度目标落后百分点' }} {{ formatPercent(progress.rule.thresholdBasisPoints) }}。</n-alert>
 
-      <n-tabs v-model:value="activeTab" type="line" animated @update:value="handleTabChange">
+      <n-tabs :value="activeTab" type="line" animated @update:value="handleTabChange">
         <n-tab-pane name="progress" tab="进度与缺口">
           <div class="analysis-two-column">
             <section class="analysis-panel chart-panel">
@@ -434,7 +452,7 @@ onBeforeUnmount(() => {
 .analysis-metrics, .reserve-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); overflow: hidden; border: 1px solid var(--ui-border); border-radius: var(--ui-radius-lg); background: var(--ui-surface); }
 .analysis-metrics > div, .reserve-metrics > div { display: grid; gap: 7px; min-height: 92px; align-content: center; padding: 14px 17px; }
 .analysis-metrics > div + div, .reserve-metrics > div + div { border-left: 1px solid var(--ui-border); }
-.analysis-metrics span, .reserve-metrics span { color: var(--ui-text-tertiary); font-size: 11px; }
+.analysis-metrics span, .reserve-metrics span { color: var(--ui-text-tertiary); font-size: 13px; }
 .analysis-metrics strong, .reserve-metrics strong { font-size: 20px; font-weight: 690; font-variant-numeric: tabular-nums; letter-spacing: -.015em; }
 .reserve-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); margin-bottom: 16px; }
 .analysis-warning { margin-top: 14px; }
@@ -444,7 +462,7 @@ onBeforeUnmount(() => {
 .analysis-panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 58px; padding: 12px 16px; border-bottom: 1px solid var(--ui-border); }
 .analysis-panel-heading > div { display: grid; gap: 3px; }
 .analysis-panel-heading h3 { margin: 0; font-size: 14px; font-weight: 680; }
-.analysis-panel-heading p { margin: 0; color: var(--ui-text-tertiary); font-size: 10px; }
+.analysis-panel-heading p { margin: 0; color: var(--ui-text-tertiary); font-size: 12px; }
 .chart { width: 100%; height: 280px; }
 .quarter-list { display: grid; padding: 4px 16px 12px; }
 .quarter-row { display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; gap: 12px; align-items: center; min-height: 58px; border-bottom: 1px solid var(--ui-border); }
@@ -452,19 +470,19 @@ onBeforeUnmount(() => {
 .quarter-index { color: var(--ui-text-secondary); font-size: 12px; font-weight: 700; }
 .quarter-row > div { display: grid; gap: 2px; }
 .quarter-row strong { font-size: 13px; font-weight: 650; }
-.quarter-row small { color: var(--ui-text-tertiary); font-size: 10px; }
+.quarter-row small { color: var(--ui-text-tertiary); font-size: 12px; }
 .configuration-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .configuration-group { min-width: 0; padding: 16px; }
 .configuration-group + .configuration-group { border-left: 1px solid var(--ui-border); }
 .configuration-group > strong { display: block; margin-bottom: 12px; font-size: 12px; font-weight: 680; }
 .configuration-fields { display: grid; grid-template-columns: .75fr 1.25fr; gap: 10px; }
-.configuration-empty { color: var(--ui-text-tertiary); font-size: 11px; }
-.report-history { display: grid; gap: 4px; margin-top: 10px; color: var(--ui-text-secondary); font-size: 10px; }
+.configuration-empty { color: var(--ui-text-tertiary); font-size: 12px; }
+.report-history { display: grid; gap: 4px; margin-top: 10px; color: var(--ui-text-secondary); font-size: 12px; }
 .category-list { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 16px 16px; }
 .milestone-form-grid { display: grid; grid-template-columns: 1.35fr 1fr .9fr .7fr 1fr auto; gap: 10px; align-items: end; padding: 16px; }
 .analysis-mobile-list { display: none; }
 .mobile-row-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
-.mobile-facts { display: flex; flex-wrap: wrap; gap: 5px 12px; color: var(--ui-text-tertiary); font-size: 10px; }
+.mobile-facts { display: flex; flex-wrap: wrap; gap: 5px 12px; color: var(--ui-text-tertiary); font-size: 12px; }
 @media (max-width: 1050px) {
   .analysis-two-column { grid-template-columns: 1fr; }
   .configuration-grid { grid-template-columns: 1fr; }
@@ -487,7 +505,7 @@ onBeforeUnmount(() => {
   .analysis-mobile-list { display: grid; }
   .analysis-mobile-row { display: grid; gap: 7px; padding: 13px 14px; border-bottom: 1px solid var(--ui-border); }
   .analysis-mobile-row:last-child { border-bottom: 0; }
-  .analysis-mobile-row > strong, .mobile-row-head strong { font-size: 12px; font-weight: 650; }
+  .analysis-mobile-row > strong, .mobile-row-head strong { font-size: 14px; font-weight: 650; }
   .milestone-mobile-row > .n-button { justify-self: start; }
 }
 </style>

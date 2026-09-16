@@ -63,7 +63,8 @@ async function saveProject() {
     }));
     createOpen.value = false;
     message.success('项目已创建，可继续补充来源需求和项目物资');
-    void router.push({ name: 'project-detail', params: { projectId: created.id } });
+    const from = route.fullPath?.startsWith('/projects') ? route.fullPath : '/projects';
+    void router.push({ name: 'project-detail', params: { projectId: created.id }, query: { from } });
   } catch (cause) {
     createError.value = cause instanceof Error ? cause.message : '项目创建失败';
   } finally {
@@ -210,7 +211,7 @@ onMounted(() => loadPage());
 .list-toolbar { display: flex; align-items: center; gap: 12px; min-height: 64px; padding: 12px 16px; border-bottom: 1px solid var(--ui-border); }
 .list-toolbar :deep(.n-input) { max-width: 420px; }
 .stage-filter { width: 150px; }
-.result-count { color: var(--ui-text-tertiary); font-size: 11px; white-space: nowrap; }
+.result-count { color: var(--ui-text-tertiary); font-size: 12px; white-space: nowrap; }
 .project-link { padding: 0; border: 0; background: none; color: var(--ui-text); font: inherit; font-weight: 660; cursor: pointer; text-align: left; }
 .project-link:hover { color: var(--ui-accent); }
 .inline-error { margin: 14px 16px 0; padding: 11px 13px; border-radius: 10px; background: var(--ui-danger-soft); color: var(--ui-danger); font-size: 12px; }
@@ -218,10 +219,10 @@ onMounted(() => loadPage());
 .mobile-project-list { display: none; }
 .create-intro { display: grid; gap: 5px; margin-bottom: 20px; padding: 13px 14px; border: 1px solid var(--ui-border); border-radius: 11px; background: var(--ui-surface-subtle); }
 .create-intro strong { font-size: 14px; }
-.create-intro span { color: var(--ui-text-secondary); font-size: 12px; line-height: 1.55; }
+.create-intro span { color: var(--ui-text-secondary); font-size: 13px; line-height: 1.55; }
 .create-error { margin-bottom: 14px; padding: 11px 13px; border-radius: 10px; background: var(--ui-danger-soft); color: var(--ui-danger); font-size: 12px; }
 .drawer-actions { position: sticky; bottom: 0; display: flex; justify-content: flex-end; gap: 10px; padding-top: 16px; background: var(--ui-surface); }
-.status-pill { display: inline-flex; align-items: center; min-height: 22px; padding: 0 8px; border-radius: 999px; font-size: 10px; font-weight: 650; white-space: nowrap; }
+.status-pill { display: inline-flex; align-items: center; min-height: 24px; padding: 0 9px; border-radius: 999px; font-size: 12px; font-weight: 650; white-space: nowrap; }
 .status-pill.confirmed { background: var(--ui-success-soft); color: var(--ui-success); }
 .status-pill.draft { background: var(--ui-surface-muted); color: var(--ui-text-secondary); }
 @media (max-width: 767px) {
@@ -236,7 +237,7 @@ onMounted(() => loadPage());
   .mobile-project-card:last-child { border-bottom: 0; }
   .mobile-project-title-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
   .mobile-project-title-row strong { font-size: 14px; line-height: 1.45; }
-  .mobile-project-meta, .mobile-project-facts { color: var(--ui-text-secondary); font-size: 11px; }
+  .mobile-project-meta, .mobile-project-facts { color: var(--ui-text-secondary); font-size: 13px; }
   .mobile-project-facts { display: flex; flex-wrap: wrap; gap: 6px 12px; }
   :global(.project-create-drawer .n-drawer) { width: 100vw !important; max-width: 100vw !important; }
   .drawer-actions { padding-bottom: max(14px, env(safe-area-inset-bottom)); }

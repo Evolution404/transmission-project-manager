@@ -170,10 +170,10 @@ async function save() {
 <style scoped>
 .progress-context { display: grid; gap: 4px; margin-bottom: 18px; }
 .progress-context strong { font-size: 18px; }
-.progress-context span, .drawer-subsection > span { color: var(--ui-text-secondary); font-size: 12px; line-height: 1.55; }
+.progress-context span, .drawer-subsection > span { color: var(--ui-text-secondary); font-size: 13px; line-height: 1.55; }
 .progress-current { display: grid; gap: 1px; overflow: hidden; margin-bottom: 18px; border: 1px solid var(--ui-border); border-radius: 14px; background: var(--ui-border); }
 .progress-current > div { display: flex; justify-content: space-between; gap: 16px; padding: 11px 14px; background: var(--ui-surface); }
-.progress-current span, .drawer-line span { color: var(--ui-text-secondary); font-size: 12px; }
+.progress-current span, .drawer-line span { color: var(--ui-text-secondary); font-size: 13px; }
 .remaining-row { background: var(--ui-accent-soft) !important; }
 .progress-alert, .final-warning { margin-bottom: 14px; }
 .money-quantity-fields { display: grid; grid-template-columns: 1.2fr .8fr; gap: 12px; }

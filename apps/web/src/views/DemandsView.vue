@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, h, onMounted, ref } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import {
   NAlert,
   NButton,
@@ -46,15 +47,21 @@ import AppFilePicker from '../app/AppFilePicker.vue';
 import AppPressable from '../app/AppPressable.vue';
 
 const props = defineProps<{ currentUser: CurrentUser }>();
+const route = useRoute();
+const router = useRouter();
 const message = useMessage();
 const canWrite = computed(() => props.currentUser.role === 'admin' || props.currentUser.role === 'project_manager');
+
+type DemandWorkspaceTab = 'pool' | 'import' | 'materials';
+const demandWorkspaceTabs = new Set<DemandWorkspaceTab>(['pool', 'import', 'materials']);
 
 const loading = ref(true);
 const error = ref('');
 const demands = ref<DemandSummary[]>([]);
 const demandCursor = ref<string | null>(null);
 const demandQuery = ref('');
-const activeTab = ref<'pool' | 'import' | 'materials'>('pool');
+const requestedTab = typeof route.query.tab === 'string' ? route.query.tab : '';
+const activeTab = ref<DemandWorkspaceTab>(demandWorkspaceTabs.has(requestedTab as DemandWorkspaceTab) ? requestedTab as DemandWorkspaceTab : 'pool');
 const selectedDemand = ref<DemandDetail | null>(null);
 const materials = ref<MaterialSummary[]>([]);
 const mappingTemplates = ref<ImportMappingTemplate[]>([]);
@@ -88,6 +95,16 @@ const manualDemandForm = ref({
   startTowerPositionId: '', endTowerPositionId: '', year: '', category: '', owner: '',
 });
 const manualDemandMaterials = ref<Array<{ id: string; model: string; quantity: string; unit: string }>>([]);
+
+function setActiveTab(value: string | number) {
+  const nextTab = String(value) as DemandWorkspaceTab;
+  if (!demandWorkspaceTabs.has(nextTab)) return;
+  activeTab.value = nextTab;
+  const query = { ...route.query };
+  if (nextTab === 'pool') delete query.tab;
+  else query.tab = nextTab;
+  void router.replace({ query });
+}
 
 const fieldDefinitions: Array<{ key: keyof ImportFieldMapping; label: string; required: boolean }> = [
   { key: 'sequenceNo', label: '序号', required: true },
@@ -494,7 +511,7 @@ onMounted(loadInitial);
         </div>
       </header>
 
-      <n-tabs v-model:value="activeTab" type="line" animated class="workspace-tabs">
+      <n-tabs :value="activeTab" type="line" animated class="workspace-tabs" @update:value="setActiveTab">
         <n-tab-pane name="pool" tab="需求池">
           <n-alert v-if="!canWrite" type="info" title="只读模式" class="section-note">
             仅管理员或项目管理角色可以手工新增或批量导入需求。
@@ -805,18 +822,18 @@ onMounted(loadInitial);
 .demands-view { max-width: 1420px; }
 .section-note { margin-bottom: 16px; }
 .workspace-tabs :deep(.n-tabs-nav) { margin-bottom: 2px; }
-.workspace-tabs :deep(.n-tabs-tab) { padding-inline: 2px; margin-right: 24px; font-size: 12px; }
+.workspace-tabs :deep(.n-tabs-tab) { padding-inline: 2px; margin-right: 24px; font-size: 14px; }
 .demand-list-surface { overflow: hidden; border: 1px solid var(--ui-border); border-radius: var(--ui-radius-lg); background: var(--ui-surface); }
 .demand-list-toolbar { display: flex; align-items: center; gap: 10px; min-height: 64px; padding: 12px 16px; border-bottom: 1px solid var(--ui-border); }
 .search-input { width: min(360px, 42vw); }
-.list-count { margin-left: auto; color: var(--ui-text-tertiary); font-size: 11px; white-space: nowrap; }
+.list-count { margin-left: auto; color: var(--ui-text-tertiary); font-size: 12px; white-space: nowrap; }
 .mobile-demand-list { display: none; }
 .import-workflow, .dictionary-panel { overflow: hidden; border: 1px solid var(--ui-border); border-radius: var(--ui-radius-lg); background: var(--ui-surface); }
 .import-step + .import-step { border-top: 1px solid var(--ui-border); }
 .import-step-header, .dictionary-panel-header { display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; gap: 12px; align-items: center; min-height: 64px; padding: 13px 16px; }
 .dictionary-panel-header { grid-template-columns: minmax(0, 1fr) auto; border-bottom: 1px solid var(--ui-border); }
 .import-step-header h3, .dictionary-panel-header h3 { margin: 0; color: var(--ui-text); font-size: 14px; font-weight: 680; }
-.import-step-header p, .dictionary-panel-header p { margin: 3px 0 0; color: var(--ui-text-secondary); font-size: 11px; line-height: 1.5; }
+.import-step-header p, .dictionary-panel-header p { margin: 3px 0 0; color: var(--ui-text-secondary); font-size: 13px; line-height: 1.5; }
 .step-number { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 9px; background: var(--ui-accent-soft); color: var(--ui-accent); font-size: 12px; font-weight: 750; }
 .import-step-body { padding: 0 16px 18px 58px; }
 .final-step .import-step-body { padding-bottom: 20px; }
@@ -836,7 +853,7 @@ onMounted(loadInitial);
 .load-more { display: flex; justify-content: center; padding: 14px 16px; border-top: 1px solid var(--ui-border); }
 .detail-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
 .detail-grid div { display: grid; gap: 4px; padding: 12px 13px; border: 1px solid var(--ui-border); border-radius: 10px; background: var(--ui-surface-subtle); }
-.detail-grid span { color: var(--ui-text-tertiary); font-size: 11px; }
+.detail-grid span { color: var(--ui-text-tertiary); font-size: 12px; }
 .detail-grid strong { color: var(--ui-text); font-size: 13px; }
 .detail-grid-polished { margin-bottom: 6px; }
 .material-lines { display: grid; gap: 8px; margin-top: 20px; }
@@ -856,7 +873,7 @@ onMounted(loadInitial);
 .material-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .material-section-heading > div { display: grid; gap: 3px; }
 .material-section-heading strong { color: var(--ui-text); font-size: 12px; }
-.material-section-heading span { color: var(--ui-text-tertiary); font-size: 11px; font-weight: 400; }
+.material-section-heading span { color: var(--ui-text-tertiary); font-size: 12px; font-weight: 400; }
 .manual-material-list { display: grid; gap: 10px; }
 .manual-material-row {
   display: grid;
@@ -878,7 +895,7 @@ onMounted(loadInitial);
   border-radius: 8px;
   background: var(--ui-accent-soft);
   color: var(--ui-accent);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 750;
 }
 .manual-material-remove { margin-bottom: 2px; }
@@ -935,10 +952,10 @@ onMounted(loadInitial);
   .mobile-demand-heading { display: grid; grid-template-columns: minmax(0,1fr) 18px; align-items: center; gap: 12px; }
   .mobile-demand-heading > div { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
   .mobile-demand-heading strong { font-size: 13px; font-weight: 700; }
-  .mobile-demand-heading span { color: var(--ui-text-tertiary); font-size: 10px; }
+  .mobile-demand-heading span { color: var(--ui-text-tertiary); font-size: 12px; }
   .mobile-demand-chevron { justify-self: end; color: var(--ui-text-tertiary) !important; font-size: 20px !important; }
   .mobile-demand-line { overflow: hidden; font-size: 14px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
-  .mobile-demand-meta { display: flex; flex-wrap: wrap; gap: 5px 12px; color: var(--ui-text-secondary); font-size: 11px; }
+  .mobile-demand-meta { display: flex; flex-wrap: wrap; gap: 5px 12px; color: var(--ui-text-secondary); font-size: 13px; }
   .desktop-material-table { display: none; }
   .mobile-material-list { display: grid; }
   .mobile-material-item { display: grid; gap: 8px; padding: 14px; border-bottom: 1px solid var(--ui-border); }
@@ -946,8 +963,8 @@ onMounted(loadInitial);
   .mobile-material-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
   .mobile-material-head > div { display: grid; gap: 3px; min-width: 0; }
   .mobile-material-head strong { overflow: hidden; font-size: 13px; font-weight: 680; text-overflow: ellipsis; white-space: nowrap; }
-  .mobile-material-head span { color: var(--ui-text-tertiary); font-size: 10px; }
-  .mobile-material-facts { display: flex; flex-wrap: wrap; gap: 5px 14px; color: var(--ui-text-secondary); font-size: 11px; }
+  .mobile-material-head span { color: var(--ui-text-tertiary); font-size: 12px; }
+  .mobile-material-facts { display: flex; flex-wrap: wrap; gap: 5px 14px; color: var(--ui-text-secondary); font-size: 13px; }
 }
 @media (max-width: 560px) {
   .material-section-heading { align-items: flex-start; }

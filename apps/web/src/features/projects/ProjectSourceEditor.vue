@@ -133,11 +133,11 @@ watch(query, () => {
 
 <style scoped>
 .editor-intro { display: grid; gap: 5px; margin-bottom: 16px; padding: 13px 14px; border: 1px solid var(--ui-border); border-radius: 11px; background: var(--ui-surface-subtle); }
-.editor-intro strong { font-size: 13px; }.editor-intro span { color: var(--ui-text-secondary); font-size: 11px; line-height: 1.6; }
+.editor-intro strong { font-size: 13px; }.editor-intro span { color: var(--ui-text-secondary); font-size: 12px; line-height: 1.6; }
 .editor-alert { margin-bottom: 14px; }.selected-section,.search-section { padding: 16px 0; border-top: 1px solid var(--ui-border); }.selected-section { border-top: 0; padding-top: 0; }
-.editor-heading { display: flex; justify-content: space-between; margin-bottom: 10px; }.editor-heading h4 { margin: 0; font-size: 13px; }.editor-heading p { margin: 3px 0 0; color: var(--ui-text-tertiary); font-size: 10px; }
+.editor-heading { display: flex; justify-content: space-between; margin-bottom: 10px; }.editor-heading h4 { margin: 0; font-size: 13px; }.editor-heading p { margin: 3px 0 0; color: var(--ui-text-tertiary); font-size: 12px; }
 .selected-list,.candidate-list { display: grid; }.selected-list > div,.candidate-list label { display: flex; align-items: center; gap: 10px; min-height: 54px; padding: 8px 2px; border-bottom: 1px solid var(--ui-border); }.selected-list > div { justify-content: space-between; }.candidate-list label { cursor: pointer; }
-.selected-list span,.candidate-list label > span:last-child { display: grid; gap: 2px; min-width: 0; flex: 1; }.selected-list strong,.candidate-list strong { font-size: 12px; }.selected-list small,.candidate-list small { overflow: hidden; color: var(--ui-text-secondary); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.selected-list span,.candidate-list label > span:last-child { display: grid; gap: 2px; min-width: 0; flex: 1; }.selected-list strong,.candidate-list strong { font-size: 12px; }.selected-list small,.candidate-list small { overflow: hidden; color: var(--ui-text-secondary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .candidate-list { max-height: 360px; margin-top: 10px; overflow: auto; }.editor-actions { position: sticky; bottom: 0; display: flex; justify-content: flex-end; gap: 9px; padding: 14px 0 max(4px, env(safe-area-inset-bottom)); background: var(--ui-surface); }
 @media(max-width:767px){ :global(.project-source-drawer .n-drawer){width:100vw!important;max-width:100vw!important}.editor-actions .n-button:last-child{flex:1}.candidate-list{max-height:none} }
 </style>

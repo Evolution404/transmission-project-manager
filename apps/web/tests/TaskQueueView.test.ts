@@ -5,7 +5,7 @@ import type { CurrentUser, TaskQueuePage } from '@tpm/shared';
 const push = vi.fn();
 const replace = vi.fn();
 const routeQuery = vi.hoisted(() => ({} as Record<string, string>));
-vi.mock('vue-router', () => ({ useRoute: () => ({ query: routeQuery }), useRouter: () => ({ push, replace }) }));
+vi.mock('vue-router', () => ({ useRoute: () => ({ query: routeQuery, fullPath: '/tasks' }), useRouter: () => ({ push, replace }) }));
 
 vi.mock('naive-ui', async () => {
   const vue = await import('vue');
@@ -62,7 +62,7 @@ describe('TaskQueueView', () => {
     expect(wrapper.text()).not.toContain('到货 70');
     expect(wrapper.get('[data-test="mobile-open-task-t1"]').text()).toContain('未实施未结算');
     await wrapper.get('[data-test="open-task-t1"]').trigger('click');
-    expect(push).toHaveBeenCalledWith('/projects/p1/tasks/t1');
+    expect(push).toHaveBeenCalledWith({ path: '/projects/p1/tasks/t1', query: { from: '/tasks' } });
   });
 
   it('sends status filtering to the server and resets the cursor-backed list', async () => {

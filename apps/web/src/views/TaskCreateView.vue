@@ -11,6 +11,13 @@ const route = useRoute();
 const router = useRouter();
 const message = useMessage();
 const projectId = computed(() => String(route.params.projectId));
+const projectTasksPath = computed(() => `/projects/${encodeURIComponent(projectId.value)}?tab=tasks`);
+const returnTarget = computed(() => {
+  const from = typeof route.query.from === 'string' ? route.query.from : '';
+  const projectPath = `/projects/${encodeURIComponent(projectId.value)}`;
+  if (from === projectPath || from.startsWith(`${projectPath}?`)) return from;
+  return projectTasksPath.value;
+});
 const project = ref<ReserveProjectSummary | null>(null);
 const execution = ref<ProjectExecutionSummary | null>(null);
 const loading = ref(true);
@@ -131,7 +138,10 @@ async function saveTask() {
       materials,
     }, idempotencyKey.value));
     message.success('执行任务已创建');
-    void router.push(`/projects/${encodeURIComponent(project.value.id)}/tasks/${encodeURIComponent(created.id)}`);
+    void router.push({
+      path: `/projects/${encodeURIComponent(project.value.id)}/tasks/${encodeURIComponent(created.id)}`,
+      query: { from: returnTarget.value },
+    });
   } catch (cause) {
     if (cause instanceof ApiRequestError && cause.status === 409) {
       conflict.value = true;
@@ -151,7 +161,7 @@ async function reloadProject() {
   idempotencyKey.value = crypto.randomUUID();
 }
 
-function backToProject() { void router.push(`/projects/${encodeURIComponent(projectId.value)}?tab=tasks`); }
+function backToProject() { void router.push(returnTarget.value); }
 
 watch([name, scopeText, owner, plannedDate, plannedQuantity, unit, demandQuantities, materialQuantities], () => {
   idempotencyKey.value = crypto.randomUUID();
@@ -258,7 +268,7 @@ onMounted(() => {
 .form-surface { padding: 20px; border: 1px solid var(--ui-border); border-radius: var(--ui-radius-lg); background: var(--ui-surface); }
 .section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
 .section-heading h3 { margin: 0; font-size: 18px; }
-.section-heading span { display: block; margin-top: 4px; color: var(--ui-text-secondary); font-size: 12px; font-weight: 400; }
+.section-heading span { display: block; margin-top: 4px; color: var(--ui-text-secondary); font-size: 13px; font-weight: 400; }
 .section-heading > strong { color: var(--ui-text-secondary); font-size: 13px; white-space: nowrap; }
 .two-column-fields, .quantity-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .quantity-fields { grid-template-columns: 1.5fr .5fr; }
@@ -266,7 +276,7 @@ onMounted(() => {
 .allocation-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(150px, 210px); gap: 18px; align-items: center; min-height: 68px; padding: 10px 0; border-bottom: 1px solid var(--ui-border); }
 .allocation-row:last-child { border-bottom: 0; }
 .allocation-row > div:first-child { display: grid; gap: 4px; }
-.allocation-row span { color: var(--ui-text-secondary); font-size: 12px; }
+.allocation-row span { color: var(--ui-text-secondary); font-size: 13px; }
 .material-input { display: flex; align-items: center; gap: 8px; }
 .material-input > span { flex: 0 0 auto; }
 .form-actions { position: sticky; bottom: 0; z-index: 5; display: flex; justify-content: flex-end; gap: 10px; padding: 14px 0; background: linear-gradient(180deg, transparent, var(--ui-canvas) 24%); }

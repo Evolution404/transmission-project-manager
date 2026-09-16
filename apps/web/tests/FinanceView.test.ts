@@ -3,7 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CurrentUser } from '@tpm/shared';
 
 const routeQuery = vi.hoisted(() => ({} as Record<string, string>));
-vi.mock('vue-router', () => ({ useRoute: () => ({ query: routeQuery }) }));
+const push = vi.fn();
+const replace = vi.fn();
+vi.mock('vue-router', () => ({ useRoute: () => ({ query: routeQuery }), useRouter: () => ({ push, replace }) }));
 
 vi.mock('naive-ui', async () => {
   const vue = await import('vue');
@@ -40,10 +42,14 @@ vi.mock('naive-ui', async () => {
     name: 'NTabPane', props: { name: String, tab: String },
     setup(props, { slots }) { return () => vue.h('section', { 'data-tab': props.name }, [vue.h('h3', props.tab), slots.default?.()]); },
   });
+  const NTabs = vue.defineComponent({
+    name: 'NTabs', props: { value: String }, emits: ['update:value'],
+    setup(props, { slots, attrs }) { return () => vue.h('div', { ...attrs, 'data-stub': 'NTabs', 'data-value': props.value }, slots.default?.()); },
+  });
   return {
     NAlert: wrap('NAlert'), NButton, NCard: wrap('NCard'), NDataTable, NEmpty: wrap('NEmpty'), NForm: wrap('NForm'),
     NFormItem: wrap('NFormItem'), NInput, NSelect, NSpace: wrap('NSpace'), NSpin: wrap('NSpin'), NStatistic: wrap('NStatistic'),
-    NTabPane, NTabs: wrap('NTabs'), NTag: wrap('NTag'),
+    NTabPane, NTabs, NTag: wrap('NTag'),
     useMessage: () => ({ success: vi.fn(), error: vi.fn(), warning: vi.fn() }),
   };
 });
@@ -103,7 +109,7 @@ describe('FinanceView P4 behavior', () => {
     for (const key of Object.keys(routeQuery)) delete routeQuery[key];
     installFetch();
   });
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(() => { vi.unstubAllGlobals(); push.mockReset(); replace.mockReset(); });
 
   it('shows framework usage warnings and keeps budget occurrence distinct from actual cost', async () => {
     const wrapper = mount(FinanceView, { props: { currentUser: admin } });
@@ -195,9 +201,32 @@ describe('FinanceView P4 behavior', () => {
 
   it('honors projectId from the route so project detail can deep-link into the matching budget context', async () => {
     routeQuery.projectId = 'p1';
+    routeQuery.tab = 'budgets';
     const wrapper = mount(FinanceView, { props: { currentUser: admin } });
     await flushPromises();
     expect(wrapper.get('[data-test="budget-project"]').attributes('value')).toBe('p1');
+    expect(wrapper.findComponent({ name: 'NTabs' }).props('value')).toBe('budgets');
     expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url) === '/api/budgets?projectId=p1')).toBe(true);
+  });
+
+  it('persists finance workspace tab changes without discarding project context', async () => {
+    routeQuery.projectId = 'p1';
+    routeQuery.tab = 'budgets';
+    const wrapper = mount(FinanceView, { props: { currentUser: admin } });
+    await flushPromises();
+    wrapper.findComponent({ name: 'NTabs' }).vm.$emit('update:value', 'entries');
+    await flushPromises();
+    expect(replace).toHaveBeenCalledWith({ query: { projectId: 'p1', tab: 'entries' } });
+  });
+
+  it('offers a safe return to the originating project when opened from project detail', async () => {
+    routeQuery.projectId = 'p1';
+    routeQuery.from = '/projects/p1?tab=finance&from=%2Fprojects%3Fstage%3Dreserve';
+    const wrapper = mount(FinanceView, { props: { currentUser: admin } });
+    await flushPromises();
+
+    expect(wrapper.find('[data-test="back-to-project"]').exists()).toBe(true);
+    await wrapper.get('[data-test="back-to-project"]').trigger('click');
+    expect(push).toHaveBeenCalledWith('/projects/p1?tab=finance&from=%2Fprojects%3Fstage%3Dreserve');
   });
 });

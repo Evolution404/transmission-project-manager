@@ -489,15 +489,15 @@ onMounted(load);
 .setting-row:last-child { border-bottom: 0; }
 .setting-copy, .setting-value { display: grid; gap: 4px; min-width: 0; }
 .setting-copy strong, .setting-value strong { color: var(--ui-text); font-size: 13px; font-weight: 650; }
-.setting-copy small, .setting-value small { color: var(--ui-text-tertiary); font-size: 11px; line-height: 1.5; }
+.setting-copy small, .setting-value small { color: var(--ui-text-tertiary); font-size: 13px; line-height: 1.5; }
 .setting-value { text-align: right; }
 .member-cell { display: grid; gap: 3px; }
 .member-cell strong { font-size: 13px; font-weight: 650; }
-.member-cell small { color: var(--ui-text-tertiary); font-size: 11px; }
+.member-cell small { color: var(--ui-text-tertiary); font-size: 13px; }
 .member-modal { width: min(640px, calc(100vw - 32px)); max-height: min(88vh, 780px); }
 :deep(.member-modal .n-card__content) { overflow-y: auto; overscroll-behavior: contain; }
 .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 14px; }
-.switch-row { display: flex; align-items: center; gap: 10px; min-height: 40px; color: var(--ui-text-secondary); font-size: 12px; }
+.switch-row { display: flex; align-items: center; gap: 10px; min-height: 40px; color: var(--ui-text-secondary); font-size: 13px; }
 .scope-note, .form-alert { margin-bottom: 14px; }
 .scope-editor { display: grid; gap: 10px; margin: 4px 0 18px; }
 .scope-row { display: grid; grid-template-columns: 140px minmax(0, 1fr) auto; gap: 10px; align-items: center; }
@@ -522,7 +522,7 @@ onMounted(load);
   .member-avatar { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 10px; background: var(--ui-surface-muted); color: var(--ui-text-secondary); font-size: 13px; font-weight: 700; }
   .member-mobile-copy { display: grid; gap: 3px; min-width: 0; }
   .member-mobile-copy strong { overflow: hidden; font-size: 13px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
-  .member-mobile-copy small { overflow: hidden; color: var(--ui-text-tertiary); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+  .member-mobile-copy small { overflow: hidden; color: var(--ui-text-tertiary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
   .setting-row { grid-template-columns: 1fr; gap: 8px; min-height: 0; padding: 14px; }
   .setting-value { text-align: left; }
   .form-grid, .scope-row { grid-template-columns: 1fr; }

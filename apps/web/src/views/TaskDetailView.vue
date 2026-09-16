@@ -14,12 +14,24 @@ const router = useRouter();
 const message = useMessage();
 const projectId = computed(() => String(route.params.projectId));
 const taskId = computed(() => String(route.params.taskId));
+const projectTasksPath = computed(() => `/projects/${encodeURIComponent(projectId.value)}?tab=tasks`);
+const returnTarget = computed(() => {
+  const from = typeof route.query.from === 'string' ? route.query.from : '';
+  if (from.startsWith('/tasks')) return from;
+  const projectPath = `/projects/${encodeURIComponent(projectId.value)}`;
+  if (from === projectPath || from.startsWith(`${projectPath}?`)) return from;
+  return projectTasksPath.value;
+});
+const returnLabel = computed(() => returnTarget.value.startsWith('/tasks') ? '返回任务队列' : '返回项目');
 const project = ref<ReserveProjectSummary | null>(null);
 const execution = ref<ProjectExecutionSummary | null>(null);
 const task = ref<ProjectTaskExecutionSummary | null>(null);
 const loading = ref(true);
 const error = ref('');
-const activeSection = ref('supply');
+type TaskDetailSection = 'supply' | 'implementation' | 'settlement' | 'scope';
+const taskDetailSections = new Set<TaskDetailSection>(['supply', 'implementation', 'settlement', 'scope']);
+const requestedSection = typeof route.query.section === 'string' ? route.query.section : '';
+const activeSection = ref<TaskDetailSection>(taskDetailSections.has(requestedSection as TaskDetailSection) ? requestedSection as TaskDetailSection : 'supply');
 type SupplyStage = 'reported' | 'shipped' | 'arrived';
 const supplyOpen = ref(false);
 const supplyMaterialId = ref<string | null>(null);
@@ -195,14 +207,23 @@ async function reloadSupplyAfterConflict() {
   supplyIdempotencyKey.value = crypto.randomUUID();
 }
 
-function backToProject() { void router.push(`/projects/${encodeURIComponent(projectId.value)}?tab=tasks`); }
+function backToOrigin() { void router.push(returnTarget.value); }
+function setActiveSection(value: string) {
+  const nextSection = value as TaskDetailSection;
+  if (!taskDetailSections.has(nextSection)) return;
+  activeSection.value = nextSection;
+  const query = { ...route.query };
+  if (nextSection === 'supply') delete query.section;
+  else query.section = nextSection;
+  void router.replace({ query });
+}
 
 onMounted(load);
 </script>
 
 <template>
   <div class="view-stack task-detail-view">
-    <app-pressable class="breadcrumb-back" @click="backToProject">‹ 返回项目</app-pressable>
+    <app-pressable class="breadcrumb-back" @click="backToOrigin">‹ {{ returnLabel }}</app-pressable>
     <div v-if="error" class="detail-error">{{ error }} <n-button text @click="load">重新加载</n-button></div>
     <n-spin :show="loading">
       <template v-if="project && task">
@@ -247,7 +268,7 @@ onMounted(load);
         </section>
 
         <nav class="segment-nav" aria-label="任务详情分段">
-          <app-pressable v-for="item in [['supply','供应'],['implementation','实施'],['settlement','结算'],['scope','范围']]" :key="item[0]" :data-test="`task-section-${item[0]}`" :class="{ active: activeSection === item[0] }" @click="activeSection = item[0]">{{ item[1] }}</app-pressable>
+          <app-pressable v-for="item in [['supply','供应'],['implementation','实施'],['settlement','结算'],['scope','范围']]" :key="item[0]" :data-test="`task-section-${item[0]}`" :class="{ active: activeSection === item[0] }" @click="setActiveSection(item[0]!)">{{ item[1] }}</app-pressable>
         </nav>
 
         <section v-if="activeSection === 'supply'" class="detail-section">
@@ -343,8 +364,8 @@ onMounted(load);
 .summary-card { display: grid; gap: 10px; min-height: 148px; padding: 18px 20px; border: 1px solid var(--ui-border); border-radius: var(--ui-radius-lg); background: var(--ui-surface); }
 .summary-label { color: var(--ui-text-secondary); font-size: 13px; font-weight: 650; }
 .summary-card > strong { align-self: end; font-size: 24px; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
-.summary-foot, .summary-empty { color: var(--ui-text-secondary); font-size: 12px; }
-.supply-facts { display: flex; flex-wrap: wrap; gap: 7px 14px; color: var(--ui-text-secondary); font-size: 12px; }
+.summary-foot, .summary-empty { color: var(--ui-text-secondary); font-size: 13px; }
+.supply-facts { display: flex; flex-wrap: wrap; gap: 7px 14px; color: var(--ui-text-secondary); font-size: 13px; }
 .segment-nav { display: flex; gap: 4px; padding: 4px; border: 1px solid var(--ui-border); border-radius: 14px; background: var(--ui-surface-muted); overflow-x: auto; scrollbar-width: none; }
 .segment-nav button { min-width: 88px; min-height: 38px; padding: 0 15px; border: 0; border-radius: 10px; background: transparent; color: var(--ui-text-secondary); cursor: pointer; }
 .segment-nav button.active { background: var(--ui-surface); color: var(--ui-text); font-weight: 700; }
@@ -355,7 +376,7 @@ onMounted(load);
 .supply-line { display: grid; grid-template-columns: minmax(220px, 1.6fr) repeat(3, minmax(80px, .55fr)) auto; gap: 16px; align-items: center; min-height: 72px; border-bottom: 1px solid var(--ui-border); }
 .supply-line:last-child { border-bottom: 0; }
 .material-main, .stage-value { display: grid; gap: 4px; }
-.material-main span, .stage-value span { color: var(--ui-text-secondary); font-size: 12px; }
+.material-main span, .stage-value span { color: var(--ui-text-secondary); font-size: 13px; }
 .stage-value strong { font-variant-numeric: tabular-nums; }
 .placeholder-section { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
 .scope-list { display: grid; }

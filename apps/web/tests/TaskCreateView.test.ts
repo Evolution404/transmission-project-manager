@@ -4,7 +4,7 @@ import type { CurrentUser } from '@tpm/shared';
 
 const push = vi.fn();
 vi.mock('vue-router', () => ({
-  useRoute: () => ({ params: { projectId: 'p1' } }),
+  useRoute: () => ({ params: { projectId: 'p1' }, query: {} }),
   useRouter: () => ({ push }),
 }));
 
@@ -99,7 +99,10 @@ describe('TaskCreateView', () => {
       demandScopes: [{ demandId: 'd1', quantityScaled: 300000 }],
       materials: [{ projectMaterialRequirementId: 'pm1', quantityScaled: 200000 }],
     });
-    expect(push).toHaveBeenCalledWith('/projects/p1/tasks/t-new');
+    expect(push).toHaveBeenCalledWith({
+      path: '/projects/p1/tasks/t-new',
+      query: { from: '/projects/p1?tab=tasks' },
+    });
   });
 
   it('allows a released project with no demand or material rows to create a task', async () => {
