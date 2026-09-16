@@ -39,17 +39,21 @@ make test
 
 `make test` 在 `make check` 已成功生成 Web production build 后直接执行 Playwright，不重复构建 Web；单独执行 `make test-ui` 时仍会先构建 Web，保持自包含。CI 的 `headless-ui` job同样保持独立构建，不能依赖另一个 job 的本地文件。
 
-当前工程化施工分支 `refactor/engineering-hardening-20260916` 最近一次完整本地门禁：
+当前发布工程化施工分支 `refactor/release-engineering-20260916` 最近一次完整本地门禁：
 
 - TypeScript（Cloudflare API + Node runtime + Web + shared）：PASS；
 - Web production build：PASS；
 - Worker `wrangler deploy --dry-run`：PASS；
 - Vue/Vitest：**165/165 PASS（23 个测试文件）**；
-- Node：**327/327 PASS**；
+- Node：**334/334 PASS**；
 - Headless Chromium：**23/23 PASS**；
 - Node + SQLite + Filesystem 第二运行时：PASS；
 - migration checksum/单基线与 repository/static guards：PASS。
 - `make audit`：仓库工程卫生 PASS，production dependency audit **0 vulnerabilities**。
+
+CI 现在把 `audit` 作为与 `check`、`headless-ui` 并列的发布关键 job。生产 preflight/promote 不再重新执行同一 SHA 的整套测试，而是通过 `scripts/engineering/verify-release-ci.mjs` 只接受精确 `main` SHA、事件为 `push`、结论成功且三个关键 job 全绿的 CI 证据；对应选择/缺失/失败场景由 `tests/release-ci-gate.test.mjs` 锁定。
+
+生产发布后的公共语义验收由 `scripts/production/public-smoke.mjs` 自动执行，至少验证 health/schema migration、认证已初始化和匿名 `/api/me` 401；校验器纯函数由 `tests/production-public-smoke.test.mjs` 覆盖。`tests/production-preflight.test.mjs` 继续锁定生产 workflow 不绕过精确 SHA、Secret/Data protection，并要求普通 code-only deploy 也先安装 Worker rollback trap。
 
 Shared 公共契约已经从单一巨型 `index.ts` 按业务域拆分；Node 原生 TypeScript ESM 通过显式 `.ts` 相对 specifier 保证可解析，并由 repository guard、maintenance-mode 与 Node 第二运行时测试共同锁定，不能只依赖 Bundler/typecheck 通过。
 

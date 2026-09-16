@@ -21,8 +21,8 @@ help:
 	  '  make security-audit       使用 npm 官方 advisory API 审计生产依赖' \
 	  '  make build                Web + Worker production build/dry-run' \
 	  '  make ci                   触发并等待当前分支 GitHub CI' \
-	  '  make production-preflight 触发并等待 main 的生产无变更预检' \
-	  '  make production           一键触发并等待受保护的 Production promote' \
+	  '  make production-preflight 可选：复用精确 main CI 后做生产打包/dry-run 演练' \
+	  '  make production           一键发布：复用精确 main CI 后执行生产专属校验、数据保护、deploy 与 smoke' \
 	  '  make production-inventory 一键读取生产 Cloudflare inventory（只读）' \
 	  '  make status               查看 Git / 最近提交状态'
 

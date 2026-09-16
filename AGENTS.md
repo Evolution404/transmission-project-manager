@@ -2,7 +2,7 @@
 
 ## 开始工作
 
-- 当前基线：最终业务模型、基础台账对象化和后端可移植化已完成；当前进行生产发布、首管理员和真实环境验收。长期业务事实以 `docs/BUSINESS_BASELINE.md`、`docs/DESIGN.md`、`docs/DATA_MODEL.md` 为准；当前施工状态只看 `docs/AI_HANDOFF.md`，生产步骤看 `docs/PRODUCTION_RUNBOOK.md`，历史 WIP/恢复过程只通过 Git 历史追溯。生产代码、测试文件、脚本和标识符必须使用业务语义命名，禁止使用 `p2.ts`、`p9App`、`scripts/p7` 等阶段编号命名。
+- 当前基线：最终业务模型、基础台账对象化、后端可移植化、全站 UI 与第一轮工程化加固均已合入并发布生产；当前继续做代码/发布工程化审计。长期业务事实以 `docs/BUSINESS_BASELINE.md`、`docs/DESIGN.md`、`docs/DATA_MODEL.md` 为准；当前施工状态只看 `docs/AI_HANDOFF.md`，生产步骤看 `docs/PRODUCTION_RUNBOOK.md`，历史 WIP/恢复过程只通过 Git 历史追溯。生产代码、测试文件、脚本和标识符必须使用业务语义命名，禁止使用 `p2.ts`、`p9App`、`scripts/p7` 等阶段编号命名。
 - 开始前运行 `git status --short --branch`，先读 `docs/README.md`，再阅读 `docs/AI_HANDOFF.md`、`docs/BUSINESS_BASELINE.md`、`docs/IMPLEMENTATION_PLAN.md`、`docs/DESIGN.md`、`docs/DATA_MODEL.md` 和 `docs/TESTING.md`。
 - **测试先于生产代码。** 新阶段或缺陷修复先写/更新能约束目标行为的测试，再修改生产实现；完成后必须跑完整 `npm run check`。发现 bug 必须先补回归用例，禁止只修表现。
 - 不覆盖他人的未提交修改。后续若用户明确要求多个 AI 协作，先划定文件/模块所有权。
