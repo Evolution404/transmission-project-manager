@@ -117,7 +117,7 @@ npm run check
 
 ## 7. 项目储备与项目物资
 
-主要测试：`reserve-planning.test.mjs`、`final-business-flow.test.mjs`、`ReservesView.test.ts`。
+主要测试：`reserve-planning.test.mjs`、`final-business-flow.test.mjs`、`ProjectsView.test.ts`、`ProjectDetailView.test.ts`、`ProjectEditors.test.ts`。
 
 覆盖：
 
@@ -149,7 +149,7 @@ npm run check
 
 ## 9. 项目出库、任务、供应、实施和结算
 
-主要测试：`final-business-flow.test.mjs`、`project-lifecycle.test.mjs`、`DeliveryView.test.ts`。
+主要测试：`final-business-flow.test.mjs`、`project-lifecycle.test.mjs`、`TaskQueueView.test.ts`、`TaskCreateView.test.ts`、`TaskDetailView.test.ts`、`ProjectDetailView.test.ts`。
 
 最终主模型必须覆盖：
 

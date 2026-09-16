@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { router } from '../src/router';
 import DemandsView from '../src/views/DemandsView.vue';
-import ReservesView from '../src/views/ReservesView.vue';
 import FinanceView from '../src/views/FinanceView.vue';
 import AnalysisView from '../src/views/AnalysisView.vue';
 import TaskQueueView from '../src/views/TaskQueueView.vue';
@@ -20,13 +19,9 @@ describe('business routes', () => {
     expect(resolved.default).toBe(DemandsView);
   });
 
-  it('lazy-loads the real reserve conversion page at /reserves instead of the P3 placeholder', async () => {
+  it('retires the legacy reserve workspace in favor of the unified project center', () => {
     const route = router.getRoutes().find((item) => item.path === '/reserves');
-    expect(route).toBeTruthy();
-    const loader = route?.components?.default;
-    expect(typeof loader).toBe('function');
-    const resolved = await (loader as () => Promise<{ default: unknown }>)();
-    expect(resolved.default).toBe(ReservesView);
+    expect(route?.redirect).toBe('/projects');
   });
 
   it('lazy-loads the real finance workspace at /finance instead of the P4 placeholder', async () => {

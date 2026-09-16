@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { NAlert, NButton, NDatePicker, NDrawer, NDrawerContent, NEmpty, NForm, NFormItem, NInput, NProgress, NSpin, NTag, useMessage } from 'naive-ui';
+import { NAlert, NButton, NDatePicker, NDrawer, NDrawerContent, NEmpty, NForm, NFormItem, NInput, NProgress, NSelect, NSpin, NTag, useMessage } from 'naive-ui';
 import type { CurrentUser, ProjectExecutionSummary, ProjectTaskExecutionSummary, ReserveProjectSummary, TaskMaterialRequirementSummary } from '@tpm/shared';
 import { ApiRequestError, apiRequest, jsonRequestInit } from '../api/client';
 import TaskImplementationDrawer from '../features/tasks/TaskImplementationDrawer.vue';
@@ -20,22 +20,30 @@ const task = ref<ProjectTaskExecutionSummary | null>(null);
 const loading = ref(true);
 const error = ref('');
 const activeSection = ref('supply');
-const arrivalOpen = ref(false);
-const arrivalMaterialId = ref<string | null>(null);
-const arrivalQuantity = ref('');
-const arrivalDate = ref(Date.now());
-const arrivalNote = ref('');
-const arrivalError = ref('');
-const arrivalConflict = ref(false);
-const savingArrival = ref(false);
-const arrivalIdempotencyKey = ref('');
+type SupplyStage = 'reported' | 'shipped' | 'arrived';
+const supplyOpen = ref(false);
+const supplyMaterialId = ref<string | null>(null);
+const supplyStage = ref<SupplyStage>('reported');
+const supplyQuantity = ref('');
+const supplyDate = ref(Date.now());
+const supplyNote = ref('');
+const supplyError = ref('');
+const supplyConflict = ref(false);
+const savingSupply = ref(false);
+const supplyIdempotencyKey = ref('');
 const implementationOpen = ref(false);
 const settlementOpen = ref(false);
 
 const canSupply = computed(() => ['admin', 'project_manager', 'implementation'].includes(props.currentUser.role));
 const canSettle = computed(() => ['admin', 'project_manager', 'finance'].includes(props.currentUser.role));
-const selectedMaterial = computed(() => task.value?.materials.find((item) => item.id === arrivalMaterialId.value) ?? null);
-const selectedSupply = computed(() => task.value?.supplyTotals.find((item) => item.taskMaterialRequirementId === arrivalMaterialId.value) ?? null);
+const selectedMaterial = computed(() => task.value?.materials.find((item) => item.id === supplyMaterialId.value) ?? null);
+const selectedSupply = computed(() => task.value?.supplyTotals.find((item) => item.taskMaterialRequirementId === supplyMaterialId.value) ?? null);
+const supplyStageOptions = [
+  { label: '已上报', value: 'reported' },
+  { label: '已发货', value: 'shipped' },
+  { label: '已到货', value: 'arrived' },
+];
+const supplyStageLabel = computed(() => supplyStageOptions.find((item) => item.value === supplyStage.value)?.label ?? '供应');
 
 function formatScaled(value: number) {
   const whole = Math.floor(value / 10000);
@@ -56,16 +64,25 @@ function progress(done: number, planned: number) {
 
 const implementationProgress = computed(() => task.value ? progress(task.value.implementedQuantityScaled, task.value.plannedQuantityScaled) : 0);
 const settlementProgress = computed(() => task.value ? progress(task.value.settledQuantityScaled, task.value.plannedQuantityScaled) : 0);
-const arrivalMaximumScaled = computed(() => {
+const supplyMaximumScaled = computed(() => {
+  const material = selectedMaterial.value;
   const supply = selectedSupply.value;
-  if (!supply) return 0;
+  if (!material || !supply) return 0;
+  if (supplyStage.value === 'reported') return Math.max(0, material.requiredQuantityScaled - supply.totals.reportedQuantityScaled);
+  if (supplyStage.value === 'shipped') return Math.max(0, supply.totals.reportedQuantityScaled - supply.totals.shippedQuantityScaled);
   return Math.max(0, supply.totals.shippedQuantityScaled - supply.totals.arrivedQuantityScaled);
 });
-const arrivalPreviewScaled = computed(() => {
+const supplyCurrentScaled = computed(() => {
   const supply = selectedSupply.value;
-  const quantity = parseScaled(arrivalQuantity.value);
-  if (!supply || quantity === null) return null;
-  return supply.totals.arrivedQuantityScaled + quantity;
+  if (!supply) return 0;
+  if (supplyStage.value === 'reported') return supply.totals.reportedQuantityScaled;
+  if (supplyStage.value === 'shipped') return supply.totals.shippedQuantityScaled;
+  return supply.totals.arrivedQuantityScaled;
+});
+const supplyPreviewScaled = computed(() => {
+  const quantity = parseScaled(supplyQuantity.value);
+  if (quantity === null) return null;
+  return supplyCurrentScaled.value + quantity;
 });
 
 function businessDateFromTimestamp(value: number) {
@@ -94,74 +111,88 @@ function supplyFor(material: TaskMaterialRequirementSummary) {
   return task.value?.supplyTotals.find((item) => item.taskMaterialRequirementId === material.id) ?? null;
 }
 
-function openArrival(materialId: string) {
-  arrivalMaterialId.value = materialId;
-  arrivalQuantity.value = '';
-  arrivalNote.value = '';
-  arrivalError.value = '';
-  arrivalConflict.value = false;
-  arrivalIdempotencyKey.value = crypto.randomUUID();
-  arrivalDate.value = Date.now();
-  arrivalOpen.value = true;
+function preferredSupplyStage(materialId: string): SupplyStage {
+  const material = task.value?.materials.find((item) => item.id === materialId);
+  const supply = task.value?.supplyTotals.find((item) => item.taskMaterialRequirementId === materialId);
+  if (!material || !supply) return 'reported';
+  if (supply.totals.reportedQuantityScaled < material.requiredQuantityScaled) return 'reported';
+  if (supply.totals.shippedQuantityScaled < supply.totals.reportedQuantityScaled) return 'shipped';
+  return 'arrived';
 }
 
-function closeArrival() {
-  if (savingArrival.value) return;
-  arrivalOpen.value = false;
+function openSupply(materialId: string) {
+  supplyMaterialId.value = materialId;
+  supplyStage.value = preferredSupplyStage(materialId);
+  supplyQuantity.value = '';
+  supplyNote.value = '';
+  supplyError.value = '';
+  supplyConflict.value = false;
+  supplyIdempotencyKey.value = crypto.randomUUID();
+  supplyDate.value = Date.now();
+  supplyOpen.value = true;
 }
 
-watch(arrivalQuantity, () => {
-  arrivalError.value = '';
-  arrivalConflict.value = false;
-});
-watch([arrivalDate, arrivalNote], () => {
-  if (arrivalOpen.value) arrivalIdempotencyKey.value = crypto.randomUUID();
+function closeSupply() {
+  if (savingSupply.value) return;
+  supplyOpen.value = false;
+}
+
+watch([supplyStage, supplyQuantity, supplyDate, supplyNote], () => {
+  supplyError.value = '';
+  supplyConflict.value = false;
+  if (supplyOpen.value) supplyIdempotencyKey.value = crypto.randomUUID();
 });
 
-async function saveArrival() {
+async function saveSupply() {
   const material = selectedMaterial.value;
   const supply = selectedSupply.value;
-  const quantityScaled = parseScaled(arrivalQuantity.value);
+  const quantityScaled = parseScaled(supplyQuantity.value);
   if (!material || !supply || quantityScaled === null || quantityScaled <= 0) {
-    arrivalError.value = '请输入大于 0 的到货数量';
+    supplyError.value = '请输入大于 0 的本次数量';
     return;
   }
-  if (quantityScaled > arrivalMaximumScaled.value) {
-    arrivalError.value = `本次最多可登记 ${formatScaled(arrivalMaximumScaled.value)} ${material.unit}`;
+  if (quantityScaled > supplyMaximumScaled.value) {
+    supplyError.value = `本次最多可登记 ${formatScaled(supplyMaximumScaled.value)} ${material.unit}`;
     return;
   }
-  savingArrival.value = true;
-  arrivalError.value = '';
-  arrivalConflict.value = false;
+  savingSupply.value = true;
+  supplyError.value = '';
+  supplyConflict.value = false;
   try {
     await apiRequest('/api/task-material-supply-events', jsonRequestInit('POST', {
       taskMaterialRequirementId: material.id,
       expectedSupplyVersion: material.supplyVersion,
-      stage: 'arrived',
+      stage: supplyStage.value,
       quantityScaled,
-      eventDate: businessDateFromTimestamp(arrivalDate.value),
-      note: arrivalNote.value.trim() || null,
-    }, arrivalIdempotencyKey.value));
+      eventDate: businessDateFromTimestamp(supplyDate.value),
+      note: supplyNote.value.trim() || null,
+    }, supplyIdempotencyKey.value));
     await load();
-    arrivalOpen.value = false;
-    message.success('到货已登记');
+    supplyOpen.value = false;
+    message.success(`${supplyStageLabel.value}已登记`);
   } catch (cause) {
     if (cause instanceof ApiRequestError && cause.status === 409) {
-      arrivalConflict.value = true;
-      arrivalError.value = '记录已被更新。你的输入仍保留，请读取最新数据后再确认。';
+      supplyConflict.value = true;
+      supplyError.value = '记录已被更新。你的输入仍保留，请读取最新数据后再确认。';
     } else {
-      arrivalError.value = cause instanceof Error ? cause.message : '登记到货失败';
+      supplyError.value = cause instanceof Error ? cause.message : '供应进度登记失败';
     }
-  } finally { savingArrival.value = false; }
+  } finally { savingSupply.value = false; }
 }
 
-async function reloadAfterConflict() {
-  const draft = arrivalQuantity.value;
+async function reloadSupplyAfterConflict() {
+  const draftQuantity = supplyQuantity.value;
+  const draftStage = supplyStage.value;
+  const draftDate = supplyDate.value;
+  const draftNote = supplyNote.value;
   await load();
-  arrivalQuantity.value = draft;
-  arrivalConflict.value = false;
-  arrivalError.value = '';
-  arrivalIdempotencyKey.value = crypto.randomUUID();
+  supplyStage.value = draftStage;
+  supplyQuantity.value = draftQuantity;
+  supplyDate.value = draftDate;
+  supplyNote.value = draftNote;
+  supplyConflict.value = false;
+  supplyError.value = '';
+  supplyIdempotencyKey.value = crypto.randomUUID();
 }
 
 function backToProject() { void router.push(`/projects/${encodeURIComponent(projectId.value)}?tab=tasks`); }
@@ -230,7 +261,7 @@ onMounted(load);
                 <div class="stage-value"><span>发货</span><strong>{{ formatScaled(supplyFor(material)!.totals.shippedQuantityScaled) }}</strong></div>
                 <div class="stage-value"><span>到货</span><strong>{{ formatScaled(supplyFor(material)!.totals.arrivedQuantityScaled) }}</strong></div>
               </template>
-              <n-button v-if="canSupply && supplyFor(material) && supplyFor(material)!.totals.arrivedQuantityScaled < supplyFor(material)!.totals.shippedQuantityScaled" :data-test="`open-arrival-${material.id}`" secondary @click="openArrival(material.id)">登记到货</n-button>
+              <n-button v-if="canSupply && supplyFor(material)" :data-test="`open-supply-${material.id}`" secondary @click="openSupply(material.id)">登记供应</n-button>
             </div>
           </div>
           <n-empty v-else description="该任务未配置物资，可以直接推进实施与结算" />
@@ -251,31 +282,36 @@ onMounted(load);
       </template>
     </n-spin>
 
-    <n-drawer v-model:show="arrivalOpen" placement="right" :width="520" class="arrival-drawer" @mask-click="closeArrival">
-      <n-drawer-content title="登记到货" closable>
+    <n-drawer v-model:show="supplyOpen" placement="right" :width="520" class="supply-drawer" @mask-click="closeSupply">
+      <n-drawer-content title="登记供应进度" closable>
         <template v-if="selectedMaterial && selectedSupply">
-          <div class="arrival-context">
+          <div class="supply-context">
             <strong>{{ selectedMaterial.model }}</strong>
             <span>{{ task?.name }}</span>
           </div>
-          <div class="arrival-current">
+          <div class="supply-current">
+            <div><span>任务需求</span><strong>{{ formatScaled(selectedMaterial.requiredQuantityScaled) }} {{ selectedMaterial.unit }}</strong></div>
+            <div><span>已上报</span><strong>{{ formatScaled(selectedSupply.totals.reportedQuantityScaled) }} {{ selectedMaterial.unit }}</strong></div>
             <div><span>已发货</span><strong>{{ formatScaled(selectedSupply.totals.shippedQuantityScaled) }} {{ selectedMaterial.unit }}</strong></div>
             <div><span>已到货</span><strong>{{ formatScaled(selectedSupply.totals.arrivedQuantityScaled) }} {{ selectedMaterial.unit }}</strong></div>
-            <div class="max-row"><span>本次最多</span><strong>{{ formatScaled(arrivalMaximumScaled) }} {{ selectedMaterial.unit }}</strong></div>
+            <div class="max-row"><span>本次最多</span><strong>{{ formatScaled(supplyMaximumScaled) }} {{ selectedMaterial.unit }}</strong></div>
           </div>
-          <n-alert v-if="arrivalError" :type="arrivalConflict ? 'warning' : 'error'" :bordered="false" class="arrival-alert">{{ arrivalError }}</n-alert>
-          <n-button v-if="arrivalConflict" data-test="reload-after-conflict" secondary block class="conflict-reload" @click="reloadAfterConflict">读取最新数据</n-button>
-          <n-form label-placement="top" class="arrival-form">
-            <n-form-item label="本次到货数量">
-              <div class="quantity-input"><n-input data-test="arrival-quantity" v-model:value="arrivalQuantity" inputmode="decimal" /><span>{{ selectedMaterial.unit }}</span></div>
+          <n-alert v-if="supplyError" :type="supplyConflict ? 'warning' : 'error'" :bordered="false" class="supply-alert">{{ supplyError }}</n-alert>
+          <n-button v-if="supplyConflict" data-test="reload-supply-after-conflict" secondary block class="conflict-reload" @click="reloadSupplyAfterConflict">读取最新数据</n-button>
+          <n-form label-placement="top" class="supply-form">
+            <n-form-item label="供应阶段">
+              <n-select v-model:value="supplyStage" data-test="supply-stage" :options="supplyStageOptions" />
             </n-form-item>
-            <n-form-item label="到货日期"><n-date-picker v-model:value="arrivalDate" type="date" clearable /></n-form-item>
-            <n-form-item label="备注"><n-input v-model:value="arrivalNote" type="textarea" :autosize="{ minRows: 2, maxRows: 4 }" /></n-form-item>
+            <n-form-item :label="`本次${supplyStageLabel}数量`">
+              <div class="quantity-input"><n-input data-test="supply-quantity" v-model:value="supplyQuantity" inputmode="decimal" /><span>{{ selectedMaterial.unit }}</span></div>
+            </n-form-item>
+            <n-form-item label="业务日期"><n-date-picker v-model:value="supplyDate" type="date" clearable /></n-form-item>
+            <n-form-item label="备注"><n-input v-model:value="supplyNote" type="textarea" :autosize="{ minRows: 2, maxRows: 4 }" /></n-form-item>
           </n-form>
-          <div v-if="arrivalPreviewScaled !== null && parseScaled(arrivalQuantity) && parseScaled(arrivalQuantity)! <= arrivalMaximumScaled" class="arrival-preview">
-            保存后累计到货将为 <strong>{{ formatScaled(arrivalPreviewScaled) }} {{ selectedMaterial.unit }}</strong>
+          <div v-if="supplyPreviewScaled !== null && parseScaled(supplyQuantity) && parseScaled(supplyQuantity)! <= supplyMaximumScaled" class="supply-preview">
+            保存后累计{{ supplyStageLabel }}将为 <strong>{{ formatScaled(supplyPreviewScaled) }} {{ selectedMaterial.unit }}</strong>
           </div>
-          <div class="drawer-actions"><n-button @click="closeArrival">取消</n-button><n-button data-test="save-arrival" type="primary" :loading="savingArrival" @click="saveArrival">登记到货</n-button></div>
+          <div class="drawer-actions"><n-button @click="closeSupply">取消</n-button><n-button data-test="save-supply" type="primary" :loading="savingSupply" @click="saveSupply">保存供应进度</n-button></div>
         </template>
       </n-drawer-content>
     </n-drawer>
@@ -327,18 +363,18 @@ onMounted(load);
 .scope-list > div { display: flex; justify-content: space-between; gap: 20px; padding: 13px 0; border-bottom: 1px solid var(--ui-border, #dce2ea); }
 .scope-list span { color: var(--ui-text-secondary, #566174); }
 .detail-error { padding: 14px 16px; border-radius: 12px; background: #fff4f3; color: #b42318; }
-.arrival-context { display: grid; gap: 3px; margin-bottom: 20px; }
-.arrival-context strong { font-size: 18px; }
-.arrival-context span { color: var(--ui-text-secondary, #566174); font-size: 13px; }
-.arrival-current { display: grid; gap: 1px; overflow: hidden; margin-bottom: 20px; border: 1px solid var(--ui-border, #dce2ea); border-radius: 14px; background: var(--ui-border, #dce2ea); }
-.arrival-current > div { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 14px; background: var(--ui-surface, #fff); }
-.arrival-current span { color: var(--ui-text-secondary, #566174); font-size: 13px; }
+.supply-context { display: grid; gap: 3px; margin-bottom: 20px; }
+.supply-context strong { font-size: 18px; }
+.supply-context span { color: var(--ui-text-secondary, #566174); font-size: 13px; }
+.supply-current { display: grid; gap: 1px; overflow: hidden; margin-bottom: 20px; border: 1px solid var(--ui-border, #dce2ea); border-radius: 14px; background: var(--ui-border, #dce2ea); }
+.supply-current > div { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 14px; background: var(--ui-surface, #fff); }
+.supply-current span { color: var(--ui-text-secondary, #566174); font-size: 13px; }
 .max-row { background: var(--ui-accent-soft, #e6efff) !important; }
-.arrival-alert, .conflict-reload { margin-bottom: 14px; }
+.supply-alert, .conflict-reload { margin-bottom: 14px; }
 .quantity-input { display: flex; align-items: center; gap: 10px; width: 100%; }
 .quantity-input > span { flex: 0 0 auto; color: var(--ui-text-secondary, #566174); }
-.arrival-preview { margin: 4px 0 18px; padding: 12px 14px; border-radius: 12px; background: var(--ui-surface-muted, #eef1f5); color: var(--ui-text-secondary, #566174); font-size: 13px; }
-.arrival-preview strong { color: var(--ui-text, #18212f); }
+.supply-preview { margin: 4px 0 18px; padding: 12px 14px; border-radius: 12px; background: var(--ui-surface-muted, #eef1f5); color: var(--ui-text-secondary, #566174); font-size: 13px; }
+.supply-preview strong { color: var(--ui-text, #18212f); }
 .drawer-actions { position: sticky; bottom: 0; display: flex; justify-content: flex-end; gap: 10px; padding-top: 14px; background: var(--ui-surface, #fff); }
 @media (max-width: 900px) { .supply-line { grid-template-columns: minmax(180px, 1fr) repeat(3, 80px); } .supply-line > .n-button { grid-column: 1 / -1; justify-self: start; margin-bottom: 12px; } }
 @media (max-width: 767px) {
@@ -354,7 +390,7 @@ onMounted(load);
   .supply-line > .n-button { grid-column: 1 / -1; width: 100%; justify-self: stretch; margin: 2px 0 0; }
   .placeholder-section { align-items: stretch; flex-direction: column; }
   .placeholder-section > .n-button { width: 100%; }
-  :global(.arrival-drawer .n-drawer) { width: 100vw !important; max-width: 100vw !important; }
+  :global(.supply-drawer .n-drawer) { width: 100vw !important; max-width: 100vw !important; }
   .drawer-actions { padding-bottom: max(14px, env(safe-area-inset-bottom)); }
   .drawer-actions .n-button:last-child { flex: 1; }
 }

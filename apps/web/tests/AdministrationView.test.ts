@@ -183,6 +183,15 @@ describe('AdministrationView member management contract', () => {
       const method = init?.method ?? 'GET';
       if (url === '/api/settings' && method === 'GET') return ok({ items: settings });
       if (url === '/api/members' && method === 'GET') return ok({ items: members });
+      if (url === '/api/notification-contacts' && method === 'GET') return ok({ items: [] });
+      if (url === '/api/notification-outbox' && method === 'GET') return ok({ items: [] });
+      if (url === '/api/backups' && method === 'GET') return ok({ items: [] });
+      if (url === '/api/reserve-categories' && method === 'GET') return ok({ items: [{ id: 'cat-1', key: 'line', label: '防断线', enabled: true, version: 1 }] });
+      if (url === '/api/category-mappings' && method === 'GET') return ok({ items: [{ id: 'map-1', demandCategory: '单改双', reserveCategoryId: 'cat-1', version: 1 }] });
+      if (url === '/api/backups' && method === 'POST') {
+        writes.push({ url, method, body: JSON.parse(String(init?.body)) });
+        return ok({ id: 'backup-1', backupDate: '2026-09-16', kind: 'daily', status: 'pending', currentTableIndex: 0, cursorRowid: 0, manifestKey: null, chunkCount: 0, error: null, startedAt: null, completedAt: null, verifiedAt: null, createdAt: '', updatedAt: '' }, 201);
+      }
       if (url === '/api/members' && method === 'POST') {
         const body = JSON.parse(String(init?.body));
         writes.push({ url, method, body });
@@ -212,9 +221,32 @@ describe('AdministrationView member management contract', () => {
     await flushPromises();
     expect(fetchMock).toHaveBeenCalledWith('/api/settings', undefined);
     expect(fetchMock).toHaveBeenCalledWith('/api/members', undefined);
+    expect(wrapper.find('[data-test="settings-page"]').exists()).toBe(true);
     expect(wrapper.text()).toContain('新增成员');
     expect(wrapper.text()).toContain('待首次登录');
     expect(wrapper.text()).toContain('member');
+    expect(wrapper.text()).toContain('业务时区');
+    expect(wrapper.text()).toContain('Asia/Shanghai');
+    expect(wrapper.text()).toContain('通知与备份');
+    expect(wrapper.text()).toContain('储备分类规则');
+    expect(wrapper.text()).toContain('单改双');
+    expect(wrapper.text()).toContain('防断线');
+    expect(wrapper.find('[data-test="mobile-member-list"]').exists()).toBe(true);
+    expect(buttonByText(wrapper, '管理').exists()).toBe(true);
+    expect(wrapper.findAll('button').some((candidate) => candidate.text().trim() === '停用')).toBe(false);
+  });
+
+  it('keeps system operations in settings and creates a backup without exposing storage implementation terms', async () => {
+    const wrapper = mount(AdministrationView, { props: { currentUser: admin } });
+    await flushPromises();
+    expect(wrapper.text()).toContain('逻辑备份');
+    expect(wrapper.text()).toContain('通知发送记录');
+    expect(wrapper.text()).not.toContain('Outbox');
+    expect(wrapper.text()).not.toContain('D1');
+    expect(wrapper.text()).not.toContain('R2');
+    await buttonByText(wrapper, '创建今日备份').trigger('click');
+    await flushPromises();
+    expect(writes.some((item) => item.url === '/api/backups' && item.method === 'POST')).toBe(true);
   });
 
   it('does not fetch or expose member administration for a non-admin role', async () => {
@@ -270,7 +302,7 @@ describe('AdministrationView member management contract', () => {
     })];
     const wrapper = mount(AdministrationView, { props: { currentUser: admin } });
     await flushPromises();
-    await buttonByText(wrapper, '编辑').trigger('click');
+    await buttonByText(wrapper, '管理').trigger('click');
     await wrapper.get('[data-form-label="姓名"] input').setValue('改名成员');
     await buttonByText(wrapper, '保存').trigger('click');
     await flushPromises();

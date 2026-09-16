@@ -2,9 +2,11 @@
 import { computed, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { NAlert, NButton, NDatePicker, NEmpty, NForm, NFormItem, NInput, NModal, NProgress, NSpin, NTag, useMessage } from 'naive-ui';
-import type { CurrentUser, ProjectExecutionSummary, ReserveProjectSummary } from '@tpm/shared';
+import type { AttachmentSummary, CurrentUser, ProjectExecutionSummary, ReserveProjectSummary } from '@tpm/shared';
 import { ApiRequestError, apiRequest, jsonRequestInit } from '../api/client';
+import { parseApiResponse } from '../api/response';
 import AppPressable from '../app/AppPressable.vue';
+import AppFilePicker from '../app/AppFilePicker.vue';
 import ProjectSourceEditor from '../features/projects/ProjectSourceEditor.vue';
 import ProjectMaterialsEditor from '../features/projects/ProjectMaterialsEditor.vue';
 
@@ -33,9 +35,13 @@ const reserveConfirmReason = ref('');
 const reserveConfirmError = ref('');
 const reserveConfirmConflict = ref(false);
 const reserveConfirmIdempotencyKey = ref('');
+const attachments = ref<AttachmentSummary[]>([]);
+const attachmentFile = ref<File | null>(null);
+const uploadingAttachment = ref(false);
 
 const canManage = computed(() => ['admin', 'project_manager'].includes(props.currentUser.role));
 const canCreateTask = computed(() => ['admin', 'project_manager', 'implementation'].includes(props.currentUser.role));
+const canUploadAttachment = computed(() => ['admin', 'project_manager', 'implementation', 'finance'].includes(props.currentUser.role));
 const implementationProgress = computed(() => {
   const tasks = execution.value?.tasks ?? [];
   const planned = tasks.reduce((sum, item) => sum + item.plannedQuantityScaled, 0);
@@ -63,12 +69,14 @@ async function load() {
   loading.value = true;
   error.value = '';
   try {
-    const [detail, summary] = await Promise.all([
+    const [detail, summary, attachmentData] = await Promise.all([
       apiRequest<ReserveProjectSummary>(`/api/reserve-projects/${encodeURIComponent(projectId.value)}`),
       apiRequest<ProjectExecutionSummary>(`/api/projects/${encodeURIComponent(projectId.value)}/execution`),
+      apiRequest<{ items: AttachmentSummary[] }>(`/api/attachments?objectType=project&objectId=${encodeURIComponent(projectId.value)}`),
     ]);
     project.value = detail;
     execution.value = summary;
+    attachments.value = attachmentData.items;
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : '项目详情读取失败';
   } finally { loading.value = false; }
@@ -77,6 +85,32 @@ async function load() {
 function backToProjects() { void router.push('/projects'); }
 function openTask(taskId: string) { void router.push(`/projects/${encodeURIComponent(projectId.value)}/tasks/${encodeURIComponent(taskId)}`); }
 function createTask() { void router.push(`/projects/${encodeURIComponent(projectId.value)}/tasks/new`); }
+
+function attachmentChanged(event: Event) {
+  attachmentFile.value = (event.target as HTMLInputElement).files?.[0] ?? null;
+}
+
+async function uploadAttachment() {
+  const file = attachmentFile.value;
+  if (!file) { message.warning('请选择附件'); return; }
+  uploadingAttachment.value = true;
+  try {
+    const response = await fetch(`/api/attachments?objectType=project&objectId=${encodeURIComponent(projectId.value)}&fileName=${encodeURIComponent(file.name)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': file.type || 'application/octet-stream', 'Idempotency-Key': crypto.randomUUID() },
+      body: file,
+    });
+    const result = await parseApiResponse<AttachmentSummary>(response);
+    if (!response.ok || !result.ok) throw new Error(result.ok ? `HTTP ${response.status}` : result.error.message);
+    attachmentFile.value = null;
+    attachments.value = (await apiRequest<{ items: AttachmentSummary[] }>(`/api/attachments?objectType=project&objectId=${encodeURIComponent(projectId.value)}`)).items;
+    message.success('附件已上传');
+  } catch (cause) {
+    message.error(cause instanceof Error ? cause.message : '附件上传失败');
+  } finally {
+    uploadingAttachment.value = false;
+  }
+}
 
 function openReserveConfirm() {
   reserveConfirmReason.value = '';
@@ -206,7 +240,7 @@ onMounted(load);
         <nav class="segment-nav" aria-label="项目详情分段">
           <app-pressable v-for="item in [
             ['overview', '概览'], ['demands', '来源需求'], ['materials', '项目物资'], ['tasks', '执行任务'], ['finance', '资金'], ['history', '附件与历史'],
-          ]" :key="item[0]" :class="{ active: tab === item[0] }" @click="setTab(item[0])">{{ item[1] }}</app-pressable>
+          ]" :key="item[0]" :data-test="`project-tab-${item[0]}`" :class="{ active: tab === item[0] }" @click="setTab(item[0])">{{ item[1] }}</app-pressable>
         </nav>
 
         <section v-if="tab === 'overview'" class="detail-section overview-section">
@@ -260,9 +294,41 @@ onMounted(load);
           <n-empty v-else description="当前项目没有项目物资；0 物资项目仍然合法" />
         </section>
 
+        <section v-else-if="tab === 'history'" class="detail-section">
+          <div class="section-heading">
+            <div><h3>附件与历史</h3><p>项目附件按当前项目权限读取；项目与储备版本用于追踪当前定义。</p></div>
+          </div>
+          <div class="history-version-strip">
+            <div><span>项目版本</span><strong>v{{ project.version }}</strong></div>
+            <div><span>储备版本</span><strong>v{{ project.reserveVersion }}</strong></div>
+            <div><span>当前阶段</span><strong>{{ execution.released ? '执行中' : project.status === 'confirmed' ? '储备已确认' : '储备草稿' }}</strong></div>
+          </div>
+          <div class="attachment-section">
+            <div class="attachment-heading"><div><strong>项目附件</strong><small>{{ attachments.length }} 个文件</small></div></div>
+            <div v-if="canUploadAttachment" class="attachment-upload-row">
+              <app-file-picker
+                test-id="project-attachment-file"
+                label="选择附件"
+                :selected-name="attachmentFile?.name ?? null"
+                :disabled="uploadingAttachment"
+                @change="attachmentChanged"
+              />
+              <n-button data-test="upload-project-attachment" :disabled="!attachmentFile" :loading="uploadingAttachment" @click="uploadAttachment">上传附件</n-button>
+            </div>
+            <div v-if="attachments.length" class="attachment-list">
+              <a v-for="item in attachments" :key="item.id" class="attachment-row" :href="`/api/attachments/${item.id}/content`">
+                <span class="attachment-name">{{ item.fileName }}</span>
+                <span class="attachment-meta">{{ Math.max(1, Math.ceil(item.sizeBytes / 1024)) }} KB · {{ item.contentType || '文件' }}</span>
+                <span class="attachment-action">下载</span>
+              </a>
+            </div>
+            <n-empty v-else description="暂无项目附件" />
+          </div>
+        </section>
+
         <section v-else class="detail-section muted-placeholder">
-          <h3>{{ tab === 'finance' ? '资金' : '附件与历史' }}</h3>
-          <p>此分段将在下一批迁移中接入现有真实业务能力。</p>
+          <h3>资金</h3>
+          <p>项目资金摘要将在资金工作区完成项目级查询后接入。</p>
         </section>
       </template>
     </n-spin>
@@ -381,6 +447,24 @@ onMounted(load);
 .task-progress-pair { display: flex; gap: 16px; }
 .row-chevron { color: var(--ui-text-tertiary); font-size: 20px; }
 .fact-list > div { display: flex; justify-content: space-between; gap: 20px; padding: 13px 2px; border-bottom: 1px solid var(--ui-border); }
+.history-version-strip { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); overflow: hidden; margin-bottom: 22px; border: 1px solid var(--ui-border); border-radius: var(--ui-radius-md); }
+.history-version-strip > div { display: grid; gap: 5px; padding: 13px 15px; }
+.history-version-strip > div + div { border-left: 1px solid var(--ui-border); }
+.history-version-strip span { color: var(--ui-text-tertiary); font-size: 11px; }
+.history-version-strip strong { font-size: 13px; font-weight: 650; }
+.attachment-section { display: grid; gap: 14px; }
+.attachment-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.attachment-heading > div { display: grid; gap: 3px; }
+.attachment-heading strong { font-size: 13px; font-weight: 680; }
+.attachment-heading small { color: var(--ui-text-tertiary); font-size: 11px; }
+.attachment-upload-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 12px; border: 1px solid var(--ui-border); border-radius: 11px; background: var(--ui-surface-subtle); }
+.attachment-list { display: grid; border-top: 1px solid var(--ui-border); }
+.attachment-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 14px; align-items: center; min-height: 54px; border-bottom: 1px solid var(--ui-border); text-decoration: none; }
+.attachment-row:last-child { border-bottom: 0; }
+.attachment-row:hover .attachment-name { color: var(--ui-accent); }
+.attachment-name { overflow: hidden; color: var(--ui-text); font-size: 12px; font-weight: 620; text-overflow: ellipsis; white-space: nowrap; }
+.attachment-meta { color: var(--ui-text-tertiary); font-size: 10px; }
+.attachment-action { color: var(--ui-accent); font-size: 11px; font-weight: 620; }
 .detail-error { padding: 12px 14px; border-radius: 10px; background: var(--ui-danger-soft); color: var(--ui-danger); font-size: 12px; }
 .release-intro { margin-bottom: 18px; padding: 13px 14px; border: 1px solid var(--ui-border); border-radius: 11px; background: var(--ui-surface-subtle); }
 .release-intro strong { font-size: 14px; }
@@ -408,6 +492,12 @@ onMounted(load);
   .task-progress-pair { grid-column: 1 / -1; justify-content: flex-start; }
   .row-chevron { grid-column: 2; grid-row: 1; }
   .release-facts { grid-template-columns: 1fr; }
+  .history-version-strip { grid-template-columns: 1fr; }
+  .history-version-strip > div + div { border-top: 1px solid var(--ui-border); border-left: 0; }
+  .attachment-upload-row { grid-template-columns: 1fr; }
+  .attachment-row { grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; padding: 10px 0; }
+  .attachment-meta { grid-column: 1; grid-row: 2; }
+  .attachment-action { grid-column: 2; grid-row: 1 / span 2; align-self: center; }
   .release-actions { position: sticky; bottom: 0; padding: 12px 0 max(4px, env(safe-area-inset-bottom)); background: var(--ui-surface, #fff); }
   .release-actions .n-button:last-child { flex: 1; }
 }

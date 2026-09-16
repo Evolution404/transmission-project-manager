@@ -66,11 +66,18 @@ function ok(data: unknown, status = 200) {
 }
 
 function installFetch(options: { conflict?: boolean; draft?: boolean; confirmConflict?: boolean } = {}) {
+  let attachments = [{ id: 'att-1', projectId: 'p1', objectType: 'project', objectId: 'p1', fileName: '现场照片.jpg', contentType: 'image/jpeg', sizeBytes: 2048, createdAt: '2026-09-15T08:00:00.000Z' }];
   vi.stubGlobal('crypto', { randomUUID: vi.fn(() => 'release-idem-1') });
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     if (url === '/api/reserve-projects/p1') return ok(options.draft ? { ...project, status: 'draft', reserveVersion: 2, version: 7 } : project);
     if (url === '/api/projects/p1/execution') return ok(execution(false));
+    if (url === '/api/attachments?objectType=project&objectId=p1' && (!init?.method || init.method === 'GET')) return ok({ items: attachments });
+    if (url === '/api/attachments?objectType=project&objectId=p1&fileName=%E9%AA%8C%E6%94%B6%E8%AE%B0%E5%BD%95.pdf' && init?.method === 'POST') {
+      const uploaded = { id: 'att-2', projectId: 'p1', objectType: 'project', objectId: 'p1', fileName: '验收记录.pdf', contentType: 'application/pdf', sizeBytes: 4, createdAt: '2026-09-16T00:00:00.000Z' };
+      attachments = [...attachments, uploaded];
+      return ok(uploaded, 201);
+    }
     if (url === '/api/reserve-projects/p1/confirm' && init?.method === 'POST') {
       if (options.confirmConflict) return new Response(JSON.stringify({ ok: false, error: { code: 'VERSION_CONFLICT', message: '项目已被修改' } }), { status: 409, headers: { 'Content-Type': 'application/json' } });
       return ok({ projectId: 'p1', version: 8, reserveVersion: 3, status: 'confirmed' });
@@ -160,5 +167,41 @@ describe('ProjectDetailView project release', () => {
     expect(readWrapper.find('[data-test="open-reserve-confirm"]').exists()).toBe(false);
     expect(readWrapper.find('[data-test="edit-project-sources"]').exists()).toBe(false);
     expect(readWrapper.find('[data-test="edit-project-materials"]').exists()).toBe(false);
+  });
+
+  it('shows project attachments in the project history area and uploads through the project-scoped endpoint', async () => {
+    installFetch();
+    const wrapper = mount(ProjectDetailView, { props: { currentUser: admin } });
+    await flushPromises();
+
+    await wrapper.get('[data-test="project-tab-history"]').trigger('click');
+    expect(wrapper.text()).toContain('现场照片.jpg');
+    expect(wrapper.find('[data-test="project-attachment-file"]').exists()).toBe(true);
+
+    const input = wrapper.get('[data-test="project-attachment-file"]');
+    const file = new File(['test'], '验收记录.pdf', { type: 'application/pdf' });
+    Object.defineProperty(input.element, 'files', { value: [file], configurable: true });
+    await input.trigger('change');
+    await wrapper.get('[data-test="upload-project-attachment"]').trigger('click');
+    await flushPromises();
+
+    const call = vi.mocked(fetch).mock.calls.find(([url, init]) => String(url).includes('fileName=%E9%AA%8C%E6%94%B6%E8%AE%B0%E5%BD%95.pdf') && init?.method === 'POST');
+    expect(call).toBeTruthy();
+    const uploadedBody = call![1]!.body as File;
+    expect(uploadedBody.name).toBe('验收记录.pdf');
+    expect(uploadedBody.type).toBe('application/pdf');
+    expect(uploadedBody.size).toBe(file.size);
+    expect(new Headers(call![1]!.headers).get('Idempotency-Key')).toBe('release-idem-1');
+    expect(wrapper.text()).toContain('验收记录.pdf');
+  });
+
+  it('keeps project attachments readable but hides upload controls from readonly users', async () => {
+    installFetch();
+    const wrapper = mount(ProjectDetailView, { props: { currentUser: readonly } });
+    await flushPromises();
+    await wrapper.get('[data-test="project-tab-history"]').trigger('click');
+    expect(wrapper.text()).toContain('现场照片.jpg');
+    expect(wrapper.find('[data-test="project-attachment-file"]').exists()).toBe(false);
+    expect(wrapper.find('[data-test="upload-project-attachment"]').exists()).toBe(false);
   });
 });

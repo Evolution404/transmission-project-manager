@@ -10,7 +10,7 @@ export const router = createRouter({
     { path: '/projects/:projectId', name: 'project-detail', component: () => import('./views/ProjectDetailView.vue'), meta: { title: '项目详情' } },
     { path: '/projects/:projectId/tasks/new', name: 'task-create', component: () => import('./views/TaskCreateView.vue'), meta: { title: '新建执行任务' } },
     { path: '/projects/:projectId/tasks/:taskId', name: 'task-detail', component: () => import('./views/TaskDetailView.vue'), meta: { title: '任务详情' } },
-    { path: '/reserves', name: 'reserves', component: () => import('./views/ReservesView.vue'), meta: { title: '项目储备' } },
+    { path: '/reserves', redirect: '/projects' },
     { path: '/tasks', name: 'tasks', component: () => import('./views/TaskQueueView.vue'), meta: { title: '执行任务' } },
     { path: '/delivery', redirect: '/tasks' },
     { path: '/finance', name: 'finance', component: () => import('./views/FinanceView.vue'), meta: { title: '框架费用' } },

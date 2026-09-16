@@ -25,7 +25,6 @@ import { apiRequest, jsonRequestInit } from '../api/client';
 import type {
   AlertEventSummary,
   AnalysisRuleSummary,
-  BackupSummary,
   CurrentUser,
   FinanceProjectSummary,
   FrameworkProgressSummary,
@@ -33,8 +32,6 @@ import type {
   MilestoneDueSummary,
   MonthlyPlanSummary,
   MonthlyReportSummary,
-  NotificationContactSummary,
-  NotificationOutboxSummary,
   ProjectGapSummary,
   ReserveRemainingSummary,
 } from '@tpm/shared';
@@ -58,9 +55,6 @@ const milestones = ref<MilestoneDueSummary[]>([]);
 const alerts = ref<AlertEventSummary[]>([]);
 const plans = ref<MonthlyPlanSummary[]>([]);
 const reports = ref<MonthlyReportSummary[]>([]);
-const backups = ref<BackupSummary[]>([]);
-const contacts = ref<NotificationContactSummary[]>([]);
-const outbox = ref<NotificationOutboxSummary[]>([]);
 
 const asOfDate = ref(businessToday());
 const planProjectId = ref<string | null>(null);
@@ -70,7 +64,6 @@ const ruleMode = ref<'ratio' | 'gap'>('ratio');
 const ruleThresholdPercent = ref('80');
 const reportMonth = ref(asOfDate.value.slice(0, 7));
 const milestoneForm = ref({ title: '', owner: '', datePrecision: 'unknown' as 'month' | 'day' | 'unknown', month: null as number | null, specificDate: '' });
-const contactForm = ref({ memberId: props.currentUser.id, address: '' });
 
 const progressChartEl = ref<HTMLDivElement | null>(null);
 const reserveChartEl = ref<HTMLDivElement | null>(null);
@@ -121,11 +114,6 @@ const milestoneColumns = computed(() => [
 const alertColumns = [
   { title: '级别', key: 'severity' }, { title: '状态', key: 'state' }, { title: '内容', key: 'message' }, { title: '周期', key: 'periodKey' },
 ];
-const backupColumns = [
-  { title: '日期', key: 'backupDate' }, { title: '类型', key: 'kind' }, { title: '状态', key: 'status' }, { title: '分片', key: 'chunkCount' },
-  { title: '校验', key: 'verifiedAt', render: (row: BackupSummary) => row.verifiedAt ? '已校验' : '未校验' },
-  { title: '操作', key: 'action', render: (row: BackupSummary) => h(NSpace, {}, { default: () => [row.status !== 'completed' ? h(NButton, { size: 'small', onClick: () => stepBackup(row) }, { default: () => '推进' }) : null, row.status === 'completed' ? h(NButton, { size: 'small', onClick: () => verifyBackup(row) }, { default: () => '校验' }) : null] }) },
-];
 
 async function loadFrameworkContext() {
   const frameworkId = selectedFrameworkId.value;
@@ -154,13 +142,6 @@ async function loadCommon() {
   const milestonePromise = apiRequest<{ items: MilestoneDueSummary[] }>(`/api/milestones/due?asOf=${asOfDate.value}`).then((data) => { milestones.value = data.items; });
   const alertPromise = apiRequest<{ items: AlertEventSummary[] }>('/api/alerts').then((data) => { alerts.value = data.items; });
   basePromises.push(fwPromise, projectPromise, reservePromise, rulePromise, milestonePromise, alertPromise);
-  if (isAdmin.value) {
-    basePromises.push(
-      apiRequest<{ items: BackupSummary[] }>('/api/backups').then((data) => { backups.value = data.items; }),
-      apiRequest<{ items: NotificationContactSummary[] }>('/api/notification-contacts').then((data) => { contacts.value = data.items; }),
-      apiRequest<{ items: NotificationOutboxSummary[] }>('/api/notification-outbox').then((data) => { outbox.value = data.items; }),
-    );
-  }
   await Promise.all(basePromises);
   await loadFrameworkContext();
   await renderCharts();
@@ -228,30 +209,6 @@ async function setMilestoneStatus(item: MilestoneDueSummary, status: 'open' | 'c
     milestones.value = (await apiRequest<{ items: MilestoneDueSummary[] }>(`/api/milestones/due?asOf=${asOfDate.value}`)).items;
   } catch (cause) { message.error(cause instanceof Error ? cause.message : '事项状态更新失败'); }
 }
-async function createContact() {
-  const address = contactForm.value.address.trim(); if (!address) return;
-  try {
-    await apiRequest('/api/notification-contacts', jsonRequestInit('POST', { memberId: contactForm.value.memberId, address, verified: true, enabled: true }));
-    contacts.value = (await apiRequest<{ items: NotificationContactSummary[] }>('/api/notification-contacts')).items; contactForm.value.address = ''; message.success('通知地址已保存');
-  } catch (cause) { message.error(cause instanceof Error ? cause.message : '通知地址保存失败'); }
-}
-async function createBackup() {
-  saving.value = true;
-  try {
-    await apiRequest('/api/backups', jsonRequestInit('POST', { backupDate: businessToday(), kind: 'daily' }));
-    backups.value = (await apiRequest<{ items: BackupSummary[] }>('/api/backups')).items; message.success('备份任务已创建');
-  } catch (cause) { message.error(cause instanceof Error ? cause.message : '备份创建失败'); }
-  finally { saving.value = false; }
-}
-async function stepBackup(item: BackupSummary) {
-  try { await apiRequest(`/api/backups/${item.id}/step`, jsonRequestInit('POST', {})); backups.value = (await apiRequest<{ items: BackupSummary[] }>('/api/backups')).items; }
-  catch (cause) { message.error(cause instanceof Error ? cause.message : '备份推进失败'); }
-}
-async function verifyBackup(item: BackupSummary) {
-  try { await apiRequest(`/api/backups/${item.id}/verify`, jsonRequestInit('POST', {})); backups.value = (await apiRequest<{ items: BackupSummary[] }>('/api/backups')).items; }
-  catch (cause) { message.error(cause instanceof Error ? cause.message : '备份校验失败'); }
-}
-
 async function renderCharts() {
   await nextTick();
   const chartElementsExist = progressChartEl.value || reserveChartEl.value;
@@ -356,24 +313,8 @@ onBeforeUnmount(() => { disposed = true; window.removeEventListener('resize', re
           <n-card title="事项清单" class="section-card"><n-data-table v-if="milestones.length" :columns="milestoneColumns" :data="milestones" :pagination="false" /><n-empty v-else description="暂无年度事项" /></n-card>
         </n-tab-pane>
 
-        <n-tab-pane name="alerts" tab="预警与通知">
+        <n-tab-pane name="alerts" tab="预警">
           <n-card title="预警事件"><n-data-table v-if="alerts.length" :columns="alertColumns" :data="alerts" :pagination="false" /><n-empty v-else description="暂无预警" /></n-card>
-          <template v-if="isAdmin">
-            <n-card title="通知地址" class="section-card">
-              <n-space align="end" wrap><n-form-item label="成员 ID"><n-input v-model:value="contactForm.memberId" /></n-form-item><n-form-item label="邮件地址"><n-input v-model:value="contactForm.address" /></n-form-item><n-button @click="createContact">保存已验证地址</n-button></n-space>
-              <div v-if="contacts.length" class="compact-list"><span v-for="item in contacts" :key="item.id">{{ item.address }} · {{ item.verifiedAt ? '已验证' : '未验证' }}</span></div>
-            </n-card>
-            <n-card title="通知 Outbox" class="section-card"><div class="compact-list"><span v-for="item in outbox" :key="item.id">{{ item.recipient }} · {{ item.status }} · 尝试 {{ item.attemptCount }}</span><n-empty v-if="!outbox.length" description="暂无待发通知" /></div></n-card>
-          </template>
-        </n-tab-pane>
-
-        <n-tab-pane v-if="isAdmin" name="ops" tab="备份运维">
-          <n-card title="D1 → R2 逻辑备份">
-            <template #header-extra><n-button data-test="create-backup" :loading="saving" @click="createBackup">创建今日备份</n-button></template>
-            <n-alert type="info" :bordered="false">备份按表分片、可续跑并保存 SHA-256；附件以 R2 key 清单进入 manifest。正式 D1 恢复演练仍需独立恢复环境，不能在当前在线库上直接覆盖。</n-alert>
-            <n-data-table v-if="backups.length" :columns="backupColumns" :data="backups" :pagination="false" />
-            <n-empty v-else description="暂无备份记录" />
-          </n-card>
         </n-tab-pane>
       </n-tabs>
     </n-spin>

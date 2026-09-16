@@ -85,15 +85,16 @@ describe('AnalysisView P6 behavior', () => {
     expect(JSON.parse(String(call![1]!.body))).toEqual({ expectedVersion: 4, targetAmountFen: 123456 });
   });
 
-  it('converts the rule percentage to basis points and lets admin start a backup', async () => {
+  it('converts the rule percentage to basis points without loading system operations', async () => {
     const wrapper = mount(AnalysisView, { props: { currentUser: admin } });
     await flushPromises();
     await wrapper.get('[data-test="rule-threshold"]').setValue('85');
     await wrapper.get('[data-test="save-rule"]').trigger('click');
-    await wrapper.get('[data-test="create-backup"]').trigger('click');
     await flushPromises();
     const ruleCall = vi.mocked(fetch).mock.calls.find(([url, init]) => String(url) === '/api/analysis/rules' && init?.method === 'PUT');
     expect(JSON.parse(String(ruleCall![1]!.body))).toEqual({ expectedVersion: 2, mode: 'ratio', thresholdBasisPoints: 8500 });
-    expect(vi.mocked(fetch).mock.calls.some(([url, init]) => String(url) === '/api/backups' && init?.method === 'POST')).toBe(true);
+    expect(vi.mocked(fetch).mock.calls.some(([url]) => ['/api/backups', '/api/notification-contacts', '/api/notification-outbox'].includes(String(url)))).toBe(false);
+    expect(wrapper.text()).not.toContain('备份运维');
+    expect(wrapper.text()).not.toContain('Outbox');
   });
 });

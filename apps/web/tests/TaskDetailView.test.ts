@@ -23,6 +23,16 @@ vi.mock('naive-ui', async () => {
     name: 'NInput', props: { value: { type: [String, Number], default: '' }, disabled: Boolean }, emits: ['update:value'], inheritAttrs: false,
     setup(props, { emit, attrs }) { return () => vue.h('input', { ...attrs, value: props.value, disabled: props.disabled, onInput: (event: Event) => emit('update:value', (event.target as HTMLInputElement).value) }); },
   });
+  const NSelect = vue.defineComponent({
+    name: 'NSelect', props: { value: String, options: { type: Array, default: () => [] } }, emits: ['update:value'], inheritAttrs: false,
+    setup(props, { emit, attrs }) {
+      return () => vue.h('select', {
+        ...attrs,
+        value: props.value ?? '',
+        onChange: (event: Event) => emit('update:value', (event.target as HTMLSelectElement).value),
+      }, (props.options as Array<{ label: string; value: string }>).map((item) => vue.h('option', { value: item.value }, item.label)));
+    },
+  });
   const NDrawer = vue.defineComponent({
     name: 'NDrawer', props: { show: Boolean }, emits: ['update:show'], inheritAttrs: false,
     setup(props, { slots, attrs }) { return () => props.show ? vue.h('aside', { ...attrs, 'data-stub': 'NDrawer' }, slots.default?.()) : null; },
@@ -37,7 +47,7 @@ vi.mock('naive-ui', async () => {
   return {
     NAlert: wrap('NAlert'), NButton, NCard: wrap('NCard'), NCheckbox, NDatePicker: NInput, NDrawer,
     NDrawerContent: wrap('NDrawerContent'), NEmpty: wrap('NEmpty'), NForm: wrap('NForm'), NFormItem: wrap('NFormItem'),
-    NInput, NProgress, NSpin: wrap('NSpin'), NTag: wrap('NTag'),
+    NInput, NProgress, NSelect, NSpin: wrap('NSpin'), NTag: wrap('NTag'),
     useMessage: () => ({ success: vi.fn(), error: vi.fn(), warning: vi.fn() }),
   };
 });
@@ -124,24 +134,25 @@ describe('TaskDetailView redesign sample', () => {
     expect(wrapper.text()).toContain('10 / 100');
   });
 
-  it('registers arrival as an increment, shows the remaining maximum and reuses one idempotency key until content changes', async () => {
+  it('registers arrival through the unified supply editor and enforces the remaining shipped quantity', async () => {
     installFetch();
     const wrapper = mount(TaskDetailView, { props: { currentUser: admin } });
     await flushPromises();
 
-    await wrapper.get('[data-test="open-arrival-tm1"]').trigger('click');
+    await wrapper.get('[data-test="open-supply-tm1"]').trigger('click');
+    await wrapper.get('[data-test="supply-stage"]').setValue('arrived');
     expect(wrapper.text()).toContain('本次最多');
     expect(wrapper.text()).toContain('20 套');
 
-    await wrapper.get('[data-test="arrival-quantity"]').setValue('21');
-    await wrapper.get('[data-test="save-arrival"]').trigger('click');
+    await wrapper.get('[data-test="supply-quantity"]').setValue('21');
+    await wrapper.get('[data-test="save-supply"]').trigger('click');
     await flushPromises();
     expect(wrapper.text()).toContain('本次最多可登记 20 套');
     expect(vi.mocked(fetch).mock.calls.filter(([url, init]) => String(url) === '/api/task-material-supply-events' && init?.method === 'POST')).toHaveLength(0);
 
-    await wrapper.get('[data-test="arrival-quantity"]').setValue('10');
-    expect(wrapper.text()).toContain('累计到货将为 30 套');
-    await wrapper.get('[data-test="save-arrival"]').trigger('click');
+    await wrapper.get('[data-test="supply-quantity"]').setValue('10');
+    expect(wrapper.text()).toContain('累计已到货将为 30 套');
+    await wrapper.get('[data-test="save-supply"]').trigger('click');
     await flushPromises();
 
     const call = vi.mocked(fetch).mock.calls.find(([url, init]) => String(url) === '/api/task-material-supply-events' && init?.method === 'POST');
@@ -152,25 +163,49 @@ describe('TaskDetailView redesign sample', () => {
     });
   });
 
+  it('registers shipment independently up to the reported cumulative quantity', async () => {
+    installFetch();
+    const wrapper = mount(TaskDetailView, { props: { currentUser: admin } });
+    await flushPromises();
+
+    await wrapper.get('[data-test="open-supply-tm1"]').trigger('click');
+    await wrapper.get('[data-test="supply-stage"]').setValue('shipped');
+    expect(wrapper.text()).toContain('已上报60 套');
+    expect(wrapper.text()).toContain('已发货40 套');
+    expect(wrapper.text()).toContain('本次最多');
+    expect(wrapper.text()).toContain('20 套');
+    await wrapper.get('[data-test="supply-quantity"]').setValue('10');
+    expect(wrapper.text()).toContain('累计已发货将为 50 套');
+    await wrapper.get('[data-test="save-supply"]').trigger('click');
+    await flushPromises();
+
+    const call = vi.mocked(fetch).mock.calls.find(([url, init]) => String(url) === '/api/task-material-supply-events' && init?.method === 'POST');
+    expect(call).toBeTruthy();
+    expect(JSON.parse(String(call![1]!.body))).toMatchObject({
+      taskMaterialRequirementId: 'tm1', expectedSupplyVersion: 3, stage: 'shipped', quantityScaled: 100000,
+    });
+  });
+
   it('keeps the arrival draft visible on a 409 conflict and offers an explicit refresh path', async () => {
     installFetch({ conflictOnSave: true });
     const wrapper = mount(TaskDetailView, { props: { currentUser: admin } });
     await flushPromises();
-    await wrapper.get('[data-test="open-arrival-tm1"]').trigger('click');
-    await wrapper.get('[data-test="arrival-quantity"]').setValue('10');
-    await wrapper.get('[data-test="save-arrival"]').trigger('click');
+    await wrapper.get('[data-test="open-supply-tm1"]').trigger('click');
+    await wrapper.get('[data-test="supply-stage"]').setValue('arrived');
+    await wrapper.get('[data-test="supply-quantity"]').setValue('10');
+    await wrapper.get('[data-test="save-supply"]').trigger('click');
     await flushPromises();
 
-    expect(wrapper.get('[data-test="arrival-quantity"]').attributes('value')).toBe('10');
+    expect(wrapper.get('[data-test="supply-quantity"]').attributes('value')).toBe('10');
     expect(wrapper.text()).toContain('记录已被更新');
-    expect(wrapper.find('[data-test="reload-after-conflict"]').exists()).toBe(true);
+    expect(wrapper.find('[data-test="reload-supply-after-conflict"]').exists()).toBe(true);
   });
 
   it('does not expose arrival mutations to readonly users', async () => {
     installFetch();
     const wrapper = mount(TaskDetailView, { props: { currentUser: readonly } });
     await flushPromises();
-    expect(wrapper.find('[data-test="open-arrival-tm1"]').exists()).toBe(false);
+    expect(wrapper.find('[data-test="open-supply-tm1"]').exists()).toBe(false);
     expect(wrapper.text()).toContain('只读');
   });
 
