@@ -55,6 +55,8 @@ CI 现在把 `audit` 作为与 `check`、`headless-ui` 并列的发布关键 job
 
 生产发布后的公共语义验收由 `scripts/production/public-smoke.mjs` 自动执行，至少验证 health/schema migration、认证已初始化和匿名 `/api/me` 401；校验器纯函数由 `tests/production-public-smoke.test.mjs` 覆盖。`tests/production-preflight.test.mjs` 继续锁定生产 workflow 不绕过精确 SHA、Secret/Data protection，并要求普通 code-only deploy 也先安装 Worker rollback trap。
 
+`make production-smoke` 复用同一脚本并从 tracked production config 解析正式域名，不允许在 Makefile/脚本中复制第二份生产 URL；`Production preflight` 必须保持无 production Environment、无 Secret、无云端写操作。
+
 Shared 公共契约已经从单一巨型 `index.ts` 按业务域拆分；Node 原生 TypeScript ESM 通过显式 `.ts` 相对 specifier 保证可解析，并由 repository guard、maintenance-mode 与 Node 第二运行时测试共同锁定，不能只依赖 Bundler/typecheck 通过。
 
 API 中需求、项目储备、资金、项目执行与任务队列的对象型分页游标统一复用 `apps/api/src/http/cursor.ts` 的 Base64URL JSON codec；各路由仍负责自己的字段形状校验和 `INVALID_CURSOR` 业务错误，公共 codec 不承载业务语义。`tests/cursor-codec.test.mjs` 和 repository guard 防止再次复制编解码实现。

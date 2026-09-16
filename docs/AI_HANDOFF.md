@@ -79,8 +79,10 @@
 
 - CI 新增独立 `audit` job，工程卫生与 production dependency security audit 成为发布关键证据；
 - `Production preflight` / `Production promote` 不再把同一 SHA 的完整测试重复执行，而由 `verify-release-ci.mjs` 严格复用精确 `main` push CI 的 `check / headless-ui / audit` 三项成功证据；
+- `Production preflight` 已解除 `production` Environment 绑定：它无云凭据、无 remote mutation，不再占用生产审批/Secret 边界；
 - production workflow 仍在 fresh runner 重新安装锁定依赖、build Web、校验 production config 并做 Worker dry-run，不能只靠历史构建产物；
 - `public-smoke.mjs` 自动验证 health/schema migration、认证初始化和匿名 401；
+- `make production-smoke` 从受控 production config 解析正式域名，可随时只读复核当前线上基础状态；
 - code-only `rebuildRequired=false` 发布也在 deploy 前记录旧 Worker version 并安装 rollback trap，smoke 失败时自动回滚；发布摘要直接记录新 Worker Version ID；
 - 旧 `main@10274d5` CI 因尚无 `audit` job，被新 release gate 正确拒绝复用，证明门禁不会拿旧弱证据冒充新发布证据。
 

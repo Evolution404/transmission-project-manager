@@ -741,13 +741,14 @@ test('Makefile is the single ergonomic entry point without bypassing production 
   const makefilePath = resolve(root, 'Makefile');
   assert.equal(existsSync(makefilePath), true, '仓库根目录必须提供 Makefile 作为统一工程入口');
   const source = readFileSync(makefilePath, 'utf8');
-  for (const target of ['help', 'install', 'dev', 'test', 'check', 'test-ui', 'build', 'ci', 'production-preflight', 'production', 'production-inventory']) {
+  for (const target of ['help', 'install', 'dev', 'test', 'check', 'test-ui', 'build', 'ci', 'production-preflight', 'production', 'production-smoke', 'production-inventory']) {
     assert.match(source, new RegExp(`^${target}:`, 'm'), `Makefile 缺少 ${target} target`);
   }
   assert.match(source, /npm run dev\b/, 'make dev 必须复用仓库正式本地启动入口');
   assert.match(source, /npm run check\b/, 'Makefile 必须保留完整 npm check 门禁');
   assert.match(source, /npm run test:ui:headless\b/, 'Makefile 必须暴露无头浏览器 UI 验收');
   assert.match(source, /scripts\/engineering\/github-workflow\.mjs production-promote\.yml --ref main --require-main-sync/, '生产一键发布必须走受保护的 Production promote workflow');
+  assert.match(source, /scripts\/production\/public-smoke\.mjs --config apps\/api\/wrangler\.production\.jsonc/, 'Makefile 必须提供基于受控 production config 的只读公网 smoke');
   assert.doesNotMatch(source, /wrangler\s+deploy/, 'Makefile 不得直接执行 wrangler deploy 绕过生产治理');
   assert.doesNotMatch(source, /git\s+(?:reset|clean)\b/, 'Makefile 不得提供破坏工作区的 reset/clean 快捷入口');
 });

@@ -128,7 +128,8 @@ test('push CI and manual production preflight contain no cloud mutation or crede
   const source = readFileSync(new URL('../.github/workflows/production-preflight.yml', import.meta.url), 'utf8');
   assert.match(source, /workflow_dispatch/);
   assert.doesNotMatch(source, /\n  (push|pull_request|schedule|workflow_run):/);
-  assert.match(source, /environment: production/);
+  assert.doesNotMatch(source, /environment:\s*production/, '纯只读 preflight 不应占用 production Environment 审批或 Secret 边界');
+  assert.match(source, /github\.ref == 'refs\/heads\/main'/, 'preflight 仍必须限制在 main');
 });
 
 test('production promote is the single manual production mutation entry point', () => {

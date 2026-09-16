@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 .DEFAULT_GOAL := help
 
-.PHONY: help install doctor dev dev-api dev-web typecheck build build-web build-worker test test-unit test-ui check audit engineering-audit security-audit ci production-preflight production production-inventory status
+.PHONY: help install doctor dev dev-api dev-web typecheck build build-web build-worker test test-unit test-ui check audit engineering-audit security-audit ci production-preflight production production-smoke production-inventory status
 
 help:
 	@printf '%s\n' \
@@ -23,6 +23,7 @@ help:
 	  '  make ci                   触发并等待当前分支 GitHub CI' \
 	  '  make production-preflight 可选：复用精确 main CI 后做生产打包/dry-run 演练' \
 	  '  make production           一键发布：复用精确 main CI 后执行生产专属校验、数据保护、deploy 与 smoke' \
+	  '  make production-smoke     只读检查当前生产 health / auth 初始化 / 匿名 401' \
 	  '  make production-inventory 一键读取生产 Cloudflare inventory（只读）' \
 	  '  make status               查看 Git / 最近提交状态'
 
@@ -85,6 +86,9 @@ production-preflight:
 
 production:
 	node scripts/engineering/github-workflow.mjs production-promote.yml --ref main --require-main-sync
+
+production-smoke:
+	node scripts/production/public-smoke.mjs --config apps/api/wrangler.production.jsonc
 
 production-inventory:
 	node scripts/engineering/github-workflow.mjs production-cloudflare-inventory.yml --ref main --require-main-sync

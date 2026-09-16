@@ -144,7 +144,9 @@ PR #2 合入后使用以下 Actions：
 - 不加载 `CLOUDFLARE_API_TOKEN`；
 - 不执行 remote migration 或 deploy。
 
-preflight 通过只证明精确 SHA 的 CI 证据、production 配置和 fresh-runner 打包成立，不证明真实 Cloudflare 资源/Secret 存在。正式发布不强制先跑 preflight，因为 `Production promote` 会执行同样的 CI 证据校验和生产专属打包检查。
+preflight 不绑定 `production` Environment，也不读取任何 production Secret；纯只读/离线演练不应占用生产审批边界。preflight 通过只证明精确 SHA 的 CI 证据、production 配置和 fresh-runner 打包成立，不证明真实 Cloudflare 资源/Secret 存在。正式发布不强制先跑 preflight，因为 `Production promote` 会执行同样的 CI 证据校验和生产专属打包检查。
+
+需要在不发布的情况下快速检查当前线上基础状态时，使用 `make production-smoke`。该命令从 `apps/api/wrangler.production.jsonc` 读取正式自定义域名，不重复维护 URL，只执行公网 GET：health/schema migration、认证初始化和匿名 `/api/me` 401。
 
 ### 5.3 开发期生产数据迁移
 

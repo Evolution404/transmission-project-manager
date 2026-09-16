@@ -116,6 +116,7 @@ YAML 中写 `environment: production` 不能替代真实 Environment protection 
 - `make ci`：触发并等待当前分支 `CI`；
 - `make production-preflight`：可选；要求 clean 且与 `origin/main` 同步的 `main`，触发并等待生产打包/dry-run 演练；
 - `make production`：同样校验精确 `main` 后触发并等待 `Production promote`；workflow 会复用该 SHA 已完成的 main CI 证据，不重复执行全套测试；
+- `make production-smoke`：不触发发布、不读取用户 Cookie/密码，直接从受控 production config 解析正式域名并检查 health/schema、认证初始化和匿名 401；
 - `make production-inventory`：触发并等待读取型 Cloudflare production inventory。
 
 `Makefile` 不允许直接执行 `wrangler deploy`、remote D1 mutation、`git reset` 或 `git clean`。生产 Secret、数据保留评估、精确 SHA 二次绑定、正式发布、health 验证和失败回退仍全部由受保护 workflow 负责。
@@ -153,6 +154,8 @@ YAML 中写 `environment: production` 不能替代真实 Environment protection 
 - `npm run production:check -- config`；
 - Wrangler production dry-run；
 - 不携带 Cloudflare Token，不产生云端变更。
+
+该 workflow 不绑定 `production` Environment：它既不读取 production Secrets，也不执行 Cloudflare mutation，因此不应占用生产审批边界。真正的 `Production promote` 与只读 production inventory 仍按各自权限模型执行。
 
 ### 6.4 开发期生产数据重建
 

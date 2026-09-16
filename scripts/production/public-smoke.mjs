@@ -1,4 +1,13 @@
+import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
+
+export function baseUrlFromProductionConfig(config) {
+  const route = Array.isArray(config?.routes)
+    ? config.routes.find((candidate) => candidate?.custom_domain === true && typeof candidate?.pattern === 'string' && candidate.pattern.trim())
+    : null;
+  if (!route) throw new Error('production config domain 无效或缺失');
+  return `https://${route.pattern.trim()}`;
+}
 
 function assertStatus(actual, expected, label) {
   if (actual !== expected) throw new Error(`${label} HTTP 状态异常：期望 ${expected}，实际 ${actual}`);
@@ -77,8 +86,15 @@ export async function runPublicSmoke(baseUrl, { attempts = 12, delayMs = 2_000 }
 const isCli = process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1];
 if (isCli) {
   try {
-    const baseUrl = process.argv[2];
-    if (!baseUrl) throw new Error('用法: node scripts/production/public-smoke.mjs https://example.com');
+    const [first, second] = process.argv.slice(2);
+    let baseUrl;
+    if (first === '--config') {
+      if (!second) throw new Error('--config 缺少 production config 路径');
+      baseUrl = baseUrlFromProductionConfig(JSON.parse(await readFile(second, 'utf8')));
+    } else {
+      baseUrl = first;
+    }
+    if (!baseUrl) throw new Error('用法: node scripts/production/public-smoke.mjs <https://domain> | --config <wrangler.production.jsonc>');
     const result = await runPublicSmoke(baseUrl);
     console.log(`[production-smoke] PASS migration=${result.migration} auth=initialized anonymous-me=401`);
   } catch (cause) {
