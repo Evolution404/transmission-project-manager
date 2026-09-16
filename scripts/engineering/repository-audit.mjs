@@ -18,6 +18,7 @@ if (forbiddenTracked.length > 0) {
 
 const productionFiles = tracked.filter((file) =>
   /^(?:apps\/[^/]+\/src|packages\/[^/]+\/src|scripts)\//.test(file)
+  && file !== 'scripts/engineering/repository-audit.mjs'
   && ['.ts', '.vue', '.mjs', '.js', '.sh'].includes(extname(file)),
 );
 
