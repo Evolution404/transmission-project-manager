@@ -31,6 +31,15 @@ vi.mock('naive-ui', async () => {
   };
 });
 
+vi.mock('../src/features/projects/ProjectSourceEditor.vue', async () => {
+  const vue = await import('vue');
+  return { default: vue.defineComponent({ name: 'ProjectSourceEditor', props: { show: Boolean }, emits: ['update:show', 'saved'], setup() { return () => null; } }) };
+});
+vi.mock('../src/features/projects/ProjectMaterialsEditor.vue', async () => {
+  const vue = await import('vue');
+  return { default: vue.defineComponent({ name: 'ProjectMaterialsEditor', props: { show: Boolean }, emits: ['update:show', 'saved'], setup() { return () => null; } }) };
+});
+
 import ProjectDetailView from '../src/views/ProjectDetailView.vue';
 
 const admin: CurrentUser = {
@@ -56,12 +65,16 @@ function ok(data: unknown, status = 200) {
   return new Response(JSON.stringify({ ok: true, data }), { status, headers: { 'Content-Type': 'application/json' } });
 }
 
-function installFetch(options: { conflict?: boolean } = {}) {
+function installFetch(options: { conflict?: boolean; draft?: boolean; confirmConflict?: boolean } = {}) {
   vi.stubGlobal('crypto', { randomUUID: vi.fn(() => 'release-idem-1') });
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
-    if (url === '/api/reserve-projects/p1') return ok(project);
+    if (url === '/api/reserve-projects/p1') return ok(options.draft ? { ...project, status: 'draft', reserveVersion: 2, version: 7 } : project);
     if (url === '/api/projects/p1/execution') return ok(execution(false));
+    if (url === '/api/reserve-projects/p1/confirm' && init?.method === 'POST') {
+      if (options.confirmConflict) return new Response(JSON.stringify({ ok: false, error: { code: 'VERSION_CONFLICT', message: '项目已被修改' } }), { status: 409, headers: { 'Content-Type': 'application/json' } });
+      return ok({ projectId: 'p1', version: 8, reserveVersion: 3, status: 'confirmed' });
+    }
     if (url === '/api/project-releases' && init?.method === 'POST') {
       if (options.conflict) return new Response(JSON.stringify({ ok: false, error: { code: 'VERSION_CONFLICT', message: '项目已被修改' } }), { status: 409, headers: { 'Content-Type': 'application/json' } });
       return ok({ id: 'release1' }, 201);
@@ -111,5 +124,41 @@ describe('ProjectDetailView project release', () => {
     const wrapper = mount(ProjectDetailView, { props: { currentUser: readonly } });
     await flushPromises();
     expect(wrapper.find('[data-test="open-project-release"]').exists()).toBe(false);
+  });
+
+  it('confirms a draft reserve even when project source and material collections are allowed to be empty', async () => {
+    installFetch({ draft: true });
+    const wrapper = mount(ProjectDetailView, { props: { currentUser: admin } });
+    await flushPromises();
+
+    expect(wrapper.find('[data-test="open-reserve-confirm"]').exists()).toBe(true);
+    await wrapper.get('[data-test="open-reserve-confirm"]').trigger('click');
+    await wrapper.get('[data-test="reserve-confirm-reason"]').setValue('本轮储备范围已核对');
+    await wrapper.get('[data-test="confirm-reserve"]').trigger('click');
+    await flushPromises();
+
+    const call = vi.mocked(fetch).mock.calls.find(([url, init]) => String(url) === '/api/reserve-projects/p1/confirm' && init?.method === 'POST');
+    expect(call).toBeTruthy();
+    expect(JSON.parse(String(call![1]!.body))).toMatchObject({ expectedVersion: 7, reason: '本轮储备范围已核对' });
+  });
+
+  it('preserves reserve confirmation reason on a 409 and never exposes project editing to readonly users', async () => {
+    installFetch({ draft: true, confirmConflict: true });
+    const wrapper = mount(ProjectDetailView, { props: { currentUser: admin } });
+    await flushPromises();
+    await wrapper.get('[data-test="open-reserve-confirm"]').trigger('click');
+    await wrapper.get('[data-test="reserve-confirm-reason"]').setValue('保留确认说明');
+    await wrapper.get('[data-test="confirm-reserve"]').trigger('click');
+    await flushPromises();
+    expect(wrapper.get('[data-test="reserve-confirm-reason"]').attributes('value')).toBe('保留确认说明');
+    expect(wrapper.text()).toContain('储备确认前项目已被更新');
+
+    vi.unstubAllGlobals();
+    installFetch({ draft: true });
+    const readWrapper = mount(ProjectDetailView, { props: { currentUser: readonly } });
+    await flushPromises();
+    expect(readWrapper.find('[data-test="open-reserve-confirm"]').exists()).toBe(false);
+    expect(readWrapper.find('[data-test="edit-project-sources"]').exists()).toBe(false);
+    expect(readWrapper.find('[data-test="edit-project-materials"]').exists()).toBe(false);
   });
 });

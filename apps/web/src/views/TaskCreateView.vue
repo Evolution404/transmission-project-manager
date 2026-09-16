@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { NAlert, NButton, NDatePicker, NEmpty, NForm, NFormItem, NInput, NSpin, useMessage } from 'naive-ui';
 import type { CurrentUser, ProjectExecutionSummary, ProjectTaskExecutionSummary, ReserveProjectSummary } from '@tpm/shared';
 import { ApiRequestError, apiRequest, jsonRequestInit } from '../api/client';
+import AppPressable from '../app/AppPressable.vue';
 
 const props = defineProps<{ currentUser: CurrentUser }>();
 const route = useRoute();
@@ -168,7 +169,7 @@ onMounted(() => {
 
 <template>
   <div class="view-stack task-create-view">
-    <button class="breadcrumb-back" @click="backToProject">‹ 返回项目</button>
+    <app-pressable class="breadcrumb-back" @click="backToProject">‹ 返回项目</app-pressable>
     <n-spin :show="loading">
       <template v-if="project && execution">
         <section class="create-header">

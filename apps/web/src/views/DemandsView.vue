@@ -43,6 +43,7 @@ import {
   sha256File,
   type ImportWorkflowProgress,
 } from '../imports/workflow';
+import AppFilePicker from '../app/AppFilePicker.vue';
 
 const props = defineProps<{ currentUser: CurrentUser }>();
 const message = useMessage();
@@ -524,7 +525,14 @@ onMounted(loadInitial);
               <n-alert type="info" :bordered="false" class="section-note">
                 推荐先下载系统标准模板填写后导入；标准模板可直接自动映射。文件仅在浏览器 Web Worker 中解析；同时兼容 .xlsx 和 UTF-8 .csv，旧 .xls 请先另存为 .xlsx。
               </n-alert>
-              <input data-test="file-input" type="file" accept=".xlsx,.csv" :disabled="parsing || importing" @change="onFileChange" />
+              <app-file-picker
+                test-id="file-input"
+                accept=".xlsx,.csv"
+                label="选择需求文件"
+                :selected-name="selectedFile?.name ?? null"
+                :disabled="parsing || importing"
+                @change="onFileChange"
+              />
               <div v-if="parsing" class="status-line">正在后台解析文件…</div>
               <div v-else-if="parsedFile" class="status-line">
                 <n-tag type="success" :bordered="false">{{ parsedFile.fileType.toUpperCase() }}</n-tag>

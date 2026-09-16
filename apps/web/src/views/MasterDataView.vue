@@ -23,6 +23,8 @@ import {
 import { apiRequest, jsonRequestInit } from '../api/client';
 import { formatBusinessDateTime } from '../businessTime';
 import { parseFileInWorker } from '../imports/workerClient';
+import AppPressable from '../app/AppPressable.vue';
+import AppFilePicker from '../app/AppFilePicker.vue';
 import {
   buildTowerImportPreview,
   completeTowerCoverageErrors,
@@ -960,11 +962,11 @@ onMounted(loadAll);
       </div>
       <div class="line-list">
         <article v-for="item in lines" :key="item.id" class="line-card">
-          <button class="line-open" :data-test="`select-line-${item.id}`" @click="openLineDetail(item)">
+          <app-pressable class="line-open" :data-test="`select-line-${item.id}`" @click="openLineDetail(item)">
             <div class="line-card-title"><n-tag size="small" :bordered="false">{{ item.voltageLevelName }}</n-tag><strong>{{ item.lineName }}</strong></div>
             <p v-if="item.matchedHistoricalName" class="history-match">曾用名匹配：{{ item.matchedHistoricalName }}</p>
             <div class="line-card-meta"><span>{{ item.towerCount ?? 0 }} 基杆塔</span><span>{{ item.enabled ? '启用' : '停用' }}</span><span v-if="item.lineCode">{{ item.lineCode }}</span></div>
-          </button>
+          </app-pressable>
           <div v-if="isAdmin" class="line-card-actions"><n-button text size="tiny" @click="openLine(item)">编辑属性</n-button><n-button text size="tiny" :disabled="saving" @click="requestDelete('lines',item,`线路“${item.lineName}”`)">删除</n-button></div>
         </article>
       </div>
@@ -973,7 +975,7 @@ onMounted(loadAll);
     </section>
 
     <section v-else class="line-detail" data-test="line-detail">
-      <button class="back-button" data-test="back-lines" @click="backToLines">← 返回线路台账</button>
+      <app-pressable class="back-button" data-test="back-lines" @click="backToLines">← 返回线路台账</app-pressable>
       <header class="detail-heading">
         <div>
           <div class="detail-title-row"><n-tag :bordered="false">{{ selectedLine.voltageLevelName }}</n-tag><h2>{{ selectedLine.lineName }}</h2></div>
@@ -1183,7 +1185,7 @@ onMounted(loadAll);
       <p>当前线路：{{ selectedLine?.lineName }}。可选择 .xlsx / .csv，或直接从表格粘贴“杆塔编号、同塔位置标识、状态”。系统会先规范编号并与完整线路台账对比，再一次确认导入。批量新增默认每个线路节点创建独立物理杆塔；同塔关联请使用单个新增。</p>
       <n-form-item label="导入模式"><n-select data-test="tower-import-mode" :value="bulkMode" :options="bulkModeOptions" @update:value="setBulkMode" /></n-form-item>
       <n-alert v-if="bulkMode==='full-order'" type="warning" :bordered="false">完整清单模式要求当前线路每个杆塔对象都在文件中唯一出现；不会把缺失行当作删除。导入完成后，文件行顺序将成为线路顺序。</n-alert>
-      <div class="tower-import-source"><input data-test="tower-import-file" type="file" accept=".xlsx,.csv" :disabled="bulkPreparing || saving" @change="onBulkFile" /><span>或</span><n-button size="small" :loading="bulkPreparing" data-test="preview-bulk-towers" @click="previewBulkPaste">预览粘贴数据</n-button></div>
+      <div class="tower-import-source"><app-file-picker test-id="tower-import-file" accept=".xlsx,.csv" label="选择台账文件" :selected-name="bulkSourceLabel || null" :disabled="bulkPreparing || saving" @change="onBulkFile" /><span>或</span><n-button size="small" :loading="bulkPreparing" data-test="preview-bulk-towers" @click="previewBulkPaste">预览粘贴数据</n-button></div>
       <n-input v-model:value="bulkText" data-test="bulk-tower-text" type="textarea" :rows="8" placeholder="杆塔编号[TAB]同塔位置标识[TAB]状态，例如：10-1    左回    启用。第一行也可以带表头。" />
       <div v-if="bulkPreview" class="tower-import-preview" data-test="tower-import-preview"><p><strong>{{ bulkSourceLabel }}</strong>：共 {{ bulkPreview.counts.total }} 行；新增 {{ bulkPreview.counts.create }}，更新 {{ bulkPreview.counts.update }}，无变化 {{ bulkPreview.counts.unchanged }}，错误 {{ bulkPreview.counts.error }}。</p><p v-if="!bulkPreview.counts.error && !bulkGlobalErrors.length">{{ bulkMode==='full-order' ? '完整清单校验通过；属性变化会先自动分批写入，随后按文件顺序原子重排。' : '系统将自动分批写入；新增杆塔按规范编号自动插入合适位置，不改变已有杆塔的人工顺序。' }}</p><div v-if="bulkPreview.counts.error" class="tower-import-errors"><p v-for="row in bulkPreview.rows.filter(item => item.action === 'error').slice(0,20)" :key="`${row.source}-${row.rowNumber}`">{{ row.source }}第 {{ row.rowNumber }} 行：{{ row.message }}</p><p v-if="bulkPreview.counts.error > 20">另有 {{ bulkPreview.counts.error - 20 }} 条错误，请修正后重新预览。</p></div><div v-if="bulkGlobalErrors.length" class="tower-import-errors"><p v-for="issue in bulkGlobalErrors" :key="issue">{{ issue }}</p></div><p v-if="bulkChunks.length">进度：{{ bulkProcessed }} / {{ bulkChunks.reduce((total, chunk) => total + chunk.length, 0) }} 条需要写入的数据。</p></div>
       <template #footer><div class="actions"><n-button @click="bulkModal=false">取消</n-button><n-button data-test="save-bulk-towers" type="primary" :loading="saving" :disabled="!bulkPreview || bulkPreview.counts.error>0 || bulkGlobalErrors.length>0" @click="saveBulk">{{ bulkNextChunk > 0 ? '继续导入' : '开始导入' }}</n-button></div></template>

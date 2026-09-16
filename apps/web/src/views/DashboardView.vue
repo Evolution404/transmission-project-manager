@@ -5,6 +5,7 @@ import { NAlert, NSpin } from 'naive-ui';
 import type { AnalysisDashboardSummary, CurrentUser } from '@tpm/shared';
 import { parseApiResponse } from '../api/response';
 import AppIcon from '../app/AppIcon.vue';
+import AppPressable from '../app/AppPressable.vue';
 
 const props = defineProps<{ currentUser: CurrentUser }>();
 const router = useRouter();
@@ -54,30 +55,30 @@ onMounted(loadDashboard);
 
     <n-spin :show="loading">
       <section class="overview-strip" aria-label="业务摘要">
-        <button class="overview-cell" @click="navigate('/demands')">
+        <app-pressable class="overview-cell" @click="navigate('/demands')">
           <span>需求</span><strong>{{ dashboard?.demandCount ?? 0 }}</strong><small>已纳入系统</small>
-        </button>
-        <button class="overview-cell" @click="navigate('/projects')">
+        </app-pressable>
+        <app-pressable class="overview-cell" @click="navigate('/projects')">
           <span>项目</span><strong>{{ dashboard?.projectCount ?? 0 }}</strong><small>当前授权范围</small>
-        </button>
-        <button class="overview-cell emphasis" @click="navigate('/projects?stage=reserve')">
+        </app-pressable>
+        <app-pressable class="overview-cell emphasis" @click="navigate('/projects?stage=reserve')">
           <span>待出库</span><strong>{{ dashboard?.unreleasedProjectCount ?? 0 }}</strong><small>等待进入执行</small>
-        </button>
-        <button class="overview-cell emphasis" @click="navigate('/delivery')">
+        </app-pressable>
+        <app-pressable class="overview-cell emphasis" @click="navigate('/tasks?status=settlement_pending')">
           <span>结算待办</span><strong>{{ dashboard?.pendingSettlementCount ?? 0 }}</strong><small>实施后未最终结算</small>
-        </button>
-        <button class="overview-cell warning" @click="navigate('/analysis')">
+        </app-pressable>
+        <app-pressable class="overview-cell warning" @click="navigate('/analysis')">
           <span>活动预警</span><strong>{{ dashboard?.activeAlertCount ?? 0 }}</strong><small>当前有效提醒</small>
-        </button>
+        </app-pressable>
       </section>
     </n-spin>
 
     <section class="workspace-section">
       <div class="workspace-section-heading"><div><h3>常用入口</h3><p>按工作对象进入，不需要先理解后台模块结构。</p></div></div>
       <div class="workspace-links">
-        <button @click="navigate('/projects')"><span class="workspace-link-icon"><app-icon name="projects" /></span><span><strong>项目中心</strong><small>储备、出库、执行任务和项目资金</small></span><app-icon name="chevron" :size="17" /></button>
-        <button @click="navigate('/delivery')"><span class="workspace-link-icon"><app-icon name="tasks" /></span><span><strong>执行任务</strong><small>供应、现场实施和任务结算</small></span><app-icon name="chevron" :size="17" /></button>
-        <button @click="navigate('/demands')"><span class="workspace-link-icon"><app-icon name="demands" /></span><span><strong>项目需求</strong><small>新建、导入和查看需求来源</small></span><app-icon name="chevron" :size="17" /></button>
+        <app-pressable @click="navigate('/projects')"><span class="workspace-link-icon"><app-icon name="projects" /></span><span><strong>项目中心</strong><small>储备、出库、执行任务和项目资金</small></span><app-icon name="chevron" :size="17" /></app-pressable>
+        <app-pressable @click="navigate('/tasks')"><span class="workspace-link-icon"><app-icon name="tasks" /></span><span><strong>执行任务</strong><small>供应、现场实施和任务结算</small></span><app-icon name="chevron" :size="17" /></app-pressable>
+        <app-pressable @click="navigate('/demands')"><span class="workspace-link-icon"><app-icon name="demands" /></span><span><strong>项目需求</strong><small>新建、导入和查看需求来源</small></span><app-icon name="chevron" :size="17" /></app-pressable>
       </div>
     </section>
   </div>

@@ -329,6 +329,25 @@ test('web form defaults are Chinese and English default placeholders are forbidd
   }
 });
 
+test('web business UI cannot render browser-native controls directly', () => {
+  const pressableFile = resolve(root, 'apps/web/src/app/AppPressable.vue');
+  const filePickerFile = resolve(root, 'apps/web/src/app/AppFilePicker.vue');
+  const primitiveFiles = new Set([pressableFile, filePickerFile]);
+  for (const file of collectSourceFiles(resolve(root, 'apps/web/src'))) {
+    if (!file.endsWith('.vue') || primitiveFiles.has(file)) continue;
+    const source = readFileSync(file, 'utf8');
+    assert.doesNotMatch(source, /<(?:button|input|select|textarea)\b/i, `${file} 直接渲染了浏览器原生表单控件；请使用设计系统组件`);
+    assert.doesNotMatch(source, /\bh\(\s*['"](?:button|input|select|textarea)['"]/i, `${file} 动态渲染了浏览器原生表单控件；请使用设计系统组件`);
+  }
+  const pressable = readFileSync(pressableFile, 'utf8');
+  assert.match(pressable, /appearance:\s*none/);
+  assert.match(pressable, /border:\s*0/);
+  assert.match(pressable, /background:\s*transparent/);
+  const filePicker = readFileSync(filePickerFile, 'utf8');
+  assert.match(filePicker, /class="native-file-input"/);
+  assert.match(filePicker, /clip-path:\s*inset\(50%\)/);
+});
+
 test('mobile UI keeps usable navigation and dashboard density', () => {
   const appSource = readFileSync(resolve(root, 'apps/web/src/App.vue'), 'utf8');
   const dashboardSource = readFileSync(resolve(root, 'apps/web/src/views/DashboardView.vue'), 'utf8');

@@ -4,6 +4,9 @@ import { useRoute, useRouter } from 'vue-router';
 import { NAlert, NButton, NDatePicker, NEmpty, NForm, NFormItem, NInput, NModal, NProgress, NSpin, NTag, useMessage } from 'naive-ui';
 import type { CurrentUser, ProjectExecutionSummary, ReserveProjectSummary } from '@tpm/shared';
 import { ApiRequestError, apiRequest, jsonRequestInit } from '../api/client';
+import AppPressable from '../app/AppPressable.vue';
+import ProjectSourceEditor from '../features/projects/ProjectSourceEditor.vue';
+import ProjectMaterialsEditor from '../features/projects/ProjectMaterialsEditor.vue';
 
 const props = defineProps<{ currentUser: CurrentUser }>();
 const route = useRoute();
@@ -22,6 +25,14 @@ const releaseNote = ref('');
 const releaseError = ref('');
 const releaseConflict = ref(false);
 const releaseIdempotencyKey = ref('');
+const sourceEditorOpen = ref(false);
+const materialsEditorOpen = ref(false);
+const reserveConfirmOpen = ref(false);
+const reserveConfirming = ref(false);
+const reserveConfirmReason = ref('');
+const reserveConfirmError = ref('');
+const reserveConfirmConflict = ref(false);
+const reserveConfirmIdempotencyKey = ref('');
 
 const canManage = computed(() => ['admin', 'project_manager'].includes(props.currentUser.role));
 const canCreateTask = computed(() => ['admin', 'project_manager', 'implementation'].includes(props.currentUser.role));
@@ -66,6 +77,51 @@ async function load() {
 function backToProjects() { void router.push('/projects'); }
 function openTask(taskId: string) { void router.push(`/projects/${encodeURIComponent(projectId.value)}/tasks/${encodeURIComponent(taskId)}`); }
 function createTask() { void router.push(`/projects/${encodeURIComponent(projectId.value)}/tasks/new`); }
+
+function openReserveConfirm() {
+  reserveConfirmReason.value = '';
+  reserveConfirmError.value = '';
+  reserveConfirmConflict.value = false;
+  reserveConfirmIdempotencyKey.value = crypto.randomUUID();
+  reserveConfirmOpen.value = true;
+}
+
+async function confirmReserve() {
+  if (!project.value) return;
+  reserveConfirming.value = true;
+  reserveConfirmError.value = '';
+  reserveConfirmConflict.value = false;
+  try {
+    await apiRequest(`/api/reserve-projects/${encodeURIComponent(project.value.id)}/confirm`, jsonRequestInit('POST', {
+      expectedVersion: project.value.version,
+      reason: reserveConfirmReason.value.trim() || null,
+    }, reserveConfirmIdempotencyKey.value));
+    reserveConfirmOpen.value = false;
+    await load();
+    message.success('储备版本已确认');
+  } catch (cause) {
+    if (cause instanceof ApiRequestError && cause.status === 409) {
+      reserveConfirmConflict.value = true;
+      reserveConfirmError.value = '储备确认前项目已被更新。当前说明已保留，请读取最新项目后重新确认。';
+    } else {
+      reserveConfirmError.value = cause instanceof Error ? cause.message : '储备确认失败';
+    }
+  } finally { reserveConfirming.value = false; }
+}
+
+async function reloadReserveProject() {
+  const reason = reserveConfirmReason.value;
+  await load();
+  reserveConfirmReason.value = reason;
+  reserveConfirmConflict.value = false;
+  reserveConfirmError.value = '';
+  reserveConfirmIdempotencyKey.value = crypto.randomUUID();
+  if (project.value?.status === 'confirmed') reserveConfirmOpen.value = false;
+}
+
+async function projectDefinitionSaved() {
+  await load();
+}
 
 function openProjectRelease() {
   releaseDate.value = Date.now();
@@ -123,7 +179,7 @@ onMounted(load);
 
 <template>
   <div class="view-stack project-detail-view">
-    <button class="breadcrumb-back" @click="backToProjects">← 返回项目</button>
+    <app-pressable class="breadcrumb-back" @click="backToProjects">← 返回项目</app-pressable>
     <div v-if="error" class="detail-error">{{ error }} <n-button text @click="load">重新加载</n-button></div>
     <n-spin :show="loading">
       <template v-if="project && execution">
@@ -140,16 +196,17 @@ onMounted(load);
             </div>
           </div>
           <div class="object-actions">
-            <n-button v-if="canManage && project.status === 'confirmed' && !execution.released" data-test="open-project-release" type="primary" @click="openProjectRelease">项目出库</n-button>
+            <n-button v-if="canManage && project.status === 'draft'" data-test="open-reserve-confirm" type="primary" @click="openReserveConfirm">确认储备</n-button>
+            <n-button v-else-if="canManage && project.status === 'confirmed' && !execution.released" data-test="open-project-release" type="primary" @click="openProjectRelease">项目出库</n-button>
             <n-button v-else-if="canCreateTask && execution.released && !execution.tasks.length" type="primary" @click="createTask">新建执行任务</n-button>
             <n-button v-else-if="execution.tasks.length" secondary @click="setTab('tasks')">查看执行任务</n-button>
           </div>
         </header>
 
         <nav class="segment-nav" aria-label="项目详情分段">
-          <button v-for="item in [
+          <app-pressable v-for="item in [
             ['overview', '概览'], ['demands', '来源需求'], ['materials', '项目物资'], ['tasks', '执行任务'], ['finance', '资金'], ['history', '附件与历史'],
-          ]" :key="item[0]" :class="{ active: tab === item[0] }" @click="setTab(item[0])">{{ item[1] }}</button>
+          ]" :key="item[0]" :class="{ active: tab === item[0] }" @click="setTab(item[0])">{{ item[1] }}</app-pressable>
         </nav>
 
         <section v-if="tab === 'overview'" class="detail-section overview-section">
@@ -178,17 +235,17 @@ onMounted(load);
         <section v-else-if="tab === 'tasks'" class="detail-section">
           <div class="section-heading"><div><h3>执行任务</h3><p>供应、实施、结算分别推进，不强制串行。</p></div><n-button v-if="canCreateTask && execution.released" secondary @click="createTask">新建任务</n-button></div>
           <div v-if="execution.tasks.length" class="task-list">
-            <button v-for="task in execution.tasks" :key="task.id" class="task-row" @click="openTask(task.id)">
+            <app-pressable v-for="task in execution.tasks" :key="task.id" class="task-row" @click="openTask(task.id)">
               <div><strong>{{ task.name }}</strong><span>{{ task.scopeText || '未填写现场范围' }}</span></div>
               <div class="task-progress-pair"><span>实施 {{ Math.round(task.implementedQuantityScaled / task.plannedQuantityScaled * 100) }}%</span><span>结算 {{ Math.round(task.settledQuantityScaled / task.plannedQuantityScaled * 100) }}%</span></div>
               <span class="row-chevron">›</span>
-            </button>
+            </app-pressable>
           </div>
           <n-empty v-else description="项目出库后可以创建执行任务" />
         </section>
 
         <section v-else-if="tab === 'demands'" class="detail-section">
-          <div class="section-heading"><div><h3>来源需求</h3><p>这里只表达项目来源，不等同于项目物资。</p></div></div>
+          <div class="section-heading"><div><h3>来源需求</h3><p>这里只表达项目来源，不等同于项目物资。</p></div><n-button v-if="canManage" data-test="edit-project-sources" secondary @click="sourceEditorOpen = true">编辑来源</n-button></div>
           <div v-if="project.demandLinks.length" class="fact-list">
             <div v-for="item in project.demandLinks" :key="item.id"><strong>{{ item.sequenceNo }}</strong><span>{{ item.lineName }} {{ item.section }}</span></div>
           </div>
@@ -196,7 +253,7 @@ onMounted(load);
         </section>
 
         <section v-else-if="tab === 'materials'" class="detail-section">
-          <div class="section-heading"><div><h3>项目物资</h3><p>项目物资独立于需求阶段物资，可持续修订并保留历史。</p></div></div>
+          <div class="section-heading"><div><h3>项目物资</h3><p>项目物资独立于需求阶段物资，可持续修订并保留历史。</p></div><n-button v-if="canManage" data-test="edit-project-materials" secondary @click="materialsEditorOpen = true">修订物资</n-button></div>
           <div v-if="project.materialRequirements.length" class="fact-list">
             <div v-for="item in project.materialRequirements" :key="item.id"><strong>{{ item.model }}</strong><span>{{ item.requiredQuantityScaled / 10000 }} {{ item.unit }}</span></div>
           </div>
@@ -209,6 +266,49 @@ onMounted(load);
         </section>
       </template>
     </n-spin>
+
+    <project-source-editor
+      v-if="project"
+      v-model:show="sourceEditorOpen"
+      :project="project"
+      @saved="projectDefinitionSaved"
+    />
+    <project-materials-editor
+      v-if="project"
+      v-model:show="materialsEditorOpen"
+      :project="project"
+      @saved="projectDefinitionSaved"
+    />
+
+    <n-modal
+      v-model:show="reserveConfirmOpen"
+      preset="card"
+      title="确认储备版本"
+      :mask-closable="!reserveConfirming"
+      class="reserve-confirm-modal"
+      :style="{ width: 'min(520px, calc(100vw - 24px))' }"
+    >
+      <template v-if="project">
+        <div class="release-intro">
+          <strong>确认当前项目定义作为新的储备版本</strong>
+          <p>来源需求和项目物资都允许为空。确认只冻结当前储备快照，不代表项目出库，也不会创建执行任务或资金流水。</p>
+        </div>
+        <div class="release-facts">
+          <div><span>当前储备版本</span><strong>v{{ project.reserveVersion }}</strong></div>
+          <div><span>来源需求</span><strong>{{ project.demandLinks.length }} 项</strong></div>
+          <div><span>项目物资</span><strong>{{ project.materialRequirements.length }} 项</strong></div>
+        </div>
+        <n-alert v-if="reserveConfirmError" :type="reserveConfirmConflict ? 'warning' : 'error'" :bordered="false" class="release-error">{{ reserveConfirmError }}</n-alert>
+        <n-button v-if="reserveConfirmConflict" data-test="reload-reserve-project" secondary block class="release-reload" @click="reloadReserveProject">读取最新项目数据</n-button>
+        <n-form label-placement="top">
+          <n-form-item label="确认说明"><n-input v-model:value="reserveConfirmReason" data-test="reserve-confirm-reason" type="textarea" :autosize="{ minRows: 2, maxRows: 4 }" placeholder="可选：记录本次储备版本确认说明" /></n-form-item>
+        </n-form>
+        <div class="release-actions">
+          <n-button :disabled="reserveConfirming" @click="reserveConfirmOpen = false">取消</n-button>
+          <n-button data-test="confirm-reserve" type="primary" :loading="reserveConfirming" @click="confirmReserve">确认储备版本</n-button>
+        </div>
+      </template>
+    </n-modal>
 
     <n-modal
       v-model:show="releaseOpen"

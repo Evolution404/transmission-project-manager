@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router';
 import { NButton, NEmpty, NInput, NProgress, NSelect, NSpin, NTag } from 'naive-ui';
 import type { CurrentUser, TaskQueueItemSummary, TaskQueuePage, TaskQueueStatus } from '@tpm/shared';
 import { apiRequest } from '../api/client';
+import AppPressable from '../app/AppPressable.vue';
 
 defineProps<{ currentUser: CurrentUser }>();
 
@@ -130,7 +131,7 @@ onMounted(() => load());
           <div class="task-table-head" aria-hidden="true">
             <span>任务 / 项目</span><span>计划</span><span>供应</span><span>实施</span><span>结算</span><span></span>
           </div>
-          <button
+          <app-pressable
             v-for="item in items"
             :key="item.id"
             :data-test="`open-task-${item.id}`"
@@ -162,11 +163,11 @@ onMounted(() => load());
               <n-progress type="line" :height="4" :show-indicator="false" :percentage="progress(item.settledQuantityScaled, item.plannedQuantityScaled)" />
             </span>
             <span class="task-row-end"><n-tag size="small" :bordered="false" :type="stateType(item)">{{ stateLabel(item) }}</n-tag><span class="row-chevron">›</span></span>
-          </button>
+          </app-pressable>
         </div>
 
         <div v-if="items.length" class="mobile-task-list">
-          <button v-for="item in items" :key="item.id" class="mobile-task-row" :data-test="`mobile-open-task-${item.id}`" @click="openTask(item)">
+          <app-pressable v-for="item in items" :key="item.id" class="mobile-task-row" :data-test="`mobile-open-task-${item.id}`" @click="openTask(item)">
             <div class="mobile-task-heading">
               <div><strong>{{ item.name }}</strong><small>{{ item.projectName }}</small></div>
               <span class="row-chevron">›</span>
@@ -181,7 +182,7 @@ onMounted(() => load());
               <div><span>实施</span><strong>{{ progress(item.implementedQuantityScaled, item.plannedQuantityScaled) }}%</strong></div>
               <div><span>结算</span><strong>{{ progress(item.settledQuantityScaled, item.plannedQuantityScaled) }}%</strong></div>
             </div>
-          </button>
+          </app-pressable>
         </div>
 
         <n-empty v-if="!loading && !items.length" description="当前筛选下没有执行任务" class="task-empty" />

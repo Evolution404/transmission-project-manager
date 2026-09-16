@@ -29,6 +29,7 @@ import type {
   ProjectTaskExecutionSummary,
   ReserveProjectSummary,
 } from '@tpm/shared';
+import AppFilePicker from '../app/AppFilePicker.vue';
 
 const props = defineProps<{ currentUser: CurrentUser }>();
 const message = useMessage();
@@ -524,7 +525,7 @@ onMounted(loadInitial);
           <n-tab-pane name="attachments" tab="附件">
             <n-card title="项目私有附件">
               <n-alert type="info" :bordered="false">附件保存在私有 R2；下载仍按项目权限校验。</n-alert>
-              <div v-if="canUpload" class="attachment-upload"><input type="file" @change="attachmentChanged" /><n-button :loading="saving" @click="uploadAttachment">上传附件</n-button></div>
+              <div v-if="canUpload" class="attachment-upload"><app-file-picker label="选择附件" :selected-name="attachmentFile?.name ?? null" :disabled="saving" @change="attachmentChanged" /><n-button :loading="saving" @click="uploadAttachment">上传附件</n-button></div>
               <div v-if="attachments.length" class="attachment-list"><a v-for="item in attachments" :key="item.id" :href="`/api/attachments/${item.id}/content`">{{ item.fileName }}</a></div>
               <n-empty v-else description="暂无附件" />
             </n-card>

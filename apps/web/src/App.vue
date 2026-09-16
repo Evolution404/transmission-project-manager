@@ -19,6 +19,7 @@ import { parseApiResponse } from './api/response';
 import LoginView from './views/LoginView.vue';
 import ChangePasswordView from './views/ChangePasswordView.vue';
 import AppIcon from './app/AppIcon.vue';
+import AppPressable from './app/AppPressable.vue';
 
 const route = useRoute();
 const router = useRouter();
@@ -174,18 +175,18 @@ onMounted(() => {
 
       <div v-else class="app-shell">
         <aside class="app-sider" aria-label="主导航">
-          <button class="brand-block" aria-label="返回工作台" @click="navigate('/')">
+          <app-pressable class="brand-block" aria-label="返回工作台" @click="navigate('/')">
             <span class="brand-mark" aria-hidden="true"><span></span></span>
             <span class="brand-copy">
               <strong>输电项目</strong>
               <small>全流程管理</small>
             </span>
-          </button>
+          </app-pressable>
 
           <div class="nav-scroll">
             <section class="nav-section">
               <span class="nav-section-label">工作</span>
-              <button
+              <app-pressable
                 v-for="item in workNav"
                 :key="item.key"
                 class="nav-item"
@@ -196,11 +197,11 @@ onMounted(() => {
               >
                 <app-icon :name="item.icon" />
                 <span>{{ item.label }}</span>
-              </button>
+              </app-pressable>
             </section>
             <section class="nav-section">
               <span class="nav-section-label">管理</span>
-              <button
+              <app-pressable
                 v-for="item in managementNav"
                 :key="item.key"
                 class="nav-item"
@@ -210,12 +211,12 @@ onMounted(() => {
               >
                 <app-icon :name="item.icon" />
                 <span>{{ item.label }}</span>
-              </button>
+              </app-pressable>
             </section>
           </div>
 
           <div class="nav-bottom">
-            <button
+            <app-pressable
               v-for="item in systemNav"
               :key="item.key"
               class="nav-item"
@@ -225,7 +226,7 @@ onMounted(() => {
             >
               <app-icon :name="item.icon" />
               <span>{{ item.label }}</span>
-            </button>
+            </app-pressable>
             <div class="sidebar-account">
               <div class="account-avatar">{{ currentUser.displayName.slice(0, 1) }}</div>
               <div class="account-copy"><strong>{{ currentUser.displayName }}</strong><small>{{ roleLabels[currentUser.role] }}</small></div>
@@ -256,20 +257,20 @@ onMounted(() => {
           </main>
 
           <nav class="mobile-bottom-nav" aria-label="手机主导航">
-            <button :class="{ active: activeKey === '/' }" @click="navigateMobile('/')"><app-icon name="workspace" /><small>工作台</small></button>
-            <button :class="{ active: activeKey === '/projects' }" @click="navigateMobile('/projects')"><app-icon name="projects" /><small>项目</small></button>
-            <button :class="{ active: activeKey === '/tasks' }" @click="navigateMobile('/tasks')"><app-icon name="tasks" /><small>任务</small></button>
-            <button :class="{ active: mobileMenuOpen }" @click="navigateMobile('more')"><app-icon name="more" /><small>更多</small></button>
+            <app-pressable :class="{ active: activeKey === '/' }" @click="navigateMobile('/')"><app-icon name="workspace" /><small>工作台</small></app-pressable>
+            <app-pressable :class="{ active: activeKey === '/projects' }" @click="navigateMobile('/projects')"><app-icon name="projects" /><small>项目</small></app-pressable>
+            <app-pressable :class="{ active: activeKey === '/tasks' }" @click="navigateMobile('/tasks')"><app-icon name="tasks" /><small>任务</small></app-pressable>
+            <app-pressable :class="{ active: mobileMenuOpen }" @click="navigateMobile('more')"><app-icon name="more" /><small>更多</small></app-pressable>
           </nav>
 
           <n-drawer v-model:show="mobileMenuOpen" placement="bottom" height="auto" class="mobile-more-drawer">
             <n-drawer-content title="更多" closable>
               <div class="mobile-more-grid">
-                <button v-for="item in [...workNav.slice(1, 2), ...managementNav, ...systemNav]" :key="item.key" @click="navigate(item.key)">
+                <app-pressable v-for="item in [...workNav.slice(1, 2), ...managementNav, ...systemNav]" :key="item.key" @click="navigate(item.key)">
                   <span class="mobile-more-icon"><app-icon :name="item.icon" /></span>
                   <span>{{ item.label }}</span>
                   <app-icon name="chevron" :size="16" class="mobile-more-chevron" />
-                </button>
+                </app-pressable>
               </div>
               <div class="mobile-account-row">
                 <div class="account-avatar">{{ currentUser.displayName.slice(0, 1) }}</div>

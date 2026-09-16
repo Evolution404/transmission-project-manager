@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router';
 import { NButton, NDataTable, NDrawer, NDrawerContent, NEmpty, NForm, NFormItem, NInput, NSpin, NTag, useMessage } from 'naive-ui';
 import type { CurrentUser, ReserveProjectSummary } from '@tpm/shared';
 import { apiRequest, jsonRequestInit } from '../api/client';
+import AppPressable from '../app/AppPressable.vue';
 
 const props = defineProps<{ currentUser: CurrentUser }>();
 const router = useRouter();
@@ -85,7 +86,7 @@ async function loadPage(cursor?: string) {
 const columns = [
   {
     title: '项目', key: 'name', minWidth: 260,
-    render: (row: ReserveProjectSummary) => h('button', { class: 'project-link', onClick: () => openProject(row.id) }, row.name),
+    render: (row: ReserveProjectSummary) => h(AppPressable, { class: 'project-link', onClick: () => openProject(row.id) }, { default: () => row.name }),
   },
   { title: '年度', key: 'year', width: 90, render: (row: ReserveProjectSummary) => row.year ?? '—' },
   {
@@ -122,7 +123,7 @@ onMounted(() => loadPage());
       <n-spin :show="loading">
         <n-data-table v-if="filtered.length" class="desktop-project-table" :data="filtered" :columns="columns" :pagination="false" :scroll-x="900" />
         <div v-if="filtered.length" class="mobile-project-list">
-          <button v-for="item in filtered" :key="item.id" class="mobile-project-card" @click="openProject(item.id)">
+          <app-pressable v-for="item in filtered" :key="item.id" class="mobile-project-card" @click="openProject(item.id)">
             <div class="mobile-project-title-row">
               <strong>{{ item.name }}</strong>
               <span class="status-pill" :class="item.status === 'confirmed' ? 'confirmed' : 'draft'">{{ item.status === 'confirmed' ? '储备已确认' : '储备草稿' }}</span>
@@ -133,7 +134,7 @@ onMounted(() => loadPage());
               <span>物资 {{ item.materialRequirements.length }}</span>
               <span v-if="item.missingPriceCount">{{ item.missingPriceCount }} 项待估价</span>
             </div>
-          </button>
+          </app-pressable>
         </div>
         <n-empty v-if="!loading && !filtered.length" description="暂无项目" />
       </n-spin>

@@ -6,6 +6,7 @@ import type { CurrentUser, ProjectExecutionSummary, ProjectTaskExecutionSummary,
 import { ApiRequestError, apiRequest, jsonRequestInit } from '../api/client';
 import TaskImplementationDrawer from '../features/tasks/TaskImplementationDrawer.vue';
 import TaskSettlementDrawer from '../features/tasks/TaskSettlementDrawer.vue';
+import AppPressable from '../app/AppPressable.vue';
 
 const props = defineProps<{ currentUser: CurrentUser }>();
 const route = useRoute();
@@ -170,7 +171,7 @@ onMounted(load);
 
 <template>
   <div class="view-stack task-detail-view">
-    <button class="breadcrumb-back" @click="backToProject">‹ 返回项目</button>
+    <app-pressable class="breadcrumb-back" @click="backToProject">‹ 返回项目</app-pressable>
     <div v-if="error" class="detail-error">{{ error }} <n-button text @click="load">重新加载</n-button></div>
     <n-spin :show="loading">
       <template v-if="project && task">
@@ -216,7 +217,7 @@ onMounted(load);
         </section>
 
         <nav class="segment-nav" aria-label="任务详情分段">
-          <button v-for="item in [['supply','供应'],['implementation','实施'],['settlement','结算'],['scope','范围']]" :key="item[0]" :data-test="`task-section-${item[0]}`" :class="{ active: activeSection === item[0] }" @click="activeSection = item[0]">{{ item[1] }}</button>
+          <app-pressable v-for="item in [['supply','供应'],['implementation','实施'],['settlement','结算'],['scope','范围']]" :key="item[0]" :data-test="`task-section-${item[0]}`" :class="{ active: activeSection === item[0] }" @click="activeSection = item[0]">{{ item[1] }}</app-pressable>
         </nav>
 
         <section v-if="activeSection === 'supply'" class="detail-section">
