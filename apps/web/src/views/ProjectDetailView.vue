@@ -20,7 +20,10 @@ const project = ref<ReserveProjectSummary | null>(null);
 const execution = ref<ProjectExecutionSummary | null>(null);
 const loading = ref(true);
 const error = ref('');
-const tab = ref(String(route.query.tab || 'overview'));
+type ProjectDetailTab = 'overview' | 'demands' | 'materials' | 'tasks' | 'finance' | 'history';
+const projectDetailTabs = new Set<ProjectDetailTab>(['overview', 'demands', 'materials', 'tasks', 'finance', 'history']);
+const requestedTab = typeof route.query.tab === 'string' ? route.query.tab : '';
+const tab = ref<ProjectDetailTab>(projectDetailTabs.has(requestedTab as ProjectDetailTab) ? requestedTab as ProjectDetailTab : 'overview');
 const releaseOpen = ref(false);
 const releasing = ref(false);
 const releaseDate = ref(Date.now());
@@ -221,8 +224,13 @@ async function reloadReleaseProject() {
 }
 
 function setTab(value: string) {
-  tab.value = value;
-  void router.replace({ query: { ...route.query, tab: value } });
+  const nextTab = value as ProjectDetailTab;
+  if (!projectDetailTabs.has(nextTab)) return;
+  tab.value = nextTab;
+  const query = { ...route.query };
+  if (nextTab === 'overview') delete query.tab;
+  else query.tab = nextTab;
+  void router.replace({ query });
 }
 
 onMounted(load);

@@ -4,8 +4,9 @@ import type { CurrentUser } from '@tpm/shared';
 
 const push = vi.fn();
 const replace = vi.fn();
+const routeQuery = vi.hoisted(() => ({} as Record<string, string>));
 vi.mock('vue-router', () => ({
-  useRoute: () => ({ params: { projectId: 'p1' }, query: {}, fullPath: '/projects/p1' }),
+  useRoute: () => ({ params: { projectId: 'p1' }, query: routeQuery, fullPath: '/projects/p1' }),
   useRouter: () => ({ push, replace }),
 }));
 
@@ -94,7 +95,19 @@ function installFetch(options: { conflict?: boolean; draft?: boolean; confirmCon
 }
 
 describe('ProjectDetailView project release', () => {
-  afterEach(() => { vi.unstubAllGlobals(); push.mockReset(); replace.mockReset(); });
+  afterEach(() => {
+    vi.unstubAllGlobals(); push.mockReset(); replace.mockReset();
+    for (const key of Object.keys(routeQuery)) delete routeQuery[key];
+  });
+
+  it('falls back to overview when the URL contains an unknown project tab', async () => {
+    routeQuery.tab = 'unknown-section';
+    installFetch();
+    const wrapper = mount(ProjectDetailView, { props: { currentUser: admin } });
+    await flushPromises();
+    expect(wrapper.get('[data-test="project-tab-overview"]').classes()).toContain('active');
+    expect(wrapper.text()).toContain('已知项目物资金额');
+  });
 
   it('confirms the one-time project release with current project version and no material release lines', async () => {
     installFetch();
