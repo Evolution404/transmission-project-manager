@@ -633,6 +633,15 @@ test('committed tests cannot silently bypass the quality gate', () => {
   }
 });
 
+test('CI keeps isolated headless browser acceptance as its own job', () => {
+  const workflow = readFileSync(resolve(root, '.github/workflows/ci.yml'), 'utf8');
+  const packageJson = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8'));
+  assert.equal(packageJson.scripts?.['test:ui:headless'], 'npm run build:web && playwright test --config playwright.config.ts');
+  assert.match(workflow, /^\s{2}headless-ui:\s*$/m, 'CI must keep a dedicated headless-ui job');
+  assert.match(workflow, /playwright install --with-deps chromium/, 'CI headless-ui job must install Chromium and its Linux dependencies');
+  assert.match(workflow, /npm run test:ui:headless/, 'CI headless-ui job must execute the repository E2E command');
+});
+
 test('Node runtime gate exercises the real app, SQLite, Filesystem, and the single schema baseline', () => {
   const nodeConfig = readFileSync(resolve(root, 'apps/api/tsconfig.node-runtime.json'), 'utf8');
   assert.match(nodeConfig, /"src\/app\.ts"/, 'Node typecheck must include the real HTTP app');
