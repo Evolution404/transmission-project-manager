@@ -8,6 +8,7 @@ import DeliveryView from '../src/views/DeliveryView.vue';
 import ProjectsView from '../src/views/ProjectsView.vue';
 import ProjectDetailView from '../src/views/ProjectDetailView.vue';
 import TaskDetailView from '../src/views/TaskDetailView.vue';
+import TaskCreateView from '../src/views/TaskCreateView.vue';
 
 describe('business routes', () => {
   it('lazy-loads the real demand pool at /demands instead of the P2 placeholder', async () => {
@@ -59,6 +60,7 @@ describe('business routes', () => {
     const cases = [
       ['/projects', ProjectsView],
       ['/projects/:projectId', ProjectDetailView],
+      ['/projects/:projectId/tasks/new', TaskCreateView],
       ['/projects/:projectId/tasks/:taskId', TaskDetailView],
     ] as const;
 

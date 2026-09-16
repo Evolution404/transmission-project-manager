@@ -24,6 +24,7 @@ const releaseConflict = ref(false);
 const releaseIdempotencyKey = ref('');
 
 const canManage = computed(() => ['admin', 'project_manager'].includes(props.currentUser.role));
+const canCreateTask = computed(() => ['admin', 'project_manager', 'implementation'].includes(props.currentUser.role));
 const implementationProgress = computed(() => {
   const tasks = execution.value?.tasks ?? [];
   const planned = tasks.reduce((sum, item) => sum + item.plannedQuantityScaled, 0);
@@ -64,7 +65,7 @@ async function load() {
 
 function backToProjects() { void router.push('/projects'); }
 function openTask(taskId: string) { void router.push(`/projects/${encodeURIComponent(projectId.value)}/tasks/${encodeURIComponent(taskId)}`); }
-function openLegacyExecution() { void router.push('/delivery'); }
+function createTask() { void router.push(`/projects/${encodeURIComponent(projectId.value)}/tasks/new`); }
 
 function openProjectRelease() {
   releaseDate.value = Date.now();
@@ -139,7 +140,7 @@ onMounted(load);
             </div>
           </div>
           <n-button v-if="canManage && project.status === 'confirmed' && !execution.released" data-test="open-project-release" type="primary" @click="openProjectRelease">项目出库</n-button>
-          <n-button v-else-if="execution.released && !execution.tasks.length" type="primary" @click="openLegacyExecution">前往创建任务</n-button>
+          <n-button v-else-if="canCreateTask && execution.released && !execution.tasks.length" type="primary" @click="createTask">新建执行任务</n-button>
           <n-button v-else-if="execution.tasks.length" type="primary" @click="setTab('tasks')">查看执行任务</n-button>
         </section>
 
@@ -173,7 +174,7 @@ onMounted(load);
         </section>
 
         <section v-else-if="tab === 'tasks'" class="detail-section">
-          <div class="section-heading"><div><h3>执行任务</h3><p>供应、实施、结算分别推进，不强制串行。</p></div></div>
+          <div class="section-heading"><div><h3>执行任务</h3><p>供应、实施、结算分别推进，不强制串行。</p></div><n-button v-if="canCreateTask && execution.released" secondary @click="createTask">新建任务</n-button></div>
           <div v-if="execution.tasks.length" class="task-list">
             <button v-for="task in execution.tasks" :key="task.id" class="task-row" @click="openTask(task.id)">
               <div><strong>{{ task.name }}</strong><span>{{ task.scopeText || '未填写现场范围' }}</span></div>

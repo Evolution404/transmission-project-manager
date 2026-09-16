@@ -8,6 +8,7 @@ export const router = createRouter({
     { path: '/demands', name: 'demands', component: () => import('./views/DemandsView.vue'), meta: { title: '项目需求' } },
     { path: '/projects', name: 'projects', component: () => import('./views/ProjectsView.vue'), meta: { title: '项目' } },
     { path: '/projects/:projectId', name: 'project-detail', component: () => import('./views/ProjectDetailView.vue'), meta: { title: '项目详情' } },
+    { path: '/projects/:projectId/tasks/new', name: 'task-create', component: () => import('./views/TaskCreateView.vue'), meta: { title: '新建执行任务' } },
     { path: '/projects/:projectId/tasks/:taskId', name: 'task-detail', component: () => import('./views/TaskDetailView.vue'), meta: { title: '任务详情' } },
     { path: '/reserves', name: 'reserves', component: () => import('./views/ReservesView.vue'), meta: { title: '项目储备' } },
     { path: '/delivery', name: 'delivery', component: () => import('./views/DeliveryView.vue'), meta: { title: '实施结算' } },
