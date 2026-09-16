@@ -86,7 +86,7 @@
 
 无头浏览器验收基础设施已经补齐并进入 CI：仓库已引入 Playwright，`npm run test:ui:headless` 每次使用临时目录创建隔离 D1 / R2 本地状态并启动独立 Wrangler Worker，不复用开发数据库、不读取真实浏览器 Cookie，也不接触真实账号。认证链路完全通过页面完成：先在初始化页输入测试管理员姓名、测试账号、测试密码和测试初始化令牌创建首管理员；随后开启新的无 Cookie 浏览器会话，再从登录页输入同一测试账号密码完成真实登录，覆盖浏览器 Argon2id 派生、服务端 HMAC verifier 与 HttpOnly session。后续视觉验收复用的是该真实登录产生的 HttpOnly 会话状态，而不是伪造 Cookie，从而避免每个视口重复执行慢 KDF。当前 Headless Chromium **9/9 PASS**：首次初始化、重新登录、业务深链整页刷新后保持登录/路由、desktop-light、desktop-dark、mobile-light、mobile-dark，以及桌面/手机关键写入弹层验收。四种视口/主题均遍历工作台、需求、项目、任务、资金、分析、基础台账、设置 8 个主路由，并校验横向溢出、实际计算字号不低于 12px、手机一级导航 5 个触控目标均不低于 44px、系统明暗 token、桌面侧栏/手机“更多→设置”真实交互；“新增需求 / 新建项目 / 新增成员”三个关键写入弹层同时校验不越出桌面/手机视口。GitHub Actions `CI` 已增加独立 `headless-ui` job，安装 Chromium 后执行同一仓库命令，本地 `npm run check` 保持轻量。
 
-本轮浏览器级验收发现并修复了两个静态审计未能发现的真实 UI 问题：一是设置页成员 DataTable 使用 `h()` 动态创建单元格，原 scoped CSS 未命中，账号 `<small>` 实际回退为 **10.83px**；现已改为限定在 `.settings-view` 下的全局后代规则，实际计算字号恢复到 13px。二是手机“新建项目”抽屉的响应式选择器错误写成后代选择器，390px 视口仍保留桌面 520px 宽度；现已改为匹配 NDrawer 自身的 `.project-create-drawer.n-drawer`，手机弹层验收通过。同期还清理了登录页 `SYSTEM SETUP / ACCOUNT` 英文装饰文案并扩大静态门禁。最新完整 `npm run check` 为 Node **312/312 PASS**、Web **165/165 PASS（23 文件）**，TypeScript、Web production build、Worker dry-run 与 Node + SQLite + Filesystem 第二运行时全部通过；独立 Headless Chromium 为 **9/9 PASS**。
+本轮浏览器级验收发现并修复了三个静态审计未能发现的真实 UI 问题：一是设置页成员 DataTable 使用 `h()` 动态创建单元格，原 scoped CSS 未命中，账号 `<small>` 实际回退为 **10.83px**；现已改为限定在 `.settings-view` 下的全局后代规则，实际计算字号恢复到 13px。二是手机“新建项目”抽屉的响应式选择器错误写成后代选择器，390px 视口仍保留桌面 520px 宽度；现已改为匹配 NDrawer 自身的 `.project-create-drawer.n-drawer`。三是“新增需求 / 需求详情”使用 Teleport 后，原 scoped `:deep(.demand-modal)` 高度规则在 Ubuntu Chromium 未命中，390×844 视口中“新增需求”最终高度实测达到 **1267.16px**；现已改为 `:global(...)` 命中 Teleport 目标，并保持卡片最大高度与内容区独立滚动。同期还清理了登录页 `SYSTEM SETUP / ACCOUNT` 英文装饰文案并扩大静态门禁。最新完整 `npm run check` 为 Node **312/312 PASS**、Web **165/165 PASS（23 文件）**，TypeScript、Web production build、Worker dry-run 与 Node + SQLite + Filesystem 第二运行时全部通过；独立 Headless Chromium 为 **9/9 PASS**。远端 GitHub Actions run `35088316979` 已在 Ubuntu runner 上验证 `check` 与 `headless-ui` **双绿**。
 
 ## 最近收口：导航逻辑与可读性审计
 
@@ -114,7 +114,7 @@
 
 1. 当前 mutation / reload 语义审计和本轮全站 UI 自动化验收均已收口：`MasterDataView.vue` 与 `SystemOperationsPanel.vue` 的真实误报已修复；`ReserveClassificationPanel.vue` 已用行为测试确认无需生产改动；`ProjectDetailView` / `TaskDetailView` 等已正确处理路径未做机械重构。
 2. 后续 UI 改动继续同时维护相关 Vitest、`npm run check` 与独立 `npm run test:ui:headless`；无头 E2E 必须继续使用隔离测试数据和页面真实认证，不得注入真实 Cookie、真实密码或复用用户真实浏览器窗口。CI 的 `headless-ui` job 不得移除，已有 repository guard 锁定。
-3. 当前没有需要继续机械调整的已知 UI blocker。除非后续自动化/人工验收出现可复现问题，否则停止继续泛化改样式；当前施工分支保持待审状态。未经用户明确授权仍不得合并 `main` 或部署生产。
+3. 当前没有已知 UI blocker。除非后续自动化/人工验收出现可复现问题，否则停止继续泛化改样式；当前施工分支保持待审状态。未经用户明确授权仍不得合并 `main` 或部署生产。
 
 ## 必须保持的业务/工程边界
 
