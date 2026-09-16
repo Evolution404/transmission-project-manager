@@ -161,18 +161,27 @@ async function loadFrameworkContext() {
   entries.value = [];
   entryCursor.value = null;
   if (!frameworkId) {
-    return;
+    return false;
   }
-  const [agreementData, summaryData, entryData] = await Promise.all([
-    apiRequest<{ items: AgreementSummary[] }>(`/api/agreements?frameworkId=${encodeURIComponent(frameworkId)}`),
-    apiRequest<FrameworkFinanceSummary>(`/api/finance/summary?frameworkId=${encodeURIComponent(frameworkId)}&asOf=${businessToday()}`),
-    apiRequest<FinancialEntryPage>(`/api/financial-entries?frameworkId=${encodeURIComponent(frameworkId)}&limit=50`),
-  ]);
+  let agreementData: { items: AgreementSummary[] };
+  let summaryData: FrameworkFinanceSummary;
+  let entryData: FinancialEntryPage;
+  try {
+    [agreementData, summaryData, entryData] = await Promise.all([
+      apiRequest<{ items: AgreementSummary[] }>(`/api/agreements?frameworkId=${encodeURIComponent(frameworkId)}`),
+      apiRequest<FrameworkFinanceSummary>(`/api/finance/summary?frameworkId=${encodeURIComponent(frameworkId)}&asOf=${businessToday()}`),
+      apiRequest<FinancialEntryPage>(`/api/financial-entries?frameworkId=${encodeURIComponent(frameworkId)}&limit=50`),
+    ]);
+  } catch (cause) {
+    if (sequence !== frameworkContextSequence || selectedFrameworkId.value !== frameworkId) return false;
+    throw cause;
+  }
   if (sequence !== frameworkContextSequence || selectedFrameworkId.value !== frameworkId) return;
   agreements.value = agreementData.items;
   summary.value = summaryData;
   entries.value = entryData.items;
   entryCursor.value = entryData.nextCursor;
+  return true;
 }
 
 async function loadMoreEntries() {
@@ -187,6 +196,7 @@ async function loadMoreEntries() {
     entries.value = [...entries.value, ...data.items.filter((item) => !known.has(item.id))];
     entryCursor.value = data.nextCursor;
   } catch (cause) {
+    if (contextSequence !== frameworkContextSequence || selectedFrameworkId.value !== frameworkId || entryCursor.value !== cursor) return;
     message.error(cause instanceof Error ? cause.message : '加载更多资金流水失败');
   }
 }
@@ -211,7 +221,13 @@ async function loadBudgetProject(projectId: string | null) {
     await loadFrameworkContext();
   }
   if (sequence !== budgetProjectSequence || selectedBudgetProjectId.value !== projectId) return;
-  const data = await apiRequest<{ items: ProjectBudgetSummary[] }>(`/api/budgets?projectId=${encodeURIComponent(projectId)}`);
+  let data: { items: ProjectBudgetSummary[] };
+  try {
+    data = await apiRequest<{ items: ProjectBudgetSummary[] }>(`/api/budgets?projectId=${encodeURIComponent(projectId)}`);
+  } catch (cause) {
+    if (sequence !== budgetProjectSequence || selectedBudgetProjectId.value !== projectId) return;
+    throw cause;
+  }
   if (sequence !== budgetProjectSequence || selectedBudgetProjectId.value !== projectId) return;
   budgets.value = data.items;
   const budget = data.items[0];
@@ -236,7 +252,8 @@ async function loadInitial() {
     entryBusinessDate.value = businessToday();
     await loadBase();
     const routeProjectId = typeof route.query.projectId === 'string' ? route.query.projectId : null;
-    const routeProject = routeProjectId ? projects.value.find((item) => item.id === routeProjectId) ?? null : null;
+    const projectId = routeProjectId ?? selectedBudgetProjectId.value;
+    const routeProject = projectId ? projects.value.find((item) => item.id === projectId) ?? null : null;
     if (routeProject?.frameworkId) selectedFrameworkId.value = routeProject.frameworkId;
     await loadFrameworkContext();
     if (routeProject) await loadBudgetProject(routeProject.id);
@@ -248,6 +265,7 @@ async function loadInitial() {
 }
 
 async function selectFramework(value: string | null) {
+  error.value = '';
   selectedFrameworkId.value = value;
   bindingFrameworkId.value = value;
   const selectedBudgetProject = projects.value.find((item) => item.id === selectedBudgetProjectId.value);
@@ -263,7 +281,20 @@ async function selectFramework(value: string | null) {
   else delete query.framework;
   if (clearBudgetProject) delete query.projectId;
   void router.replace({ query });
-  await loadFrameworkContext();
+  try {
+    await loadFrameworkContext();
+  } catch (cause) {
+    if (selectedFrameworkId.value === value) error.value = cause instanceof Error ? cause.message : '读取资金数据失败';
+  }
+}
+
+async function selectBudgetProject(projectId: string | null) {
+  error.value = '';
+  try {
+    await loadBudgetProject(projectId);
+  } catch (cause) {
+    if (selectedBudgetProjectId.value === projectId) error.value = cause instanceof Error ? cause.message : '读取项目预算失败';
+  }
 }
 
 async function createFramework() {
@@ -390,7 +421,7 @@ onMounted(loadInitial);
   <n-spin :show="loading">
     <div class="view-stack finance-view">
       <n-alert v-if="error" type="error" title="读取失败">
-        <div class="load-error-content"><span>{{ error }}</span><n-button size="small" secondary @click="loadInitial">重新加载</n-button></div>
+        <div class="load-error-content"><span>{{ error }}</span><n-button data-test="retry-finance" size="small" secondary @click="loadInitial">重新加载</n-button></div>
       </n-alert>
 
       <header class="page-header">
@@ -512,7 +543,7 @@ onMounted(loadInitial);
             <div class="workspace-panel-body budget-body">
               <n-alert type="info" :bordered="false">确认预算时协议必须与项目属于同一框架并在有效期内；预算确认占用不会自动生成预算发生。</n-alert>
               <n-form class="budget-form" label-placement="top">
-              <n-form-item label="子项目"><n-select data-test="budget-project" :disabled="saving" :value="selectedBudgetProjectId" :options="currentFrameworkProjectOptions" @update:value="loadBudgetProject" /></n-form-item>
+              <n-form-item label="子项目"><n-select data-test="budget-project" :disabled="saving" :value="selectedBudgetProjectId" :options="currentFrameworkProjectOptions" @update:value="selectBudgetProject" /></n-form-item>
               <n-form-item label="预算总额（元）"><n-input v-model:value="budgetTotalYuan" data-test="budget-total" :disabled="!canFinanceWrite || saving" /></n-form-item>
               <n-form-item label="说明"><n-input v-model:value="budgetNote" :disabled="!canFinanceWrite || saving" /></n-form-item>
               </n-form>

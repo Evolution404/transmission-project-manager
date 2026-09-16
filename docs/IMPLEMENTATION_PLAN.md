@@ -87,7 +87,7 @@
 
 M6 基础台账定向结果：基础台账 API **25/25 PASS**；相关 Web **30/30 PASS**。M6 收口时完整 `npm run check` 为 Node **270/270**、Web **114/114（19 文件）**。
 
-全站 UI 重构当前施工分支 `refactor/ui-redesign-20260916` 最近一次完整 `npm run check` 已 PASS：Node **307/307**、Web **155/155（23 文件）**，Cloudflare/Node/Web/shared TypeScript、Web production build、Worker dry-run、Node+SQLite+Filesystem 第二运行时和全部静态门禁均 PASS。
+全站 UI 重构当前施工分支 `refactor/ui-redesign-20260916` 最近一次完整 `npm run check` 已 PASS：Node **307/307**、Web **159/159（23 文件）**，Cloudflare/Node/Web/shared TypeScript、Web production build、Worker dry-run、Node+SQLite+Filesystem 第二运行时和全部静态门禁均 PASS。
 
 项目分页/路由状态工作包已经收口并验证：修复项目列表固定前 50 条且 `nextCursor:null` 的分页缺口，并让工作台 `/projects?stage=reserve`、项目列表 `stage/query`、任务队列 `/tasks?status=...&query=...` 在刷新后恢复筛选。定向仓储测试 **2/2 PASS**，Projects/Tasks 定向 **6/6 PASS**，Web/API typecheck 和 `git diff --check` 均 PASS。
 
@@ -112,6 +112,8 @@ M6 基础台账定向结果：基础台账 API **25/25 PASS**；相关 Web **30/
 操作可达性随后继续收口：业务 UI 禁止 `tiny` 按钮；基础台账高频线路操作/杆塔排序改为 small，并在手机提升命中高度；项目/任务/基础台账的文本式返回导航桌面至少 36px、手机至少 44px 命中高度。相关页面定向 **38/38 PASS**；完整 `npm run check` 为 Node **306/306 PASS**、Web **151/151 PASS（23 文件）**。
 
 随后继续处理异步上下文乱序：Finance 框架切换、预算项目切换和流水游标加载增加 request sequence；Analysis 框架上下文增加 request sequence，统计日期事项读取统一进入 `loadMilestones()` 单一序号。旧请求即使最后返回也不能覆盖新框架/新项目/新日期，旧分页也不能追加到新框架。新增四个真实乱序行为测试，Finance/Analysis 定向 **20/20 PASS**；完整 `npm run check` 为 Node **307/307 PASS**、Web **155/155 PASS（23 文件）**。
+
+随后继续补齐当前上下文读取失败语义：Finance 当前框架/预算项目、Analysis 当前框架/统计日期读取失败必须进入页面错误恢复并可重新加载当前选择；旧上下文失败继续静默丢弃。Analysis 切框架开始即清空旧进度图，避免失败后旧图残留。四个失败/重试行为测试均按先红后绿完成，Finance/Analysis 定向 **24/24 PASS**；完整 `npm run check` 为 Node **307/307 PASS**、Web **159/159 PASS（23 文件）**。
 
 该工作包保持以下验收条件：
 
@@ -138,7 +140,7 @@ M6 基础台账定向结果：基础台账 API **25/25 PASS**；相关 Web **30/
 - `project-execution.ts` 已由约 850 行降至约 334 行；其职责回混已有 repository/static guard。
 - `analysis-operations.ts` 的混合职责已经完成拆分：`analysis-calculations.ts` 承载纯分析计算/查询编排，`analysis-operations.ts` 仅保留分析/计划/月报/里程碑 HTTP，`notification-operations.ts` 承载通知/告警/outbox，`backup-operations.ts` 承载逻辑备份，`system-tasks.ts` 承载定时任务编排。最新已验证代码提交为 `8c8f7ef`。
 - 分析计算抽取前已逐项对照旧实现并由测试锁定 BigInt 四舍五入、季度状态、默认/自定义计划、ratio/gap lagging 边界和里程碑提醒语义；分析/P6、通知仓储、备份仓储和 repository guards 定向合计 **53/53 PASS**。
-- 上述分析模块职责拆分完成时的历史门禁基线为 Node **293/293 PASS**、Web **114/114 PASS**；当前施工分支的最新完整门禁以第 4 节所列 Node **307/307**、Web **155/155（23 文件）**为准。
+- 上述分析模块职责拆分完成时的历史门禁基线为 Node **293/293 PASS**、Web **114/114 PASS**；当前施工分支的最新完整门禁以第 4 节所列 Node **307/307**、Web **159/159（23 文件）**为准。
 - 后续候选热点仍包括 `reserve-planning.ts`、`demand-import.ts`、`finance.ts`、`project-lifecycle.ts`、`MasterDataView.vue`、`packages/shared/src/index.ts`；按职责耦合收益排序拆分，禁止仅按文件行数机械拆分。
 
 ## 6. 当前生产状态

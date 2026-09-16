@@ -133,9 +133,16 @@ const alertColumns = [
 
 async function loadMilestones(requestedAsOf = asOfDate.value) {
   const sequence = ++milestoneRequestSequence;
-  const data = await apiRequest<{ items: MilestoneDueSummary[] }>(`/api/milestones/due?asOf=${requestedAsOf}`);
+  let data: { items: MilestoneDueSummary[] };
+  try {
+    data = await apiRequest<{ items: MilestoneDueSummary[] }>(`/api/milestones/due?asOf=${requestedAsOf}`);
+  } catch (cause) {
+    if (sequence !== milestoneRequestSequence || asOfDate.value !== requestedAsOf) return false;
+    throw cause;
+  }
   if (sequence !== milestoneRequestSequence || asOfDate.value !== requestedAsOf) return;
   milestones.value = data.items;
+  return true;
 }
 
 async function loadFrameworkContext() {
@@ -144,20 +151,31 @@ async function loadFrameworkContext() {
   const requestedAsOf = asOfDate.value;
   const requestedReportMonth = reportMonth.value;
   progress.value = null; gaps.value = []; plans.value = []; reports.value = [];
+  progressChart?.clear();
   if (!frameworkId) { await renderCharts(); return; }
   const year = Number(selectedFramework.value?.startDate.slice(0, 4) ?? requestedAsOf.slice(0, 4));
-  const [progressData, gapData, planData, reportData] = await Promise.all([
-    apiRequest<FrameworkProgressSummary>(`/api/analysis/frameworks/${encodeURIComponent(frameworkId)}/progress?asOf=${requestedAsOf}`),
-    apiRequest<{ items: ProjectGapSummary[] }>(`/api/analysis/projects/gaps?frameworkId=${encodeURIComponent(frameworkId)}&asOf=${requestedAsOf}`),
-    apiRequest<{ items: MonthlyPlanSummary[] }>(`/api/analysis/plans?frameworkId=${encodeURIComponent(frameworkId)}&year=${year}`),
-    apiRequest<{ items: MonthlyReportSummary[] }>(`/api/reports/monthly?frameworkId=${encodeURIComponent(frameworkId)}&businessMonth=${requestedReportMonth}`),
-  ]);
+  let progressData: FrameworkProgressSummary;
+  let gapData: { items: ProjectGapSummary[] };
+  let planData: { items: MonthlyPlanSummary[] };
+  let reportData: { items: MonthlyReportSummary[] };
+  try {
+    [progressData, gapData, planData, reportData] = await Promise.all([
+      apiRequest<FrameworkProgressSummary>(`/api/analysis/frameworks/${encodeURIComponent(frameworkId)}/progress?asOf=${requestedAsOf}`),
+      apiRequest<{ items: ProjectGapSummary[] }>(`/api/analysis/projects/gaps?frameworkId=${encodeURIComponent(frameworkId)}&asOf=${requestedAsOf}`),
+      apiRequest<{ items: MonthlyPlanSummary[] }>(`/api/analysis/plans?frameworkId=${encodeURIComponent(frameworkId)}&year=${year}`),
+      apiRequest<{ items: MonthlyReportSummary[] }>(`/api/reports/monthly?frameworkId=${encodeURIComponent(frameworkId)}&businessMonth=${requestedReportMonth}`),
+    ]);
+  } catch (cause) {
+    if (sequence !== frameworkContextSequence || selectedFrameworkId.value !== frameworkId) return false;
+    throw cause;
+  }
   if (sequence !== frameworkContextSequence || selectedFrameworkId.value !== frameworkId) return;
   progress.value = progressData;
   gaps.value = gapData.items;
   plans.value = planData.items;
   reports.value = reportData.items;
   await renderCharts();
+  return true;
 }
 
 async function loadCommon() {
@@ -189,6 +207,7 @@ async function refresh() {
   finally { loading.value = false; }
 }
 async function selectFramework(value: string | null) {
+  error.value = '';
   selectedFrameworkId.value = value;
   if (planProjectId.value && !projects.value.some((item) => item.id === planProjectId.value && item.frameworkId === value)) {
     planProjectId.value = null;
@@ -198,12 +217,21 @@ async function selectFramework(value: string | null) {
   if (value) query.framework = value;
   else delete query.framework;
   void router.replace({ query });
-  await loadFrameworkContext();
+  try {
+    await loadFrameworkContext();
+  } catch (cause) {
+    if (selectedFrameworkId.value === value) error.value = cause instanceof Error ? cause.message : '读取分析数据失败';
+  }
 }
 async function changeAsOf() {
   const requestedAsOf = asOfDate.value;
+  error.value = '';
   reportMonth.value = requestedAsOf.slice(0, 7);
-  await Promise.all([loadMilestones(requestedAsOf), loadFrameworkContext()]);
+  try {
+    await Promise.all([loadMilestones(requestedAsOf), loadFrameworkContext()]);
+  } catch (cause) {
+    if (asOfDate.value === requestedAsOf) error.value = cause instanceof Error ? cause.message : '读取分析数据失败';
+  }
 }
 
 async function savePlan() {
@@ -342,7 +370,7 @@ onBeforeUnmount(() => {
 <template>
   <div class="view-stack analysis-view">
     <n-alert v-if="error" type="error">
-      <div class="load-error-content"><span>{{ error }}</span><n-button size="small" secondary @click="refresh">重新加载</n-button></div>
+      <div class="load-error-content"><span>{{ error }}</span><n-button data-test="retry-analysis" size="small" secondary @click="refresh">重新加载</n-button></div>
     </n-alert>
     <header class="page-header">
       <div class="page-header-copy">

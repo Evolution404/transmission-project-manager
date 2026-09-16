@@ -273,6 +273,27 @@ describe('FinanceView P4 behavior', () => {
     expect(wrapper.text()).toContain('协议一');
   });
 
+  it('surfaces the latest framework load failure with an in-page retry path', async () => {
+    const wrapper = mount(FinanceView, { props: { currentUser: admin } });
+    await flushPromises();
+    const fallback = vi.mocked(fetch).getMockImplementation()!;
+    let fail = true;
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (fail && url === '/api/agreements?frameworkId=fw2') throw new Error('专项框架读取失败');
+      return fallback(input, init);
+    });
+
+    await wrapper.get('[data-test="finance-framework"]').setValue('fw2');
+    await flushPromises();
+    expect(wrapper.text()).toContain('专项框架读取失败');
+    fail = false;
+    await wrapper.get('[data-test="retry-finance"]').trigger('click');
+    await flushPromises();
+    expect(wrapper.text()).not.toContain('专项框架读取失败');
+    expect(wrapper.get('[data-test="finance-framework"]').attributes('value')).toBe('fw2');
+  });
+
   it('ignores a stale budget-project response after another project is selected', async () => {
     const fallback = vi.mocked(fetch).getMockImplementation()!;
     const staleGate = deferred<void>();
@@ -304,6 +325,28 @@ describe('FinanceView P4 behavior', () => {
     await flushPromises();
     expect(wrapper.get('[data-test="budget-project"]').attributes('value')).toBe('p3');
     expect((wrapper.get('[data-test="budget-total"]').element as HTMLInputElement).value).toBe('2000.00');
+  });
+
+  it('surfaces the latest budget-project load failure instead of rejecting silently', async () => {
+    const wrapper = mount(FinanceView, { props: { currentUser: admin } });
+    await flushPromises();
+    const fallback = vi.mocked(fetch).getMockImplementation()!;
+    let fail = true;
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (fail && url === '/api/budgets?projectId=p1') throw new Error('子项目预算读取失败');
+      return fallback(input, init);
+    });
+
+    await wrapper.get('[data-test="budget-project"]').setValue('p1');
+    await flushPromises();
+    expect(wrapper.text()).toContain('子项目预算读取失败');
+    fail = false;
+    await wrapper.get('[data-test="retry-finance"]').trigger('click');
+    await flushPromises();
+    expect(wrapper.text()).not.toContain('子项目预算读取失败');
+    expect(wrapper.get('[data-test="budget-project"]').attributes('value')).toBe('p1');
+    expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url) === '/api/budgets?projectId=p1')).toHaveLength(2);
   });
 
   it('clears a budget project from another framework when the user switches framework context', async () => {

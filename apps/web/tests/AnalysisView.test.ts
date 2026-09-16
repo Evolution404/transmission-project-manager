@@ -2,11 +2,11 @@ import { flushPromises, mount } from '@vue/test-utils';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CurrentUser } from '@tpm/shared';
 
-const { chartSetOption, chartResize } = vi.hoisted(() => ({ chartSetOption: vi.fn(), chartResize: vi.fn() }));
+const { chartSetOption, chartResize, chartClear } = vi.hoisted(() => ({ chartSetOption: vi.fn(), chartResize: vi.fn(), chartClear: vi.fn() }));
 const routeQuery = vi.hoisted(() => ({} as Record<string, string>));
 const replace = vi.fn();
 vi.mock('vue-router', () => ({ useRoute: () => ({ query: routeQuery }), useRouter: () => ({ replace }) }));
-vi.mock('../src/charts/echarts', () => ({ init: () => ({ setOption: chartSetOption, resize: chartResize, dispose: vi.fn() }) }));
+vi.mock('../src/charts/echarts', () => ({ init: () => ({ setOption: chartSetOption, resize: chartResize, clear: chartClear, dispose: vi.fn() }) }));
 vi.mock('naive-ui', async () => {
   const vue = await import('vue');
   const wrap = (name: string) => vue.defineComponent({ name, setup(_, { slots }) { return () => vue.h('div', { 'data-stub': name }, [slots['header-extra']?.(), slots.default?.()]); } });
@@ -81,6 +81,7 @@ describe('AnalysisView P6 behavior', () => {
     replace.mockReset();
     chartSetOption.mockReset();
     chartResize.mockReset();
+    chartClear.mockReset();
     document.documentElement.style.setProperty('--ui-text', '#f8fafc');
     document.documentElement.style.setProperty('--ui-text-secondary', '#cbd5e1');
     document.documentElement.style.setProperty('--ui-border', '#334155');
@@ -141,6 +142,29 @@ describe('AnalysisView P6 behavior', () => {
     expect(wrapper.get('.analysis-warning').text()).toContain('框架一');
   });
 
+  it('surfaces the latest framework analysis failure with an in-page retry path', async () => {
+    const wrapper = mount(AnalysisView, { props: { currentUser: readonly } });
+    await flushPromises();
+    chartClear.mockReset();
+    const fallback = vi.mocked(fetch).getMockImplementation()!;
+    let fail = true;
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (fail && url.startsWith('/api/analysis/frameworks/fw2/progress?')) throw new Error('框架分析读取失败');
+      return fallback(input, init);
+    });
+
+    await wrapper.get('[data-test="analysis-framework"]').setValue('fw2');
+    await flushPromises();
+    expect(wrapper.text()).toContain('框架分析读取失败');
+    expect(chartClear).toHaveBeenCalledTimes(1);
+    fail = false;
+    await wrapper.get('[data-test="retry-analysis"]').trigger('click');
+    await flushPromises();
+    expect(wrapper.text()).not.toContain('框架分析读取失败');
+    expect(wrapper.get('.analysis-warning').text()).toContain('框架二');
+  });
+
   it('ignores stale milestone results after the statistics date changes again', async () => {
     const wrapper = mount(AnalysisView, { props: { currentUser: readonly } });
     await flushPromises();
@@ -172,6 +196,27 @@ describe('AnalysisView P6 behavior', () => {
     await flushPromises();
     expect(wrapper.text()).toContain('新日期事项');
     expect(wrapper.text()).not.toContain('旧日期事项');
+  });
+
+  it('surfaces the latest statistics-date load failure instead of rejecting silently', async () => {
+    const wrapper = mount(AnalysisView, { props: { currentUser: readonly } });
+    await flushPromises();
+    const fallback = vi.mocked(fetch).getMockImplementation()!;
+    let fail = true;
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (fail && url === '/api/milestones/due?asOf=2026-10-01') throw new Error('统计日期事项读取失败');
+      return fallback(input, init);
+    });
+
+    await wrapper.get('[data-test="analysis-as-of"]').setValue('2026-10-01');
+    await flushPromises();
+    expect(wrapper.text()).toContain('统计日期事项读取失败');
+    fail = false;
+    await wrapper.get('[data-test="retry-analysis"]').trigger('click');
+    await flushPromises();
+    expect(wrapper.text()).not.toContain('统计日期事项读取失败');
+    expect((wrapper.get('[data-test="analysis-as-of"]').element as HTMLInputElement).value).toBe('2026-10-01');
   });
 
   it('shows real progress, reserve categories and active alerts', async () => {
