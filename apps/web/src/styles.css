@@ -114,7 +114,7 @@ a { color: inherit; }
 .nav-scroll::-webkit-scrollbar { display: none; }
 .nav-section { display: grid; gap: 3px; margin-bottom: 18px; }
 .nav-section-label { padding: 0 10px 7px; color: var(--ui-sidebar-muted); font-size: 12px; font-weight: 700; letter-spacing: .08em; }
-.nav-item {
+aside.app-sider .nav-item {
   position: relative;
   display: flex;
   align-items: center;
@@ -122,7 +122,7 @@ a { color: inherit; }
   width: calc(100% - 8px);
   min-height: 46px;
   margin: 0 4px;
-  padding: 0 14px;
+  padding: 0 14px 0 20px;
   border: 0;
   border-radius: 10px;
   background: transparent;
@@ -141,7 +141,7 @@ a { color: inherit; }
 .nav-item.active::before {
   position: absolute;
   top: 50%;
-  left: 3px;
+  left: 6px;
   width: 3px;
   height: 26px;
   border-radius: 999px;
@@ -296,7 +296,7 @@ code { font-family: "SFMono-Regular", Consolas, monospace; font-size: 12px; }
   .brand-block .brand-icon { width: 42px; height: 42px; }
   .brand-lockup-copy, .nav-section-label, .account-copy { display: none; }
   .nav-section { gap: 5px; margin-bottom: 12px; }
-  .nav-item {
+  aside.app-sider .nav-item {
     flex-direction: column;
     justify-content: center;
     gap: 4px;

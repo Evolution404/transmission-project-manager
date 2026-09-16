@@ -141,13 +141,21 @@ async function assertSidebarActiveIndicator(page: Page, title: string, path: str
   const indicator = await item.evaluate((element) => {
     const style = getComputedStyle(element, '::before');
     const itemRect = element.getBoundingClientRect();
+    const iconRect = element.querySelector('.app-icon')?.getBoundingClientRect();
     const left = Number.parseFloat(style.left);
     const width = Number.parseFloat(style.width);
-    return { content: style.content, left, width, itemWidth: itemRect.width };
+    return {
+      content: style.content,
+      left,
+      width,
+      itemWidth: itemRect.width,
+      iconLeft: iconRect ? iconRect.left - itemRect.left : Number.NaN,
+    };
   });
   expect(indicator.content).not.toBe('none');
   expect(indicator.left).toBeGreaterThanOrEqual(0);
   expect(indicator.left + indicator.width).toBeLessThanOrEqual(indicator.itemWidth);
+  expect(indicator.iconLeft - (indicator.left + indicator.width), `${title} 激活竖条与图标间距不足`).toBeGreaterThanOrEqual(8);
 }
 
 async function assertRouteLayout(page: Page, path: string, mobile: boolean) {
