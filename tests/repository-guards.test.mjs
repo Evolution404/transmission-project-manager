@@ -724,6 +724,19 @@ test('CI keeps isolated headless browser acceptance as its own job', () => {
   assert.match(workflow, /npm run test:ui:headless/, 'CI headless-ui job must execute the repository E2E command');
 });
 
+test('full local test gate reuses the web build produced by check', () => {
+  const makefile = readFileSync(resolve(root, 'Makefile'), 'utf8');
+  const packageJson = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8'));
+  assert.equal(
+    packageJson.scripts?.['test:ui:headless:prepared'],
+    'playwright test --config playwright.config.ts',
+    'prepared headless test must run Playwright without rebuilding Web',
+  );
+  assert.match(makefile, /^test:\s+check\s*$/m, 'make test must finish check before UI E2E');
+  assert.match(makefile, /^\s+npm run test:ui:headless:prepared\s*$/m, 'make test must reuse the Web build produced by check');
+  assert.match(makefile, /^test-ui:\s*\n\s+npm run test:ui:headless\s*$/m, 'standalone make test-ui must remain self-contained and build Web first');
+});
+
 test('Makefile is the single ergonomic entry point without bypassing production governance', () => {
   const makefilePath = resolve(root, 'Makefile');
   assert.equal(existsSync(makefilePath), true, '仓库根目录必须提供 Makefile 作为统一工程入口');

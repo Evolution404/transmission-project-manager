@@ -57,7 +57,8 @@ build-web:
 build-worker:
 	npm run build:worker
 
-test: check test-ui
+test: check
+	npm run test:ui:headless:prepared
 
 test-unit:
 	npm test

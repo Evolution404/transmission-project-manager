@@ -18,6 +18,7 @@
     "test:node": "node --test --test-concurrency=5 tests/*.test.mjs",
     "test:web": "npm run test --workspace @tpm/web",
     "test:ui:headless": "npm run build:web && playwright test --config playwright.config.ts",
+    "test:ui:headless:prepared": "playwright test --config playwright.config.ts",
     "test": "npm run test:node && npm run test:web",
     "check": "npm run typecheck && npm run build && npm test",
     "engineering:audit": "node scripts/engineering/repository-audit.mjs",
