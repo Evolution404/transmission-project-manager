@@ -148,7 +148,7 @@ M6 基础台账定向结果：基础台账 API **25/25 PASS**；相关 Web **30/
 - 分析计算抽取前已逐项对照旧实现并由测试锁定 BigInt 四舍五入、季度状态、默认/自定义计划、ratio/gap lagging 边界和里程碑提醒语义；分析/P6、通知仓储、备份仓储和 repository guards 定向合计 **53/53 PASS**。
 - 上述分析模块职责拆分完成时的历史门禁基线为 Node **293/293 PASS**、Web **114/114 PASS**；当前发布工程化施工分支最新完整本地 `make test` 为 Node **334/334 PASS**、Web **165/165 PASS（23 文件）**、Headless Chromium **23/23 PASS**，并通过 Cloudflare/Node/Web/shared TypeScript、Web production build、Worker dry-run、Node + SQLite + Filesystem 第二运行时及 `make audit`。本轮还将储备大类/类别映射 HTTP 从项目储备路由中拆到 `reserve-category-config.ts`，保持原 API 路径与业务语义不变。
 - Shared 根契约巨型 `index.ts` 已完成按域拆分，不再属于候选热点。后续候选仍包括 `reserve-planning.ts`、`demand-import.ts`、`finance.ts`、`project-lifecycle.ts`、`MasterDataView.vue`、`DemandsView.vue`、`FinanceView.vue`、`AnalysisView.vue`；按职责耦合收益排序，禁止仅按文件行数机械拆分。
-- 2026-09-17 清理一次性运维资产：PR #6 已关闭并删除其 `ops/cfdiag-once-20260914` 分支；旧 `ops/cloudflare-inventory-diagnostics-20260914` 远端诊断分支也已删除。当前无开放 PR，远端仅保留 `main`。
+- 2026-09-17 清理一次性运维资产：PR #6 已关闭并删除其 `ops/cfdiag-once-20260914` 分支；旧 `ops/cloudflare-inventory-diagnostics-20260914` 远端诊断分支也已删除。当前无开放 PR；远端仅保留 `main` 与本次交接施工分支 `refactor/technical-debt-cleanup-20260917`。
 - 下一轮低风险候选为 `expectedVersion` 纯解析重复与 `transmission-grid.ts` 旧 cursor codec；都必须先补兼容/行为测试，不得把不同业务错误合同强行统一。
 
 ## 6. 当前生产状态

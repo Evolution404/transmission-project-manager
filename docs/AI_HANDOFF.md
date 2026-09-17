@@ -118,7 +118,7 @@ Shared 拆分过程中完整门禁曾抓到 Node 原生 ESM 不接受无扩展�
 
 - PR #6 `ops: add one-shot Cloudflare auth diagnostic` 已关闭；对应远端分支 `ops/cfdiag-once-20260914` 已删除。该 PR 仅用于 2026-09-14 一次性 Cloudflare Token 诊断，正式发布/inventory/smoke 流程已经完全替代它。
 - 另一条历史远端诊断分支 `ops/cloudflare-inventory-diagnostics-20260914` 也已确认只包含旧 inventory/认证诊断提交，且 `main` 中现行 `production-cloudflare-inventory.yml` 更新、更安全；该残留远端分支已删除。
-- 当前 GitHub **无开放 PR**，远端只剩 `origin/main`；本轮清理未修改生产代码，也未触发生产发布。
+- 当前 GitHub **无开放 PR**；历史诊断分支已清空。为交接而保留的远端分支只有 `refactor/technical-debt-cleanup-20260917`，除此之外为 `origin/main`。本轮清理未修改生产代码，也未触发生产发布。
 - 下一项优先候选技术债：API 对 `expectedVersion` 的纯解析逻辑仍在 `finance.ts`、`project-lifecycle.ts`、`reserve-planning.ts` 及若干台账模块重复。先区分“纯正整数解析”与各路由自己的错误码/409 语义，只允许抽取无业务语义的 parser，禁止把不同状态码或冲突文案硬统一。
 - 第二候选：`transmission-grid.ts` 仍有自定义 `btoa/atob + encodeURIComponent` cursor 编解码，而其他对象分页已统一到 `apps/api/src/http/cursor.ts`。下一位 AI 应先写兼容性测试，确认线路/杆塔 cursor 的既有 wire format 是否允许迁移；不能直接替换导致已有 cursor 链接失效。
 - 维护热点继续以职责证据为准；`MasterDataView.vue`、`DemandsView.vue`、`demand-import.ts`、`FinanceView.vue`、`finance.ts`、`project-lifecycle.ts`、`reserve-planning.ts`、`AnalysisView.vue` 仅是候选，不因行数本身拆分。
