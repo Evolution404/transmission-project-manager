@@ -45,8 +45,8 @@ make test
 - Web production build：PASS；
 - Worker `wrangler deploy --dry-run`：PASS；
 - Vue/Vitest：**165/165 PASS（23 个测试文件）**；
-- Node：**339/339 PASS**；
-- Headless Chromium：**23/23 PASS**；
+- Node：**340/340 PASS**；
+- Headless Chromium：**24/24 PASS**；
 - Node + SQLite + Filesystem 第二运行时：PASS；
 - migration checksum/单基线与 repository/static guards：PASS。
 - `make audit`：仓库工程卫生 PASS，production dependency audit **0 vulnerabilities**。
