@@ -385,6 +385,44 @@ test('web business UI cannot render browser-native controls directly', () => {
   assert.match(filePicker, /clip-path:\s*inset\(50%\)/);
 });
 
+test('primary data surfaces share the spacious empty-state contract', () => {
+  const styleSource = readFileSync(resolve(root, 'apps/web/src/styles.css'), 'utf8');
+  assert.match(
+    styleSource,
+    /\.surface-empty-state\s*\{[^}]*padding:\s*48px 20px;[^}]*\}/s,
+    '整块数据区域的空状态必须使用统一的 48px 垂直留白，避免图标贴近上下边界',
+  );
+
+  const contracts = [
+    ['ProjectsView.vue', 'emptyDescription'],
+    ['DemandsView.vue', '暂无正式需求'],
+    ['DemandsView.vue', '暂无标准物资'],
+    ['FinanceView.vue', '暂无框架'],
+    ['FinanceView.vue', '当前框架暂无执行协议'],
+    ['FinanceView.vue', '暂无资金流水'],
+    ['TaskQueueView.vue', '当前筛选下没有执行任务'],
+    ['MasterDataView.vue', '没有符合条件的线路'],
+    ['MasterDataView.vue', '当前线路下暂无匹配杆塔'],
+  ];
+  for (const [name, marker] of contracts) {
+    const source = readFileSync(resolve(root, 'apps/web/src/views', name), 'utf8');
+    const tagPattern = new RegExp(`<n-empty[^>]*(?:description="[^"]*${marker}[^"]*"|:description="${marker}")[^>]*>`, 's');
+    const tag = source.match(tagPattern)?.[0];
+    assert.ok(tag, `${name} 缺少主数据区域空状态：${marker}`);
+    assert.match(tag, /class="[^"]*surface-empty-state[^"]*"/, `${name} 的“${marker}”必须使用共享宽松空状态样式`);
+  }
+
+  for (const relative of [
+    'apps/web/src/views/FinanceView.vue',
+    'apps/web/src/views/DemandsView.vue',
+    'apps/web/src/views/TaskQueueView.vue',
+  ]) {
+    const source = readFileSync(resolve(root, relative), 'utf8');
+    assert.doesNotMatch(source, />\s*\.n-empty\s*\{\s*padding:/, `${relative} 不得重新引入局部 n-empty padding`);
+    assert.doesNotMatch(source, /\.task-empty\s*\{\s*padding:/, `${relative} 不得重新引入页面私有空状态 padding`);
+  }
+});
+
 test('task progress drawers cannot close while a save request is in flight', () => {
   for (const relative of [
     'apps/web/src/features/tasks/TaskImplementationDrawer.vue',

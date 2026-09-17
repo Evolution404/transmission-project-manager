@@ -591,7 +591,7 @@ onMounted(loadInitial);
                 </div>
               </app-pressable>
             </div>
-            <n-empty v-else description="暂无正式需求；可新增需求或通过模板导入。" />
+            <n-empty v-else class="surface-empty-state" description="暂无正式需求；可新增需求或通过模板导入。" />
             <div v-if="demandCursor" class="load-more">
               <n-button secondary @click="loadDemands(false)">加载更多</n-button>
             </div>
@@ -730,7 +730,7 @@ onMounted(loadInitial);
                   <div class="mobile-material-facts"><span>型号 {{ item.model }}</span><span>单位 {{ item.unit }}</span></div>
                 </div>
               </div>
-              <n-empty v-else description="暂无标准物资。导入需求可以先进行，但未知物资会被标记为待核实。" />
+              <n-empty v-else class="surface-empty-state" description="暂无标准物资。导入需求可以先进行，但未知物资会被标记为待核实。" />
             </div>
           </section>
         </n-tab-pane>
@@ -896,7 +896,6 @@ onMounted(loadInitial);
 .final-step .import-step-body { padding-bottom: 20px; }
 .dictionary-edit { padding: 16px; border-bottom: 1px solid var(--ui-border); background: var(--ui-surface-subtle); }
 .dictionary-data :deep(.n-data-table) { border: 0; border-radius: 0; }
-.dictionary-data > .n-empty { padding: 32px 16px; }
 .mobile-material-list { display: none; }
 .status-line { margin-top: 14px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .template-row { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr) auto; gap: 10px; margin-bottom: 18px; }

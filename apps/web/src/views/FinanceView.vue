@@ -523,7 +523,7 @@ onMounted(loadInitial);
                   </div>
                 </div>
               </div>
-              <n-empty v-else description="暂无框架。" />
+              <n-empty v-else class="surface-empty-state" description="暂无框架。" />
             </div>
             <n-form v-if="canManageStructure && showFrameworkForm" class="form-grid edit-surface" label-placement="top">
               <n-form-item label="框架编号"><n-input v-model:value="frameworkForm.code" data-test="framework-code" :disabled="saving" /></n-form-item>
@@ -557,7 +557,7 @@ onMounted(loadInitial);
                   </div>
                 </div>
               </div>
-              <n-empty v-else description="当前框架暂无执行协议。" />
+              <n-empty v-else class="surface-empty-state" description="当前框架暂无执行协议。" />
             </div>
             <n-form v-if="canManageStructure && showAgreementForm" class="form-grid edit-surface" label-placement="top">
               <n-form-item label="协议编号"><n-input v-model:value="agreementForm.code" :disabled="saving" /></n-form-item>
@@ -626,7 +626,7 @@ onMounted(loadInitial);
                   </div>
                 </div>
               </div>
-              <n-empty v-else description="暂无资金流水。" />
+              <n-empty v-else class="surface-empty-state" description="暂无资金流水。" />
               <div v-if="entryCursor" class="load-more">
                 <n-button data-test="load-more-entries" @click="loadMoreEntries">加载更多流水</n-button>
               </div>
@@ -674,7 +674,6 @@ onMounted(loadInitial);
 .workspace-panel-body { padding: 16px; }
 .data-panel-body { padding: 0; }
 .data-panel-body :deep(.n-data-table) { border: 0; border-radius: 0; }
-.data-panel-body > .n-empty { padding: 30px 16px; }
 .mobile-finance-list { display: none; }
 .mobile-finance-row { display: grid; gap: 9px; padding: 14px; border-bottom: 1px solid var(--ui-border); }
 .mobile-finance-row:last-child { border-bottom: 0; }

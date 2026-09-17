@@ -715,6 +715,38 @@ test.describe.serial('无头浏览器真实认证与响应式 UI', () => {
     }
   });
 
+  test('主数据区域空状态与上下边界保持宽松净距', async ({ browser }) => {
+    const context = await browser.newContext({
+      viewport: { width: 1440, height: 900 },
+      colorScheme: 'light',
+      storageState: authenticatedState,
+    });
+    try {
+      const page = await context.newPage();
+      await page.goto(`${baseUrl}/projects`);
+      await expect(page.locator('.app-shell')).toBeVisible();
+      await page.locator('[data-test="project-search"] input').fill('__empty_state_spacing_guard__');
+      const empty = page.locator('.list-surface .surface-empty-state');
+      await expect(empty).toBeVisible();
+      const clearance = await empty.evaluate((element) => {
+        const emptyRect = element.getBoundingClientRect();
+        const icon = element.querySelector<HTMLElement>('.n-empty__icon');
+        const description = element.querySelector<HTMLElement>('.n-empty__description');
+        if (!icon || !description) throw new Error('空状态内部结构缺失');
+        const iconRect = icon.getBoundingClientRect();
+        const descriptionRect = description.getBoundingClientRect();
+        return {
+          top: iconRect.top - emptyRect.top,
+          bottom: emptyRect.bottom - descriptionRect.bottom,
+        };
+      });
+      expect(clearance.top, `空状态图标距上边界仅 ${clearance.top}px`).toBeGreaterThanOrEqual(40);
+      expect(clearance.bottom, `空状态说明距下边界仅 ${clearance.bottom}px`).toBeGreaterThanOrEqual(40);
+    } finally {
+      await context.close();
+    }
+  });
+
   for (const options of [
     { name: 'desktop-light', width: 1440, height: 900, colorScheme: 'light' as const, mobile: false },
     { name: 'desktop-dark', width: 1440, height: 900, colorScheme: 'dark' as const, mobile: false },
