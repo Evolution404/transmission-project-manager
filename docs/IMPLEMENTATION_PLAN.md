@@ -1,6 +1,6 @@
 # 实施计划与验收清单
 
-版本：2026-09-16。长期业务事实见 `BUSINESS_BASELINE.md`，当前施工状态见 `AI_HANDOFF.md`。
+版本：2026-09-17。长期业务事实见 `BUSINESS_BASELINE.md`，当前施工状态见 `AI_HANDOFF.md`。
 
 ## 1. 阶段总览
 
@@ -19,7 +19,7 @@
 | 生产 schema 升级 | 既有生产 D1 → 当前 M6 schema | **已完成：按用户授权重建空 D1，仅保留 zhangsan 账号及原密码凭据，旧 D1 已删除** |
 | P7 | 真实业务、恢复、性能、网络和运维移交 | 继续按真实环境逐项验收 |
 | 全站 UI 重构 | 应用壳、项目/任务闭环、需求、资金、台账、分析、设置、认证视觉与全站验收 | **已通过 PR #15 合入 main 并发布生产**；Playwright 持续覆盖真实页面认证、桌面/手机、浅色/暗色、主路由、关键弹层和业务 Drawer。长期 UI 规范统一维护在 `DESIGN.md` |
-| 工程化加固 | Makefile、可重复审计、共享契约模块化、测试/CI/发布提效 | 第一轮已通过 PR #16 合入并发布；当前 `refactor/release-engineering-20260916` 继续优化精确 CI 证据复用、发布 smoke/回退和清晰 API 职责边界 |
+| 工程化加固 | Makefile、可重复审计、共享契约模块化、测试/CI/发布提效 | **PR #16 / #17 已合入并发布**；精确 main CI 证据复用、audit job、自动 smoke、code-only rollback 与职责拆分均已上线。当前 `refactor/technical-debt-cleanup-20260917` 继续清理有明确证据的技术债 |
 
 ## 2. 当前业务主路径
 
@@ -147,7 +147,9 @@ M6 基础台账定向结果：基础台账 API **25/25 PASS**；相关 Web **30/
 - `analysis-operations.ts` 的混合职责已经完成拆分：`analysis-calculations.ts` 承载纯分析计算/查询编排，`analysis-operations.ts` 仅保留分析/计划/月报/里程碑 HTTP，`notification-operations.ts` 承载通知/告警/outbox，`backup-operations.ts` 承载逻辑备份，`system-tasks.ts` 承载定时任务编排。最新已验证代码提交为 `8c8f7ef`。
 - 分析计算抽取前已逐项对照旧实现并由测试锁定 BigInt 四舍五入、季度状态、默认/自定义计划、ratio/gap lagging 边界和里程碑提醒语义；分析/P6、通知仓储、备份仓储和 repository guards 定向合计 **53/53 PASS**。
 - 上述分析模块职责拆分完成时的历史门禁基线为 Node **293/293 PASS**、Web **114/114 PASS**；当前发布工程化施工分支最新完整本地 `make test` 为 Node **334/334 PASS**、Web **165/165 PASS（23 文件）**、Headless Chromium **23/23 PASS**，并通过 Cloudflare/Node/Web/shared TypeScript、Web production build、Worker dry-run、Node + SQLite + Filesystem 第二运行时及 `make audit`。本轮还将储备大类/类别映射 HTTP 从项目储备路由中拆到 `reserve-category-config.ts`，保持原 API 路径与业务语义不变。
-- 后续候选热点仍包括 `reserve-planning.ts`、`demand-import.ts`、`finance.ts`、`project-lifecycle.ts`、`MasterDataView.vue`、`packages/shared/src/index.ts`；按职责耦合收益排序拆分，禁止仅按文件行数机械拆分。
+- Shared 根契约巨型 `index.ts` 已完成按域拆分，不再属于候选热点。后续候选仍包括 `reserve-planning.ts`、`demand-import.ts`、`finance.ts`、`project-lifecycle.ts`、`MasterDataView.vue`、`DemandsView.vue`、`FinanceView.vue`、`AnalysisView.vue`；按职责耦合收益排序，禁止仅按文件行数机械拆分。
+- 2026-09-17 清理一次性运维资产：PR #6 已关闭并删除其 `ops/cfdiag-once-20260914` 分支；旧 `ops/cloudflare-inventory-diagnostics-20260914` 远端诊断分支也已删除。当前无开放 PR，远端仅保留 `main`。
+- 下一轮低风险候选为 `expectedVersion` 纯解析重复与 `transmission-grid.ts` 旧 cursor codec；都必须先补兼容/行为测试，不得把不同业务错误合同强行统一。
 
 ## 6. 当前生产状态
 
@@ -158,7 +160,7 @@ M6 基础台账定向结果：基础台账 API **25/25 PASS**；相关 Web **30/
 - Cloudflare Worker 已通过正式 `Production release` 发布，公网 health 与认证初始化状态通过复核。
 - 以后若生产已经产生正式业务数据，默认走统一 `Production promote`：先只读评估并自动搬运结构兼容的数据；结构变化时在临时 SQLite 中转换到当前 `0001` 新模型并校验；无法确定性转换则在生产变更前停止并由用户决定。只有用户再次明确授权删除时才允许清空数据。
 - 2026-09-16 全站 UI + Makefile 工程入口已通过 PR #15 合入 `main@bc59cf18befb3058d47848e8dae6f9589187c9dd` 并由 `Production promote` run `35108487959` 正式发布。数据评估判定 schema fingerprint 一致、`rebuildRequired=false`，因此只发布代码/静态资源并原样保留生产 D1。
-- 2026-09-16 第一轮工程化加固通过 PR #16 合入并发布 `main@10274d5b213598c51e7da075273e30930e7de707`；Production promote run `35115794914` PASS，D1 未重建，Worker Version ID `e50f4e69-c4eb-4ab5-afb0-a1a79603cd3a`。当前后续分支只优化发布工程与明确职责边界，尚未合并/发布。
+- 2026-09-16 发布链优化与储备分类职责拆分通过 PR #17 合入并发布 `main@8eb6bb6d475d73a0659d7924cce4e98aebaf58f1`；main CI run `35144001547` 的 `check/headless-ui/audit` 三项 PASS，Production promote run `35144244010` 约 45 秒完成。D1 评估 `rebuildRequired=false`，未重建/清空数据；当前 Worker Version ID `a0d69abd-a24d-4eba-8c2a-a323d04b63ea`，内置与独立 production smoke 均 PASS。
 
 ## 7. 本轮完成标准
 
