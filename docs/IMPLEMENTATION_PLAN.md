@@ -146,10 +146,11 @@ M6 基础台账定向结果：基础台账 API **25/25 PASS**；相关 Web **30/
 - `project-execution.ts` 已由约 850 行降至约 334 行；其职责回混已有 repository/static guard。
 - `analysis-operations.ts` 的混合职责已经完成拆分：`analysis-calculations.ts` 承载纯分析计算/查询编排，`analysis-operations.ts` 仅保留分析/计划/月报/里程碑 HTTP，`notification-operations.ts` 承载通知/告警/outbox，`backup-operations.ts` 承载逻辑备份，`system-tasks.ts` 承载定时任务编排。最新已验证代码提交为 `8c8f7ef`。
 - 分析计算抽取前已逐项对照旧实现并由测试锁定 BigInt 四舍五入、季度状态、默认/自定义计划、ratio/gap lagging 边界和里程碑提醒语义；分析/P6、通知仓储、备份仓储和 repository guards 定向合计 **53/53 PASS**。
-- 上述分析模块职责拆分完成时的历史门禁基线为 Node **293/293 PASS**、Web **114/114 PASS**；当前发布工程化施工分支最新完整本地 `make test` 为 Node **334/334 PASS**、Web **165/165 PASS（23 文件）**、Headless Chromium **23/23 PASS**，并通过 Cloudflare/Node/Web/shared TypeScript、Web production build、Worker dry-run、Node + SQLite + Filesystem 第二运行时及 `make audit`。本轮还将储备大类/类别映射 HTTP 从项目储备路由中拆到 `reserve-category-config.ts`，保持原 API 路径与业务语义不变。
+- 上述分析模块职责拆分完成时的历史门禁基线为 Node **293/293 PASS**、Web **114/114 PASS**；当前 `refactor/technical-debt-cleanup-20260917` 最新完整本地 `make test` 为 Node **339/339 PASS**、Web **165/165 PASS（23 文件）**、Headless Chromium **23/23 PASS**，并通过 Cloudflare/Node/Web/shared TypeScript、Web production build、Worker dry-run及 Node + SQLite + Filesystem 第二运行时；最终 `make audit` 同样 PASS，production dependency audit **0 vulnerabilities**。
 - Shared 根契约巨型 `index.ts` 已完成按域拆分，不再属于候选热点。后续候选仍包括 `reserve-planning.ts`、`demand-import.ts`、`finance.ts`、`project-lifecycle.ts`、`MasterDataView.vue`、`DemandsView.vue`、`FinanceView.vue`、`AnalysisView.vue`；按职责耦合收益排序，禁止仅按文件行数机械拆分。
 - 2026-09-17 清理一次性运维资产：PR #6 已关闭并删除其 `ops/cfdiag-once-20260914` 分支；旧 `ops/cloudflare-inventory-diagnostics-20260914` 远端诊断分支也已删除。当前无开放 PR；远端仅保留 `main` 与本次交接施工分支 `refactor/technical-debt-cleanup-20260917`。
-- 下一轮低风险候选为 `expectedVersion` 纯解析重复与 `transmission-grid.ts` 旧 cursor codec；都必须先补兼容/行为测试，不得把不同业务错误合同强行统一。
+- `expectedVersion` 纯解析重复已完成：严格安全正整数与历史 coercion 两种既有输入语义分别集中到 `http/request-values.ts`，业务路由继续各自决定 HTTP 状态、错误码和 409 冲突语义；repository guard 禁止 parser 再次复制。
+- `transmission-grid.ts` 旧 cursor codec 已完成：线路/杆塔分页统一使用 `http/cursor.ts`，共享 codec 同时接受旧台账 `btoa(encodeURIComponent(JSON))` wire format、现有 Base64URL JSON，并能安全编码中文线路名等 Unicode 状态；兼容性单测和真实分页回归均已锁定。
 
 ## 6. 当前生产状态
 

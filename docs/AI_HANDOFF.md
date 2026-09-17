@@ -110,7 +110,7 @@
 
 ## 当前验证状态与下一步
 
-PR #17 合并后的精确 `main` CI run `35144001547` 已三绿：`check` 1m13s、`headless-ui` 1m47s、`audit` 14s。此前本地完整 `make test` 已 PASS：Node **334/334**、Web **165/165（23 文件）**、Headless Chromium **23/23**；其后新增 production smoke/release gate 测试也已由 PR / main CI 验证。production dependency audit 为 **0 vulnerabilities**。
+PR #17 合并后的精确 `main` CI run `35144001547` 已三绿：`check` 1m13s、`headless-ui` 1m47s、`audit` 14s。当前技术债施工分支最新完整本地 `make test` 已 PASS：Node **339/339**、Web **165/165（23 文件）**、Headless Chromium **23/23**；TypeScript、Web production build、Worker dry-run、Node + SQLite + Filesystem 第二运行时均通过。最终文档树上的 `make audit` 也已 PASS：仓库工程卫生通过，production dependency audit **0 vulnerabilities**。
 
 Shared 拆分过程中完整门禁曾抓到 Node 原生 ESM 不接受无扩展名相对 specifier；现已改为显式 `.ts`，并新增门禁防回归。该失败从未合入 `main`、从未发布生产。
 
@@ -118,12 +118,12 @@ Shared 拆分过程中完整门禁曾抓到 Node 原生 ESM 不接受无扩展�
 
 - PR #6 `ops: add one-shot Cloudflare auth diagnostic` 已关闭；对应远端分支 `ops/cfdiag-once-20260914` 已删除。该 PR 仅用于 2026-09-14 一次性 Cloudflare Token 诊断，正式发布/inventory/smoke 流程已经完全替代它。
 - 另一条历史远端诊断分支 `ops/cloudflare-inventory-diagnostics-20260914` 也已确认只包含旧 inventory/认证诊断提交，且 `main` 中现行 `production-cloudflare-inventory.yml` 更新、更安全；该残留远端分支已删除。
-- 当前 GitHub **无开放 PR**；历史诊断分支已清空。为交接而保留的远端分支只有 `refactor/technical-debt-cleanup-20260917`，除此之外为 `origin/main`。本轮清理未修改生产代码，也未触发生产发布。
-- 下一项优先候选技术债：API 对 `expectedVersion` 的纯解析逻辑仍在 `finance.ts`、`project-lifecycle.ts`、`reserve-planning.ts` 及若干台账模块重复。先区分“纯正整数解析”与各路由自己的错误码/409 语义，只允许抽取无业务语义的 parser，禁止把不同状态码或冲突文案硬统一。
-- 第二候选：`transmission-grid.ts` 仍有自定义 `btoa/atob + encodeURIComponent` cursor 编解码，而其他对象分页已统一到 `apps/api/src/http/cursor.ts`。下一位 AI 应先写兼容性测试，确认线路/杆塔 cursor 的既有 wire format 是否允许迁移；不能直接替换导致已有 cursor 链接失效。
+- `expectedVersion` 纯解析重复已在提交 `95d5ccb` 收口。公共层只提供两类无业务语义 parser：严格 JSON 数字的安全正整数解析，以及为 `demand-import` / `reserve-planning` / `reserve-category-config` 保留既有 `Number(...)` coercion 的兼容解析；各路由原有 400/409/422、错误码和冲突文案未被合并。新增纯函数测试与 repository guard，防止同类 parser 再复制回业务模块。
+- `transmission-grid.ts` 旧 cursor codec 已在提交 `9b2ff2b` 收口到 `apps/api/src/http/cursor.ts`。测试先证明旧 `btoa(encodeURIComponent(JSON))` wire format 不能被原共享 codec 读取，再扩展共享 decoder 同时兼容旧台账 cursor 与现有 Base64URL JSON；encoder 对 ASCII 保持现有格式，对中文线路名等 Unicode 状态安全回退到 URI 编码后再 Base64URL。线路/杆塔分页加入真实旧 cursor 回归，repository guard 也已覆盖 `transmission-grid.ts`。
+- 两个小包均已独立提交并 push 到 `refactor/technical-debt-cleanup-20260917`；完整 `make test` 为 Node **339/339**、Web **165/165（23 文件）**、Headless Chromium **23/23**。当前尚未触发生产发布，不得把本地全绿描述成线上已升级。
 - 维护热点继续以职责证据为准；`MasterDataView.vue`、`DemandsView.vue`、`demand-import.ts`、`FinanceView.vue`、`finance.ts`、`project-lifecycle.ts`、`reserve-planning.ts`、`AnalysisView.vue` 仅是候选，不因行数本身拆分。
 
-下一步：从上述候选中选择一个低风险、可测试的技术债 → 测试先行 → 小提交 → `make test` + `make audit` → push/PR → 三 job CI → 合并 `main` → 等精确 main CI 三绿 → `make production` → `make production-smoke`。本轮用户已经明确要求“清理后发布”，但仍必须完成这些门禁后再部署。
+下一步：提交并 push 文档 → 创建 PR → 等 `check / headless-ui / audit` 三 job 全绿 → 合并 `main` → 等精确 main push CI 三绿 → `make production` → `make production-smoke`。本轮用户已经明确要求“清理后发布”，但仍必须完成这些门禁后再部署。
 
 ## 必须保持的业务/工程边界
 
