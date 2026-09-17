@@ -823,6 +823,28 @@ test('API object pagination cursors share one Base64URL JSON codec', () => {
   }
 });
 
+test('expectedVersion request parsing stays centralized without merging route error contracts', () => {
+  const requestValues = readFileSync(resolve(root, 'apps/api/src/http/request-values.ts'), 'utf8');
+  assert.match(requestValues, /export function positiveIntegerValue/);
+  assert.match(requestValues, /export function coercedPositiveIntegerValue/);
+
+  for (const relative of [
+    'apps/api/src/analysis-operations.ts',
+    'apps/api/src/demand-import.ts',
+    'apps/api/src/finance.ts',
+    'apps/api/src/project-execution-shared.ts',
+    'apps/api/src/project-lifecycle.ts',
+    'apps/api/src/reserve-category-config.ts',
+    'apps/api/src/reserve-planning.ts',
+  ]) {
+    const source = readFileSync(resolve(root, relative), 'utf8');
+    assert.match(source, /\.\/http\/request-values\.ts/, `${relative} must use shared request value parsing`);
+    assert.doesNotMatch(source, /function\s+(?:parseExpectedVersion|expectedVersion)\s*\(/, `${relative} must not reimplement expectedVersion parsing`);
+    assert.doesNotMatch(source, /Number\.isSafeInteger\(value\)\s*&&\s*value\s*>=\s*1/, `${relative} must not copy the strict positive-version parser`);
+    assert.doesNotMatch(source, /const\s+version\s*=\s*Number\(value\)[\s\S]{0,120}version\s*>=\s*1/, `${relative} must not copy the coercing positive-version parser`);
+  }
+});
+
 test('reserve category configuration stays isolated from project reserve planning routes', () => {
   const planning = readFileSync(resolve(root, 'apps/api/src/reserve-planning.ts'), 'utf8');
   const categoryConfig = readFileSync(resolve(root, 'apps/api/src/reserve-category-config.ts'), 'utf8');

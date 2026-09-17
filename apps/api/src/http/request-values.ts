@@ -18,6 +18,15 @@ export function intValue(value: unknown, min: number, max: number): number | nul
   return Number.isInteger(parsed) && parsed >= min && parsed <= max ? parsed : null;
 }
 
+export function positiveIntegerValue(value: unknown): number | null {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 1 ? value : null;
+}
+
+export function coercedPositiveIntegerValue(value: unknown): number | null {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= 1 ? parsed : null;
+}
+
 export function plainObject(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
