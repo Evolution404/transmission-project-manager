@@ -1,6 +1,6 @@
 # 测试策略与开发门禁
 
-版本：2026-09-16。适用于所有业务功能、基础台账、认证、后端可移植化、数据迁移、缺陷修复、工程化重构和正式环境准备。
+版本：2026-09-17。适用于所有业务功能、基础台账、认证、后端可移植化、数据迁移、缺陷修复、工程化重构和正式环境准备。
 
 ## 1. 核心规则：测试先于生产代码
 
@@ -39,13 +39,13 @@ make test
 
 `make test` 在 `make check` 已成功生成 Web production build 后直接执行 Playwright，不重复构建 Web；单独执行 `make test-ui` 时仍会先构建 Web，保持自包含。CI 的 `headless-ui` job同样保持独立构建，不能依赖另一个 job 的本地文件。
 
-当前发布工程化施工分支 `refactor/release-engineering-20260916` 最近一次完整本地门禁：
+当前技术债施工分支 `refactor/technical-debt-cleanup-20260917` 最近一次完整本地门禁：
 
 - TypeScript（Cloudflare API + Node runtime + Web + shared）：PASS；
 - Web production build：PASS；
 - Worker `wrangler deploy --dry-run`：PASS；
 - Vue/Vitest：**165/165 PASS（23 个测试文件）**；
-- Node：**334/334 PASS**；
+- Node：**339/339 PASS**；
 - Headless Chromium：**23/23 PASS**；
 - Node + SQLite + Filesystem 第二运行时：PASS；
 - migration checksum/单基线与 repository/static guards：PASS。
@@ -59,7 +59,9 @@ CI 现在把 `audit` 作为与 `check`、`headless-ui` 并列的发布关键 job
 
 Shared 公共契约已经从单一巨型 `index.ts` 按业务域拆分；Node 原生 TypeScript ESM 通过显式 `.ts` 相对 specifier 保证可解析，并由 repository guard、maintenance-mode 与 Node 第二运行时测试共同锁定，不能只依赖 Bundler/typecheck 通过。
 
-API 中需求、项目储备、资金、项目执行与任务队列的对象型分页游标统一复用 `apps/api/src/http/cursor.ts` 的 Base64URL JSON codec；各路由仍负责自己的字段形状校验和 `INVALID_CURSOR` 业务错误，公共 codec 不承载业务语义。`tests/cursor-codec.test.mjs` 和 repository guard 防止再次复制编解码实现。
+API 中需求、项目储备、资金、项目执行、任务队列与输电台账的对象型分页游标统一复用 `apps/api/src/http/cursor.ts`。公共 codec 输出 Base64URL JSON，并兼容读取旧输电台账 `btoa(encodeURIComponent(JSON))` cursor；对 Unicode 状态使用兼容编码路径，避免中文线路名触发浏览器 Base64 Latin-1 限制。各路由仍负责自己的字段形状校验和 `INVALID_CURSOR` 业务错误，公共 codec 不承载业务语义。`tests/cursor-codec.test.mjs`、基础台账真实分页回归和 repository guard 防止再次复制编解码实现或破坏旧 cursor。
+
+`expectedVersion` 等版本值的纯解析统一由 `apps/api/src/http/request-values.ts` 提供。严格 JSON 数字的安全正整数解析与历史 coercion 输入语义保持为两个独立纯函数，避免重构时无意把 `"1"` / `true` 等旧输入接受范围扩散到严格路由，或反向破坏已有兼容路由；HTTP 状态、错误码、冲突文案仍由各业务路由决定。`tests/request-values.test.mjs` 与 repository guard 锁定该边界。
 
 工程卫生和生产依赖安全审计统一使用：
 

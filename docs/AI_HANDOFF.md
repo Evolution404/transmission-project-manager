@@ -1,22 +1,21 @@
 # AI 交接说明
 
-日期：2026-09-16。此文档只记录当前施工状态；历史 UI 重构、生产发布和排障过程通过 Git / GitHub Actions 追溯。
+日期：2026-09-17。此文档只记录当前施工状态；历史 UI 重构、生产发布和排障过程通过 Git / GitHub Actions 追溯。
 
 ## 当前任务
 
-全站 UI 与第一轮工程化加固已经通过 PR #15 / #16 合入 `main` 并发布生产。当前继续做**代码/发布工程化审计**，目标是减少重复发布耗时、提高发布证据与自动回退质量，并继续按明确职责边界清理真实技术债；禁止为了“文件变小”机械拆分业务模块。
+全站 UI、第一轮工程化加固和发布链优化已经通过 PR #15 / #16 / #17 合入 `main` 并发布生产。当前继续做**技术债审计与清理**：只处理有明确引用证据的死代码、一次性运维资产、重复基础设施逻辑和清晰职责混杂；禁止为了“文件变小”机械拆分业务模块。
 
-当前施工分支：`refactor/release-engineering-20260916`。禁止 `git reset` / `git clean`，不得覆盖他人未提交修改。当前用户只要求“继续审计代码，优化发布”，未授权本分支合入或再次发布生产；完成 CI 后停在可审查状态。
+当前施工分支：`refactor/technical-debt-cleanup-20260917`，从已发布 `main@8eb6bb6d475d73a0659d7924cce4e98aebaf58f1` 创建。当前工作区仅有本交接文档/实施计划更新，尚未开始新的生产代码重构。禁止 `git reset` / `git clean`，不得覆盖他人未提交修改。用户本轮要求清理技术债后再发布；下一位 AI 应先完成当前审计、测试和 PR，再按 `main` 精确 CI → `Production promote` 发布，不能跳过门禁。
 
 ## 当前生产基线
 
-- PR #16 已合入 `main@10274d5b213598c51e7da075273e30930e7de707`。
-- 合并后 `main` CI run `35115163597`：`check`、`headless-ui` PASS。
-- `Production preflight` run `35115550812`：PASS。
-- `Production promote` run `35115794914`：PASS。
+- PR #17 已合入 `main@8eb6bb6d475d73a0659d7924cce4e98aebaf58f1`。
+- 合并后 `main` CI run `35144001547`：`check`、`headless-ui`、`audit` 三项 PASS。
+- `Production promote` run `35144244010`：PASS，优化后的正式 promote 总耗时约 45 秒。
 - 数据保留评估为 `rebuildRequired=false`，source/target schema fingerprint 完全一致，未重建 D1、未清空生产数据。
-- 当前已发布 Worker Version ID：`e50f4e69-c4eb-4ab5-afb0-a1a79603cd3a`。
-- 独立公网验收：`/api/health` 正常、`schema.ready=true`、current/required migration 均为 `0001_initial_schema.sql`；`/api/auth/status initialized=true`；匿名 `/api/me` 返回 401。只读 inventory run `35116478135` PASS。
+- 当前已发布 Worker Version ID：`a0d69abd-a24d-4eba-8c2a-a323d04b63ea`。
+- workflow 内置公网 smoke 与发布后独立 `make production-smoke` 均 PASS：`/api/health` 正常、`schema.ready=true`、current/required migration 均为 `0001_initial_schema.sql`；`/api/auth/status initialized=true`；匿名 `/api/me` 返回 401。
 
 生产仍处开发阶段 schema 策略：只允许单一 `0001_initial_schema.sql`；只有用户明确宣布进入运行阶段/正式维护升级链后，才允许追加 `0002+`。
 
@@ -75,7 +74,7 @@
 
 提交：`def862a refactor(api): share pagination cursor codec`。
 
-### 当前发布链优化 WIP
+### 发布链优化（已通过 PR #17 合入并发布）
 
 - CI 新增独立 `audit` job，工程卫生与 production dependency security audit 成为发布关键证据；
 - `Production preflight` / `Production promote` 不再把同一 SHA 的完整测试重复执行，而由 `verify-release-ci.mjs` 严格复用精确 `main` push CI 的 `check / headless-ui / audit` 三项成功证据；
@@ -86,7 +85,7 @@
 - code-only `rebuildRequired=false` 发布也在 deploy 前记录旧 Worker version 并安装 rollback trap，smoke 失败时自动回滚；发布摘要直接记录新 Worker Version ID；
 - 旧 `main@10274d5` CI 因尚无 `audit` job，被新 release gate 正确拒绝复用，证明门禁不会拿旧弱证据冒充新发布证据。
 
-当前相关提交：`368ab75 build: reuse exact CI evidence for releases`。
+相关提交包括 `368ab75 build: reuse exact CI evidence for releases`、`789e2d6 build: streamline production preflight and smoke`；最终由 PR #17 合入 `main`。
 
 ### 储备分类配置职责拆分
 
@@ -111,11 +110,20 @@
 
 ## 当前验证状态与下一步
 
-最新完整本地 `make test` 已 PASS：Node **334/334**、Web **165/165（23 文件）**、Headless Chromium **23/23**；Cloudflare/Node/Web/shared TypeScript、Web production build、Worker dry-run、Node + SQLite + Filesystem 第二运行时全部通过。`make audit` 同样 PASS，production dependency audit 为 **0 vulnerabilities**。
+PR #17 合并后的精确 `main` CI run `35144001547` 已三绿：`check` 1m13s、`headless-ui` 1m47s、`audit` 14s。当前技术债施工分支最新完整本地 `make test` 已 PASS：Node **339/339**、Web **165/165（23 文件）**、Headless Chromium **23/23**；TypeScript、Web production build、Worker dry-run、Node + SQLite + Filesystem 第二运行时均通过。最终文档树上的 `make audit` 也已 PASS：仓库工程卫生通过，production dependency audit **0 vulnerabilities**。
 
 Shared 拆分过程中完整门禁曾抓到 Node 原生 ESM 不接受无扩展名相对 specifier；现已改为显式 `.ts`，并新增门禁防回归。该失败从未合入 `main`、从未发布生产。
 
-下一步仅完成当前分支文档同步 → GitHub CI 三 job 实测 → 如需要创建 PR 供用户审核。**不得沿用上一轮已经完成的发布授权自动合并/部署当前分支。**
+### 2026-09-17 技术债清理进展
+
+- PR #6 `ops: add one-shot Cloudflare auth diagnostic` 已关闭；对应远端分支 `ops/cfdiag-once-20260914` 已删除。该 PR 仅用于 2026-09-14 一次性 Cloudflare Token 诊断，正式发布/inventory/smoke 流程已经完全替代它。
+- 另一条历史远端诊断分支 `ops/cloudflare-inventory-diagnostics-20260914` 也已确认只包含旧 inventory/认证诊断提交，且 `main` 中现行 `production-cloudflare-inventory.yml` 更新、更安全；该残留远端分支已删除。
+- `expectedVersion` 纯解析重复已在提交 `95d5ccb` 收口。公共层只提供两类无业务语义 parser：严格 JSON 数字的安全正整数解析，以及为 `demand-import` / `reserve-planning` / `reserve-category-config` 保留既有 `Number(...)` coercion 的兼容解析；各路由原有 400/409/422、错误码和冲突文案未被合并。新增纯函数测试与 repository guard，防止同类 parser 再复制回业务模块。
+- `transmission-grid.ts` 旧 cursor codec 已在提交 `9b2ff2b` 收口到 `apps/api/src/http/cursor.ts`。测试先证明旧 `btoa(encodeURIComponent(JSON))` wire format 不能被原共享 codec 读取，再扩展共享 decoder 同时兼容旧台账 cursor 与现有 Base64URL JSON；encoder 对 ASCII 保持现有格式，对中文线路名等 Unicode 状态安全回退到 URI 编码后再 Base64URL。线路/杆塔分页加入真实旧 cursor 回归，repository guard 也已覆盖 `transmission-grid.ts`。
+- 两个小包均已独立提交并 push 到 `refactor/technical-debt-cleanup-20260917`；完整 `make test` 为 Node **339/339**、Web **165/165（23 文件）**、Headless Chromium **23/23**。当前尚未触发生产发布，不得把本地全绿描述成线上已升级。
+- 维护热点继续以职责证据为准；`MasterDataView.vue`、`DemandsView.vue`、`demand-import.ts`、`FinanceView.vue`、`finance.ts`、`project-lifecycle.ts`、`reserve-planning.ts`、`AnalysisView.vue` 仅是候选，不因行数本身拆分。
+
+下一步：提交并 push 文档 → 创建 PR → 等 `check / headless-ui / audit` 三 job 全绿 → 合并 `main` → 等精确 main push CI 三绿 → `make production` → `make production-smoke`。本轮用户已经明确要求“清理后发布”，但仍必须完成这些门禁后再部署。
 
 ## 必须保持的业务/工程边界
 

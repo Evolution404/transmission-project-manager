@@ -23,7 +23,7 @@ import type {
 import { deleteAttachmentContent, loadAttachmentContent, saveAttachmentContent } from './application/attachment-content.ts';
 import { hasScope, requireRoles, type AppEnv } from './auth.ts';
 import { replayIdempotentResponse, requestHash, requireIdempotencyKey } from './http/idempotent-mutation.ts';
-import { apiError } from './http/request-values.ts';
+import { apiError, positiveIntegerValue as expectedVersion } from './http/request-values.ts';
 import type { AttachmentRecord } from './ports/attachment-repository';
 import { SqlAttachmentRepository } from './repositories/sql-attachment-repository.ts';
 import { SqlLegacyExecutionRepository } from './repositories/sql-legacy-execution-repository.ts';
@@ -130,10 +130,6 @@ function positiveInteger(value: unknown): number | null {
 
 function nonNegativeInteger(value: unknown): number | null {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
-}
-
-function expectedVersion(value: unknown): number | null {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 1 ? value : null;
 }
 
 function validDate(value: unknown): string | null {

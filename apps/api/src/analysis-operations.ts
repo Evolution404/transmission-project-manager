@@ -21,13 +21,12 @@ import {
 } from './analysis-calculations.ts';
 import { hasScope, requireRoles, type AppEnv } from './auth.ts';
 import { replayIdempotentResponse, requestHash, requireIdempotencyKey } from './http/idempotent-mutation.ts';
-import { apiError } from './http/request-values.ts';
+import { apiError, positiveIntegerValue as expectedVersion } from './http/request-values.ts';
 import { resolvePersistence as createCloudflarePersistence } from './runtime/persistence.ts';
 import { SqlAnalysisRepository } from './repositories/sql-analysis-repository.ts';
 
 function cleanText(value: unknown) { return value === null || value === undefined ? '' : String(value).trim(); }
 function safeNonNegative(value: unknown): number | null { return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null; }
-function expectedVersion(value: unknown): number | null { return typeof value === 'number' && Number.isSafeInteger(value) && value >= 1 ? value : null; }
 function validDate(value: unknown): string | null {
   const text = cleanText(value);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return null;

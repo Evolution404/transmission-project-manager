@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import type { CategoryMappingSummary, ReserveCategorySummary } from '@tpm/shared';
 import { requireRoles, type AppEnv } from './auth.ts';
 import { replayIdempotentResponse, requestHash, requireIdempotencyKey } from './http/idempotent-mutation.ts';
-import { apiError } from './http/request-values.ts';
+import { apiError, coercedPositiveIntegerValue as parseExpectedVersion } from './http/request-values.ts';
 import { SqlProjectQueryRepository } from './repositories/sql-project-query-repository.ts';
 import { SqlReserveCategoryWriteRepository } from './repositories/sql-reserve-category-write-repository.ts';
 import { resolvePersistence as createCloudflarePersistence } from './runtime/persistence.ts';
@@ -10,11 +10,6 @@ import { resolvePersistence as createCloudflarePersistence } from './runtime/per
 function cleanText(value: unknown): string {
   if (value === null || value === undefined) return '';
   return String(value).trim();
-}
-
-function parseExpectedVersion(value: unknown): number | null {
-  const version = Number(value);
-  return Number.isInteger(version) && version >= 1 ? version : null;
 }
 
 export const reserveCategoryConfigApp = new Hono<AppEnv>();

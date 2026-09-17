@@ -1,6 +1,7 @@
 import type { Context } from 'hono';
 import type { LifecycleState } from '@tpm/shared';
 import { hasScope, type AppEnv } from './auth.ts';
+import { positiveIntegerValue } from './http/request-values.ts';
 
 export const MAX_EXECUTION_ITEMS = 100;
 
@@ -15,17 +16,13 @@ export function nullableExecutionText(value: unknown, max: number): string | nul
   return text && text.length <= max ? text : undefined;
 }
 
-export function positiveExecutionInteger(value: unknown): number | null {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : null;
-}
+export const positiveExecutionInteger = positiveIntegerValue;
 
 export function nonNegativeExecutionInteger(value: unknown): number | null {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
 }
 
-export function expectedExecutionVersion(value: unknown): number | null {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 1 ? value : null;
-}
+export const expectedExecutionVersion = positiveIntegerValue;
 
 export function validExecutionYear(value: unknown): number | null | undefined {
   if (value === null || value === undefined || value === '') return null;

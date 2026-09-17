@@ -21,3 +21,14 @@ test('JSON cursor codec rejects empty, malformed and non-JSON input', () => {
   assert.equal(decodeJsonCursor('not-a-valid-cursor'), null);
   assert.equal(decodeJsonCursor('bm90LWpzb24'), null);
 });
+
+test('JSON cursor codec accepts the legacy transmission-grid wire format and round-trips Unicode state', () => {
+  const legacyState = ['宁镇线', 'line-legacy'];
+  const legacyCursor = btoa(encodeURIComponent(JSON.stringify(legacyState)));
+
+  assert.deepEqual(decodeJsonCursor(legacyCursor), legacyState);
+
+  const encoded = encodeJsonCursor(legacyState);
+  assert.match(encoded, /^[A-Za-z0-9_-]+$/);
+  assert.deepEqual(decodeJsonCursor(encoded), legacyState);
+});

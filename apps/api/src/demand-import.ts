@@ -17,7 +17,7 @@ import { normalizeTowerNo } from '@tpm/shared';
 import { requireRoles, type AppEnv } from './auth.ts';
 import { decodeJsonCursor, encodeJsonCursor } from './http/cursor.ts';
 import { replayIdempotentResponse, requestHash, requireIdempotencyKey } from './http/idempotent-mutation.ts';
-import { apiError } from './http/request-values.ts';
+import { apiError, coercedPositiveIntegerValue as parseExpectedVersion } from './http/request-values.ts';
 import { SqlDemandQueryRepository } from './repositories/sql-demand-query-repository.ts';
 import { SqlImportMappingRepository } from './repositories/sql-import-mapping-repository.ts';
 import { SqlImportRepository } from './repositories/sql-import-repository.ts';
@@ -50,11 +50,6 @@ const MAX_PUBLISH_ROWS = 10;
 function parseJson<T>(value: string | null, fallback: T): T {
   if (value === null) return fallback;
   try { return JSON.parse(value) as T; } catch { return fallback; }
-}
-
-function parseExpectedVersion(value: unknown): number | null {
-  const version = Number(value);
-  return Number.isInteger(version) && version >= 1 ? version : null;
 }
 
 async function hashText(value: string): Promise<string> {

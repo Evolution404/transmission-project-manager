@@ -22,7 +22,7 @@ import type {
 import { hasScope, requireRoles, type AppEnv } from './auth.ts';
 import { decodeJsonCursor, encodeJsonCursor } from './http/cursor.ts';
 import { replayIdempotentResponse, requestHash, requireIdempotencyKey } from './http/idempotent-mutation.ts';
-import { apiError } from './http/request-values.ts';
+import { apiError, positiveIntegerValue as expectedVersion } from './http/request-values.ts';
 import { SqlFinanceBudgetRepository } from './repositories/sql-finance-budget-repository.ts';
 import { SqlFinanceEntryRepository } from './repositories/sql-finance-entry-repository.ts';
 import { SqlFinanceQueryRepository } from './repositories/sql-finance-query-repository.ts';
@@ -56,9 +56,6 @@ function safeSum(values: number[]): number | null {
   let total = 0n;
   for (const value of values) total += BigInt(value);
   return total <= BigInt(Number.MAX_SAFE_INTEGER) && total >= BigInt(Number.MIN_SAFE_INTEGER) ? Number(total) : null;
-}
-function expectedVersion(value: unknown): number | null {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 1 ? value : null;
 }
 function dateValue(value: unknown): string | null {
   const text = cleanText(value);
