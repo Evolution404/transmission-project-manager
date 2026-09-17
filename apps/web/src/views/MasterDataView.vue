@@ -1047,7 +1047,7 @@ onMounted(loadAll);
             <div v-if="isAdmin" class="line-card-actions"><n-button text size="small" @click="openLine(item)">编辑属性</n-button><n-button text size="small" :disabled="saving" @click="requestDelete('lines',item,`线路“${item.lineName}”`)">删除</n-button></div>
           </article>
         </div>
-        <n-empty v-if="!lines.length && !loading" description="没有符合条件的线路" />
+        <n-empty v-if="!lines.length && !loading" class="surface-empty-state" description="没有符合条件的线路" />
         <div v-if="lineCursor" class="load-more"><n-button :loading="loading" @click="loadLines(true)">加载更多线路</n-button></div>
       </section>
     </section>
@@ -1101,7 +1101,7 @@ onMounted(loadAll);
           </div>
           </article>
         </div>
-        <n-empty v-else-if="!towerLoading" description="当前线路下暂无匹配杆塔" />
+        <n-empty v-else-if="!towerLoading" class="surface-empty-state" description="当前线路下暂无匹配杆塔" />
         <div v-if="towerCursor" class="load-more"><n-button :loading="towerLoading" @click="loadTowers(true)">加载更多杆塔</n-button></div>
       </section>
     </section>

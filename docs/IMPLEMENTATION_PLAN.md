@@ -19,7 +19,7 @@
 | 生产 schema 升级 | 既有生产 D1 → 当前 M6 schema | **已完成：按用户授权重建空 D1，仅保留 zhangsan 账号及原密码凭据，旧 D1 已删除** |
 | P7 | 真实业务、恢复、性能、网络和运维移交 | 继续按真实环境逐项验收 |
 | 全站 UI 重构 | 应用壳、项目/任务闭环、需求、资金、台账、分析、设置、认证视觉与全站验收 | **已通过 PR #15 合入 main 并发布生产**；Playwright 持续覆盖真实页面认证、桌面/手机、浅色/暗色、主路由、关键弹层和业务 Drawer。长期 UI 规范统一维护在 `DESIGN.md` |
-| 工程化加固 | Makefile、可重复审计、共享契约模块化、测试/CI/发布提效 | **PR #16 / #17 已合入并发布**；精确 main CI 证据复用、audit job、自动 smoke、code-only rollback 与职责拆分均已上线。当前 `refactor/technical-debt-cleanup-20260917` 继续清理有明确证据的技术债 |
+| 工程化加固 | Makefile、可重复审计、共享契约模块化、测试/CI/发布提效 | **PR #16 / #17 / #18 已合入并发布**；精确 main CI 证据复用、audit job、自动 smoke、code-only rollback、请求值解析与 cursor codec 收口均已上线。当前 `fix/empty-state-spacing-20260917` 进行主数据空状态一致性修复 |
 
 ## 2. 当前业务主路径
 
@@ -131,7 +131,7 @@ M6 基础台账定向结果：基础台账 API **25/25 PASS**；相关 Web **30/
 - 定向测试、`git diff --check`、相关 typecheck 通过后，再跑完整 `npm run check` 并独立提交。
 - 所有会先提交业务事实、再刷新页面投影的写操作，都必须区分“mutation 失败”和“mutation 已成功但刷新失败”；后者不得诱导用户重复提交。需求、资金、分析已纳入静态门禁，剩余页面按实际风险继续审计，不做机械式重构。
 
-无头浏览器验收已改为仓库内可重复执行的 Playwright E2E，而不再依赖用户真实 Chrome。`npm run test:ui:headless` 会先构建 Web，然后在临时目录初始化独立本地 D1/R2 状态并启动独立 Wrangler Worker；测试凭据只存在于 E2E 代码与临时进程中，不读取 `.env` 中真实账号密码、不复制用户真实 Cookie。认证必须走页面本身：首次初始化输入测试账号/密码/初始化令牌，新浏览器会话再次输入账号密码登录；后续验收复用这次真实登录产生的会话状态。当前 Headless Chromium **23/23 PASS**，覆盖 1440 桌面明暗主题、1440×600 低高度、768 / 900 / 1100 紧凑桌面、768×600 低高度、390 手机明暗主题和 320px 最窄手机。8 个主路由必须真实加载成功，任何可见加载错误态都直接失败；同时检查横向溢出、实际字号下限、手机按钮及输入/下拉/日期/页签触控目标、可见按钮必须具有文字或 aria-label/title、明暗 token、关键导航和真实 DOMRect 重叠。“新增需求 / 新建项目 / 新增成员”在 1440 / 768 / 390 / 320 四档视口中做几何验收；E2E 还创建隔离项目与任务，真实打开项目物资、项目来源、供应、实施、结算 5 类 Drawer，并在 390 / 320px 触控视口中校验完整进入屏幕；该夹具使用超长项目/任务/负责人/物资型号，额外验证 768 / 390 / 320 下项目详情、任务详情和任务队列不被长文本撑破。近期审计又修复了 text-only 错误恢复按钮命中区坍缩、768px 需求模态框高度断点、线路删除仅 hover 可达，以及多处 NDrawer 根节点选择器误写成后代选择器的问题；新增 repository guard 防止回归。新增“主路由必须加载成功”门禁还发现并修复任务队列 SQL 使用旧 `projects.year` 字段的问题，现已对齐当前 `business_year` schema。颜色 token 审计继续发现浅色三级文字原本只有约 2.58:1 对比度，现已将浅色 secondary/tertiary 调整为 `#475467/#667085`，并新增常用浅色 surface ≥4.5:1 的 repository guard。CI 保留独立 `headless-ui` job并上传失败 screenshot/trace。同期完整 `npm run check` 为 Node **318/318 PASS**、Web **165/165 PASS（23 文件）**。后续 UI 改动必须同时维持该 E2E 与现有单元/集成门禁全绿。
+无头浏览器验收已改为仓库内可重复执行的 Playwright E2E，而不再依赖用户真实 Chrome。`npm run test:ui:headless` 会先构建 Web，然后在临时目录初始化独立本地 D1/R2 状态并启动独立 Wrangler Worker；测试凭据只存在于 E2E 代码与临时进程中，不读取 `.env` 中真实账号密码、不复制用户真实 Cookie。认证必须走页面本身：首次初始化输入测试账号/密码/初始化令牌，新浏览器会话再次输入账号密码登录；后续验收复用这次真实登录产生的会话状态。当前 Headless Chromium **24/24 PASS**，覆盖 1440 桌面明暗主题、1440×600 低高度、768 / 900 / 1100 紧凑桌面、768×600 低高度、390 手机明暗主题和 320px 最窄手机。8 个主路由必须真实加载成功，任何可见加载错误态都直接失败；同时检查横向溢出、实际字号下限、手机按钮及输入/下拉/日期/页签触控目标、可见按钮必须具有文字或 aria-label/title、明暗 token、关键导航和真实 DOMRect 重叠。新增主数据空状态几何门禁会在项目列表制造无匹配结果，直接测量空状态图标/说明文字到区域上下边界的实际净距并要求 `>=40px`，防止共享 CSS 或组件 DOM 变化导致留白回退。“新增需求 / 新建项目 / 新增成员”在 1440 / 768 / 390 / 320 四档视口中做几何验收；E2E 还创建隔离项目与任务，真实打开项目物资、项目来源、供应、实施、结算 5 类 Drawer，并在 390 / 320px 触控视口中校验完整进入屏幕；该夹具使用超长项目/任务/负责人/物资型号，额外验证 768 / 390 / 320 下项目详情、任务详情和任务队列不被长文本撑破。后续 UI 改动必须同时维持该 E2E 与现有单元/集成门禁全绿。
 
 远端证据：PR #15 与合并后 `main` CI run `35107954205` 均 PASS；最新 production preflight `35108265214`、Production promote `35108487959` 均 PASS。该次发布评估 `rebuildRequired=false`，未重建 D1、未丢弃生产数据。当前 production schema 仍为唯一 `0001_initial_schema.sql` 基线。
 
@@ -161,7 +161,8 @@ M6 基础台账定向结果：基础台账 API **25/25 PASS**；相关 Web **30/
 - Cloudflare Worker 已通过正式 `Production release` 发布，公网 health 与认证初始化状态通过复核。
 - 以后若生产已经产生正式业务数据，默认走统一 `Production promote`：先只读评估并自动搬运结构兼容的数据；结构变化时在临时 SQLite 中转换到当前 `0001` 新模型并校验；无法确定性转换则在生产变更前停止并由用户决定。只有用户再次明确授权删除时才允许清空数据。
 - 2026-09-16 全站 UI + Makefile 工程入口已通过 PR #15 合入 `main@bc59cf18befb3058d47848e8dae6f9589187c9dd` 并由 `Production promote` run `35108487959` 正式发布。数据评估判定 schema fingerprint 一致、`rebuildRequired=false`，因此只发布代码/静态资源并原样保留生产 D1。
-- 2026-09-16 发布链优化与储备分类职责拆分通过 PR #17 合入并发布 `main@8eb6bb6d475d73a0659d7924cce4e98aebaf58f1`；main CI run `35144001547` 的 `check/headless-ui/audit` 三项 PASS，Production promote run `35144244010` 约 45 秒完成。D1 评估 `rebuildRequired=false`，未重建/清空数据；当前 Worker Version ID `a0d69abd-a24d-4eba-8c2a-a323d04b63ea`，内置与独立 production smoke 均 PASS。
+- 2026-09-16 发布链优化与储备分类职责拆分通过 PR #17 合入并发布 `main@8eb6bb6d475d73a0659d7924cce4e98aebaf58f1`；main CI run `35144001547` 的 `check/headless-ui/audit` 三项 PASS，Production promote run `35144244010` 完成。
+- 2026-09-17 技术债清理通过 PR #18 合入并发布 `main@398e65adbe11e653bf20bc7b8cf3e0cfc7796cd1`；精确 main CI run `35168605524` 三项 PASS，Production promote run `35172379250` PASS。D1 评估 `rebuildRequired=false`，source/target schema fingerprint 一致，未重建/清空数据；当前 Worker Version ID `bf567d9a-7d37-48e8-a97d-b27ddfcaacac`，内置与独立 production smoke 均 PASS。
 
 ## 7. 本轮完成标准
 

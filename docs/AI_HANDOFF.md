@@ -4,17 +4,17 @@
 
 ## 当前任务
 
-全站 UI、第一轮工程化加固和发布链优化已经通过 PR #15 / #16 / #17 合入 `main` 并发布生产。当前继续做**技术债审计与清理**：只处理有明确引用证据的死代码、一次性运维资产、重复基础设施逻辑和清晰职责混杂；禁止为了“文件变小”机械拆分业务模块。
+全站 UI、第一轮工程化加固、发布链优化和技术债清理已经通过 PR #15 / #16 / #17 / #18 合入 `main` 并发布生产。当前施工转为**空状态垂直留白专项**：修复项目页“暂无项目”图标/文字贴近上下边界的问题，同时审计并统一其他主数据区域的同类空状态，增加静态契约与真实浏览器几何门禁。
 
-当前施工分支：`refactor/technical-debt-cleanup-20260917`，从已发布 `main@8eb6bb6d475d73a0659d7924cce4e98aebaf58f1` 创建。当前工作区仅有本交接文档/实施计划更新，尚未开始新的生产代码重构。禁止 `git reset` / `git clean`，不得覆盖他人未提交修改。用户本轮要求清理技术债后再发布；下一位 AI 应先完成当前审计、测试和 PR，再按 `main` 精确 CI → `Production promote` 发布，不能跳过门禁。
+当前施工分支：`fix/empty-state-spacing-20260917`，从已发布 `main@398e65adbe11e653bf20bc7b8cf3e0cfc7796cd1` 创建。实现提交 `a4d28db fix(web): standardize spacious empty states` 已 push；禁止 `git reset` / `git clean`，不得覆盖他人未提交修改。用户已明确要求“完成任务，发布”，因此完成 PR 三项 CI、合并 `main`、精确 main push CI 三绿后，按受控流程执行 `make production` 与 `make production-smoke`。
 
 ## 当前生产基线
 
-- PR #17 已合入 `main@8eb6bb6d475d73a0659d7924cce4e98aebaf58f1`。
-- 合并后 `main` CI run `35144001547`：`check`、`headless-ui`、`audit` 三项 PASS。
-- `Production promote` run `35144244010`：PASS，优化后的正式 promote 总耗时约 45 秒。
+- PR #18 已合入 `main@398e65adbe11e653bf20bc7b8cf3e0cfc7796cd1`。
+- 合并后精确 `main` CI run `35168605524`：`check`、`headless-ui`、`audit` 三项 PASS。
+- `Production promote` run `35172379250`：PASS。
 - 数据保留评估为 `rebuildRequired=false`，source/target schema fingerprint 完全一致，未重建 D1、未清空生产数据。
-- 当前已发布 Worker Version ID：`a0d69abd-a24d-4eba-8c2a-a323d04b63ea`。
+- 当前已发布 Worker Version ID：`bf567d9a-7d37-48e8-a97d-b27ddfcaacac`。
 - workflow 内置公网 smoke 与发布后独立 `make production-smoke` 均 PASS：`/api/health` 正常、`schema.ready=true`、current/required migration 均为 `0001_initial_schema.sql`；`/api/auth/status initialized=true`；匿名 `/api/me` 返回 401。
 
 生产仍处开发阶段 schema 策略：只允许单一 `0001_initial_schema.sql`；只有用户明确宣布进入运行阶段/正式维护升级链后，才允许追加 `0002+`。
@@ -110,7 +110,7 @@
 
 ## 当前验证状态与下一步
 
-PR #17 合并后的精确 `main` CI run `35144001547` 已三绿：`check` 1m13s、`headless-ui` 1m47s、`audit` 14s。当前技术债施工分支最新完整本地 `make test` 已 PASS：Node **339/339**、Web **165/165（23 文件）**、Headless Chromium **23/23**；TypeScript、Web production build、Worker dry-run、Node + SQLite + Filesystem 第二运行时均通过。最终文档树上的 `make audit` 也已 PASS：仓库工程卫生通过，production dependency audit **0 vulnerabilities**。
+PR #18 合并后的精确 `main` CI run `35168605524` 已三绿。当前空状态专项分支最新完整本地 `make test` 已 PASS：Node **340/340**、Web **165/165（23 文件）**、Headless Chromium **24/24**；TypeScript、Web production build、Worker dry-run、Node + SQLite + Filesystem 第二运行时均通过。`make audit` 也已 PASS：仓库工程卫生通过，production dependency audit **0 vulnerabilities**。
 
 Shared 拆分过程中完整门禁曾抓到 Node 原生 ESM 不接受无扩展名相对 specifier；现已改为显式 `.ts`，并新增门禁防回归。该失败从未合入 `main`、从未发布生产。
 
@@ -123,7 +123,15 @@ Shared 拆分过程中完整门禁曾抓到 Node 原生 ESM 不接受无扩展�
 - 两个小包均已独立提交并 push 到 `refactor/technical-debt-cleanup-20260917`；完整 `make test` 为 Node **339/339**、Web **165/165（23 文件）**、Headless Chromium **23/23**。当前尚未触发生产发布，不得把本地全绿描述成线上已升级。
 - 维护热点继续以职责证据为准；`MasterDataView.vue`、`DemandsView.vue`、`demand-import.ts`、`FinanceView.vue`、`finance.ts`、`project-lifecycle.ts`、`reserve-planning.ts`、`AnalysisView.vue` 仅是候选，不因行数本身拆分。
 
-下一步：提交并 push 文档 → 创建 PR → 等 `check / headless-ui / audit` 三 job 全绿 → 合并 `main` → 等精确 main push CI 三绿 → `make production` → `make production-smoke`。本轮用户已经明确要求“清理后发布”，但仍必须完成这些门禁后再部署。
+### 2026-09-17 空状态留白专项
+
+- 项目页“暂无项目”原本没有任何专用垂直留白，Naive UI 空状态内容贴近列表上下边界；审计同时发现需求池、物资字典、资金三处、任务队列、线路台账和杆塔台账各自存在无样式或 `30/32/56px` 私有实现。
+- 当前 9 个主数据区域统一使用全局 `.surface-empty-state { width: 100%; padding: 48px 20px; }`；抽屉、详情卡片等紧凑型小空状态没有机械放大。
+- repository guard 明确锁定上述主区域必须使用共享契约，并禁止 Finance/Demands/TaskQueue 重新出现页面私有 `n-empty` padding。
+- Playwright 新增真实几何门禁：项目列表制造“搜索无结果”后，直接测量空状态图标/说明到区域上下边界的实际净距，要求均 `>= 40px`。该测试已在桌面真实渲染中 PASS。
+- 实现提交：`a4d28db fix(web): standardize spacious empty states`；完整 `make test` 为 Node **340/340**、Web **165/165**、Headless **24/24**；`make audit` PASS，0 vulnerabilities。
+
+下一步：提交并 push 文档 → 创建 PR → 等 `check / headless-ui / audit` 三 job 全绿 → 合并 `main` → 等精确 main push CI 三绿 → `make production` → `make production-smoke`。本轮用户已明确授权发布，但仍不得跳过上述门禁。
 
 ## 必须保持的业务/工程边界
 

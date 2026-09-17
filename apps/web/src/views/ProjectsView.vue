@@ -183,7 +183,7 @@ onMounted(() => loadPage());
             </div>
           </app-pressable>
         </div>
-        <n-empty v-if="!loading && !projects.length" :description="emptyDescription" />
+        <n-empty v-if="!loading && !projects.length" class="surface-empty-state" :description="emptyDescription" />
       </n-spin>
       <div v-if="nextCursor" class="load-more"><n-button :loading="loadingMore" @click="loadPage(nextCursor)">加载更多</n-button></div>
     </section>

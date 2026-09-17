@@ -205,7 +205,7 @@ onMounted(() => load());
           </app-pressable>
         </div>
 
-        <n-empty v-if="!loading && !items.length" description="当前筛选下没有执行任务" class="task-empty" />
+        <n-empty v-if="!loading && !items.length" description="当前筛选下没有执行任务" class="surface-empty-state" />
       </n-spin>
 
       <div v-if="nextCursor" class="load-more">
@@ -237,7 +237,6 @@ onMounted(() => load());
 .task-row-end { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
 .row-chevron { color: var(--ui-text-tertiary); font-size: 20px; line-height: 1; }
 .mobile-task-list { display: none; }
-.task-empty { padding: 56px 16px; }
 .load-more { display: flex; justify-content: center; padding: 14px 16px; border-top: 1px solid var(--ui-border); }
 @media (max-width: 1180px) {
   .task-table-head, .task-table-row { grid-template-columns: minmax(230px, 1.4fr) 120px minmax(170px, 1fr) minmax(135px, .75fr) minmax(135px, .75fr); }

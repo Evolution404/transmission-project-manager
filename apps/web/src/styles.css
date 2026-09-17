@@ -240,6 +240,7 @@ aside.app-sider .nav-item {
 .toolbar-spacer { flex: 1 1 auto; }
 .muted { color: var(--ui-text-secondary); }
 .empty-copy { max-width: 560px; margin: 0 auto; color: var(--ui-text-secondary); text-align: center; line-height: 1.7; }
+.surface-empty-state { width: 100%; padding: 48px 20px; }
 code { font-family: "SFMono-Regular", Consolas, monospace; font-size: 12px; }
 
 .content-wrap .n-card {
