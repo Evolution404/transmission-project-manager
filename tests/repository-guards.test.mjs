@@ -816,6 +816,7 @@ test('API object pagination cursors share one Base64URL JSON codec', () => {
     'apps/api/src/project-execution.ts',
     'apps/api/src/project-execution-query.ts',
     'apps/api/src/reserve-planning.ts',
+    'apps/api/src/transmission-grid.ts',
   ]) {
     const source = readFileSync(resolve(root, relative), 'utf8');
     assert.match(source, /\.\/http\/cursor\.ts/, `${relative} must use the shared cursor codec`);

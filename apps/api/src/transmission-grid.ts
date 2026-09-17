@@ -7,6 +7,7 @@ import type {
 import { normalizeTowerNo } from '@tpm/shared';
 import { requireRoles, type AppEnv } from './auth.ts';
 import { inferNewTowerOrder } from './domain/tower-ordering.ts';
+import { decodeJsonCursor, encodeJsonCursor } from './http/cursor.ts';
 import { beginIdempotentMutation as beginMutation, replayIdempotentMutation as replay, type IdempotentMutation as Mutation } from './http/idempotent-mutation.ts';
 import { apiError, boolValue, cleanText, intValue } from './http/request-values.ts';
 import { masterDataRepository, masterDataWriteRepository } from './master-data-context.ts';
@@ -25,17 +26,17 @@ transmissionGridApp.get('/master/voltage-levels', async (c) => {
 function listPage(c: Context<AppEnv>): { limit: number; cursor: [string, string] | null } | Response {
   const limit = Number(c.req.query('limit') ?? '100');
   if (!Number.isInteger(limit) || limit < 1 || limit > 100) return c.json(apiError('INVALID_PAGE_LIMIT', 'limit 必须在 1–100 之间'), 400);
-  try {
-    const cursor = c.req.query('cursor') ? JSON.parse(decodeURIComponent(atob(c.req.query('cursor')!))) : null;
-    if (cursor !== null && (!Array.isArray(cursor) || cursor.length !== 2 || cursor.some((v) => typeof v !== 'string'))) throw new Error();
-    return { limit, cursor };
-  } catch {
+  const cursorParam = c.req.query('cursor');
+  if (!cursorParam) return { limit, cursor: null };
+  const cursor = decodeJsonCursor(cursorParam);
+  if (!Array.isArray(cursor) || cursor.length !== 2 || cursor.some((v) => typeof v !== 'string')) {
     return c.json(apiError('INVALID_CURSOR', '分页游标无效'), 400);
   }
+  return { limit, cursor: [cursor[0], cursor[1]] };
 }
 
 function pageCursor(first: string, id: string) {
-  return btoa(encodeURIComponent(JSON.stringify([first, id])));
+  return encodeJsonCursor([first, id]);
 }
 
 transmissionGridApp.get('/master/lines', async (c) => {

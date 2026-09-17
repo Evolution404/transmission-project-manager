@@ -506,6 +506,10 @@ test('master lists page within the selected parent without losing or repeating o
   assert.equal(next.body.data.items.length, 1);
   assert.notEqual(next.body.data.items[0].id, first.body.data.items[0].id);
   assert.equal(next.body.data.items[0].lineId, lineA.id);
+  const legacyCursor = btoa(encodeURIComponent(JSON.stringify([String(first.body.data.items[0].sortRank), first.body.data.items[0].id])));
+  const legacyNext = await jsonRequest(`/api/master/towers?lineId=${lineA.id}&limit=1&cursor=${encodeURIComponent(legacyCursor)}`);
+  assert.equal(legacyNext.response.status, 200);
+  assert.equal(legacyNext.body.data.items[0].id, next.body.data.items[0].id);
   const lines = await jsonRequest('/api/master/lines?voltageLevelId=vl-ac-220&limit=1');
   assert.equal(lines.body.data.items.length, 1);
   assert.ok(lines.body.data.nextCursor);
